@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import {
   BarChart3,
   ChevronRight,
@@ -7,6 +7,7 @@ import {
   Search,
   Star,
 } from 'lucide-react'
+import { ChartCanvas, type ChartRange, type PriceMode } from './ChartCanvas'
 
 type Instrument = {
   symbol: string
@@ -20,7 +21,6 @@ type Instrument = {
 }
 
 type Scope = 'all' | 'stock' | 'etf' | 'index' | 'sector'
-type Range = '1Y' | '3Y' | '10Y' | 'ALL'
 
 const scopes: Array<{ value: Scope; label: string }> = [
   { value: 'all', label: '全部' },
@@ -30,7 +30,7 @@ const scopes: Array<{ value: Scope; label: string }> = [
   { value: 'sector', label: '板块' },
 ]
 
-const ranges: Range[] = ['1Y', '3Y', '10Y', 'ALL']
+const ranges: ChartRange[] = ['1Y', '3Y', '10Y', 'ALL']
 
 const fallback: Instrument = {
   symbol: 'BK1128.DC',
@@ -46,16 +46,26 @@ const fallback: Instrument = {
 export function App() {
   const [query, setQuery] = useState('')
   const [scope, setScope] = useState<Scope>('all')
-  const [range, setRange] = useState<Range>('3Y')
+  const [range, setRange] = useState<ChartRange>('3Y')
+  const [priceMode, setPriceMode] = useState<PriceMode>('normal')
   const [items, setItems] = useState<Instrument[]>([])
   const [selected, setSelected] = useState<Instrument>(fallback)
   const [chatOpen, setChatOpen] = useState(true)
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading')
 
+  const handleCoverageChange = useCallback((rows: number, first?: string, last?: string) => {
+    setSelected(current => ({
+      ...current,
+      rows,
+      first_trade_date: first,
+      last_trade_date: last,
+    }))
+  }, [])
+
   useEffect(() => {
     const controller = new AbortController()
+    setLoadState('loading')
     const handle = window.setTimeout(async () => {
-      setLoadState('loading')
       const params = new URLSearchParams({ query, limit: '30' })
       if (scope !== 'all') params.append('kind', scope)
       try {
@@ -127,12 +137,20 @@ export function App() {
           >{chatOpen ? <PanelRightClose size={17}/> : <MessageSquare size={17}/>}</button>
         </header>
         <div className="market-strip">
-          <span>日线</span><span>不复权</span><span>普通坐标</span>
+          <span>日线</span><span>不复权</span>
+          <div className="coordinate-tabs" aria-label="价格坐标">
+            <button className={priceMode === 'normal' ? 'active' : ''} onClick={() => setPriceMode('normal')}>普通</button>
+            <button className={priceMode === 'log' ? 'active' : ''} onClick={() => setPriceMode('log')}>对数</button>
+          </div>
           <span className="ma ma-short">MA 5</span><span className="ma ma-mid">MA 20</span><span className="ma ma-long">MA 60</span>
         </div>
         <div className="canvas-shell" data-range={range}>
-          <div className="chart-grid"><div className="chart-watermark">{selected.symbol}</div></div>
-          <div className="volume-grid" />
+          <ChartCanvas
+            symbol={selected.symbol}
+            range={range}
+            priceMode={priceMode}
+            onCoverageChange={handleCoverageChange}
+          />
         </div>
         <footer className="statusbar">
           <span>{selected.first_trade_date ?? '—'} → {selected.last_trade_date ?? '—'}</span>

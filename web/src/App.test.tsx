@@ -6,6 +6,10 @@ import userEvent from '@testing-library/user-event'
 
 import { App } from './App'
 
+vi.mock('./ChartCanvas', () => ({
+  ChartCanvas: ({ symbol }: { symbol: string }) => <div data-testid="chart-canvas">{symbol}</div>,
+}))
+
 afterEach(() => {
   cleanup()
   vi.unstubAllGlobals()

@@ -16,6 +16,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid #4b84c6; outline-
   height: 100vh;
   display: grid;
   grid-template-columns: 272px minmax(520px, 1fr) 300px;
+  grid-template-rows: minmax(0, 1fr);
   background: #0d1014;
 }
 .workstation.chat-closed { grid-template-columns: 272px minmax(520px, 1fr); }
@@ -57,16 +58,16 @@ button:focus-visible, input:focus-visible { outline: 2px solid #4b84c6; outline-
   color: #e8ebf0;
   font-size: 12px;
 }
-.scope-tabs, .range-tabs { display: flex; align-items: center; gap: 2px; }
+.scope-tabs, .range-tabs, .coordinate-tabs { display: flex; align-items: center; gap: 2px; }
 .scope-tabs { padding: 0 6px; border-bottom: 1px solid #272d36; }
-.scope-tabs button, .range-tabs button {
+.scope-tabs button, .range-tabs button, .coordinate-tabs button {
   border: 0;
   background: transparent;
   color: #8e99a8;
   font-size: 11px;
   padding: 7px 7px;
 }
-.scope-tabs button.active, .range-tabs button.active { color: #f0f3f7; background: #252b34; border-radius: 3px; }
+.scope-tabs button.active, .range-tabs button.active, .coordinate-tabs button.active { color: #f0f3f7; background: #252b34; border-radius: 3px; }
 .instrument-list { overflow: auto; padding: 5px; }
 .instrument {
   width: 100%;
@@ -88,7 +89,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid #4b84c6; outline-
 .list-state { padding: 18px 8px; color: #788493; text-align: center; font-size: 11px; }
 .list-state.error { color: #d38181; }
 
-.workspace { min-width: 0; display: grid; grid-template-rows: 50px 32px 1fr 26px; }
+.workspace { min-width: 0; min-height: 0; display: grid; grid-template-rows: 50px 32px minmax(0, 1fr) 26px; }
 .toolbar {
   display: flex;
   align-items: center;
@@ -121,6 +122,8 @@ button:focus-visible, input:focus-visible { outline: 2px solid #4b84c6; outline-
   color: #7f8997;
   font-size: 10px;
 }
+.coordinate-tabs { height: 24px; padding: 2px; background: #171c22; border: 1px solid #272d36; border-radius: 3px; }
+.coordinate-tabs button { padding: 2px 6px; font-size: 10px; }
 .ma { position: relative; padding-left: 9px; }
 .ma::before { content: ""; position: absolute; left: 0; top: 4px; width: 5px; height: 5px; border-radius: 50%; }
 .ma-short::before { background: #e5b85c; }
@@ -128,26 +131,41 @@ button:focus-visible, input:focus-visible { outline: 2px solid #4b84c6; outline-
 .ma-long::before { background: #b984cc; }
 .canvas-shell {
   min-height: 0;
-  display: grid;
-  grid-template-rows: minmax(220px, 3fr) minmax(96px, 1fr);
+  position: relative;
+  overflow: hidden;
   background: #0d1014;
 }
-.chart-grid, .volume-grid {
-  position: relative;
-  background-image: linear-gradient(#1c222a 1px, transparent 1px), linear-gradient(90deg, #1c222a 1px, transparent 1px);
-  background-size: 100% 20%, 12.5% 100%;
-}
-.chart-grid { border-bottom: 1px solid #303743; }
-.chart-watermark {
+.chart-stage, .chart-host { position: absolute; inset: 0; min-height: 0; }
+.chart-readout {
   position: absolute;
+  z-index: 2;
+  top: 8px;
+  left: 10px;
+  right: 74px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  color: #8e99a8;
+  font-size: 10px;
+  pointer-events: none;
+}
+.chart-readout b { color: #c6ccd5; font-weight: 500; }
+.chart-readout .rise { color: #ef5350; }
+.chart-readout .fall { color: #26a269; }
+.chart-readout .ma5-value { color: #e5b85c; }
+.chart-readout .ma20-value { color: #57a7d9; }
+.chart-readout .ma60-value { color: #b984cc; }
+.chart-state {
+  position: absolute;
+  z-index: 3;
   inset: 0;
   display: grid;
   place-items: center;
-  color: #171c22;
-  font-size: 64px;
-  font-weight: 700;
-  pointer-events: none;
+  background: #0d1014cc;
+  color: #7f8997;
+  font-size: 12px;
 }
+.chart-state.error { color: #d38181; }
 .statusbar {
   display: flex;
   align-items: center;
@@ -185,5 +203,5 @@ button:focus-visible, input:focus-visible { outline: 2px solid #4b84c6; outline-
   .workspace { grid-row: 2; }
   .range-tabs { display: none; }
   .statusbar span:first-child { display: none; }
-  .chart-watermark { font-size: 34px; }
+  .chart-readout { right: 58px; gap: 3px 8px; }
 }
