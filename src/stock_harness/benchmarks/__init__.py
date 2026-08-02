@@ -1,0 +1,1 @@
+"""Repeatable StockHarness performance benchmarks."""

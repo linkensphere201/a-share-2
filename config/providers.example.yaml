@@ -1,0 +1,29 @@
+providers:
+  default: tushare
+  tushare:
+    enabled: true
+    token_env: TUSHARE_TOKEN
+    env_file: ../.env
+    requests_per_minute: 300
+    retries: 4
+    retry_wait_seconds: 15
+    backoff_multiplier: 2
+    api_url: http://api.waditu.com/dataapi
+    timeout_seconds: 30
+  validation:
+    providers:
+      - akshare
+      - baostock
+    sample_symbols:
+      - 000001.SZ
+      - 000002.SZ
+      - 600000.SH
+    price_abs_tolerance: 0.001
+    volume_rel_tolerance: 0.001
+  repair:
+    enabled: true
+    universe_provider: baostock
+    fallback_providers:
+      - akshare_eastmoney
+      - akshare_sina
+    max_dates_per_run: 1

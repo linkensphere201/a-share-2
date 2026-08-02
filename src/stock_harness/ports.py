@@ -1,0 +1,54 @@
+"""Provider and storage boundaries for the minimal data layer."""
+
+from __future__ import annotations
+
+from datetime import date
+from typing import Protocol, Sequence
+
+from stock_harness.models import DailyBar, Instrument, RepairBatch, StoredDailyBar, WriteStats
+
+
+class DailyMarketDataProvider(Protocol):
+    @property
+    def code(self) -> str: ...
+
+    def list_instruments(self) -> Sequence[Instrument]: ...
+
+    def fetch_daily_bars(self, trade_date: date) -> Sequence[DailyBar]: ...
+
+
+class DailyBarValidationProvider(Protocol):
+    @property
+    def code(self) -> str: ...
+
+    def fetch_symbol_daily_bars(
+        self, symbol: str, start_date: date, end_date: date
+    ) -> Sequence[DailyBar]: ...
+
+
+class TradeDateRepairProvider(Protocol):
+    @property
+    def code(self) -> str: ...
+
+    def fetch_stock_trade_date(self, trade_date: date) -> RepairBatch: ...
+
+
+class MarketDataStore(Protocol):
+    def upsert_instruments(self, instruments: Sequence[Instrument]) -> int: ...
+
+    def upsert_daily_bars(self, source: str, bars: Sequence[DailyBar]) -> WriteStats: ...
+
+    def upsert_daily_snapshot(
+        self,
+        source: str,
+        scope: str,
+        trade_date: date,
+        bars: Sequence[DailyBar],
+    ) -> WriteStats: ...
+
+    def get_daily_bars(
+        self,
+        symbol: str,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> list[StoredDailyBar]: ...

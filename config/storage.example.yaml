@@ -1,0 +1,6 @@
+storage:
+  database_path: ../data/market.sqlite
+  sqlite_cache_size_kib: 32768
+  sqlite_mmap_size_mib: 256
+  sqlite_temp_store: MEMORY
+  sqlite_busy_timeout_ms: 120000
