@@ -10,6 +10,7 @@ import {
   type CandlestickData,
   type HistogramData,
   type IChartApi,
+  type IRange,
   type ISeriesApi,
   type LineData,
   type Time,
@@ -29,6 +30,7 @@ export type DailyBar = {
 }
 
 type Readout = DailyBar & { ma5?: number; ma20?: number; ma60?: number }
+type RenderBar = DailyBar & { period_start: string }
 
 type ChartCanvasProps = {
   symbol: string
@@ -49,9 +51,15 @@ export function ChartCanvas({ symbol, range, priceMode, onCoverageChange }: Char
   const ma20Ref = useRef<ISeriesApi<'Line'> | null>(null)
   const ma60Ref = useRef<ISeriesApi<'Line'> | null>(null)
   const barsRef = useRef<DailyBar[]>([])
+  const renderedBarsRef = useRef<Map<string, RenderBar>>(new Map())
+  const bucketRef = useRef(1)
+  const applyBucketRef = useRef<(bucket: number, preserve?: IRange<Time>) => void>(() => undefined)
+  const recalculateLodRef = useRef<() => void>(() => undefined)
+  const suppressLodRef = useRef(false)
   const [bars, setBars] = useState<DailyBar[]>([])
   const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading')
   const [readout, setReadout] = useState<Readout | null>(null)
+  const [lodBucket, setLodBucket] = useState(1)
 
   const averages = useMemo(() => ({
     ma5: movingAverage(bars, 5),
@@ -115,21 +123,39 @@ export function ChartCanvas({ symbol, range, priceMode, onCoverageChange }: Char
       }
       const candle = param.seriesData.get(candles) as CandlestickData<Time> | undefined
       if (!candle || !('open' in candle)) return
-      const index = barsRef.current.findIndex(item => item.trade_date === String(param.time))
-      const source = index >= 0 ? barsRef.current[index].source : ''
+      const rendered = renderedBarsRef.current.get(String(param.time))
       setReadout({
-        trade_date: String(param.time),
+        trade_date: rendered && rendered.period_start !== rendered.trade_date
+          ? `${rendered.period_start} → ${rendered.trade_date}`
+          : String(param.time),
         open: candle.open,
         high: candle.high,
         low: candle.low,
         close: candle.close,
-        volume: index >= 0 ? barsRef.current[index].volume : 0,
-        source,
+        volume: rendered?.volume ?? 0,
+        source: rendered?.source ?? '',
         ma5: valueAt(ma5, param),
         ma20: valueAt(ma20, param),
         ma60: valueAt(ma60, param),
       })
     })
+
+    let lodFrame = 0
+    const recalculateLod = () => {
+      if (suppressLodRef.current) return
+      window.cancelAnimationFrame(lodFrame)
+      lodFrame = window.requestAnimationFrame(() => {
+        const visible = chart.timeScale().getVisibleRange()
+        if (!visible || !hostRef.current) return
+        const count = countBarsInRange(barsRef.current, String(visible.from), String(visible.to))
+        const nextBucket = chooseLodBucket(count, hostRef.current.clientWidth)
+        if (nextBucket !== bucketRef.current) applyBucketRef.current(nextBucket, visible)
+      })
+    }
+    chart.timeScale().subscribeVisibleTimeRangeChange(recalculateLod)
+    recalculateLodRef.current = recalculateLod
+    const resizeObserver = new ResizeObserver(recalculateLod)
+    resizeObserver.observe(hostRef.current)
 
     chartRef.current = chart
     candleRef.current = candles
@@ -138,6 +164,9 @@ export function ChartCanvas({ symbol, range, priceMode, onCoverageChange }: Char
     ma20Ref.current = ma20
     ma60Ref.current = ma60
     return () => {
+      window.cancelAnimationFrame(lodFrame)
+      resizeObserver.disconnect()
+      chart.timeScale().unsubscribeVisibleTimeRangeChange(recalculateLod)
       chart.remove()
       chartRef.current = null
     }
@@ -169,23 +198,38 @@ export function ChartCanvas({ symbol, range, priceMode, onCoverageChange }: Char
   }, [symbol, onCoverageChange])
 
   useEffect(() => {
-    const candles: CandlestickData<Time>[] = bars.map(item => ({
+    applyBucketRef.current = (bucket, preserve) => {
+      const renderedBars = aggregateBars(bars, bucket)
+      const candles: CandlestickData<Time>[] = renderedBars.map(item => ({
       time: item.trade_date,
       open: item.open,
       high: item.high,
       low: item.low,
       close: item.close,
-    }))
-    const volumes: HistogramData<Time>[] = bars.map(item => ({
-      time: item.trade_date,
-      value: item.volume,
-      color: item.close >= item.open ? `${rising}99` : `${falling}99`,
-    }))
-    candleRef.current?.setData(candles)
-    volumeRef.current?.setData(volumes)
-    ma5Ref.current?.setData(averages.ma5)
-    ma20Ref.current?.setData(averages.ma20)
-    ma60Ref.current?.setData(averages.ma60)
+      }))
+      const volumes: HistogramData<Time>[] = renderedBars.map(item => ({
+        time: item.trade_date,
+        value: item.volume,
+        color: item.close >= item.open ? `${rising}99` : `${falling}99`,
+      }))
+      const times = new Set(renderedBars.map(item => item.trade_date))
+      suppressLodRef.current = true
+      candleRef.current?.setData(candles)
+      volumeRef.current?.setData(volumes)
+      ma5Ref.current?.setData(averages.ma5.filter(item => times.has(String(item.time))))
+      ma20Ref.current?.setData(averages.ma20.filter(item => times.has(String(item.time))))
+      ma60Ref.current?.setData(averages.ma60.filter(item => times.has(String(item.time))))
+      renderedBarsRef.current = new Map(renderedBars.map(item => [item.trade_date, item]))
+      bucketRef.current = bucket
+      setLodBucket(bucket)
+      window.requestAnimationFrame(() => {
+        if (preserve) chartRef.current?.timeScale().setVisibleRange(preserve)
+        window.requestAnimationFrame(() => {
+          suppressLodRef.current = false
+        })
+      })
+    }
+    applyBucketRef.current(1)
   }, [bars, averages])
 
   useEffect(() => {
@@ -199,17 +243,19 @@ export function ChartCanvas({ symbol, range, priceMode, onCoverageChange }: Char
     if (!chart || bars.length === 0) return
     if (range === 'ALL') {
       chart.timeScale().fitContent()
+      window.requestAnimationFrame(() => recalculateLodRef.current())
       return
     }
     const last = bars.at(-1)!.trade_date
     const from = subtractYears(last, Number.parseInt(range, 10))
     chart.timeScale().setVisibleRange({ from, to: last })
+    window.requestAnimationFrame(() => recalculateLodRef.current())
   }, [bars, range])
 
   return (
     <div className="chart-stage">
       <div ref={hostRef} className="chart-host"/>
-      {readout && <ChartReadout value={readout}/>}
+      {readout && <ChartReadout value={readout} lodBucket={lodBucket}/>}
       {state === 'loading' && <div className="chart-state">加载日线数据</div>}
       {state === 'error' && <div className="chart-state error">日线数据加载失败</div>}
       {state === 'ready' && bars.length === 0 && <div className="chart-state">暂无日线数据</div>}
@@ -217,11 +263,12 @@ export function ChartCanvas({ symbol, range, priceMode, onCoverageChange }: Char
   )
 }
 
-function ChartReadout({ value }: { value: Readout }) {
+function ChartReadout({ value, lodBucket }: { value: Readout; lodBucket: number }) {
   const change = value.close - value.open
   const tone = change >= 0 ? 'rise' : 'fall'
   return (
     <div className="chart-readout">
+      <span className="lod-badge">{lodBucket}D</span>
       <span>{value.trade_date}</span>
       <span>开 <b>{formatPrice(value.open)}</b></span>
       <span>高 <b>{formatPrice(value.high)}</b></span>
@@ -245,6 +292,42 @@ export function movingAverage(bars: DailyBar[], window: number): LineData<Time>[
     if (index >= window - 1) output.push({ time: bars[index].trade_date, value: sum / window })
   }
   return output
+}
+
+export function aggregateBars(bars: DailyBar[], bucket: number): RenderBar[] {
+  if (bucket <= 1) return bars.map(item => ({ ...item, period_start: item.trade_date }))
+  const output: RenderBar[] = []
+  for (let start = 0; start < bars.length; start += bucket) {
+    const group = bars.slice(start, start + bucket)
+    const first = group[0]
+    const last = group.at(-1)!
+    output.push({
+      trade_date: last.trade_date,
+      period_start: first.trade_date,
+      open: first.open,
+      high: Math.max(...group.map(item => item.high)),
+      low: Math.min(...group.map(item => item.low)),
+      close: last.close,
+      volume: group.reduce((sum, item) => sum + item.volume, 0),
+      source: first.source === last.source ? first.source : 'mixed',
+    })
+  }
+  return output
+}
+
+export function chooseLodBucket(visibleBars: number, width: number): number {
+  if (visibleBars <= 0 || width <= 0) return 1
+  const required = visibleBars / Math.max(1, width * 1.25)
+  if (required <= 1) return 1
+  return Math.min(32, 2 ** Math.ceil(Math.log2(required)))
+}
+
+function countBarsInRange(bars: DailyBar[], from: string, to: string): number {
+  let count = 0
+  for (const bar of bars) {
+    if (bar.trade_date >= from && bar.trade_date <= to) count += 1
+  }
+  return count
 }
 
 function latestReadout(bars: DailyBar[]): Readout | null {

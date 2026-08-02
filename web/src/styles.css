@@ -150,6 +150,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid #4b84c6; outline-
   pointer-events: none;
 }
 .chart-readout b { color: #c6ccd5; font-weight: 500; }
+.chart-readout .lod-badge { color: #d8dde6; background: #303743; padding: 1px 4px; border-radius: 2px; }
 .chart-readout .rise { color: #ef5350; }
 .chart-readout .fall { color: #26a269; }
 .chart-readout .ma5-value { color: #e5b85c; }
