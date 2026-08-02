@@ -10,6 +10,45 @@ providers:
     backoff_multiplier: 2
     api_url: http://api.waditu.com/dataapi
     timeout_seconds: 30
+  universes:
+    # Keep one active, liquid, established representative for each exposure.
+    etfs:
+      - { symbol: 510050.SH, category: broad, reason: established Shanghai 50 tracker }
+      - { symbol: 510300.SH, category: broad, reason: established CSI 300 tracker }
+      - { symbol: 510500.SH, category: broad, reason: established CSI 500 tracker }
+      - { symbol: 512100.SH, category: broad, reason: established CSI 1000 tracker }
+      - { symbol: 588000.SH, category: broad, reason: established STAR 50 tracker }
+      - { symbol: 159915.SZ, category: broad, reason: established ChiNext tracker }
+      - { symbol: 512480.SH, category: sector, reason: representative semiconductor tracker }
+      - { symbol: 512880.SH, category: sector, reason: representative securities tracker }
+      - { symbol: 512800.SH, category: sector, reason: representative bank tracker }
+      - { symbol: 512170.SH, category: sector, reason: representative medical-services tracker }
+      - { symbol: 512010.SH, category: sector, reason: representative pharmaceutical tracker }
+      - { symbol: 515030.SH, category: sector, reason: representative new-energy vehicle tracker }
+      - { symbol: 515790.SH, category: sector, reason: representative photovoltaic tracker }
+      - { symbol: 512660.SH, category: sector, reason: representative defense tracker }
+      - { symbol: 512690.SH, category: sector, reason: representative liquor tracker }
+      - { symbol: 512200.SH, category: sector, reason: representative real-estate tracker }
+      - { symbol: 512400.SH, category: sector, reason: representative nonferrous-metals tracker }
+      - { symbol: 515220.SH, category: sector, reason: representative coal tracker }
+      - { symbol: 159928.SZ, category: sector, reason: representative consumer-staples tracker }
+      - { symbol: 512980.SH, category: sector, reason: representative media tracker }
+      - { symbol: 512720.SH, category: sector, reason: representative computer tracker }
+      - { symbol: 515050.SH, category: sector, reason: representative 5G tracker }
+      - { symbol: 516510.SH, category: sector, reason: representative cloud-computing tracker }
+    broad_indices:
+      - { symbol: 000001.SH, category: composite, reason: Shanghai Composite benchmark }
+      - { symbol: 399001.SZ, category: composite, reason: Shenzhen Component benchmark }
+      - { symbol: 000016.SH, category: broad, reason: Shanghai 50 benchmark }
+      - { symbol: 000300.SH, category: broad, reason: CSI 300 benchmark }
+      - { symbol: 000905.SH, category: broad, reason: CSI 500 benchmark }
+      - { symbol: 000852.SH, category: broad, reason: CSI 1000 benchmark }
+      - { symbol: 932000.CSI, category: broad, reason: CSI 2000 benchmark }
+      - { symbol: 000688.SH, category: growth, reason: STAR 50 benchmark }
+      - { symbol: 399006.SZ, category: growth, reason: ChiNext benchmark }
+      - { symbol: 399673.SZ, category: growth, reason: ChiNext 50 benchmark }
+    sector_source: SW2021
+    sector_level: L1
   validation:
     providers:
       - akshare

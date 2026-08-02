@@ -3,7 +3,13 @@ from __future__ import annotations
 import unittest
 from datetime import date
 
-from stock_harness.models import DailyBar, Instrument, InstrumentKind
+from stock_harness.models import (
+    BoardMembership,
+    CatalogEntry,
+    DailyBar,
+    Instrument,
+    InstrumentKind,
+)
 from stock_harness.sqlite_store import SQLiteMarketDataStore
 
 
@@ -135,6 +141,120 @@ class SQLiteMarketDataStoreTests(unittest.TestCase):
 
         self.assertEqual((stats.changed, stats.unchanged), (0, 1))
         self.assertEqual((stored.source, stored.close, stored.volume), ("tushare", 11, 100))
+
+    def test_symbol_history_commits_bars_and_coverage_state_together(self) -> None:
+        start = date(2026, 7, 1)
+        end = date(2026, 7, 31)
+        bar = DailyBar("600519.SH", end, 10, 12, 9, 11, 100)
+
+        stats = self.store.upsert_symbol_history(
+            "tushare", "test", "600519.SH", start, end, [bar]
+        )
+        state = self.store.get_symbol_sync_state("tushare", "test", "600519.SH")
+
+        self.assertEqual(stats.changed, 1)
+        self.assertIsNotNone(state)
+        self.assertEqual((state.covered_from, state.covered_through), (start, end))
+        self.assertEqual(state.last_batch_rows, 1)
+
+    def test_empty_symbol_increment_advances_coverage_without_bars(self) -> None:
+        first_end = date(2026, 7, 31)
+        second_end = date(2026, 8, 2)
+        self.store.upsert_symbol_history(
+            "tushare", "test", "600519.SH", date(2026, 7, 1), first_end, []
+        )
+
+        stats = self.store.upsert_symbol_history(
+            "tushare", "test", "600519.SH", date(2026, 8, 1), second_end, []
+        )
+        state = self.store.get_symbol_sync_state("tushare", "test", "600519.SH")
+
+        self.assertEqual(stats.received, 0)
+        self.assertEqual(state.covered_through, second_end)
+
+    def test_instrument_coverage_reports_dates_rows_and_sources(self) -> None:
+        trade_date = date(2026, 7, 31)
+        self.store.upsert_daily_bars(
+            "tushare", [DailyBar("600519.SH", trade_date, 10, 12, 9, 11, 100)]
+        )
+
+        coverage = self.store.list_instrument_coverage({InstrumentKind.STOCK})[0]
+
+        self.assertEqual((coverage.first_trade_date, coverage.last_trade_date), (trade_date, trade_date))
+        self.assertEqual(coverage.row_count, 1)
+        self.assertEqual(coverage.source_rows, (("tushare", 1),))
+
+    def test_catalog_and_memberships_preserve_provider_identity(self) -> None:
+        observed_on = date(2026, 7, 31)
+        board = Instrument("BK1128.DC", "CPO", InstrumentKind.SECTOR, "DC")
+        entry = CatalogEntry(
+            board, "tushare_dc", "eastmoney", "eastmoney_board",
+            "concept", board.symbol, observed_on, aliases=("CPO concept",),
+        )
+
+        self.store.upsert_catalog_entries([entry])
+        self.store.replace_board_memberships(
+            "tushare_dc",
+            board.symbol,
+            observed_on,
+            [BoardMembership(board.symbol, "300308.SZ", "Innolight", "tushare_dc", observed_on)],
+        )
+
+        catalog = self.store._connection.execute(
+            """
+            SELECT profile.acquired_via, profile.source_system, catalog.family,
+                   catalog.category, instrument.symbol
+            FROM instrument_catalog_entries AS catalog
+            JOIN sources AS source ON source.source_id = catalog.catalog_source_id
+            JOIN source_profiles AS profile USING (source_id)
+            JOIN instruments AS instrument USING (instrument_id)
+            """
+        ).fetchone()
+        membership = self.store._connection.execute(
+            "SELECT member_symbol, active FROM board_memberships"
+        ).fetchone()
+
+        self.assertEqual(tuple(catalog), ("tushare", "eastmoney", "eastmoney_board", "concept", "BK1128.DC"))
+        self.assertEqual(tuple(membership), ("300308.SZ", 1))
+
+    def test_volume_scale_migration_is_idempotent(self) -> None:
+        trade_date = date(2026, 7, 31)
+        self.store.upsert_daily_bars(
+            "tushare_ths",
+            [DailyBar("600519.SH", trade_date, 10, 12, 9, 11, 123)],
+        )
+
+        first = self.store.apply_volume_scale_migration(
+            "2026-08-02-ths-volume-shares", "tushare_ths", 100
+        )
+        second = self.store.apply_volume_scale_migration(
+            "2026-08-02-ths-volume-shares", "tushare_ths", 100
+        )
+
+        self.assertEqual((first, second), (1, 1))
+        self.assertEqual(self.store.get_daily_bars("600519.SH")[0].volume, 12_300)
+
+    def test_catalog_exclusion_migration_preserves_history(self) -> None:
+        instrument = Instrument(
+            "501011.SH", "ETF\u8054\u63a5(LOF)", InstrumentKind.ETF, "SH"
+        )
+        self.store.upsert_catalog_entries([
+            CatalogEntry(
+                instrument, "tushare", "tushare", "exchange_traded_equity_fund",
+                "stock", instrument.symbol, date(2026, 8, 2),
+            )
+        ])
+        self.store.upsert_daily_bars(
+            "tushare", [DailyBar(instrument.symbol, date(2026, 7, 31), 10, 12, 9, 11, 100)]
+        )
+
+        affected = self.store.apply_catalog_name_exclusion_migration(
+            "exclude-links", "tushare", "exchange_traded_equity_fund", "\u8054\u63a5"
+        )
+
+        self.assertEqual(affected, 1)
+        self.assertEqual(self.store.list_catalog_coverage_rows(), [])
+        self.assertEqual(len(self.store.get_daily_bars(instrument.symbol)), 1)
 
 
 if __name__ == "__main__":

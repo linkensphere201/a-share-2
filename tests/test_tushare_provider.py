@@ -4,7 +4,8 @@ import unittest
 from collections import namedtuple
 from datetime import date
 
-from stock_harness.config import TushareSettings
+from stock_harness.config import TushareSettings, UniverseSymbol
+from stock_harness.models import InstrumentKind
 from stock_harness.tushare_provider import TushareDailyProvider
 
 
@@ -53,6 +54,110 @@ class _JsonClient:
         }]
 
 
+class _UniverseClient:
+    def fund_basic(self, **kwargs):
+        if kwargs["status"] != "L":
+            return []
+        return [{
+            "ts_code": "510300.SH", "name": "CSI 300 ETF", "status": "L",
+            "list_date": "20120528", "delist_date": None,
+        }]
+
+    def index_basic(self, **kwargs):
+        if kwargs["market"] != "SSE":
+            return []
+        return [{
+            "ts_code": "000300.SH", "name": "CSI 300", "market": "SSE",
+            "list_date": "20050408",
+        }]
+
+    def index_classify(self, **_kwargs):
+        return [{
+            "index_code": "801010.SI", "industry_name": "Agriculture",
+            "level": "L1", "src": "SW2021",
+        }]
+
+    def fund_daily(self, **kwargs):
+        return [self._bar("510300.SH", kwargs["end_date"], 12.34)]
+
+    def index_daily(self, **kwargs):
+        return [self._bar("000300.SH", kwargs["end_date"], 56.78)]
+
+    def sw_daily(self, **kwargs):
+        return [self._bar("801010.SI", kwargs["end_date"], 9.87)]
+
+    @staticmethod
+    def _bar(symbol, trade_date, volume):
+        return {
+            "ts_code": symbol, "trade_date": trade_date,
+            "open": 10.0, "high": 12.0, "low": 9.0, "close": 11.0,
+            "vol": volume,
+        }
+
+
+class _IncompleteIndexClient(_UniverseClient):
+    def index_daily(self, **kwargs):
+        complete = self._bar("000300.SH", kwargs["end_date"], 56.78)
+        incomplete = dict(complete, trade_date=kwargs["start_date"], open=None)
+        return [complete, incomplete]
+
+
+class _InvalidSectorClient(_UniverseClient):
+    def sw_daily(self, **kwargs):
+        row = self._bar("801010.SI", kwargs["end_date"], 9.87)
+        row["close"] = 12.01
+        return [row]
+
+
+class _ExpandedCatalogClient(_UniverseClient):
+    def fund_basic(self, **kwargs):
+        if kwargs["status"] == "D":
+            return []
+        return [
+            {
+                "ts_code": "512480.SH", "name": "Semiconductor ETF",
+                "fund_type": "股票型", "list_date": "20190508",
+                "delist_date": None, "status": "L", "market": "E",
+            },
+            {
+                "ts_code": "511010.SH", "name": "Bond ETF",
+                "fund_type": "债券型", "list_date": "20130325",
+                "delist_date": None, "status": "L", "market": "E",
+            },
+        ]
+
+    def dc_index(self, **kwargs):
+        if kwargs["trade_date"] != "20260731":
+            return []
+        return [{"ts_code": "BK1128.DC", "trade_date": "20260731", "name": "CPO"}]
+
+    def dc_daily(self, **kwargs):
+        if "trade_date" in kwargs:
+            return [{"ts_code": "BK1128.DC", "trade_date": "20260731", "category": "概念板块"}]
+        return [self._bar("BK1128.DC", kwargs["end_date"], 12345)]
+
+    def ths_index(self, **_kwargs):
+        return [{
+            "ts_code": "886033.TI", "name": "CPO", "count": 203,
+            "exchange": "A", "list_date": "20230210", "type": "N",
+        }]
+
+    def ths_daily(self, **kwargs):
+        return [self._bar("886033.TI", kwargs["end_date"], 67890)]
+
+    def dc_member(self, **_kwargs):
+        return [{
+            "trade_date": "20260731", "ts_code": "BK1128.DC",
+            "con_code": "300308.SZ", "name": "Zhongji Innolight",
+        }]
+
+    def ths_member(self, **_kwargs):
+        return [{
+            "ts_code": "886033.TI", "con_code": "300308.SZ",
+            "con_name": "Zhongji Innolight",
+        }]
+
+
 def _settings() -> TushareSettings:
     return TushareSettings("TUSHARE_TOKEN", None, 0, 0, 0, 1)
 
@@ -78,6 +183,92 @@ class TushareDailyProviderTests(unittest.TestCase):
         self.assertEqual(len(provider.list_instruments()), 1)
         self.assertEqual(provider.trading_dates(date(2026, 7, 1), date(2026, 7, 31)), [date(2026, 7, 31)])
         self.assertEqual(provider.fetch_daily_bars(date(2026, 7, 31))[0].volume, 12_300)
+
+    def test_lists_configured_etfs_indices_and_sw_l1_sectors(self) -> None:
+        provider = TushareDailyProvider(_settings(), client=_UniverseClient())
+        etf = UniverseSymbol("510300.SH", "broad", "representative tracker")
+        index = UniverseSymbol("000300.SH", "broad", "market benchmark")
+
+        self.assertEqual(provider.list_etfs([etf])[0].kind, InstrumentKind.ETF)
+        self.assertEqual(
+            provider.list_broad_indices([index])[0].kind, InstrumentKind.INDEX
+        )
+        self.assertEqual(
+            provider.list_sectors("SW2021", "L1")[0].kind, InstrumentKind.SECTOR
+        )
+
+    def test_configured_symbol_volume_units_are_normalized_to_shares(self) -> None:
+        provider = TushareDailyProvider(_settings(), client=_UniverseClient())
+        target = date(2026, 7, 31)
+
+        etf = provider.fetch_symbol_daily_bars(
+            InstrumentKind.ETF, "510300.SH", target, target
+        )[0]
+        index = provider.fetch_symbol_daily_bars(
+            InstrumentKind.INDEX, "000300.SH", target, target
+        )[0]
+        sector = provider.fetch_symbol_daily_bars(
+            InstrumentKind.SECTOR, "801010.SI", target, target
+        )[0]
+
+        self.assertEqual((etf.volume, index.volume, sector.volume), (1_234, 5_678, 98_700))
+
+    def test_missing_configured_symbol_is_rejected(self) -> None:
+        provider = TushareDailyProvider(_settings(), client=_UniverseClient())
+        missing = UniverseSymbol("510500.SH", "broad", "missing fixture")
+
+        with self.assertRaisesRegex(RuntimeError, "510500.SH"):
+            provider.list_etfs([missing])
+
+    def test_close_only_index_history_is_not_fabricated_into_ohlc(self) -> None:
+        provider = TushareDailyProvider(_settings(), client=_IncompleteIndexClient())
+
+        bars = provider.fetch_symbol_daily_bars(
+            InstrumentKind.INDEX,
+            "000300.SH",
+            date(2026, 7, 30),
+            date(2026, 7, 31),
+        )
+
+        self.assertEqual([bar.trade_date for bar in bars], [date(2026, 7, 31)])
+
+    def test_invalid_sector_envelope_is_exposed_for_targeted_repair(self) -> None:
+        provider = TushareDailyProvider(_settings(), client=_InvalidSectorClient())
+
+        bars = provider.fetch_symbol_daily_bars(
+            InstrumentKind.SECTOR,
+            "801010.SI",
+            date(2026, 7, 31),
+            date(2026, 7, 31),
+        )
+
+        self.assertEqual(bars, [])
+        self.assertEqual(provider.rejected_bars[0].symbol, "801010.SI")
+
+    def test_expanded_catalogs_keep_etf_dc_and_ths_identities_separate(self) -> None:
+        provider = TushareDailyProvider(_settings(), client=_ExpandedCatalogClient())
+        observed_on = date(2026, 8, 2)
+
+        etfs = provider.list_all_equity_etfs(observed_on)
+        dc = provider.list_dc_boards(observed_on)
+        ths = provider.list_ths_boards(observed_on)
+
+        self.assertEqual([item.provider_symbol for item in etfs], ["512480.SH"])
+        self.assertEqual((dc[0].provider_symbol, dc[0].source_system), ("BK1128.DC", "eastmoney"))
+        self.assertEqual((ths[0].provider_symbol, ths[0].source_system), ("886033.TI", "ths"))
+        self.assertEqual(ths[0].constituent_count, 203)
+
+    def test_board_daily_and_membership_provenance_is_preserved(self) -> None:
+        provider = TushareDailyProvider(_settings(), client=_ExpandedCatalogClient())
+        target = date(2026, 7, 31)
+
+        dc_bar = provider.fetch_board_daily_bars("eastmoney", "BK1128.DC", target, target)[0]
+        ths_bar = provider.fetch_board_daily_bars("ths", "886033.TI", target, target)[0]
+        dc_member = provider.list_board_members("eastmoney", "BK1128.DC", target)[0]
+        ths_member = provider.list_board_members("ths", "886033.TI", target)[0]
+
+        self.assertEqual((dc_bar.volume, ths_bar.volume), (12345, 6_789_000))
+        self.assertEqual((dc_member.source, ths_member.source), ("tushare_dc", "tushare_ths"))
 
 
 if __name__ == "__main__":

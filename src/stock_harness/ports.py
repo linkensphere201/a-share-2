@@ -5,7 +5,16 @@ from __future__ import annotations
 from datetime import date
 from typing import Protocol, Sequence
 
-from stock_harness.models import DailyBar, Instrument, RepairBatch, StoredDailyBar, WriteStats
+from stock_harness.models import (
+    BoardMembership,
+    CatalogEntry,
+    DailyBar,
+    Instrument,
+    RepairBatch,
+    StoredDailyBar,
+    SymbolSyncState,
+    WriteStats,
+)
 
 
 class DailyMarketDataProvider(Protocol):
@@ -26,6 +35,17 @@ class DailyBarValidationProvider(Protocol):
     ) -> Sequence[DailyBar]: ...
 
 
+class ConfiguredSymbolDailyProvider(Protocol):
+    @property
+    def code(self) -> str: ...
+
+    def trading_dates(self, start_date: date, end_date: date) -> list[date]: ...
+
+    def fetch_symbol_daily_bars(
+        self, symbol: str, start_date: date, end_date: date
+    ) -> Sequence[DailyBar]: ...
+
+
 class TradeDateRepairProvider(Protocol):
     @property
     def code(self) -> str: ...
@@ -36,6 +56,16 @@ class TradeDateRepairProvider(Protocol):
 class MarketDataStore(Protocol):
     def upsert_instruments(self, instruments: Sequence[Instrument]) -> int: ...
 
+    def upsert_catalog_entries(self, entries: Sequence[CatalogEntry]) -> int: ...
+
+    def replace_board_memberships(
+        self,
+        source: str,
+        board_symbol: str,
+        observed_on: date,
+        memberships: Sequence[BoardMembership],
+    ) -> int: ...
+
     def upsert_daily_bars(self, source: str, bars: Sequence[DailyBar]) -> WriteStats: ...
 
     def upsert_daily_snapshot(
@@ -43,6 +73,20 @@ class MarketDataStore(Protocol):
         source: str,
         scope: str,
         trade_date: date,
+        bars: Sequence[DailyBar],
+    ) -> WriteStats: ...
+
+    def get_symbol_sync_state(
+        self, source: str, scope: str, symbol: str
+    ) -> SymbolSyncState | None: ...
+
+    def upsert_symbol_history(
+        self,
+        source: str,
+        scope: str,
+        symbol: str,
+        covered_from: date,
+        covered_through: date,
         bars: Sequence[DailyBar],
     ) -> WriteStats: ...
 

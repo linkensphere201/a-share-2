@@ -19,7 +19,7 @@ Milestone 1 provides up to 30 years of full-scope daily OHLC and volume data, ve
 
 ## Status
 
-The first data-layer slice is implemented with a minimal typed model, provider/storage protocols, a transactional SQLite performance baseline, and repeatable hot-path benchmarks. SQLite remains a baseline candidate until it is compared with an immutable yearly base plus a small incremental overlay at larger scale.
+The first data-layer slice is implemented with a minimal typed model, provider/storage protocols, a transactional SQLite hot store, repeatable hot-path benchmarks, and real historical coverage for A-shares, ETFs, major indices, SW2021 sectors, and Provider-native Eastmoney/THS boards.
 
 ## Development
 
@@ -54,6 +54,57 @@ Resume the full-market 30-year stock backfill:
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\run_stock_backfill.ps1
 ```
+
+Resume the configured ETF, broad-index, and SW2021 level-one sector histories:
+
+```powershell
+$env:PYTHONPATH = "src"
+..\stock-picker\.venv\Scripts\python.exe -m stock_harness.cli backfill-universe `
+  --scope all --years 30
+```
+
+Refresh the complete searchable equity-ETF, Eastmoney-board, and THS-board catalogs:
+
+```powershell
+$env:PYTHONPATH = "src"
+..\stock-picker\.venv\Scripts\python.exe -m stock_harness.cli sync-catalog --scope all
+```
+
+Resume their 30-year available histories and refresh current board memberships:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\run_expanded_backfill.ps1
+```
+
+The expanded catalog keeps acquisition and publisher provenance separate. Eastmoney rows use `acquired_via=tushare`, `source_system=eastmoney`, and daily source `tushare_dc`; THS rows use `source_system=ths` and daily source `tushare_ths`. `.DC` and `.TI` boards are never merged by display name. Explicit aliases and cross-Provider mappings have dedicated tables.
+
+Write expanded catalog and history coverage:
+
+```powershell
+$env:PYTHONPATH = "src"
+..\stock-picker\.venv\Scripts\python.exe -m stock_harness.cli expanded-report
+```
+
+Validate a Provider-native board against the matching AkShare publisher endpoint:
+
+```powershell
+$env:PYTHONPATH = "src"
+..\stock-picker\.venv\Scripts\python.exe -m stock_harness.cli validate-board-date `
+  --source ths --symbol 886033.TI --trade-date 2026-07-31
+```
+
+THS volume is normalized from lots to shares. Existing stores use the idempotent `ths-volume-shares` data migration; ETF-link funds are excluded from the searchable ETF catalog by the `exclude-etf-links` migration. Both migration IDs are recorded in SQLite and cannot be applied twice.
+
+`config/providers.example.yaml` contains the explicit ETF and index whitelists and the inclusion reason for each symbol. ETF and index volumes are normalized from lots to shares; SW sector volumes are normalized from 10,000-share units to shares. Incomplete close-only pre-launch index rows are not fabricated into candles. Invalid SW sector rows are isolated and repaired from the independent AkShare/SW endpoint before their symbol cursor advances.
+
+Write a per-kind and per-symbol coverage report:
+
+```powershell
+$env:PYTHONPATH = "src"
+..\stock-picker\.venv\Scripts\python.exe -m stock_harness.cli coverage-report
+```
+
+The generated `data/reports/universe-coverage.json` records each symbol's first and latest stored trading date, row count, and Provider provenance. The `data/` directory remains local and ignored by Git.
 
 The launcher processes at most 25 missing trading dates per Python process by default, then starts a fresh process to bound Provider and SQLite memory. Override this bounded batch with `-BatchDates`; use `-Once` only for a single diagnostic batch. Do not use an unbounded process for multi-decade collection. The backfill writes daily bars and their complete-day receipt in one transaction, and restarting the same command skips completed trading dates.
 

@@ -38,6 +38,21 @@ class RepairSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class UniverseSymbol:
+    symbol: str
+    category: str
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class UniverseSettings:
+    etfs: tuple[UniverseSymbol, ...]
+    broad_indices: tuple[UniverseSymbol, ...]
+    sector_source: str
+    sector_level: str
+
+
+@dataclass(frozen=True, slots=True)
 class RuntimeSettings:
     provider_name: str
     tushare: TushareSettings
@@ -48,6 +63,7 @@ class RuntimeSettings:
     sqlite_busy_timeout_ms: int
     validation: ValidationSettings
     repair: RepairSettings
+    universe: UniverseSettings
 
 
 def load_runtime_settings(provider_config: Path, storage_config: Path) -> RuntimeSettings:
@@ -68,6 +84,9 @@ def load_runtime_settings(provider_config: Path, storage_config: Path) -> Runtim
     repair = providers.get("repair", {})
     if not isinstance(repair, dict):
         raise ValueError("configuration section must be a mapping: providers.repair")
+    universes = providers.get("universes", {})
+    if not isinstance(universes, dict):
+        raise ValueError("configuration section must be a mapping: providers.universes")
     storage = _mapping(storage_data, "storage")
     database_path = _resolve_path(storage_config, str(storage.get("database_path", "../data/market.sqlite")))
     sqlite_cache_size_kib = int(storage.get("sqlite_cache_size_kib", 32_768))
@@ -118,6 +137,12 @@ def load_runtime_settings(provider_config: Path, storage_config: Path) -> Runtim
             ),
             max_dates_per_run=int(repair.get("max_dates_per_run", 1)),
         ),
+        universe=UniverseSettings(
+            etfs=_universe_symbols(universes, "etfs"),
+            broad_indices=_universe_symbols(universes, "broad_indices"),
+            sector_source=str(universes.get("sector_source", "SW2021")),
+            sector_level=str(universes.get("sector_level", "L1")),
+        ),
     )
 
 
@@ -161,6 +186,27 @@ def _mapping(data: dict[str, object], key: str) -> dict[str, object]:
     if not isinstance(value, dict):
         raise ValueError(f"configuration section must be a mapping: {key}")
     return value
+
+
+def _universe_symbols(data: dict[str, object], key: str) -> tuple[UniverseSymbol, ...]:
+    value = data.get(key, ())
+    if not isinstance(value, list):
+        raise ValueError(f"configuration section must be a list: providers.universes.{key}")
+    symbols: list[UniverseSymbol] = []
+    seen: set[str] = set()
+    for item in value:
+        if not isinstance(item, dict):
+            raise ValueError(f"universe entries must be mappings: providers.universes.{key}")
+        symbol = str(item.get("symbol", "")).strip().upper()
+        category = str(item.get("category", "")).strip()
+        reason = str(item.get("reason", "")).strip()
+        if not symbol or not category or not reason:
+            raise ValueError(f"universe entries require symbol, category, and reason: {key}")
+        if symbol in seen:
+            raise ValueError(f"duplicate universe symbol: {symbol}")
+        seen.add(symbol)
+        symbols.append(UniverseSymbol(symbol, category, reason))
+    return tuple(symbols)
 
 
 def _resolve_path(config_path: Path, value: str) -> Path:

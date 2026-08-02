@@ -13,12 +13,17 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 
 from stock_harness.models import (
+    BoardMembership,
+    CatalogEntry,
     CoverageGap,
     DailyBar,
     Instrument,
+    InstrumentCoverage,
+    InstrumentKind,
     ProviderIncident,
     RepairJob,
     StoredDailyBar,
+    SymbolSyncState,
     ValidationResult,
     WriteStats,
 )
@@ -41,6 +46,81 @@ CREATE TABLE IF NOT EXISTS instruments (
 
 CREATE INDEX IF NOT EXISTS instruments_kind_active
 ON instruments(kind, active, symbol);
+
+CREATE TABLE IF NOT EXISTS source_profiles (
+    source_id INTEGER PRIMARY KEY,
+    acquired_via TEXT NOT NULL,
+    source_system TEXT NOT NULL,
+    FOREIGN KEY (source_id) REFERENCES sources(source_id)
+);
+
+CREATE TABLE IF NOT EXISTS data_migrations (
+    migration_id TEXT PRIMARY KEY,
+    applied_at_ms INTEGER NOT NULL,
+    affected_rows INTEGER NOT NULL,
+    details TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS instrument_catalog_entries (
+    catalog_source_id INTEGER NOT NULL,
+    provider_symbol TEXT NOT NULL,
+    instrument_id INTEGER NOT NULL,
+    source_system TEXT NOT NULL,
+    family TEXT NOT NULL,
+    category TEXT NOT NULL,
+    observed_on INTEGER NOT NULL,
+    listed_on INTEGER,
+    delisted_on INTEGER,
+    constituent_count INTEGER,
+    updated_at_ms INTEGER NOT NULL,
+    PRIMARY KEY (catalog_source_id, provider_symbol),
+    FOREIGN KEY (catalog_source_id) REFERENCES sources(source_id),
+    FOREIGN KEY (instrument_id) REFERENCES instruments(instrument_id)
+) WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS instrument_catalog_family
+ON instrument_catalog_entries(source_system, family, category, provider_symbol);
+
+CREATE TABLE IF NOT EXISTS instrument_aliases (
+    catalog_source_id INTEGER NOT NULL,
+    instrument_id INTEGER NOT NULL,
+    alias TEXT NOT NULL,
+    alias_type TEXT NOT NULL,
+    updated_at_ms INTEGER NOT NULL,
+    PRIMARY KEY (catalog_source_id, instrument_id, alias),
+    FOREIGN KEY (catalog_source_id) REFERENCES sources(source_id),
+    FOREIGN KEY (instrument_id) REFERENCES instruments(instrument_id)
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS board_memberships (
+    source_id INTEGER NOT NULL,
+    board_instrument_id INTEGER NOT NULL,
+    member_symbol TEXT NOT NULL,
+    member_name TEXT NOT NULL,
+    active INTEGER NOT NULL CHECK (active IN (0, 1)),
+    first_seen_on INTEGER NOT NULL,
+    last_seen_on INTEGER NOT NULL,
+    updated_at_ms INTEGER NOT NULL,
+    PRIMARY KEY (source_id, board_instrument_id, member_symbol),
+    FOREIGN KEY (source_id) REFERENCES sources(source_id),
+    FOREIGN KEY (board_instrument_id) REFERENCES instruments(instrument_id)
+) WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS board_memberships_member
+ON board_memberships(member_symbol, active, board_instrument_id);
+
+CREATE TABLE IF NOT EXISTS instrument_mappings (
+    left_instrument_id INTEGER NOT NULL,
+    right_instrument_id INTEGER NOT NULL,
+    relation TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('proposed', 'confirmed', 'rejected')),
+    evidence TEXT NOT NULL,
+    updated_at_ms INTEGER NOT NULL,
+    PRIMARY KEY (left_instrument_id, right_instrument_id, relation),
+    FOREIGN KEY (left_instrument_id) REFERENCES instruments(instrument_id),
+    FOREIGN KEY (right_instrument_id) REFERENCES instruments(instrument_id),
+    CHECK (left_instrument_id <> right_instrument_id)
+) WITHOUT ROWID;
 
 CREATE TABLE IF NOT EXISTS daily_bars (
     instrument_id INTEGER NOT NULL,
@@ -68,6 +148,22 @@ CREATE TABLE IF NOT EXISTS sync_cursors (
     PRIMARY KEY (source_id, instrument_kind),
     FOREIGN KEY (source_id) REFERENCES sources(source_id)
 ) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS symbol_sync_states (
+    source_id INTEGER NOT NULL,
+    scope TEXT NOT NULL,
+    instrument_id INTEGER NOT NULL,
+    covered_from INTEGER NOT NULL,
+    covered_through INTEGER NOT NULL,
+    last_batch_rows INTEGER NOT NULL,
+    updated_at_ms INTEGER NOT NULL,
+    PRIMARY KEY (source_id, scope, instrument_id),
+    FOREIGN KEY (source_id) REFERENCES sources(source_id),
+    FOREIGN KEY (instrument_id) REFERENCES instruments(instrument_id)
+) WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS symbol_sync_states_scope
+ON symbol_sync_states(scope, covered_through, instrument_id);
 
 CREATE TABLE IF NOT EXISTS daily_snapshot_receipts (
     source_id INTEGER NOT NULL,
@@ -318,6 +414,113 @@ class SQLiteMarketDataStore:
             )
         return len(rows)
 
+    def upsert_catalog_entries(self, entries: Sequence[CatalogEntry]) -> int:
+        if not entries:
+            return 0
+        self.upsert_instruments([entry.instrument for entry in entries])
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        with self._lock, self._transaction():
+            instrument_ids = self._instrument_ids(
+                {entry.instrument.symbol for entry in entries}
+            )
+            for entry in entries:
+                source_id = self._source_id(
+                    entry.catalog_source,
+                    acquired_via="tushare" if entry.catalog_source.startswith("tushare") else entry.catalog_source,
+                    source_system=entry.source_system,
+                )
+                instrument_id = instrument_ids[entry.instrument.symbol]
+                self._connection.execute(
+                    """
+                    INSERT INTO instrument_catalog_entries(
+                        catalog_source_id, provider_symbol, instrument_id,
+                        source_system, family, category, observed_on, listed_on,
+                        delisted_on, constituent_count, updated_at_ms
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(catalog_source_id, provider_symbol) DO UPDATE SET
+                        instrument_id = excluded.instrument_id,
+                        source_system = excluded.source_system,
+                        family = excluded.family,
+                        category = excluded.category,
+                        observed_on = excluded.observed_on,
+                        listed_on = excluded.listed_on,
+                        delisted_on = excluded.delisted_on,
+                        constituent_count = excluded.constituent_count,
+                        updated_at_ms = excluded.updated_at_ms
+                    """,
+                    (
+                        source_id, entry.provider_symbol, instrument_id,
+                        entry.source_system, entry.family, entry.category,
+                        _date_key(entry.observed_on),
+                        _date_key(entry.listed_on) if entry.listed_on else None,
+                        _date_key(entry.delisted_on) if entry.delisted_on else None,
+                        entry.constituent_count, now_ms,
+                    ),
+                )
+                aliases = {entry.instrument.name, *entry.aliases}
+                self._connection.executemany(
+                    """
+                    INSERT INTO instrument_aliases(
+                        catalog_source_id, instrument_id, alias, alias_type, updated_at_ms
+                    ) VALUES (?, ?, ?, 'display_name', ?)
+                    ON CONFLICT(catalog_source_id, instrument_id, alias) DO UPDATE SET
+                        updated_at_ms = excluded.updated_at_ms
+                    """,
+                    (
+                        (source_id, instrument_id, alias.strip(), now_ms)
+                        for alias in aliases if alias.strip()
+                    ),
+                )
+        return len(entries)
+
+    def replace_board_memberships(
+        self,
+        source: str,
+        board_symbol: str,
+        observed_on: date,
+        memberships: Sequence[BoardMembership],
+    ) -> int:
+        for membership in memberships:
+            if membership.source != source or membership.board_symbol != board_symbol:
+                raise ValueError("board memberships must share source and board symbol")
+            if membership.observed_on != observed_on:
+                raise ValueError("board memberships must share the observation date")
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        with self._lock, self._transaction():
+            source_id = self._source_id(source)
+            instrument_ids = self._instrument_ids({board_symbol})
+            if board_symbol not in instrument_ids:
+                raise ValueError(f"unknown board instrument: {board_symbol}")
+            board_id = instrument_ids[board_symbol]
+            self._connection.execute(
+                """
+                UPDATE board_memberships SET active = 0, updated_at_ms = ?
+                WHERE source_id = ? AND board_instrument_id = ? AND active = 1
+                """,
+                (now_ms, source_id, board_id),
+            )
+            self._connection.executemany(
+                """
+                INSERT INTO board_memberships(
+                    source_id, board_instrument_id, member_symbol, member_name,
+                    active, first_seen_on, last_seen_on, updated_at_ms
+                ) VALUES (?, ?, ?, ?, 1, ?, ?, ?)
+                ON CONFLICT(source_id, board_instrument_id, member_symbol) DO UPDATE SET
+                    member_name = excluded.member_name,
+                    active = 1,
+                    last_seen_on = excluded.last_seen_on,
+                    updated_at_ms = excluded.updated_at_ms
+                """,
+                (
+                    (
+                        source_id, board_id, item.member_symbol, item.member_name,
+                        _date_key(observed_on), _date_key(observed_on), now_ms,
+                    )
+                    for item in memberships
+                ),
+            )
+        return len(memberships)
+
     def ensure_instruments(self, instruments: Sequence[Instrument]) -> int:
         rows = [
             (item.symbol, item.name, item.kind.value, item.exchange, int(item.active))
@@ -349,6 +552,109 @@ class SQLiteMarketDataStore:
 
         elapsed_ms = (time.perf_counter() - started) * 1000
         return WriteStats(len(bars), changed, len(bars) - changed, elapsed_ms)
+
+    def apply_volume_scale_migration(
+        self, migration_id: str, source: str, multiplier: int
+    ) -> int:
+        if not migration_id:
+            raise ValueError("migration_id is required")
+        if multiplier <= 0:
+            raise ValueError("volume multiplier must be positive")
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        with self._lock, self._transaction():
+            existing = self._connection.execute(
+                "SELECT affected_rows FROM data_migrations WHERE migration_id = ?",
+                (migration_id,),
+            ).fetchone()
+            if existing is not None:
+                return int(existing[0])
+            source_id = self._source_id(source)
+            before = self._connection.total_changes
+            self._connection.execute(
+                """
+                UPDATE daily_bars
+                SET volume = volume * ?, updated_at_ms = ?
+                WHERE source_id = ?
+                """,
+                (multiplier, now_ms, source_id),
+            )
+            affected = self._connection.total_changes - before
+            self._connection.execute(
+                """
+                INSERT INTO data_migrations(
+                    migration_id, applied_at_ms, affected_rows, details
+                ) VALUES (?, ?, ?, ?)
+                """,
+                (
+                    migration_id,
+                    now_ms,
+                    affected,
+                    f"scaled {source} daily volume by {multiplier}",
+                ),
+            )
+        return affected
+
+    def apply_catalog_name_exclusion_migration(
+        self,
+        migration_id: str,
+        source: str,
+        family: str,
+        excluded_name_fragment: str,
+    ) -> int:
+        if not migration_id or not excluded_name_fragment:
+            raise ValueError("migration ID and excluded name fragment are required")
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        with self._lock, self._transaction():
+            existing = self._connection.execute(
+                "SELECT affected_rows FROM data_migrations WHERE migration_id = ?",
+                (migration_id,),
+            ).fetchone()
+            if existing is not None:
+                return int(existing[0])
+            source_id = self._source_id(source)
+            instrument_rows = self._connection.execute(
+                """
+                SELECT catalog.instrument_id
+                FROM instrument_catalog_entries AS catalog
+                JOIN instruments AS instrument USING (instrument_id)
+                WHERE catalog.catalog_source_id = ? AND catalog.family = ?
+                  AND instr(instrument.name, ?) > 0
+                """,
+                (source_id, family, excluded_name_fragment),
+            ).fetchall()
+            instrument_ids = [int(row[0]) for row in instrument_rows]
+            self._connection.executemany(
+                """
+                DELETE FROM instrument_aliases
+                WHERE catalog_source_id = ? AND instrument_id = ?
+                """,
+                ((source_id, instrument_id) for instrument_id in instrument_ids),
+            )
+            self._connection.executemany(
+                """
+                DELETE FROM instrument_catalog_entries
+                WHERE catalog_source_id = ? AND instrument_id = ? AND family = ?
+                """,
+                (
+                    (source_id, instrument_id, family)
+                    for instrument_id in instrument_ids
+                ),
+            )
+            affected = len(instrument_ids)
+            self._connection.execute(
+                """
+                INSERT INTO data_migrations(
+                    migration_id, applied_at_ms, affected_rows, details
+                ) VALUES (?, ?, ?, ?)
+                """,
+                (
+                    migration_id,
+                    now_ms,
+                    affected,
+                    f"excluded {source}/{family} names containing {excluded_name_fragment}",
+                ),
+            )
+        return affected
 
     def upsert_daily_snapshot(
         self,
@@ -449,6 +755,99 @@ class SQLiteMarketDataStore:
         )
         return self._connection.total_changes - before
 
+    def get_symbol_sync_state(
+        self, source: str, scope: str, symbol: str
+    ) -> SymbolSyncState | None:
+        with self._lock:
+            row = self._connection.execute(
+                """
+                SELECT source.code, state.scope, instrument.symbol,
+                       state.covered_from, state.covered_through,
+                       state.last_batch_rows, state.updated_at_ms
+                FROM symbol_sync_states AS state
+                JOIN sources AS source USING (source_id)
+                JOIN instruments AS instrument USING (instrument_id)
+                WHERE source.code = ? AND state.scope = ? AND instrument.symbol = ?
+                """,
+                (source, scope, symbol),
+            ).fetchone()
+        if row is None:
+            return None
+        return SymbolSyncState(
+            source=str(row[0]),
+            scope=str(row[1]),
+            symbol=str(row[2]),
+            covered_from=_date_from_key(int(row[3])),
+            covered_through=_date_from_key(int(row[4])),
+            last_batch_rows=int(row[5]),
+            updated_at_ms=int(row[6]),
+        )
+
+    def upsert_symbol_history(
+        self,
+        source: str,
+        scope: str,
+        symbol: str,
+        covered_from: date,
+        covered_through: date,
+        bars: Sequence[DailyBar],
+    ) -> WriteStats:
+        started = time.perf_counter()
+        if not scope:
+            raise ValueError("symbol-history scope is required")
+        if covered_from > covered_through:
+            raise ValueError("symbol-history coverage start must not exceed end")
+        dates: set[date] = set()
+        for bar in bars:
+            bar.validate()
+            if bar.symbol != symbol:
+                raise ValueError("symbol-history bars must share the requested symbol")
+            if not covered_from <= bar.trade_date <= covered_through:
+                raise ValueError("symbol-history bars must be inside the covered range")
+            if bar.trade_date in dates:
+                raise ValueError("symbol-history bars must contain unique dates")
+            dates.add(bar.trade_date)
+
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        with self._lock, self._transaction():
+            source_id = self._source_id(source)
+            instrument_ids = self._instrument_ids({symbol})
+            if symbol not in instrument_ids:
+                raise ValueError(f"symbol history references unknown instrument: {symbol}")
+            instrument_id = instrument_ids[symbol]
+            existing = self._connection.execute(
+                """
+                SELECT covered_from, covered_through
+                FROM symbol_sync_states
+                WHERE source_id = ? AND scope = ? AND instrument_id = ?
+                """,
+                (source_id, scope, instrument_id),
+            ).fetchone()
+            merged_from = min(int(existing[0]), _date_key(covered_from)) if existing else _date_key(covered_from)
+            merged_through = max(int(existing[1]), _date_key(covered_through)) if existing else _date_key(covered_through)
+            changed = self._upsert_daily_bars_locked(source, bars, now_ms) if bars else 0
+            self._connection.execute(
+                """
+                INSERT INTO symbol_sync_states(
+                    source_id, scope, instrument_id, covered_from, covered_through,
+                    last_batch_rows, updated_at_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(source_id, scope, instrument_id) DO UPDATE SET
+                    covered_from = excluded.covered_from,
+                    covered_through = excluded.covered_through,
+                    last_batch_rows = excluded.last_batch_rows,
+                    updated_at_ms = excluded.updated_at_ms
+                """,
+                (
+                    source_id, scope, instrument_id, merged_from, merged_through,
+                    len(bars), now_ms,
+                ),
+            )
+        return WriteStats(
+            len(bars), changed, len(bars) - changed,
+            (time.perf_counter() - started) * 1000,
+        )
+
     def get_daily_bars(
         self,
         symbol: str,
@@ -486,6 +885,96 @@ class SQLiteMarketDataStore:
                 source=row[7],
                 updated_at_ms=row[8],
             )
+            for row in rows
+        ]
+
+    def list_instrument_coverage(
+        self, kinds: set[InstrumentKind] | None = None
+    ) -> list[InstrumentCoverage]:
+        parameters: list[object] = []
+        where = ""
+        if kinds:
+            values = sorted(item.value for item in kinds)
+            where = "WHERE instrument.kind IN (" + ",".join("?" for _ in values) + ")"
+            parameters.extend(values)
+        with self._lock:
+            rows = self._connection.execute(
+                f"""
+                SELECT instrument.instrument_id, instrument.symbol, instrument.name,
+                       instrument.kind, instrument.active, min(bar.trade_date),
+                       max(bar.trade_date), count(bar.trade_date)
+                FROM instruments AS instrument
+                LEFT JOIN daily_bars AS bar USING (instrument_id)
+                {where}
+                GROUP BY instrument.instrument_id
+                ORDER BY instrument.kind, instrument.symbol
+                """,
+                parameters,
+            ).fetchall()
+            source_rows = self._connection.execute(
+                f"""
+                SELECT instrument.instrument_id, source.code, count(*)
+                FROM instruments AS instrument
+                JOIN daily_bars AS bar USING (instrument_id)
+                JOIN sources AS source USING (source_id)
+                {where}
+                GROUP BY instrument.instrument_id, source.code
+                ORDER BY instrument.instrument_id, source.code
+                """,
+                parameters,
+            ).fetchall()
+        sources: dict[int, list[tuple[str, int]]] = {}
+        for row in source_rows:
+            sources.setdefault(int(row[0]), []).append((str(row[1]), int(row[2])))
+        return [
+            InstrumentCoverage(
+                symbol=str(row[1]),
+                name=str(row[2]),
+                kind=InstrumentKind(str(row[3])),
+                active=bool(row[4]),
+                first_trade_date=_date_from_key(int(row[5])) if row[5] is not None else None,
+                last_trade_date=_date_from_key(int(row[6])) if row[6] is not None else None,
+                row_count=int(row[7]),
+                source_rows=tuple(sources.get(int(row[0]), ())),
+            )
+            for row in rows
+        ]
+
+    def list_catalog_coverage_rows(self) -> list[dict[str, object]]:
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT catalog_source.code, catalog.source_system, catalog.family,
+                       catalog.category, instrument.symbol, instrument.name,
+                       instrument.active, catalog.observed_on, catalog.listed_on,
+                       catalog.delisted_on, min(bar.trade_date), max(bar.trade_date),
+                       count(bar.trade_date)
+                FROM instrument_catalog_entries AS catalog
+                JOIN sources AS catalog_source
+                  ON catalog_source.source_id = catalog.catalog_source_id
+                JOIN instruments AS instrument USING (instrument_id)
+                LEFT JOIN daily_bars AS bar USING (instrument_id)
+                GROUP BY catalog.catalog_source_id, catalog.provider_symbol
+                ORDER BY catalog_source.code, catalog.family, catalog.category,
+                         instrument.symbol
+                """
+            ).fetchall()
+        return [
+            {
+                "catalog_source": str(row[0]),
+                "source_system": str(row[1]),
+                "family": str(row[2]),
+                "category": str(row[3]),
+                "symbol": str(row[4]),
+                "name": str(row[5]),
+                "active": bool(row[6]),
+                "observed_on": _date_from_key(int(row[7])),
+                "listed_on": _date_from_key(int(row[8])) if row[8] is not None else None,
+                "delisted_on": _date_from_key(int(row[9])) if row[9] is not None else None,
+                "first_trade_date": _date_from_key(int(row[10])) if row[10] is not None else None,
+                "last_trade_date": _date_from_key(int(row[11])) if row[11] is not None else None,
+                "rows": int(row[12]),
+            }
             for row in rows
         ]
 
@@ -876,11 +1365,32 @@ class SQLiteMarketDataStore:
             for row in rows
         ]
 
-    def _source_id(self, source: str) -> int:
+    def _source_id(
+        self,
+        source: str,
+        acquired_via: str | None = None,
+        source_system: str | None = None,
+    ) -> int:
         if not source:
             raise ValueError("source is required")
         self._connection.execute("INSERT OR IGNORE INTO sources(code) VALUES (?)", (source,))
-        return int(self._connection.execute("SELECT source_id FROM sources WHERE code = ?", (source,)).fetchone()[0])
+        source_id = int(self._connection.execute("SELECT source_id FROM sources WHERE code = ?", (source,)).fetchone()[0])
+        default_acquired_via, default_source_system = _source_profile(source)
+        self._connection.execute(
+            """
+            INSERT INTO source_profiles(source_id, acquired_via, source_system)
+            VALUES (?, ?, ?)
+            ON CONFLICT(source_id) DO UPDATE SET
+                acquired_via = excluded.acquired_via,
+                source_system = excluded.source_system
+            """,
+            (
+                source_id,
+                acquired_via or default_acquired_via,
+                source_system or default_source_system,
+            ),
+        )
+        return source_id
 
     def _instrument_ids(self, symbols: set[str]) -> dict[str, int]:
         result: dict[str, int] = {}
@@ -979,6 +1489,18 @@ def _date_key(value: date) -> int:
 
 def _date_from_key(value: int) -> date:
     return date(value // 10_000, value // 100 % 100, value % 100)
+
+
+def _source_profile(source: str) -> tuple[str, str]:
+    if source == "tushare_dc":
+        return "tushare", "eastmoney"
+    if source == "tushare_ths":
+        return "tushare", "ths"
+    if source.startswith("akshare_eastmoney"):
+        return "akshare", "eastmoney"
+    if source.startswith("akshare_ths"):
+        return "akshare", "ths"
+    return source, source
 
 
 def _snapshot_hash(bars: Sequence[DailyBar]) -> bytes:

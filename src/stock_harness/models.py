@@ -68,6 +68,60 @@ class WriteStats:
 
 
 @dataclass(frozen=True, slots=True)
+class SymbolSyncState:
+    source: str
+    scope: str
+    symbol: str
+    covered_from: date
+    covered_through: date
+    last_batch_rows: int
+    updated_at_ms: int
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderBarRejection:
+    symbol: str
+    trade_date: date
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class InstrumentCoverage:
+    symbol: str
+    name: str
+    kind: InstrumentKind
+    active: bool
+    first_trade_date: date | None
+    last_trade_date: date | None
+    row_count: int
+    source_rows: tuple[tuple[str, int], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogEntry:
+    instrument: Instrument
+    catalog_source: str
+    source_system: str
+    family: str
+    category: str
+    provider_symbol: str
+    observed_on: date
+    listed_on: date | None = None
+    delisted_on: date | None = None
+    constituent_count: int | None = None
+    aliases: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class BoardMembership:
+    board_symbol: str
+    member_symbol: str
+    member_name: str
+    source: str
+    observed_on: date
+
+
+@dataclass(frozen=True, slots=True)
 class CoverageGap:
     source: str
     scope: str
