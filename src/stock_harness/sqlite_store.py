@@ -92,6 +92,9 @@ CREATE TABLE IF NOT EXISTS instrument_aliases (
     FOREIGN KEY (instrument_id) REFERENCES instruments(instrument_id)
 ) WITHOUT ROWID;
 
+CREATE INDEX IF NOT EXISTS instrument_aliases_instrument
+ON instrument_aliases(instrument_id, alias);
+
 CREATE TABLE IF NOT EXISTS board_memberships (
     source_id INTEGER NOT NULL,
     board_instrument_id INTEGER NOT NULL,
@@ -108,6 +111,9 @@ CREATE TABLE IF NOT EXISTS board_memberships (
 
 CREATE INDEX IF NOT EXISTS board_memberships_member
 ON board_memberships(member_symbol, active, board_instrument_id);
+
+CREATE INDEX IF NOT EXISTS board_memberships_board
+ON board_memberships(board_instrument_id, active, member_symbol);
 
 CREATE TABLE IF NOT EXISTS instrument_mappings (
     left_instrument_id INTEGER NOT NULL,
@@ -888,6 +894,216 @@ class SQLiteMarketDataStore:
             for row in rows
         ]
 
+    def search_instruments(
+        self,
+        query: str = "",
+        kinds: set[InstrumentKind] | None = None,
+        source_system: str | None = None,
+        family: str | None = None,
+        category: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict[str, object]]:
+        if not 1 <= limit <= 500 or offset < 0:
+            raise ValueError("invalid instrument pagination")
+        clauses: list[str] = []
+        parameters: list[object] = []
+        if query.strip():
+            pattern = f"%{query.strip()}%"
+            clauses.append(
+                "(instrument.symbol LIKE ? OR instrument.name LIKE ? OR EXISTS ("
+                "SELECT 1 FROM instrument_aliases AS alias "
+                "WHERE alias.instrument_id = instrument.instrument_id AND alias.alias LIKE ?))"
+            )
+            parameters.extend((pattern, pattern, pattern))
+        if kinds:
+            values = sorted(item.value for item in kinds)
+            clauses.append("instrument.kind IN (" + ",".join("?" for _ in values) + ")")
+            parameters.extend(values)
+        for column, value in (
+            ("catalog.source_system", source_system),
+            ("catalog.family", family),
+            ("catalog.category", category),
+        ):
+            if value:
+                clauses.append(f"{column} = ?")
+                parameters.append(value)
+        where = "WHERE " + " AND ".join(clauses) if clauses else ""
+        parameters.extend((limit, offset))
+        with self._lock:
+            rows = self._connection.execute(
+                f"""
+                WITH selected AS (
+                    SELECT instrument.instrument_id, instrument.symbol,
+                           instrument.name, instrument.kind, instrument.exchange,
+                           instrument.active, catalog.source_system,
+                           catalog.family, catalog.category
+                    FROM instruments AS instrument
+                    LEFT JOIN instrument_catalog_entries AS catalog USING (instrument_id)
+                    {where}
+                    ORDER BY instrument.kind, instrument.name, instrument.symbol
+                    LIMIT ? OFFSET ?
+                )
+                SELECT selected.symbol, selected.name, selected.kind,
+                       selected.exchange, selected.active, selected.source_system,
+                       selected.family, selected.category,
+                       (SELECT min(trade_date) FROM daily_bars
+                        WHERE instrument_id = selected.instrument_id),
+                       (SELECT max(trade_date) FROM daily_bars
+                        WHERE instrument_id = selected.instrument_id),
+                       (SELECT count(*) FROM daily_bars
+                        WHERE instrument_id = selected.instrument_id)
+                FROM selected
+                ORDER BY selected.kind, selected.name, selected.symbol
+                """,
+                parameters,
+            ).fetchall()
+        return [_instrument_row(row) for row in rows]
+
+    def get_instrument_summary(self, symbol: str) -> dict[str, object] | None:
+        with self._lock:
+            row = self._connection.execute(
+                """
+                SELECT instrument.symbol, instrument.name, instrument.kind,
+                       instrument.exchange, instrument.active,
+                       catalog.source_system, catalog.family, catalog.category,
+                       (SELECT min(trade_date) FROM daily_bars
+                        WHERE instrument_id = instrument.instrument_id),
+                       (SELECT max(trade_date) FROM daily_bars
+                        WHERE instrument_id = instrument.instrument_id),
+                       (SELECT count(*) FROM daily_bars
+                        WHERE instrument_id = instrument.instrument_id)
+                FROM instruments AS instrument
+                LEFT JOIN instrument_catalog_entries AS catalog USING (instrument_id)
+                WHERE instrument.symbol = ?
+                ORDER BY catalog.catalog_source_id
+                LIMIT 1
+                """,
+                (symbol,),
+            ).fetchone()
+            if row is None:
+                return None
+            instrument_id = int(
+                self._connection.execute(
+                    "SELECT instrument_id FROM instruments WHERE symbol = ?", (symbol,)
+                ).fetchone()[0]
+            )
+            aliases = self._connection.execute(
+                """
+                SELECT DISTINCT alias FROM instrument_aliases
+                WHERE instrument_id = ? ORDER BY alias
+                """,
+                (instrument_id,),
+            ).fetchall()
+            catalog = self._connection.execute(
+                """
+                SELECT source.code, entry.listed_on, entry.delisted_on
+                FROM instrument_catalog_entries AS entry
+                JOIN sources AS source ON source.source_id = entry.catalog_source_id
+                WHERE entry.instrument_id = ?
+                ORDER BY entry.catalog_source_id LIMIT 1
+                """,
+                (instrument_id,),
+            ).fetchone()
+            incidents = self._connection.execute(
+                """
+                SELECT source.code, incident.dataset, incident.trade_date,
+                       incident.incident_type, incident.message
+                FROM provider_incidents AS incident
+                JOIN sources AS source USING (source_id)
+                WHERE incident.status = 'open'
+                  AND (incident.scope = ? OR incident.scope LIKE ?)
+                ORDER BY incident.trade_date DESC, incident.incident_id DESC
+                LIMIT 20
+                """,
+                (symbol, f"%:{symbol}"),
+            ).fetchall()
+        result = _instrument_row(row)
+        result.update(
+            {
+                "aliases": [str(item[0]) for item in aliases],
+                "catalog_source": str(catalog[0]) if catalog else None,
+                "listed_on": (
+                    _date_from_key(int(catalog[1])) if catalog and catalog[1] is not None else None
+                ),
+                "delisted_on": (
+                    _date_from_key(int(catalog[2])) if catalog and catalog[2] is not None else None
+                ),
+                "open_incidents": [
+                    {
+                        "source": str(item[0]),
+                        "dataset": str(item[1]),
+                        "trade_date": _date_from_key(int(item[2])),
+                        "type": str(item[3]),
+                        "message": str(item[4]),
+                    }
+                    for item in incidents
+                ],
+            }
+        )
+        return result
+
+    def list_board_members(
+        self, board_symbol: str, limit: int = 500, offset: int = 0
+    ) -> list[dict[str, object]]:
+        if not 1 <= limit <= 5000 or offset < 0:
+            raise ValueError("invalid membership pagination")
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT member.member_symbol, member.member_name,
+                       member.first_seen_on, member.last_seen_on, source.code
+                FROM board_memberships AS member
+                JOIN instruments AS board
+                  ON board.instrument_id = member.board_instrument_id
+                JOIN sources AS source USING (source_id)
+                WHERE board.symbol = ? AND member.active = 1
+                ORDER BY member.member_symbol
+                LIMIT ? OFFSET ?
+                """,
+                (board_symbol, limit, offset),
+            ).fetchall()
+        return [
+            {
+                "symbol": str(row[0]), "name": str(row[1]),
+                "first_seen_on": _date_from_key(int(row[2])),
+                "last_seen_on": _date_from_key(int(row[3])), "source": str(row[4]),
+            }
+            for row in rows
+        ]
+
+    def list_symbol_boards(
+        self, member_symbol: str, limit: int = 500, offset: int = 0
+    ) -> list[dict[str, object]]:
+        if not 1 <= limit <= 5000 or offset < 0:
+            raise ValueError("invalid membership pagination")
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT board.symbol, board.name, catalog.source_system,
+                       catalog.family, catalog.category, source.code
+                FROM board_memberships AS member
+                JOIN instruments AS board
+                  ON board.instrument_id = member.board_instrument_id
+                JOIN sources AS source USING (source_id)
+                LEFT JOIN instrument_catalog_entries AS catalog
+                  ON catalog.instrument_id = board.instrument_id
+                 AND catalog.catalog_source_id = member.source_id
+                WHERE member.member_symbol = ? AND member.active = 1
+                ORDER BY source.code, board.name, board.symbol
+                LIMIT ? OFFSET ?
+                """,
+                (member_symbol, limit, offset),
+            ).fetchall()
+        return [
+            {
+                "symbol": str(row[0]), "name": str(row[1]),
+                "source_system": row[2], "family": row[3],
+                "category": row[4], "source": str(row[5]),
+            }
+            for row in rows
+        ]
+
     def list_instrument_coverage(
         self, kinds: set[InstrumentKind] | None = None
     ) -> list[InstrumentCoverage]:
@@ -1501,6 +1717,17 @@ def _source_profile(source: str) -> tuple[str, str]:
     if source.startswith("akshare_ths"):
         return "akshare", "ths"
     return source, source
+
+
+def _instrument_row(row: sqlite3.Row) -> dict[str, object]:
+    return {
+        "symbol": str(row[0]), "name": str(row[1]), "kind": str(row[2]),
+        "exchange": str(row[3]), "active": bool(row[4]),
+        "source_system": row[5], "family": row[6], "category": row[7],
+        "first_trade_date": _date_from_key(int(row[8])) if row[8] is not None else None,
+        "last_trade_date": _date_from_key(int(row[9])) if row[9] is not None else None,
+        "rows": int(row[10]),
+    }
 
 
 def _snapshot_hash(bars: Sequence[DailyBar]) -> bytes:

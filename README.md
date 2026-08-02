@@ -23,12 +23,32 @@ The first data-layer slice is implemented with a minimal typed model, provider/s
 
 ## Development
 
-Run the dependency-free unit tests:
+Create the local environment and run the backend tests:
 
 ```powershell
-$env:PYTHONPATH = "src"
-python -m unittest discover -s tests -v
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+.\.venv\Scripts\python.exe -m pytest
 ```
+
+Run the local chart-serving API:
+
+```powershell
+.\.venv\Scripts\python.exe -m uvicorn --app-dir src stock_harness.api:app `
+  --host 127.0.0.1 --port 8001
+```
+
+The API exposes instrument search and detail, bounded daily bars, board members, and reverse stock-to-board relationships under `/api`. Interactive OpenAPI documentation is available at `/docs`.
+
+Start the web workstation in another terminal:
+
+```powershell
+Set-Location web
+npm.cmd install
+npm.cmd run dev
+```
+
+Open `http://127.0.0.1:5173`. The Vite server proxies `/api` to the local API on port 8001.
 
 Run the representative SQLite hot-path benchmark:
 

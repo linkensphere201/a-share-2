@@ -10,11 +10,13 @@ coverage.xml
 htmlcov/
 .venv/
 venv/
+*.egg-info/
 
-# Node / frontend tooling, if added later
+# Node / frontend tooling
 node_modules/
 dist/
 build/
+*.tsbuildinfo
 
 # Local data and run artifacts
 .env
