@@ -42,6 +42,7 @@ def run_stock_backfill(
     end_date: date,
     max_dates: int | None = None,
     progress_every: int = 10,
+    refresh_last_trading_days: int = 0,
 ) -> BackfillResult:
     instruments = provider.list_instruments()
     store.upsert_instruments(instruments)
@@ -49,6 +50,11 @@ def run_stock_backfill(
     trading_dates = provider.trading_dates(start_date, end_date)
     snapshot_dates = store.list_daily_snapshot_dates(
         provider.code, "stock", start_date, end_date
+    )
+    forced_dates = set(
+        trading_dates[-refresh_last_trading_days:]
+        if refresh_last_trading_days > 0
+        else ()
     )
     skipped = 0
     completed = 0
@@ -64,7 +70,7 @@ def run_stock_backfill(
         end_date,
     )
     for trade_date in trading_dates:
-        if trade_date in snapshot_dates:
+        if trade_date in snapshot_dates and trade_date not in forced_dates:
             skipped += 1
             continue
         if max_dates is not None and processed >= max_dates:
@@ -196,6 +202,7 @@ def run_symbol_backfill(
     allow_empty_initial: bool = False,
     instrument_start_dates: Mapping[str, date] | None = None,
     allow_unrepaired_rejections: bool = False,
+    force_refresh_from: date | None = None,
 ) -> SymbolBackfillResult:
     if not scope:
         raise ValueError("symbol backfill scope is required")
@@ -215,7 +222,10 @@ def run_symbol_backfill(
             (instrument_start_dates or {}).get(instrument.symbol, start_date),
         )
         state = store.get_symbol_sync_state(provider.code, scope, instrument.symbol)
+        forced = force_refresh_from is not None
         if (
+            not forced
+            and
             state is not None
             and state.covered_from <= desired_start
             and state.covered_through >= end_date
@@ -226,7 +236,9 @@ def run_symbol_backfill(
             break
         fetch_from = desired_start
         fetch_through = end_date
-        if state is not None and desired_start < state.covered_from:
+        if forced:
+            fetch_from = max(desired_start, force_refresh_from)
+        elif state is not None and desired_start < state.covered_from:
             fetch_through = state.covered_from - timedelta(days=1)
         elif state is not None:
             fetch_from = max(desired_start, state.covered_through + timedelta(days=1))

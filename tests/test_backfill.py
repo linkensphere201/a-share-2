@@ -87,6 +87,21 @@ class BackfillTests(unittest.TestCase):
             self.assertEqual(second_provider.fetched_dates, [])
             self.assertEqual(store.count_daily_bars(), 2)
 
+    def test_stock_refresh_rechecks_only_requested_recent_trading_dates(self) -> None:
+        with SQLiteMarketDataStore(":memory:") as store:
+            run_stock_backfill(_Provider(), store, date(2026, 7, 1), date(2026, 7, 31))
+            refresh_provider = _Provider()
+            result = run_stock_backfill(
+                refresh_provider,
+                store,
+                date(2026, 7, 1),
+                date(2026, 7, 31),
+                refresh_last_trading_days=1,
+            )
+
+        self.assertEqual(refresh_provider.fetched_dates, [date(2026, 7, 31)])
+        self.assertEqual((result.skipped_dates, result.completed_dates, result.rows_written), (1, 1, 0))
+
     def test_backfill_registers_historical_symbols_missing_from_master(self) -> None:
         with SQLiteMarketDataStore(":memory:") as store:
             result = run_stock_backfill(
@@ -140,6 +155,26 @@ class BackfillTests(unittest.TestCase):
             [("510300.SH", date(2026, 8, 1), date(2026, 8, 3))],
         )
         self.assertEqual(third.changed_rows, 1)
+
+    def test_symbol_refresh_rechecks_an_explicit_overlap(self) -> None:
+        instrument = Instrument("510300.SH", "CSI 300 ETF", InstrumentKind.ETF, "SH")
+        with SQLiteMarketDataStore(":memory:") as store:
+            run_symbol_backfill(
+                _SymbolProvider(), store, "etf", InstrumentKind.ETF, [instrument],
+                date(2026, 7, 1), date(2026, 7, 31),
+            )
+            refresh_provider = _SymbolProvider()
+            result = run_symbol_backfill(
+                refresh_provider, store, "etf", InstrumentKind.ETF, [instrument],
+                date(2026, 7, 1), date(2026, 7, 31),
+                force_refresh_from=date(2026, 7, 25),
+            )
+
+        self.assertEqual(
+            refresh_provider.fetched_ranges,
+            [(instrument.symbol, date(2026, 7, 25), date(2026, 7, 31))],
+        )
+        self.assertEqual((result.completed_symbols, result.changed_rows), (1, 0))
 
     def test_symbol_backfill_can_extend_an_existing_cursor_backwards(self) -> None:
         instrument = Instrument("510300.SH", "CSI 300 ETF", InstrumentKind.ETF, "SH")

@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 from stock_harness.backfill import run_stock_backfill, run_symbol_backfill, years_ago
@@ -63,6 +63,7 @@ def main() -> None:
     backfill.add_argument("--end-date", type=date.fromisoformat, default=date.today())
     backfill.add_argument("--max-dates", type=int)
     backfill.add_argument("--progress-every", type=int, default=10)
+    backfill.add_argument("--refresh-last-trading-days", type=int, default=0)
     universe = subparsers.add_parser(
         "backfill-universe", help="Resume configured ETF, index, or sector history"
     )
@@ -71,6 +72,7 @@ def main() -> None:
     universe.add_argument("--start-date", type=date.fromisoformat)
     universe.add_argument("--end-date", type=date.fromisoformat, default=date.today())
     universe.add_argument("--max-symbols", type=int)
+    universe.add_argument("--refresh-lookback-days", type=int, default=0)
     catalog = subparsers.add_parser(
         "sync-catalog", help="Refresh the complete searchable ETF and board catalogs"
     )
@@ -84,6 +86,7 @@ def main() -> None:
     expanded.add_argument("--start-date", type=date.fromisoformat)
     expanded.add_argument("--end-date", type=date.fromisoformat, default=date.today())
     expanded.add_argument("--max-symbols", type=int)
+    expanded.add_argument("--refresh-lookback-days", type=int, default=0)
     members = subparsers.add_parser(
         "sync-board-members", help="Refresh current Eastmoney or THS board memberships"
     )
@@ -264,6 +267,10 @@ def main() -> None:
                     fallback_provider=(
                         AkShareSwValidationProvider() if kind is InstrumentKind.SECTOR else None
                     ),
+                    force_refresh_from=(
+                        args.end_date - timedelta(days=args.refresh_lookback_days)
+                        if args.refresh_lookback_days > 0 else None
+                    ),
                 )
                 print(
                     f"symbol_backfill_summary scope={scope} "
@@ -329,6 +336,10 @@ def main() -> None:
                         if entry.listed_on is not None
                     },
                     allow_unrepaired_rejections=scope in {"dc", "ths"},
+                    force_refresh_from=(
+                        args.end_date - timedelta(days=args.refresh_lookback_days)
+                        if args.refresh_lookback_days > 0 else None
+                    ),
                 )
                 remaining = (
                     result.configured_symbols
@@ -498,6 +509,7 @@ def main() -> None:
             args.end_date,
             max_dates=args.max_dates,
             progress_every=args.progress_every,
+            refresh_last_trading_days=args.refresh_last_trading_days,
         )
         checkpoint = store.checkpoint("PASSIVE")
     print(
