@@ -18,6 +18,7 @@ import {
 
 export type ChartRange = '1Y' | '3Y' | '10Y' | 'ALL'
 export type PriceMode = 'normal' | 'log'
+export type VisibleRange = { from: string; to: string }
 
 export type DailyBar = {
   trade_date: string
@@ -36,13 +37,22 @@ type ChartCanvasProps = {
   symbol: string
   range: ChartRange
   priceMode: PriceMode
+  initialVisibleRange?: VisibleRange
   onCoverageChange?: (bars: number, first?: string, last?: string) => void
+  onVisibleRangeChange?: (value: VisibleRange) => void
 }
 
 const rising = '#ef5350'
 const falling = '#26a269'
 
-export function ChartCanvas({ symbol, range, priceMode, onCoverageChange }: ChartCanvasProps) {
+export function ChartCanvas({
+  symbol,
+  range,
+  priceMode,
+  initialVisibleRange,
+  onCoverageChange,
+  onVisibleRangeChange,
+}: ChartCanvasProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const candleRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
@@ -56,6 +66,8 @@ export function ChartCanvas({ symbol, range, priceMode, onCoverageChange }: Char
   const applyBucketRef = useRef<(bucket: number, preserve?: IRange<Time>) => void>(() => undefined)
   const recalculateLodRef = useRef<() => void>(() => undefined)
   const suppressLodRef = useRef(false)
+  const coverageCallbackRef = useRef(onCoverageChange)
+  const visibleRangeCallbackRef = useRef(onVisibleRangeChange)
   const [bars, setBars] = useState<DailyBar[]>([])
   const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading')
   const [readout, setReadout] = useState<Readout | null>(null)
@@ -66,6 +78,9 @@ export function ChartCanvas({ symbol, range, priceMode, onCoverageChange }: Char
     ma20: movingAverage(bars, 20),
     ma60: movingAverage(bars, 60),
   }), [bars])
+
+  useEffect(() => { coverageCallbackRef.current = onCoverageChange }, [onCoverageChange])
+  useEffect(() => { visibleRangeCallbackRef.current = onVisibleRangeChange }, [onVisibleRangeChange])
 
   useEffect(() => {
     if (!hostRef.current) return
@@ -141,6 +156,7 @@ export function ChartCanvas({ symbol, range, priceMode, onCoverageChange }: Char
     })
 
     let lodFrame = 0
+    let visibleRangeTimer = 0
     const recalculateLod = () => {
       if (suppressLodRef.current) return
       window.cancelAnimationFrame(lodFrame)
@@ -151,6 +167,13 @@ export function ChartCanvas({ symbol, range, priceMode, onCoverageChange }: Char
         const nextBucket = chooseLodBucket(count, hostRef.current.clientWidth)
         if (nextBucket !== bucketRef.current) applyBucketRef.current(nextBucket, visible)
       })
+      window.clearTimeout(visibleRangeTimer)
+      visibleRangeTimer = window.setTimeout(() => {
+        const visible = chart.timeScale().getVisibleRange()
+        if (visible && !suppressLodRef.current) {
+          visibleRangeCallbackRef.current?.({ from: String(visible.from), to: String(visible.to) })
+        }
+      }, 180)
     }
     chart.timeScale().subscribeVisibleTimeRangeChange(recalculateLod)
     recalculateLodRef.current = recalculateLod
@@ -165,6 +188,7 @@ export function ChartCanvas({ symbol, range, priceMode, onCoverageChange }: Char
     ma60Ref.current = ma60
     return () => {
       window.cancelAnimationFrame(lodFrame)
+      window.clearTimeout(visibleRangeTimer)
       resizeObserver.disconnect()
       chart.timeScale().unsubscribeVisibleTimeRangeChange(recalculateLod)
       chart.remove()
@@ -185,7 +209,7 @@ export function ChartCanvas({ symbol, range, priceMode, onCoverageChange }: Char
         setBars(body.items)
         setReadout(latestReadout(body.items))
         setState('ready')
-        onCoverageChange?.(
+        coverageCallbackRef.current?.(
           body.items.length,
           body.items.at(0)?.trade_date,
           body.items.at(-1)?.trade_date,
@@ -195,7 +219,7 @@ export function ChartCanvas({ symbol, range, priceMode, onCoverageChange }: Char
         if ((error as Error).name !== 'AbortError') setState('error')
       })
     return () => controller.abort()
-  }, [symbol, onCoverageChange])
+  }, [symbol])
 
   useEffect(() => {
     applyBucketRef.current = (bucket, preserve) => {
@@ -241,6 +265,11 @@ export function ChartCanvas({ symbol, range, priceMode, onCoverageChange }: Char
   useEffect(() => {
     const chart = chartRef.current
     if (!chart || bars.length === 0) return
+    if (initialVisibleRange) {
+      chart.timeScale().setVisibleRange(initialVisibleRange)
+      window.requestAnimationFrame(() => recalculateLodRef.current())
+      return
+    }
     if (range === 'ALL') {
       chart.timeScale().fitContent()
       window.requestAnimationFrame(() => recalculateLodRef.current())
@@ -250,7 +279,7 @@ export function ChartCanvas({ symbol, range, priceMode, onCoverageChange }: Char
     const from = subtractYears(last, Number.parseInt(range, 10))
     chart.timeScale().setVisibleRange({ from, to: last })
     window.requestAnimationFrame(() => recalculateLodRef.current())
-  }, [bars, range])
+  }, [bars, range, initialVisibleRange?.from, initialVisibleRange?.to])
 
   return (
     <div className="chart-stage">

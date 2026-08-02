@@ -10,6 +10,7 @@
 body { margin: 0; overflow: hidden; }
 button, input { font: inherit; letter-spacing: 0; }
 button { cursor: pointer; }
+button:disabled { cursor: default; opacity: .35; }
 button:focus-visible, input:focus-visible { outline: 2px solid #4b84c6; outline-offset: -1px; }
 
 .workstation {
@@ -69,23 +70,28 @@ button:focus-visible, input:focus-visible { outline: 2px solid #4b84c6; outline-
 }
 .scope-tabs button.active, .range-tabs button.active, .coordinate-tabs button.active { color: #f0f3f7; background: #252b34; border-radius: 3px; }
 .instrument-list { overflow: auto; padding: 5px; }
-.instrument {
+.instrument-row {
   width: 100%;
   height: 46px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  text-align: left;
-  border: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 28px;
   border-radius: 3px;
-  padding: 0 8px;
   background: transparent;
   color: #aeb6c2;
 }
-.instrument:hover, .instrument.active { background: #1b2129; color: #f2f4f7; }
-.instrument span { display: grid; gap: 3px; min-width: 0; }
-.instrument strong { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.instrument small, .security small { font-size: 10px; color: #788493; }
+.instrument-row:hover, .instrument-row.active { background: #1b2129; color: #f2f4f7; }
+.instrument-main, .instrument-add {
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+}
+.instrument-main { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 0 4px 0 8px; text-align: left; }
+.instrument-main span { display: grid; gap: 3px; min-width: 0; }
+.instrument-main strong { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.instrument-main small, .security small { font-size: 10px; color: #788493; }
+.instrument-add { display: grid; place-items: center; color: #657180; opacity: .5; }
+.instrument-row:hover .instrument-add { opacity: 1; color: #c6ccd5; }
 .list-state { padding: 18px 8px; color: #788493; text-align: center; font-size: 11px; }
 .list-state.error { color: #d38181; }
 
@@ -129,12 +135,44 @@ button:focus-visible, input:focus-visible { outline: 2px solid #4b84c6; outline-
 .ma-short::before { background: #e5b85c; }
 .ma-mid::before { background: #57a7d9; }
 .ma-long::before { background: #b984cc; }
+.canvas-count { margin-left: auto; color: #657180; }
 .canvas-shell {
   min-height: 0;
   position: relative;
   overflow: hidden;
   background: #0d1014;
 }
+.canvas-grid { display: grid; gap: 1px; background: #303743; }
+.canvas-count-1 { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+.canvas-count-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: minmax(0, 1fr); }
+.canvas-count-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); }
+.canvas-count-3 .chart-panel:first-child { grid-row: 1 / 3; }
+.canvas-count-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); }
+.chart-panel {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: 28px minmax(0, 1fr);
+  background: #0d1014;
+  position: relative;
+}
+.chart-panel.focused { box-shadow: inset 0 0 0 1px #4b84c6; z-index: 1; }
+.chart-panel-header {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 4px 0 8px;
+  border-bottom: 1px solid #272d36;
+  background: #12161b;
+}
+.chart-panel-title { min-width: 0; display: flex; align-items: baseline; gap: 7px; border: 0; background: transparent; color: #d8dde6; text-align: left; }
+.chart-panel-title strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+.chart-panel-title small { flex: 0 0 auto; color: #657180; font-size: 9px; }
+.chart-panel-actions { display: flex; gap: 2px; }
+.chart-panel-actions button { width: 23px; height: 23px; display: grid; place-items: center; border: 0; border-radius: 3px; background: transparent; color: #657180; }
+.chart-panel-actions button:hover:not(:disabled) { color: #e8ebf0; background: #252b34; }
+.chart-panel-body { min-width: 0; min-height: 0; position: relative; }
 .chart-stage, .chart-host { position: absolute; inset: 0; min-height: 0; }
 .chart-readout {
   position: absolute;
@@ -205,4 +243,6 @@ button:focus-visible, input:focus-visible { outline: 2px solid #4b84c6; outline-
   .range-tabs { display: none; }
   .statusbar span:first-child { display: none; }
   .chart-readout { right: 58px; gap: 3px 8px; }
+  .canvas-grid { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; grid-auto-rows: minmax(300px, 1fr); overflow-y: auto; }
+  .canvas-count-3 .chart-panel:first-child { grid-row: auto; }
 }
