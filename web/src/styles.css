@@ -135,20 +135,21 @@ button:focus-visible, input:focus-visible { outline: 2px solid #4b84c6; outline-
 .ma-short::before { background: #e5b85c; }
 .ma-mid::before { background: #57a7d9; }
 .ma-long::before { background: #b984cc; }
-.canvas-count { margin-left: auto; color: #657180; }
-.canvas-shell {
+.window-count { margin-left: auto; color: #657180; }
+.window-group {
   min-height: 0;
   position: relative;
   overflow: hidden;
-  background: #0d1014;
+  display: grid;
+  gap: 1px;
+  background: #303743;
 }
-.canvas-grid { display: grid; gap: 1px; background: #303743; }
-.canvas-count-1 { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
-.canvas-count-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: minmax(0, 1fr); }
-.canvas-count-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); }
-.canvas-count-3 .chart-panel:first-child { grid-row: 1 / 3; }
-.canvas-count-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); }
-.chart-panel {
+.window-count-1 { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+.window-count-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: minmax(0, 1fr); }
+.window-count-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); }
+.window-count-3 .instrument-window:first-child { grid-row: 1 / 3; }
+.window-count-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); }
+.instrument-window {
   min-width: 0;
   min-height: 0;
   display: grid;
@@ -156,8 +157,8 @@ button:focus-visible, input:focus-visible { outline: 2px solid #4b84c6; outline-
   background: #0d1014;
   position: relative;
 }
-.chart-panel.focused { box-shadow: inset 0 0 0 1px #4b84c6; z-index: 1; }
-.chart-panel-header {
+.instrument-window.focused { box-shadow: inset 0 0 0 1px #4b84c6; z-index: 1; }
+.instrument-window-header {
   min-width: 0;
   display: flex;
   align-items: center;
@@ -166,13 +167,13 @@ button:focus-visible, input:focus-visible { outline: 2px solid #4b84c6; outline-
   border-bottom: 1px solid #272d36;
   background: #12161b;
 }
-.chart-panel-title { min-width: 0; display: flex; align-items: baseline; gap: 7px; border: 0; background: transparent; color: #d8dde6; text-align: left; }
-.chart-panel-title strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
-.chart-panel-title small { flex: 0 0 auto; color: #657180; font-size: 9px; }
-.chart-panel-actions { display: flex; gap: 2px; }
-.chart-panel-actions button { width: 23px; height: 23px; display: grid; place-items: center; border: 0; border-radius: 3px; background: transparent; color: #657180; }
-.chart-panel-actions button:hover:not(:disabled) { color: #e8ebf0; background: #252b34; }
-.chart-panel-body { min-width: 0; min-height: 0; position: relative; }
+.instrument-window-title { min-width: 0; display: flex; align-items: baseline; gap: 7px; border: 0; background: transparent; color: #d8dde6; text-align: left; }
+.instrument-window-title strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+.instrument-window-title small { flex: 0 0 auto; color: #657180; font-size: 9px; }
+.instrument-window-actions { display: flex; gap: 2px; }
+.instrument-window-actions button { width: 23px; height: 23px; display: grid; place-items: center; border: 0; border-radius: 3px; background: transparent; color: #657180; }
+.instrument-window-actions button:hover:not(:disabled) { color: #e8ebf0; background: #252b34; }
+.instrument-window-body { min-width: 0; min-height: 0; position: relative; }
 .chart-stage, .chart-host { position: absolute; inset: 0; min-height: 0; }
 .chart-readout {
   position: absolute;
@@ -243,6 +244,6 @@ button:focus-visible, input:focus-visible { outline: 2px solid #4b84c6; outline-
   .range-tabs { display: none; }
   .statusbar span:first-child { display: none; }
   .chart-readout { right: 58px; gap: 3px 8px; }
-  .canvas-grid { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; grid-auto-rows: minmax(300px, 1fr); overflow-y: auto; }
-  .canvas-count-3 .chart-panel:first-child { grid-row: auto; }
+  .window-group { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; grid-auto-rows: minmax(300px, 1fr); overflow-y: auto; }
+  .window-count-3 .instrument-window:first-child { grid-row: auto; }
 }
