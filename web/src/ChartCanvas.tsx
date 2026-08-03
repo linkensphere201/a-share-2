@@ -65,6 +65,7 @@ export function ChartCanvas({
   const bucketRef = useRef(1)
   const applyBucketRef = useRef<(bucket: number, preserve?: IRange<Time>) => void>(() => undefined)
   const recalculateLodRef = useRef<() => void>(() => undefined)
+  const resetAutoScaleRef = useRef<() => void>(() => undefined)
   const suppressLodRef = useRef(false)
   const coverageCallbackRef = useRef(onCoverageChange)
   const visibleRangeCallbackRef = useRef(onVisibleRangeChange)
@@ -130,6 +131,11 @@ export function ChartCanvas({
     }, 1)
     chart.panes()[0]?.setStretchFactor(3)
     chart.panes()[1]?.setStretchFactor(1)
+    const resetAutoScale = () => {
+      chart.priceScale('right', 0).applyOptions({ autoScale: true })
+      chart.priceScale('right', 1).applyOptions({ autoScale: true })
+    }
+    resetAutoScaleRef.current = resetAutoScale
 
     chart.subscribeCrosshairMove(param => {
       if (!param.time) {
@@ -161,6 +167,7 @@ export function ChartCanvas({
       if (suppressLodRef.current) return
       window.cancelAnimationFrame(lodFrame)
       lodFrame = window.requestAnimationFrame(() => {
+        resetAutoScale()
         const visible = chart.timeScale().getVisibleRange()
         if (!visible || !hostRef.current) return
         const count = countBarsInRange(barsRef.current, String(visible.from), String(visible.to))
@@ -248,6 +255,7 @@ export function ChartCanvas({
       setLodBucket(bucket)
       window.requestAnimationFrame(() => {
         if (preserve) chartRef.current?.timeScale().setVisibleRange(preserve)
+        resetAutoScaleRef.current()
         window.requestAnimationFrame(() => {
           suppressLodRef.current = false
         })
@@ -258,8 +266,10 @@ export function ChartCanvas({
 
   useEffect(() => {
     chartRef.current?.priceScale('right', 0).applyOptions({
+      autoScale: true,
       mode: priceMode === 'log' ? PriceScaleMode.Logarithmic : PriceScaleMode.Normal,
     })
+    chartRef.current?.priceScale('right', 1).applyOptions({ autoScale: true })
   }, [priceMode])
 
   useEffect(() => {
@@ -267,17 +277,20 @@ export function ChartCanvas({
     if (!chart || bars.length === 0) return
     if (initialVisibleRange) {
       chart.timeScale().setVisibleRange(initialVisibleRange)
+      resetAutoScaleRef.current()
       window.requestAnimationFrame(() => recalculateLodRef.current())
       return
     }
     if (range === 'ALL') {
       chart.timeScale().fitContent()
+      resetAutoScaleRef.current()
       window.requestAnimationFrame(() => recalculateLodRef.current())
       return
     }
     const last = bars.at(-1)!.trade_date
     const from = subtractYears(last, Number.parseInt(range, 10))
     chart.timeScale().setVisibleRange({ from, to: last })
+    resetAutoScaleRef.current()
     window.requestAnimationFrame(() => recalculateLodRef.current())
   }, [bars, range, initialVisibleRange?.from, initialVisibleRange?.to])
 
