@@ -17,6 +17,10 @@ dependencies = [
 dev = ["httpx2>=0.1", "pytest>=8"]
 benchmark = ["duckdb>=1.5", "polars>=1.40"]
 validation = ["akshare>=1.17", "baostock>=0.8.9"]
+desktop = ["pywebview>=5.4,<7", "pyinstaller>=6.15,<7"]
+
+[project.scripts]
+stock-harness-desktop = "stock_harness.desktop:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

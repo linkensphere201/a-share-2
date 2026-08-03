@@ -50,6 +50,30 @@ npm.cmd run dev
 
 Open `http://127.0.0.1:5173`. The Vite server proxies `/api` to the local API on port 8001.
 
+The workstation toolbar provides a window-group selector and a visible `布局管理` command on desktop. The graphical editor creates groups from templates, adds horizontal or vertical list/chart windows, configures list-to-chart relationships, selects the startup default, and supports undo/redo. Structural editing is intentionally hidden on mobile.
+
+## Desktop Application
+
+Build the Windows desktop package:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\build_desktop.ps1
+```
+
+The package is written to `dist\StockHarness\StockHarness.exe`. It starts the local FastAPI service, serves the production React build from the same origin, opens a WebView2 window, and stops the service when the window closes. WebView2 must be available on the machine.
+
+The package contains credential-free `config\providers.local.yaml` and `config\storage.local.yaml` defaults. When the executable remains under this repository's `dist` directory, it detects and reuses the repository's ignored local configuration and existing database. A package copied elsewhere uses its own `config` directory and defaults to its own `data\market.sqlite`. Set `TUSHARE_TOKEN` in the environment or provide the ignored `.env` referenced by the active Provider configuration before relying on automatic updates.
+
+At application startup, a background worker immediately refreshes the recent trading calendar and missing completed-day snapshots for stocks, exchange ETFs, configured indices, SW sectors, Eastmoney boards, and THS boards. It then polls every 15 minutes. The UI starts independently; Provider failures are retained as update status and retried on the next poll. The current trading day is eligible only after 18:00 local time, preventing an intraday partial daily snapshot from being marked complete.
+
+Inspect the worker without blocking chart requests:
+
+```text
+GET /api/update-status
+```
+
+Use `--no-auto-update` for offline diagnostics and `--smoke-test` for a packaged backend/frontend startup check.
+
 Run the representative SQLite hot-path benchmark:
 
 ```powershell

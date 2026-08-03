@@ -6,6 +6,7 @@ import sqlite3
 import sys
 import threading
 import time
+import json
 from contextlib import AbstractContextManager
 from hashlib import blake2b
 from collections.abc import Sequence
@@ -20,6 +21,8 @@ from stock_harness.models import (
     Instrument,
     InstrumentCoverage,
     InstrumentKind,
+    EtfHolding,
+    MarketSnapshot,
     ProviderIncident,
     RepairJob,
     StoredDailyBar,
@@ -46,6 +49,30 @@ CREATE TABLE IF NOT EXISTS instruments (
 
 CREATE INDEX IF NOT EXISTS instruments_kind_active
 ON instruments(kind, active, symbol);
+
+CREATE TABLE IF NOT EXISTS custom_instrument_groups (
+    group_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    description TEXT NOT NULL,
+    created_at_ms INTEGER NOT NULL,
+    updated_at_ms INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS custom_instrument_group_members (
+    group_id TEXT NOT NULL,
+    instrument_id INTEGER NOT NULL,
+    position INTEGER NOT NULL,
+    tags_json TEXT NOT NULL,
+    note TEXT NOT NULL,
+    updated_at_ms INTEGER NOT NULL,
+    PRIMARY KEY (group_id, instrument_id),
+    UNIQUE (group_id, position),
+    FOREIGN KEY (group_id) REFERENCES custom_instrument_groups(group_id) ON DELETE CASCADE,
+    FOREIGN KEY (instrument_id) REFERENCES instruments(instrument_id)
+) WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS custom_group_members_order
+ON custom_instrument_group_members(group_id, position);
 
 CREATE TABLE IF NOT EXISTS source_profiles (
     source_id INTEGER PRIMARY KEY,
@@ -115,6 +142,53 @@ ON board_memberships(member_symbol, active, board_instrument_id);
 CREATE INDEX IF NOT EXISTS board_memberships_board
 ON board_memberships(board_instrument_id, active, member_symbol);
 
+CREATE TABLE IF NOT EXISTS market_snapshots (
+    instrument_id INTEGER NOT NULL,
+    trade_date INTEGER NOT NULL,
+    change_percent REAL NOT NULL,
+    total_market_cap REAL,
+    source_id INTEGER NOT NULL,
+    updated_at_ms INTEGER NOT NULL,
+    PRIMARY KEY (instrument_id, trade_date),
+    FOREIGN KEY (instrument_id) REFERENCES instruments(instrument_id),
+    FOREIGN KEY (source_id) REFERENCES sources(source_id)
+) WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS market_snapshots_latest
+ON market_snapshots(instrument_id, trade_date DESC);
+
+CREATE TABLE IF NOT EXISTS etf_holdings (
+    source_id INTEGER NOT NULL,
+    etf_instrument_id INTEGER NOT NULL,
+    as_of_date INTEGER NOT NULL,
+    holding_symbol TEXT NOT NULL,
+    holding_name TEXT NOT NULL,
+    quantity REAL,
+    weight_percent REAL,
+    market_value REAL,
+    holding_rank INTEGER,
+    updated_at_ms INTEGER NOT NULL,
+    PRIMARY KEY (source_id, etf_instrument_id, as_of_date, holding_symbol),
+    FOREIGN KEY (source_id) REFERENCES sources(source_id),
+    FOREIGN KEY (etf_instrument_id) REFERENCES instruments(instrument_id)
+) WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS etf_holdings_latest
+ON etf_holdings(etf_instrument_id, as_of_date DESC, holding_rank, holding_symbol);
+
+CREATE TABLE IF NOT EXISTS etf_holding_receipts (
+    source_id INTEGER NOT NULL,
+    etf_instrument_id INTEGER NOT NULL,
+    requested_date INTEGER NOT NULL,
+    as_of_date INTEGER,
+    row_count INTEGER NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('complete', 'empty')),
+    updated_at_ms INTEGER NOT NULL,
+    PRIMARY KEY (source_id, etf_instrument_id, requested_date),
+    FOREIGN KEY (source_id) REFERENCES sources(source_id),
+    FOREIGN KEY (etf_instrument_id) REFERENCES instruments(instrument_id)
+) WITHOUT ROWID;
+
 CREATE TABLE IF NOT EXISTS instrument_mappings (
     left_instrument_id INTEGER NOT NULL,
     right_instrument_id INTEGER NOT NULL,
@@ -179,6 +253,14 @@ CREATE TABLE IF NOT EXISTS daily_snapshot_receipts (
     payload_hash BLOB NOT NULL,
     updated_at_ms INTEGER NOT NULL,
     PRIMARY KEY (source_id, scope, trade_date),
+    FOREIGN KEY (source_id) REFERENCES sources(source_id)
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS trading_calendar (
+    source_id INTEGER NOT NULL,
+    trade_date INTEGER NOT NULL,
+    updated_at_ms INTEGER NOT NULL,
+    PRIMARY KEY (source_id, trade_date),
     FOREIGN KEY (source_id) REFERENCES sources(source_id)
 ) WITHOUT ROWID;
 
@@ -385,6 +467,40 @@ class SQLiteMarketDataStore:
             row = self._connection.execute(f"PRAGMA wal_checkpoint({mode})").fetchone()
         return int(row[0]), int(row[1]), int(row[2])
 
+    def upsert_trading_dates(self, source: str, trading_dates: Sequence[date]) -> int:
+        dates = sorted(set(trading_dates))
+        if not dates:
+            return 0
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        with self._lock, self._transaction():
+            source_id = self._source_id(source)
+            self._connection.executemany(
+                """
+                INSERT INTO trading_calendar(source_id, trade_date, updated_at_ms)
+                VALUES (?, ?, ?)
+                ON CONFLICT(source_id, trade_date) DO UPDATE SET
+                    updated_at_ms = excluded.updated_at_ms
+                """,
+                ((source_id, _date_key(item), now_ms) for item in dates),
+            )
+        return len(dates)
+
+    def list_trading_dates(
+        self, source: str, start_date: date, end_date: date
+    ) -> list[date]:
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT calendar.trade_date
+                FROM trading_calendar AS calendar
+                JOIN sources AS source USING (source_id)
+                WHERE source.code = ? AND calendar.trade_date BETWEEN ? AND ?
+                ORDER BY calendar.trade_date
+                """,
+                (source, _date_key(start_date), _date_key(end_date)),
+            ).fetchall()
+        return [_date_from_key(int(row[0])) for row in rows]
+
     def _configure(self) -> None:
         self._connection.execute("PRAGMA journal_mode=WAL")
         self._connection.execute("PRAGMA synchronous=NORMAL")
@@ -526,6 +642,295 @@ class SQLiteMarketDataStore:
                 ),
             )
         return len(memberships)
+
+    def derive_market_snapshots(self, trade_date: date) -> int:
+        """Materialize latest-day changes from canonical bars without extra Provider calls."""
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        trade_key = _date_key(trade_date)
+        with self._lock, self._transaction():
+            cursor = self._connection.execute(
+                """
+                INSERT INTO market_snapshots(
+                    instrument_id, trade_date, change_percent, total_market_cap,
+                    source_id, updated_at_ms
+                )
+                SELECT current.instrument_id, current.trade_date,
+                       (current.close / previous.close - 1.0) * 100.0,
+                       NULL, current.source_id, ?
+                FROM daily_bars AS current
+                JOIN daily_bars AS previous
+                  ON previous.instrument_id = current.instrument_id
+                 AND previous.trade_date = (
+                     SELECT max(candidate.trade_date)
+                     FROM daily_bars AS candidate
+                     WHERE candidate.instrument_id = current.instrument_id
+                       AND candidate.trade_date < current.trade_date
+                 )
+                WHERE current.trade_date = ? AND previous.close <> 0
+                ON CONFLICT(instrument_id, trade_date) DO UPDATE SET
+                    change_percent = excluded.change_percent,
+                    source_id = excluded.source_id,
+                    updated_at_ms = excluded.updated_at_ms
+                """,
+                (now_ms, trade_key),
+            )
+        return max(0, cursor.rowcount)
+
+    def upsert_market_snapshots(
+        self, source: str, snapshots: Sequence[MarketSnapshot]
+    ) -> int:
+        if not snapshots:
+            return 0
+        symbols = {item.symbol for item in snapshots}
+        if len(symbols) != len(snapshots):
+            raise ValueError("market snapshots must contain unique symbols")
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        with self._lock, self._transaction():
+            instrument_ids = self._instrument_ids(symbols)
+            missing = symbols - instrument_ids.keys()
+            if missing:
+                raise ValueError(f"unknown instruments: {', '.join(sorted(missing))}")
+            source_id = self._source_id(source)
+            self._connection.executemany(
+                """
+                INSERT INTO market_snapshots(
+                    instrument_id, trade_date, change_percent, total_market_cap,
+                    source_id, updated_at_ms
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(instrument_id, trade_date) DO UPDATE SET
+                    change_percent = excluded.change_percent,
+                    total_market_cap = excluded.total_market_cap,
+                    source_id = excluded.source_id,
+                    updated_at_ms = excluded.updated_at_ms
+                """,
+                (
+                    (
+                        instrument_ids[item.symbol], _date_key(item.trade_date),
+                        item.change_percent, item.total_market_cap, source_id, now_ms,
+                    )
+                    for item in snapshots
+                ),
+            )
+        return len(snapshots)
+
+    def list_market_snapshots(self, symbols: Sequence[str]) -> list[dict[str, object]]:
+        ordered = list(dict.fromkeys(item.upper() for item in symbols if item))
+        if len(ordered) > 500:
+            raise ValueError("market snapshot query exceeds 500 symbols")
+        if not ordered:
+            return []
+        rows: list[sqlite3.Row] = []
+        with self._lock:
+            for offset in range(0, len(ordered), 400):
+                chunk = ordered[offset : offset + 400]
+                placeholders = ",".join("?" for _ in chunk)
+                rows.extend(self._connection.execute(
+                    f"""
+                    SELECT instrument.symbol, instrument.name, instrument.kind,
+                           instrument.exchange, snapshot.trade_date,
+                           snapshot.change_percent, snapshot.total_market_cap,
+                           source.code, snapshot.updated_at_ms
+                    FROM instruments AS instrument
+                    JOIN market_snapshots AS snapshot USING (instrument_id)
+                    JOIN sources AS source USING (source_id)
+                    WHERE instrument.symbol IN ({placeholders})
+                      AND snapshot.trade_date = (
+                          SELECT max(latest.trade_date)
+                          FROM market_snapshots AS latest
+                          WHERE latest.instrument_id = instrument.instrument_id
+                      )
+                    """,
+                    chunk,
+                ).fetchall())
+        by_symbol = {
+            str(row[0]): {
+                "symbol": str(row[0]), "name": str(row[1]),
+                "kind": str(row[2]), "exchange": str(row[3]),
+                "trade_date": _date_from_key(int(row[4])),
+                "change_percent": float(row[5]),
+                "total_market_cap": float(row[6]) if row[6] is not None else None,
+                "source": str(row[7]), "updated_at_ms": int(row[8]),
+            }
+            for row in rows
+        }
+        return [by_symbol[symbol] for symbol in ordered if symbol in by_symbol]
+
+    def replace_etf_holdings(
+        self,
+        source: str,
+        etf_symbol: str,
+        as_of_date: date,
+        holdings: Sequence[EtfHolding],
+    ) -> int:
+        for item in holdings:
+            if item.etf_symbol != etf_symbol or item.as_of_date != as_of_date:
+                raise ValueError("ETF holdings must share ETF symbol and as-of date")
+        if len({item.holding_symbol for item in holdings}) != len(holdings):
+            raise ValueError("ETF holdings must contain unique symbols")
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        with self._lock, self._transaction():
+            etf_row = self._connection.execute(
+                "SELECT instrument_id, kind FROM instruments WHERE symbol = ?", (etf_symbol,)
+            ).fetchone()
+            if etf_row is None or str(etf_row[1]) != InstrumentKind.ETF.value:
+                raise ValueError(f"unknown ETF instrument: {etf_symbol}")
+            source_id = self._source_id(source)
+            etf_id = int(etf_row[0])
+            as_of_key = _date_key(as_of_date)
+            self._connection.execute(
+                "DELETE FROM etf_holdings WHERE source_id = ? AND etf_instrument_id = ? AND as_of_date = ?",
+                (source_id, etf_id, as_of_key),
+            )
+            self._connection.executemany(
+                """
+                INSERT INTO etf_holdings(
+                    source_id, etf_instrument_id, as_of_date, holding_symbol,
+                    holding_name, quantity, weight_percent, market_value,
+                    holding_rank, updated_at_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    (
+                        source_id, etf_id, as_of_key, item.holding_symbol,
+                        item.holding_name, item.quantity, item.weight_percent,
+                        item.market_value, item.rank, now_ms,
+                    )
+                    for item in holdings
+                ),
+            )
+        return len(holdings)
+
+    def record_etf_holding_receipt(
+        self,
+        source: str,
+        etf_symbol: str,
+        requested_date: date,
+        as_of_date: date | None,
+        row_count: int,
+    ) -> None:
+        if row_count < 0:
+            raise ValueError("ETF holding receipt row count must be non-negative")
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        with self._lock, self._transaction():
+            row = self._connection.execute(
+                "SELECT instrument_id, kind FROM instruments WHERE symbol = ?", (etf_symbol,)
+            ).fetchone()
+            if row is None or str(row[1]) != InstrumentKind.ETF.value:
+                raise ValueError(f"unknown ETF instrument: {etf_symbol}")
+            source_id = self._source_id(source)
+            self._connection.execute(
+                """
+                INSERT INTO etf_holding_receipts(
+                    source_id, etf_instrument_id, requested_date, as_of_date,
+                    row_count, status, updated_at_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(source_id, etf_instrument_id, requested_date) DO UPDATE SET
+                    as_of_date = excluded.as_of_date,
+                    row_count = excluded.row_count,
+                    status = excluded.status,
+                    updated_at_ms = excluded.updated_at_ms
+                """,
+                (
+                    source_id, int(row[0]), _date_key(requested_date),
+                    _date_key(as_of_date) if as_of_date else None, row_count,
+                    "complete" if row_count else "empty", now_ms,
+                ),
+            )
+
+    def list_etfs_needing_holding_refresh(
+        self,
+        source: str,
+        requested_date: date,
+        limit: int,
+        preferred_symbols: Sequence[str] = (),
+    ) -> list[str]:
+        if limit <= 0:
+            return []
+        preferred = list(dict.fromkeys(item.upper() for item in preferred_symbols))
+        with self._lock, self._transaction():
+            source_id = self._source_id(source)
+            if preferred:
+                placeholders = ",".join("?" for _ in preferred)
+                priority = f"CASE WHEN instrument.symbol IN ({placeholders}) THEN 0 ELSE 1 END"
+                params: list[object] = [source_id, _date_key(requested_date), *preferred, limit]
+            else:
+                priority = "1"
+                params = [source_id, _date_key(requested_date), limit]
+            rows = self._connection.execute(
+                f"""
+                SELECT instrument.symbol
+                FROM instruments AS instrument
+                LEFT JOIN etf_holding_receipts AS receipt
+                  ON receipt.etf_instrument_id = instrument.instrument_id
+                 AND receipt.source_id = ? AND receipt.requested_date = ?
+                WHERE instrument.kind = 'etf' AND instrument.active = 1
+                  AND receipt.etf_instrument_id IS NULL
+                ORDER BY {priority}, instrument.symbol
+                LIMIT ?
+                """,
+                params,
+            ).fetchall()
+        return [str(row[0]) for row in rows]
+
+    def list_etf_holdings(
+        self, etf_symbol: str, limit: int = 500, offset: int = 0
+    ) -> dict[str, object] | None:
+        if not 1 <= limit <= 5000 or offset < 0:
+            raise ValueError("invalid ETF holding pagination")
+        with self._lock:
+            meta = self._connection.execute(
+                """
+                SELECT holding.as_of_date, source.code, count(*)
+                FROM etf_holdings AS holding
+                JOIN instruments AS etf ON etf.instrument_id = holding.etf_instrument_id
+                JOIN sources AS source USING (source_id)
+                WHERE etf.symbol = ?
+                GROUP BY holding.as_of_date, source.code
+                ORDER BY holding.as_of_date DESC,
+                         CASE source.code WHEN 'tushare_etf_pcf' THEN 0 ELSE 1 END,
+                         source.code
+                LIMIT 1
+                """,
+                (etf_symbol,),
+            ).fetchone()
+            if meta is None:
+                return None
+            rows = self._connection.execute(
+                """
+                SELECT holding.holding_symbol, holding.holding_name,
+                       holding.quantity, holding.weight_percent,
+                       holding.market_value, holding.holding_rank,
+                       instrument.kind, instrument.exchange, instrument.active
+                FROM etf_holdings AS holding
+                JOIN instruments AS etf ON etf.instrument_id = holding.etf_instrument_id
+                JOIN sources AS source USING (source_id)
+                LEFT JOIN instruments AS instrument
+                  ON instrument.symbol = holding.holding_symbol
+                WHERE etf.symbol = ? AND holding.as_of_date = ? AND source.code = ?
+                ORDER BY coalesce(holding.holding_rank, 2147483647), holding.holding_symbol
+                LIMIT ? OFFSET ?
+                """,
+                (etf_symbol, int(meta[0]), str(meta[1]), limit, offset),
+            ).fetchall()
+        return {
+            "symbol": etf_symbol,
+            "as_of_date": _date_from_key(int(meta[0])),
+            "source": str(meta[1]),
+            "total": int(meta[2]),
+            "items": [
+                {
+                    "symbol": str(row[0]), "name": str(row[1]),
+                    "quantity": float(row[2]) if row[2] is not None else None,
+                    "weight_percent": float(row[3]) if row[3] is not None else None,
+                    "market_value": float(row[4]) if row[4] is not None else None,
+                    "rank": int(row[5]) if row[5] is not None else None,
+                    "kind": str(row[6]) if row[6] is not None else None,
+                    "exchange": str(row[7]) if row[7] is not None else None,
+                    "available": row[6] is not None and bool(row[8]),
+                }
+                for row in rows
+            ],
+        }
 
     def ensure_instruments(self, instruments: Sequence[Instrument]) -> int:
         rows = [
@@ -894,6 +1299,167 @@ class SQLiteMarketDataStore:
             for row in rows
         ]
 
+    def list_custom_groups(self, query: str = "") -> list[dict[str, object]]:
+        pattern = f"%{query.strip()}%"
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT custom.group_id, custom.name, custom.description,
+                       custom.created_at_ms, custom.updated_at_ms, count(member.instrument_id)
+                FROM custom_instrument_groups AS custom
+                LEFT JOIN custom_instrument_group_members AS member USING (group_id)
+                WHERE ? = '%%' OR custom.name LIKE ? OR custom.description LIKE ?
+                GROUP BY custom.group_id
+                ORDER BY custom.name COLLATE NOCASE, custom.group_id
+                """,
+                (pattern, pattern, pattern),
+            ).fetchall()
+        return [
+            {
+                "id": str(row[0]), "symbol": f"CUSTOM:{row[0]}",
+                "name": str(row[1]), "description": str(row[2]),
+                "member_count": int(row[5]), "created_at_ms": int(row[3]),
+                "updated_at_ms": int(row[4]),
+            }
+            for row in rows
+        ]
+
+    def get_custom_group(self, group_id: str) -> dict[str, object] | None:
+        with self._lock:
+            group = self._connection.execute(
+                """
+                SELECT group_id, name, description, created_at_ms, updated_at_ms
+                FROM custom_instrument_groups WHERE group_id = ?
+                """,
+                (group_id,),
+            ).fetchone()
+            if group is None:
+                return None
+            rows = self._connection.execute(
+                """
+                SELECT instrument.symbol, instrument.name, instrument.kind,
+                       instrument.exchange, member.position, member.tags_json,
+                       member.note, instrument.active
+                FROM custom_instrument_group_members AS member
+                JOIN instruments AS instrument USING (instrument_id)
+                WHERE member.group_id = ?
+                ORDER BY member.position, instrument.symbol
+                """,
+                (group_id,),
+            ).fetchall()
+        return {
+            "id": str(group[0]), "symbol": f"CUSTOM:{group[0]}",
+            "name": str(group[1]), "description": str(group[2]),
+            "created_at_ms": int(group[3]), "updated_at_ms": int(group[4]),
+            "members": [
+                {
+                    "symbol": str(row[0]), "name": str(row[1]),
+                    "kind": str(row[2]), "exchange": str(row[3]),
+                    "position": int(row[4]), "tags": json.loads(str(row[5])),
+                    "note": str(row[6]), "available": bool(row[7]),
+                }
+                for row in rows
+            ],
+        }
+
+    def create_custom_group(
+        self,
+        group_id: str,
+        name: str,
+        description: str = "",
+        members: Sequence[dict[str, object]] = (),
+    ) -> dict[str, object]:
+        normalized_name = name.strip()
+        if not normalized_name:
+            raise ValueError("custom group name is required")
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        with self._lock, self._transaction():
+            self._connection.execute(
+                """
+                INSERT INTO custom_instrument_groups(
+                    group_id, name, description, created_at_ms, updated_at_ms
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (group_id, normalized_name, description.strip(), now_ms, now_ms),
+            )
+            self._replace_custom_group_members_locked(group_id, members, now_ms)
+        result = self.get_custom_group(group_id)
+        assert result is not None
+        return result
+
+    def update_custom_group(
+        self,
+        group_id: str,
+        name: str,
+        description: str = "",
+        members: Sequence[dict[str, object]] = (),
+    ) -> dict[str, object] | None:
+        normalized_name = name.strip()
+        if not normalized_name:
+            raise ValueError("custom group name is required")
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        with self._lock, self._transaction():
+            cursor = self._connection.execute(
+                """
+                UPDATE custom_instrument_groups
+                SET name = ?, description = ?, updated_at_ms = ?
+                WHERE group_id = ?
+                """,
+                (normalized_name, description.strip(), now_ms, group_id),
+            )
+            if cursor.rowcount == 0:
+                return None
+            self._replace_custom_group_members_locked(group_id, members, now_ms)
+        return self.get_custom_group(group_id)
+
+    def delete_custom_group(self, group_id: str) -> bool:
+        with self._lock, self._transaction():
+            self._connection.execute(
+                "DELETE FROM custom_instrument_group_members WHERE group_id = ?",
+                (group_id,),
+            )
+            cursor = self._connection.execute(
+                "DELETE FROM custom_instrument_groups WHERE group_id = ?",
+                (group_id,),
+            )
+        return cursor.rowcount > 0
+
+    def _replace_custom_group_members_locked(
+        self,
+        group_id: str,
+        members: Sequence[dict[str, object]],
+        now_ms: int,
+    ) -> None:
+        symbols = [str(item["symbol"]).upper() for item in members]
+        if len(symbols) != len(set(symbols)):
+            raise ValueError("custom group members must contain unique symbols")
+        instrument_ids = self._instrument_ids(set(symbols))
+        missing = set(symbols) - instrument_ids.keys()
+        if missing:
+            raise ValueError(f"unknown instruments: {', '.join(sorted(missing))}")
+        self._connection.execute(
+            "DELETE FROM custom_instrument_group_members WHERE group_id = ?",
+            (group_id,),
+        )
+        self._connection.executemany(
+            """
+            INSERT INTO custom_instrument_group_members(
+                group_id, instrument_id, position, tags_json, note, updated_at_ms
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                (
+                    group_id, instrument_ids[symbol], position,
+                    json.dumps(
+                        [str(tag).strip() for tag in item.get("tags", []) if str(tag).strip()],
+                        ensure_ascii=False, separators=(",", ":"),
+                    ),
+                    str(item.get("note", "")).strip(), now_ms,
+                )
+                for position, (symbol, item) in enumerate(zip(symbols, members))
+            ),
+        )
+
     def search_instruments(
         self,
         query: str = "",
@@ -1052,11 +1618,14 @@ class SQLiteMarketDataStore:
             rows = self._connection.execute(
                 """
                 SELECT member.member_symbol, member.member_name,
-                       member.first_seen_on, member.last_seen_on, source.code
+                       member.first_seen_on, member.last_seen_on, source.code,
+                       instrument.kind, instrument.exchange, instrument.active
                 FROM board_memberships AS member
                 JOIN instruments AS board
                   ON board.instrument_id = member.board_instrument_id
                 JOIN sources AS source USING (source_id)
+                LEFT JOIN instruments AS instrument
+                  ON instrument.symbol = member.member_symbol
                 WHERE board.symbol = ? AND member.active = 1
                 ORDER BY member.member_symbol
                 LIMIT ? OFFSET ?
@@ -1068,6 +1637,9 @@ class SQLiteMarketDataStore:
                 "symbol": str(row[0]), "name": str(row[1]),
                 "first_seen_on": _date_from_key(int(row[2])),
                 "last_seen_on": _date_from_key(int(row[3])), "source": str(row[4]),
+                "kind": str(row[5]) if row[5] is not None else None,
+                "exchange": str(row[6]) if row[6] is not None else None,
+                "available": row[5] is not None and bool(row[7]),
             }
             for row in rows
         ]

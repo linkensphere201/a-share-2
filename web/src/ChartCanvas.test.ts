@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest'
 
-import { aggregateBars, chooseLodBucket, movingAverage, type DailyBar } from './ChartCanvas'
+import {
+  aggregateBars,
+  calculateChangePercent,
+  candleColor,
+  chooseLodBucket,
+  createRangeMeasurement,
+  movingAverage,
+  type DailyBar,
+} from './ChartCanvas'
 
 describe('movingAverage', () => {
   it('starts only after the full window and uses close prices', () => {
@@ -45,5 +53,58 @@ describe('chart level of detail', () => {
   it('uses power-of-two buckets only when density exceeds the viewport', () => {
     expect(chooseLodBucket(800, 800)).toBe(1)
     expect(chooseLodBucket(5_457, 800)).toBe(8)
+  })
+})
+
+describe('daily change percentage', () => {
+  it('calculates rise and fall against the previous close', () => {
+    expect(calculateChangePercent(11, 10)).toBeCloseTo(10)
+    expect(calculateChangePercent(9, 10)).toBeCloseTo(-10)
+  })
+
+  it('returns no value when the previous close is unavailable or zero', () => {
+    expect(calculateChangePercent(10)).toBeUndefined()
+    expect(calculateChangePercent(10, 0)).toBeUndefined()
+  })
+})
+
+describe('candlestick change colors', () => {
+  const bar = (open: number, close: number) => ({ open, close })
+
+  it('uses pale red and green below the three-percent threshold', () => {
+    expect(candleColor(bar(10, 10.2), 10)).toBe('#e99693')
+    expect(candleColor(bar(10, 9.8), 10)).toBe('#70be9a')
+  })
+
+  it('uses strong red and green at or beyond three percent', () => {
+    expect(candleColor(bar(10, 10.3), 10)).toBe('#ef5350')
+    expect(candleColor(bar(10, 9.7), 10)).toBe('#26a269')
+  })
+
+  it('falls back to the open when no previous close exists', () => {
+    expect(candleColor(bar(10, 10.1))).toBe('#e99693')
+  })
+})
+
+describe('selected range measurement', () => {
+  it('measures from the first open to the last close', () => {
+    const first: DailyBar = {
+      trade_date: '2026-07-01', open: 10, high: 11, low: 9, close: 10.5, volume: 100, source: 'test',
+    }
+    const last: DailyBar = {
+      trade_date: '2026-07-31', open: 11, high: 13, low: 10, close: 12, volume: 200, source: 'test',
+    }
+
+    expect(createRangeMeasurement(first, last, 23)).toEqual({
+      from: '2026-07-01',
+      to: '2026-07-31',
+      startAnchor: '2026-07-01',
+      endAnchor: '2026-07-31',
+      open: 10,
+      close: 12,
+      changePercent: 20,
+      elapsedDays: 30,
+      kLineCount: 23,
+    })
   })
 })

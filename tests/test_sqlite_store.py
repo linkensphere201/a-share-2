@@ -7,8 +7,10 @@ from stock_harness.models import (
     BoardMembership,
     CatalogEntry,
     DailyBar,
+    EtfHolding,
     Instrument,
     InstrumentKind,
+    MarketSnapshot,
 )
 from stock_harness.sqlite_store import SQLiteMarketDataStore
 
@@ -216,6 +218,62 @@ class SQLiteMarketDataStoreTests(unittest.TestCase):
 
         self.assertEqual(tuple(catalog), ("tushare", "eastmoney", "eastmoney_board", "concept", "BK1128.DC"))
         self.assertEqual(tuple(membership), ("300308.SZ", 1))
+
+    def test_market_snapshots_are_derived_and_stock_cap_is_enriched(self) -> None:
+        self.store.upsert_daily_bars("tushare", [
+            DailyBar("600519.SH", date(2026, 7, 31), 10, 10, 10, 10, 100),
+            DailyBar("600519.SH", date(2026, 8, 3), 11, 11, 11, 11, 100),
+        ])
+        self.store.derive_market_snapshots(date(2026, 8, 3))
+        self.store.upsert_market_snapshots("tushare", [
+            MarketSnapshot("600519.SH", date(2026, 8, 3), 10.0, 2_000_000_000),
+        ])
+
+        snapshot = self.store.list_market_snapshots(["600519.SH"])[0]
+
+        self.assertEqual(snapshot["trade_date"], date(2026, 8, 3))
+        self.assertAlmostEqual(snapshot["change_percent"], 10.0)
+        self.assertEqual(snapshot["total_market_cap"], 2_000_000_000)
+
+    def test_etf_holdings_keep_as_of_date_and_receipt(self) -> None:
+        etf = Instrument("510300.SH", "ETF", InstrumentKind.ETF, "SH")
+        self.store.upsert_instruments([etf])
+        as_of = date(2026, 8, 3)
+        holdings = [EtfHolding(etf.symbol, "600519.SH", "Moutai", as_of, 100, rank=1)]
+
+        self.store.replace_etf_holdings("tushare_etf_pcf", etf.symbol, as_of, holdings)
+        self.store.record_etf_holding_receipt(
+            "tushare_etf_pcf", etf.symbol, as_of, as_of, 1
+        )
+        result = self.store.list_etf_holdings(etf.symbol)
+
+        self.assertEqual(result["as_of_date"], as_of)
+        self.assertEqual(result["items"][0]["symbol"], "600519.SH")
+        self.assertEqual(
+            self.store.list_etfs_needing_holding_refresh(
+                "tushare_etf_pcf", as_of, 10
+            ),
+            [],
+        )
+
+    def test_custom_groups_persist_order_tags_and_updates(self) -> None:
+        created = self.store.create_custom_group(
+            "group-one", "Core Tech", "manual collection", [
+                {"symbol": "600519.SH", "tags": ["leader"], "note": "watch"},
+            ],
+        )
+        updated = self.store.update_custom_group(
+            "group-one", "Core Tech 2", "updated", [
+                {"symbol": "600519.SH", "tags": ["long-term"], "note": "hold"},
+            ],
+        )
+
+        self.assertEqual(created["members"][0]["tags"], ["leader"])
+        self.assertEqual(updated["name"], "Core Tech 2")
+        self.assertEqual(updated["members"][0]["note"], "hold")
+        self.assertEqual(self.store.list_custom_groups("Tech")[0]["member_count"], 1)
+        self.assertTrue(self.store.delete_custom_group("group-one"))
+        self.assertIsNone(self.store.get_custom_group("group-one"))
 
     def test_volume_scale_migration_is_idempotent(self) -> None:
         trade_date = date(2026, 7, 31)

@@ -10,6 +10,8 @@ from stock_harness.models import (
     CatalogEntry,
     DailyBar,
     Instrument,
+    EtfHolding,
+    MarketSnapshot,
     RepairBatch,
     StoredDailyBar,
     SymbolSyncState,
@@ -64,6 +66,18 @@ class MarketDataStore(Protocol):
         board_symbol: str,
         observed_on: date,
         memberships: Sequence[BoardMembership],
+    ) -> int: ...
+
+    def upsert_market_snapshots(
+        self, source: str, snapshots: Sequence[MarketSnapshot]
+    ) -> int: ...
+
+    def replace_etf_holdings(
+        self,
+        source: str,
+        etf_symbol: str,
+        as_of_date: date,
+        holdings: Sequence[EtfHolding],
     ) -> int: ...
 
     def upsert_daily_bars(self, source: str, bars: Sequence[DailyBar]) -> WriteStats: ...

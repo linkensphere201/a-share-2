@@ -1,9 +1,9 @@
 import { Maximize2, Minimize2, X } from 'lucide-react'
 import { ChartCanvas, type VisibleRange } from './ChartCanvas'
-import type { InstrumentWindowState } from './workspace'
+import type { ChartWindowState } from './workspace'
 
 type InstrumentWindowProps = {
-  windowState: InstrumentWindowState
+  windowState: ChartWindowState
   focused: boolean
   maximized: boolean
   removable: boolean
@@ -14,7 +14,7 @@ type InstrumentWindowProps = {
   onVisibleRangeChange: (value: VisibleRange) => void
 }
 
-export function InstrumentWindow({
+export function ChartWindow({
   windowState,
   focused,
   maximized,
@@ -30,17 +30,17 @@ export function InstrumentWindow({
     <section className={focused ? 'instrument-window focused' : 'instrument-window'}>
       <header className="instrument-window-header">
         <button className="instrument-window-title" onClick={onFocus}>
-          <strong>{instrument.name}</strong><small>{instrument.symbol}</small>
+          <strong>{windowState.title}</strong><small>{instrument.name} · {instrument.symbol}</small>
         </button>
         <div className="instrument-window-actions">
           <button
             title={maximized ? '还原窗口' : '最大化窗口'}
-            aria-label={maximized ? '还原窗口' : `最大化 ${instrument.name} 窗口`}
+            aria-label={maximized ? '还原窗口' : `最大化 ${windowState.title} 窗口`}
             onClick={onToggleMaximize}
           >{maximized ? <Minimize2 size={13}/> : <Maximize2 size={13}/>}</button>
           <button
             title="移除窗口"
-            aria-label={`移除 ${instrument.name} 窗口`}
+            aria-label={`移除 ${windowState.title} 窗口`}
             disabled={!removable}
             onClick={onRemove}
           ><X size={14}/></button>
@@ -59,3 +59,5 @@ export function InstrumentWindow({
     </section>
   )
 }
+
+export const InstrumentWindow = ChartWindow

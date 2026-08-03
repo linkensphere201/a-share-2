@@ -5,19 +5,38 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from datetime import date
 from pathlib import Path
+from typing import Callable
+from uuid import uuid4
+import sqlite3
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 
 from stock_harness.config import load_runtime_settings
 from stock_harness.models import InstrumentKind
 from stock_harness.sqlite_store import SQLiteMarketDataStore
 
 
+class CustomGroupMemberInput(BaseModel):
+    symbol: str
+    tags: list[str] = Field(default_factory=list)
+    note: str = ""
+
+
+class CustomGroupInput(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    description: str = Field(default="", max_length=500)
+    members: list[CustomGroupMemberInput] = Field(default_factory=list, max_length=5000)
+
+
 def create_app(
     store: SQLiteMarketDataStore | None = None,
     provider_config: Path = Path("config/providers.local.yaml"),
     storage_config: Path = Path("config/storage.local.yaml"),
+    web_dist: Path | None = None,
+    update_status: Callable[[], dict[str, object]] | None = None,
 ) -> FastAPI:
     owned_store = store is None
 
@@ -42,13 +61,19 @@ def create_app(
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
-        allow_methods=["GET"],
+        allow_methods=["GET", "POST", "PUT", "DELETE"],
         allow_headers=["*"],
     )
 
     @app.get("/api/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/api/update-status")
+    def auto_update_status() -> dict[str, object]:
+        if update_status is None:
+            return {"state": "disabled"}
+        return update_status()
 
     @app.get("/api/instruments")
     def instruments(
@@ -70,7 +95,65 @@ def create_app(
             limit=limit,
             offset=offset,
         )
+        if offset == 0 and not kind and not source_system and not family and not category:
+            groups = _store(request).list_custom_groups(query)
+            custom_rows = [
+                {
+                    "symbol": item["symbol"], "name": item["name"],
+                    "kind": "custom-group", "exchange": "LOCAL", "active": True,
+                    "category": "自定义分组", "rows": item["member_count"],
+                    "first_trade_date": None, "last_trade_date": None,
+                }
+                for item in groups
+            ]
+            rows = (custom_rows + rows)[:limit]
         return {"items": rows, "limit": limit, "offset": offset}
+
+    @app.get("/api/custom-groups")
+    def custom_groups(request: Request, query: str = "") -> dict[str, object]:
+        return {"items": _store(request).list_custom_groups(query)}
+
+    @app.get("/api/custom-groups/{group_id}")
+    def custom_group(request: Request, group_id: str) -> dict[str, object]:
+        result = _store(request).get_custom_group(group_id)
+        if result is None:
+            raise HTTPException(status_code=404, detail="custom group not found")
+        return result
+
+    @app.post("/api/custom-groups", status_code=status.HTTP_201_CREATED)
+    def create_custom_group(request: Request, payload: CustomGroupInput) -> dict[str, object]:
+        try:
+            return _store(request).create_custom_group(
+                str(uuid4()), payload.name, payload.description,
+                [item.model_dump() for item in payload.members],
+            )
+        except sqlite3.IntegrityError as exc:
+            raise HTTPException(status_code=409, detail="custom group name already exists") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.put("/api/custom-groups/{group_id}")
+    def update_custom_group(
+        request: Request, group_id: str, payload: CustomGroupInput,
+    ) -> dict[str, object]:
+        try:
+            result = _store(request).update_custom_group(
+                group_id, payload.name, payload.description,
+                [item.model_dump() for item in payload.members],
+            )
+        except sqlite3.IntegrityError as exc:
+            raise HTTPException(status_code=409, detail="custom group name already exists") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if result is None:
+            raise HTTPException(status_code=404, detail="custom group not found")
+        return result
+
+    @app.delete("/api/custom-groups/{group_id}", status_code=status.HTTP_204_NO_CONTENT)
+    def delete_custom_group(request: Request, group_id: str) -> Response:
+        if not _store(request).delete_custom_group(group_id):
+            raise HTTPException(status_code=404, detail="custom group not found")
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @app.get("/api/instruments/{symbol}")
     def instrument(request: Request, symbol: str) -> dict[str, object]:
@@ -78,6 +161,16 @@ def create_app(
         if row is None:
             raise HTTPException(status_code=404, detail="instrument not found")
         return row
+
+    @app.get("/api/market-snapshots")
+    def market_snapshots(
+        request: Request,
+        symbol: list[str] = Query(default=[]),
+    ) -> dict[str, object]:
+        if len(symbol) > 500:
+            raise HTTPException(status_code=422, detail="at most 500 symbols are allowed")
+        normalized = [item.upper() for item in symbol]
+        return {"items": _store(request).list_market_snapshots(normalized)}
 
     @app.get("/api/instruments/{symbol}/daily-bars")
     def daily_bars(
@@ -116,6 +209,53 @@ def create_app(
         rows = _store(request).list_board_members(symbol.upper(), limit, offset)
         return {"symbol": symbol.upper(), "items": rows, "limit": limit, "offset": offset}
 
+    @app.get("/api/instruments/{symbol}/members")
+    def instrument_members(
+        request: Request,
+        symbol: str,
+        limit: int = Query(default=500, ge=1, le=5000),
+        offset: int = Query(default=0, ge=0),
+    ) -> dict[str, object]:
+        normalized = symbol.upper()
+        store = _store(request)
+        if normalized.startswith("CUSTOM:"):
+            custom = store.get_custom_group(normalized.split(":", 1)[1].lower())
+            if custom is None:
+                raise HTTPException(status_code=404, detail="custom group not found")
+            all_items = custom["members"]
+            items = all_items[offset : offset + limit]
+            relation = "custom_group_members"
+            as_of_date = None
+            source = "local_custom_group"
+            total = len(all_items)
+            return _enrich_members(store, normalized, relation, as_of_date, source, total, items)
+        instrument = store.get_instrument_summary(normalized)
+        if instrument is None:
+            raise HTTPException(status_code=404, detail="instrument not found")
+        if instrument["kind"] == InstrumentKind.SECTOR.value:
+            items = store.list_board_members(normalized, limit, offset)
+            as_of_date = max(
+                (item["last_seen_on"] for item in items), default=None
+            )
+            source = items[0]["source"] if items else None
+            relation = "board_constituents"
+            total = len(items)
+        elif instrument["kind"] == InstrumentKind.ETF.value:
+            result = store.list_etf_holdings(normalized, limit, offset)
+            if result is None:
+                return {
+                    "symbol": normalized, "relation": "etf_pcf",
+                    "as_of_date": None, "source": None, "total": 0, "items": [],
+                }
+            items = result["items"]
+            as_of_date = result["as_of_date"]
+            source = result["source"]
+            relation = "etf_pcf"
+            total = result["total"]
+        else:
+            raise HTTPException(status_code=400, detail="instrument has no members")
+        return _enrich_members(store, normalized, relation, as_of_date, source, total, items)
+
     @app.get("/api/instruments/{symbol}/boards")
     def symbol_boards(
         request: Request,
@@ -126,11 +266,49 @@ def create_app(
         rows = _store(request).list_symbol_boards(symbol.upper(), limit, offset)
         return {"symbol": symbol.upper(), "items": rows, "limit": limit, "offset": offset}
 
+    if web_dist is not None:
+        index_file = web_dist / "index.html"
+        if not index_file.is_file():
+            raise ValueError(f"frontend build not found: {index_file}")
+        app.mount("/", StaticFiles(directory=web_dist, html=True), name="web")
+
     return app
 
 
 def _store(request: Request) -> SQLiteMarketDataStore:
     return request.app.state.store
+
+
+def _enrich_members(
+    store: SQLiteMarketDataStore,
+    symbol: str,
+    relation: str,
+    as_of_date: object,
+    source: object,
+    total: int,
+    items: list[dict[str, object]],
+) -> dict[str, object]:
+    member_symbols = [str(item["symbol"]) for item in items]
+    snapshot_rows = []
+    for chunk_start in range(0, len(member_symbols), 500):
+        snapshot_rows.extend(store.list_market_snapshots(
+            member_symbols[chunk_start : chunk_start + 500]
+        ))
+    snapshots = {item["symbol"]: item for item in snapshot_rows}
+    enriched = []
+    for item in items:
+        snapshot = snapshots.get(str(item["symbol"]))
+        enriched.append({
+            **item,
+            "change_percent": snapshot["change_percent"] if snapshot else None,
+            "total_market_cap": snapshot["total_market_cap"] if snapshot else None,
+            "snapshot_date": snapshot["trade_date"] if snapshot else None,
+        })
+    return {
+        "symbol": symbol, "relation": relation,
+        "as_of_date": as_of_date, "source": source,
+        "total": total, "items": enriched,
+    }
 
 
 app = create_app()

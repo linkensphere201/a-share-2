@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import { Percent, X, ZoomIn } from 'lucide-react'
 import {
   CandlestickSeries,
   ColorType,
@@ -16,7 +17,7 @@ import {
   type Time,
 } from 'lightweight-charts'
 
-export type ChartRange = '1Y' | '3Y' | '10Y' | 'ALL'
+export type ChartRange = '1M' | '1Y' | '3Y' | '10Y' | 'ALL'
 export type PriceMode = 'normal' | 'log'
 export type VisibleRange = { from: string; to: string }
 
@@ -30,8 +31,29 @@ export type DailyBar = {
   source: string
 }
 
-type Readout = DailyBar & { ma5?: number; ma20?: number; ma60?: number }
+type Readout = DailyBar & { changePercent?: number; ma5?: number; ma20?: number; ma60?: number }
 type RenderBar = DailyBar & { period_start: string }
+type SelectionBox = { left: number; top: number; width: number; height: number }
+type RangeSelection = {
+  first: RenderBar
+  last: RenderBar
+  count: number
+  box: SelectionBox
+  menuLeft: number
+  menuTop: number
+}
+
+export type RangeMeasurement = {
+  from: string
+  to: string
+  startAnchor: string
+  endAnchor: string
+  open: number
+  close: number
+  changePercent: number
+  elapsedDays: number
+  kLineCount: number
+}
 
 type ChartCanvasProps = {
   symbol: string
@@ -44,6 +66,8 @@ type ChartCanvasProps = {
 
 const rising = '#ef5350'
 const falling = '#26a269'
+const risingSoft = '#e99693'
+const fallingSoft = '#70be9a'
 
 export function ChartCanvas({
   symbol,
@@ -61,7 +85,10 @@ export function ChartCanvas({
   const ma20Ref = useRef<ISeriesApi<'Line'> | null>(null)
   const ma60Ref = useRef<ISeriesApi<'Line'> | null>(null)
   const barsRef = useRef<DailyBar[]>([])
+  const previousCloseByDateRef = useRef<Map<string, number>>(new Map())
   const renderedBarsRef = useRef<Map<string, RenderBar>>(new Map())
+  const renderedBarListRef = useRef<RenderBar[]>([])
+  const selectionDragRef = useRef<{ pointerId: number; startX: number; startY: number } | undefined>(undefined)
   const bucketRef = useRef(1)
   const applyBucketRef = useRef<(bucket: number, preserve?: IRange<Time>) => void>(() => undefined)
   const recalculateLodRef = useRef<() => void>(() => undefined)
@@ -73,6 +100,10 @@ export function ChartCanvas({
   const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading')
   const [readout, setReadout] = useState<Readout | null>(null)
   const [lodBucket, setLodBucket] = useState(1)
+  const [selectionBox, setSelectionBox] = useState<SelectionBox>()
+  const [rangeSelection, setRangeSelection] = useState<RangeSelection>()
+  const [measurement, setMeasurement] = useState<RangeMeasurement>()
+  const [overlayRevision, setOverlayRevision] = useState(0)
 
   const averages = useMemo(() => ({
     ma5: movingAverage(bars, 5),
@@ -145,6 +176,9 @@ export function ChartCanvas({
       const candle = param.seriesData.get(candles) as CandlestickData<Time> | undefined
       if (!candle || !('open' in candle)) return
       const rendered = renderedBarsRef.current.get(String(param.time))
+      const previousClose = rendered
+        ? previousCloseByDateRef.current.get(rendered.period_start)
+        : undefined
       setReadout({
         trade_date: rendered && rendered.period_start !== rendered.trade_date
           ? `${rendered.period_start} → ${rendered.trade_date}`
@@ -155,6 +189,7 @@ export function ChartCanvas({
         close: candle.close,
         volume: rendered?.volume ?? 0,
         source: rendered?.source ?? '',
+        changePercent: calculateChangePercent(candle.close, previousClose),
         ma5: valueAt(ma5, param),
         ma20: valueAt(ma20, param),
         ma60: valueAt(ma60, param),
@@ -168,6 +203,7 @@ export function ChartCanvas({
       window.cancelAnimationFrame(lodFrame)
       lodFrame = window.requestAnimationFrame(() => {
         resetAutoScale()
+        setOverlayRevision(value => value + 1)
         const visible = chart.timeScale().getVisibleRange()
         if (!visible || !hostRef.current) return
         const count = countBarsInRange(barsRef.current, String(visible.from), String(visible.to))
@@ -205,6 +241,10 @@ export function ChartCanvas({
 
   useEffect(() => {
     const controller = new AbortController()
+    selectionDragRef.current = undefined
+    setSelectionBox(undefined)
+    setRangeSelection(undefined)
+    setMeasurement(undefined)
     setState('loading')
     fetch(`/api/instruments/${encodeURIComponent(symbol)}/daily-bars`, { signal: controller.signal })
       .then(response => {
@@ -213,6 +253,7 @@ export function ChartCanvas({
       })
       .then(body => {
         barsRef.current = body.items
+        previousCloseByDateRef.current = previousCloseByDate(body.items)
         setBars(body.items)
         setReadout(latestReadout(body.items))
         setState('ready')
@@ -231,17 +272,27 @@ export function ChartCanvas({
   useEffect(() => {
     applyBucketRef.current = (bucket, preserve) => {
       const renderedBars = aggregateBars(bars, bucket)
-      const candles: CandlestickData<Time>[] = renderedBars.map(item => ({
-      time: item.trade_date,
-      open: item.open,
-      high: item.high,
-      low: item.low,
-      close: item.close,
-      }))
+      const colors = new Map(renderedBars.map(item => [
+        item.trade_date,
+        candleColor(item, previousCloseByDateRef.current.get(item.period_start)),
+      ]))
+      const candles: CandlestickData<Time>[] = renderedBars.map(item => {
+        const color = colors.get(item.trade_date)!
+        return {
+          time: item.trade_date,
+          open: item.open,
+          high: item.high,
+          low: item.low,
+          close: item.close,
+          color,
+          borderColor: color,
+          wickColor: color,
+        }
+      })
       const volumes: HistogramData<Time>[] = renderedBars.map(item => ({
         time: item.trade_date,
         value: item.volume,
-        color: item.close >= item.open ? `${rising}99` : `${falling}99`,
+        color: `${colors.get(item.trade_date)!}99`,
       }))
       const times = new Set(renderedBars.map(item => item.trade_date))
       suppressLodRef.current = true
@@ -251,6 +302,7 @@ export function ChartCanvas({
       ma20Ref.current?.setData(averages.ma20.filter(item => times.has(String(item.time))))
       ma60Ref.current?.setData(averages.ma60.filter(item => times.has(String(item.time))))
       renderedBarsRef.current = new Map(renderedBars.map(item => [item.trade_date, item]))
+      renderedBarListRef.current = renderedBars
       bucketRef.current = bucket
       setLodBucket(bucket)
       window.requestAnimationFrame(() => {
@@ -288,16 +340,139 @@ export function ChartCanvas({
       return
     }
     const last = bars.at(-1)!.trade_date
-    const from = subtractYears(last, Number.parseInt(range, 10))
+    const from = range === '1M' ? subtractMonths(last, 1) : subtractYears(last, Number.parseInt(range, 10))
     chart.timeScale().setVisibleRange({ from, to: last })
     resetAutoScaleRef.current()
     window.requestAnimationFrame(() => recalculateLodRef.current())
   }, [bars, range, initialVisibleRange?.from, initialVisibleRange?.to])
 
+  const handleSelectionStart = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 2 || !chartRef.current) return
+    event.preventDefault()
+    const point = localPoint(event)
+    const paneHeight = chartRef.current.panes()[0]?.getHeight() ?? event.currentTarget.clientHeight
+    if (point.y > paneHeight) return
+    event.currentTarget.setPointerCapture(event.pointerId)
+    selectionDragRef.current = { pointerId: event.pointerId, startX: point.x, startY: point.y }
+    setMeasurement(undefined)
+    setRangeSelection(undefined)
+    setSelectionBox({ left: point.x, top: point.y, width: 0, height: 0 })
+  }
+
+  const handleSelectionMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = selectionDragRef.current
+    if (!drag || drag.pointerId !== event.pointerId || !chartRef.current) return
+    event.preventDefault()
+    const point = localPoint(event)
+    const paneHeight = chartRef.current.panes()[0]?.getHeight() ?? event.currentTarget.clientHeight
+    setSelectionBox(rectangleFromPoints(
+      drag.startX,
+      drag.startY,
+      clamp(point.x, 0, event.currentTarget.clientWidth),
+      clamp(point.y, 0, paneHeight),
+    ))
+  }
+
+  const handleSelectionEnd = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = selectionDragRef.current
+    if (!drag || drag.pointerId !== event.pointerId || !chartRef.current) return
+    event.preventDefault()
+    selectionDragRef.current = undefined
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+    const point = localPoint(event)
+    const paneHeight = chartRef.current.panes()[0]?.getHeight() ?? event.currentTarget.clientHeight
+    const box = rectangleFromPoints(
+      drag.startX,
+      drag.startY,
+      clamp(point.x, 0, event.currentTarget.clientWidth),
+      clamp(point.y, 0, paneHeight),
+    )
+    if (box.width < 8 || box.height < 8) {
+      setSelectionBox(undefined)
+      return
+    }
+    const selected = resolveRangeSelection(
+      chartRef.current,
+      renderedBarListRef.current,
+      box,
+      point.x,
+      point.y,
+      event.currentTarget.clientWidth,
+      event.currentTarget.clientHeight,
+    )
+    if (!selected) {
+      setSelectionBox(undefined)
+      return
+    }
+    setSelectionBox(box)
+    setRangeSelection(selected)
+  }
+
+  const handleSelectionCancel = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (selectionDragRef.current?.pointerId !== event.pointerId) return
+    selectionDragRef.current = undefined
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+    setSelectionBox(undefined)
+    setRangeSelection(undefined)
+  }
+
+  const showRangeMeasurement = () => {
+    if (!rangeSelection) return
+    setMeasurement(createRangeMeasurement(rangeSelection.first, rangeSelection.last, rangeSelection.count))
+    setRangeSelection(undefined)
+    setSelectionBox(undefined)
+    setOverlayRevision(value => value + 1)
+  }
+
+  const zoomToSelection = () => {
+    if (!rangeSelection || rangeSelection.count < 2 || !chartRef.current) return
+    chartRef.current.timeScale().setVisibleRange({
+      from: rangeSelection.first.period_start,
+      to: rangeSelection.last.trade_date,
+    })
+    resetAutoScaleRef.current()
+    setRangeSelection(undefined)
+    setSelectionBox(undefined)
+    window.requestAnimationFrame(() => recalculateLodRef.current())
+  }
+
+  const measurementGeometry = projectMeasurement(
+    measurement,
+    chartRef.current,
+    candleRef.current,
+    hostRef.current,
+    overlayRevision,
+  )
+
   return (
-    <div className="chart-stage">
+    <div
+      className={selectionDragRef.current ? 'chart-stage selecting' : 'chart-stage'}
+      onPointerDown={handleSelectionStart}
+      onPointerMove={handleSelectionMove}
+      onPointerUp={handleSelectionEnd}
+      onPointerCancel={handleSelectionCancel}
+      onContextMenu={event => event.preventDefault()}
+    >
       <div ref={hostRef} className="chart-host"/>
       {readout && <ChartReadout value={readout} lodBucket={lodBucket}/>}
+      {selectionBox && <div className="chart-range-selection" style={selectionBox}/>}
+      {rangeSelection && (
+        <div
+          className="chart-range-menu"
+          style={{ left: rangeSelection.menuLeft, top: rangeSelection.menuTop }}
+          onPointerDown={event => event.stopPropagation()}
+        >
+          <button onClick={showRangeMeasurement}><Percent size={14}/>展示区域涨跌幅</button>
+          <button disabled={rangeSelection.count < 2} onClick={zoomToSelection}><ZoomIn size={14}/>缩放区域</button>
+          <button className="chart-range-menu-close" title="关闭" aria-label="关闭区域菜单" onClick={() => {
+            setRangeSelection(undefined)
+            setSelectionBox(undefined)
+          }}><X size={13}/></button>
+        </div>
+      )}
+      {measurement && measurementGeometry && (
+        <MeasurementOverlay measurement={measurement} geometry={measurementGeometry}/>
+      )}
       {state === 'loading' && <div className="chart-state">加载日线数据</div>}
       {state === 'error' && <div className="chart-state error">日线数据加载失败</div>}
       {state === 'ready' && bars.length === 0 && <div className="chart-state">暂无日线数据</div>}
@@ -305,9 +480,57 @@ export function ChartCanvas({
   )
 }
 
+type MeasurementGeometry = {
+  width: number
+  height: number
+  startX: number
+  startY: number
+  endX: number
+  endY: number
+  labelLeft: number
+  labelTop: number
+}
+
+function MeasurementOverlay({
+  measurement,
+  geometry,
+}: {
+  measurement: RangeMeasurement
+  geometry: MeasurementGeometry
+}) {
+  const tone = measurement.changePercent >= 0 ? 'rise' : 'fall'
+  const strokeTone = measurement.changePercent >= 0 ? 'measurement-rise' : 'measurement-fall'
+  const horizontalLabelX = (geometry.startX + geometry.endX) / 2
+  const horizontalLabelY = clamp(geometry.startY - 7, 12, geometry.height - 6)
+  return (
+    <div className="chart-measurement-overlay">
+      <svg width={geometry.width} height={geometry.height} aria-hidden="true">
+        <polyline
+          className={`measurement-triangle ${strokeTone}`}
+          points={`${geometry.startX},${geometry.startY} ${geometry.endX},${geometry.startY} ${geometry.endX},${geometry.endY} ${geometry.startX},${geometry.startY}`}
+        />
+        <circle className={strokeTone} cx={geometry.startX} cy={geometry.startY} r="3"/>
+        <circle className={strokeTone} cx={geometry.endX} cy={geometry.endY} r="3"/>
+        <text className="measurement-duration" x={horizontalLabelX} y={horizontalLabelY} textAnchor="middle">
+          {measurement.elapsedDays}天 · {measurement.kLineCount}根K线
+        </text>
+      </svg>
+      <div className="chart-measurement-readout" style={{ left: geometry.labelLeft, top: geometry.labelTop }}>
+        <span><small>{measurement.from}</small><b>开 {formatPrice(measurement.open)}</b></span>
+        <span><small>{measurement.to}</small><b>收 {formatPrice(measurement.close)}</b></span>
+        <strong className={tone}>涨跌 {formatChangePercent(measurement.changePercent)}</strong>
+      </div>
+    </div>
+  )
+}
+
 function ChartReadout({ value, lodBucket }: { value: Readout; lodBucket: number }) {
-  const change = value.close - value.open
-  const tone = change >= 0 ? 'rise' : 'fall'
+  const candleTone = value.changePercent === undefined
+    ? value.close >= value.open ? 'rise' : 'fall'
+    : value.changePercent >= 0 ? 'rise' : 'fall'
+  const changeTone = value.changePercent === undefined
+    ? undefined
+    : value.changePercent >= 0 ? 'rise' : 'fall'
   return (
     <div className="chart-readout">
       <span className="lod-badge">{lodBucket}D</span>
@@ -315,7 +538,8 @@ function ChartReadout({ value, lodBucket }: { value: Readout; lodBucket: number 
       <span>开 <b>{formatPrice(value.open)}</b></span>
       <span>高 <b>{formatPrice(value.high)}</b></span>
       <span>低 <b>{formatPrice(value.low)}</b></span>
-      <span>收 <b className={tone}>{formatPrice(value.close)}</b></span>
+      <span>收 <b className={candleTone}>{formatPrice(value.close)}</b></span>
+      <span>涨跌 <b className={changeTone}>{formatChangePercent(value.changePercent)}</b></span>
       <span>量 <b>{formatVolume(value.volume)}</b></span>
       {value.ma5 !== undefined && <span className="ma5-value">MA5 {formatPrice(value.ma5)}</span>}
       {value.ma20 !== undefined && <span className="ma20-value">MA20 {formatPrice(value.ma20)}</span>}
@@ -364,6 +588,126 @@ export function chooseLodBucket(visibleBars: number, width: number): number {
   return Math.min(32, 2 ** Math.ceil(Math.log2(required)))
 }
 
+export function calculateChangePercent(close: number, previousClose?: number): number | undefined {
+  if (previousClose === undefined || previousClose === 0) return undefined
+  return (close - previousClose) / previousClose * 100
+}
+
+export function candleColor(bar: Pick<DailyBar, 'open' | 'close'>, previousClose?: number): string {
+  const reference = previousClose ?? bar.open
+  const changePercent = calculateChangePercent(bar.close, reference) ?? 0
+  if (changePercent >= 0) return changePercent < 3 ? risingSoft : rising
+  return Math.abs(changePercent) < 3 ? fallingSoft : falling
+}
+
+export function createRangeMeasurement(
+  first: DailyBar & { period_start?: string },
+  last: DailyBar,
+  kLineCount: number,
+): RangeMeasurement {
+  const from = first.period_start ?? first.trade_date
+  return {
+    from,
+    to: last.trade_date,
+    startAnchor: first.trade_date,
+    endAnchor: last.trade_date,
+    open: first.open,
+    close: last.close,
+    changePercent: calculateChangePercent(last.close, first.open) ?? 0,
+    elapsedDays: calendarDaysBetween(from, last.trade_date),
+    kLineCount,
+  }
+}
+
+function resolveRangeSelection(
+  chart: IChartApi,
+  renderedBars: RenderBar[],
+  box: SelectionBox,
+  pointerX: number,
+  pointerY: number,
+  hostWidth: number,
+  hostHeight: number,
+): RangeSelection | undefined {
+  if (renderedBars.length === 0) return undefined
+  const leftLogical = chart.timeScale().coordinateToLogical(box.left)
+  const rightLogical = chart.timeScale().coordinateToLogical(box.left + box.width)
+  if (leftLogical === null || rightLogical === null) return undefined
+  const leftIndex = clamp(Math.round(Number(leftLogical)), 0, renderedBars.length - 1)
+  const rightIndex = clamp(Math.round(Number(rightLogical)), 0, renderedBars.length - 1)
+  const firstIndex = Math.min(leftIndex, rightIndex)
+  const lastIndex = Math.max(leftIndex, rightIndex)
+  return {
+    first: renderedBars[firstIndex],
+    last: renderedBars[lastIndex],
+    count: lastIndex - firstIndex + 1,
+    box,
+    menuLeft: clamp(pointerX + 6, 6, Math.max(6, hostWidth - 190)),
+    menuTop: clamp(pointerY + 6, 6, Math.max(6, hostHeight - 78)),
+  }
+}
+
+function projectMeasurement(
+  measurement: RangeMeasurement | undefined,
+  chart: IChartApi | null,
+  candles: ISeriesApi<'Candlestick'> | null,
+  host: HTMLDivElement | null,
+  revision: number,
+): MeasurementGeometry | undefined {
+  void revision
+  if (!measurement || !chart || !candles || !host) return undefined
+  const startX = chart.timeScale().timeToCoordinate(measurement.startAnchor)
+  const endX = chart.timeScale().timeToCoordinate(measurement.endAnchor)
+  const startY = candles.priceToCoordinate(measurement.open)
+  const endY = candles.priceToCoordinate(measurement.close)
+  if (startX === null || endX === null || startY === null || endY === null) return undefined
+  const height = chart.panes()[0]?.getHeight() ?? host.clientHeight
+  const labelWidth = Math.min(168, Math.max(132, host.clientWidth - 16))
+  const midpointX = (startX + endX) / 2
+  const midpointY = (startY + endY) / 2
+  return {
+    width: host.clientWidth,
+    height,
+    startX,
+    startY,
+    endX,
+    endY,
+    labelLeft: clamp(midpointX + 8, 8, Math.max(8, host.clientWidth - labelWidth - 8)),
+    labelTop: clamp(midpointY - 24, 36, Math.max(36, height - 66)),
+  }
+}
+
+function localPoint(event: ReactPointerEvent<HTMLDivElement>): { x: number; y: number } {
+  const bounds = event.currentTarget.getBoundingClientRect()
+  return { x: event.clientX - bounds.left, y: event.clientY - bounds.top }
+}
+
+function rectangleFromPoints(startX: number, startY: number, endX: number, endY: number): SelectionBox {
+  return {
+    left: Math.min(startX, endX),
+    top: Math.min(startY, endY),
+    width: Math.abs(endX - startX),
+    height: Math.abs(endY - startY),
+  }
+}
+
+function calendarDaysBetween(from: string, to: string): number {
+  const start = Date.parse(`${from}T00:00:00Z`)
+  const end = Date.parse(`${to}T00:00:00Z`)
+  return Math.max(0, Math.round((end - start) / 86_400_000))
+}
+
+function clamp(value: number, minimum: number, maximum: number): number {
+  return Math.min(maximum, Math.max(minimum, value))
+}
+
+function previousCloseByDate(bars: DailyBar[]): Map<string, number> {
+  const output = new Map<string, number>()
+  for (let index = 1; index < bars.length; index += 1) {
+    output.set(bars[index].trade_date, bars[index - 1].close)
+  }
+  return output
+}
+
 function countBarsInRange(bars: DailyBar[], from: string, to: string): number {
   let count = 0
   for (const bar of bars) {
@@ -377,6 +721,7 @@ function latestReadout(bars: DailyBar[]): Readout | null {
   if (!latest) return null
   return {
     ...latest,
+    changePercent: calculateChangePercent(latest.close, bars.at(-2)?.close),
     ma5: latestAverage(bars, 5),
     ma20: latestAverage(bars, 20),
     ma60: latestAverage(bars, 60),
@@ -399,8 +744,19 @@ function subtractYears(date: string, years: number): string {
   return value.toISOString().slice(0, 10)
 }
 
+function subtractMonths(date: string, months: number): string {
+  const value = new Date(`${date}T00:00:00Z`)
+  value.setUTCMonth(value.getUTCMonth() - months)
+  return value.toISOString().slice(0, 10)
+}
+
 function formatPrice(value: number): string {
   return value >= 1000 ? value.toFixed(1) : value.toFixed(2)
+}
+
+function formatChangePercent(value?: number): string {
+  if (value === undefined) return '—'
+  return `${value > 0 ? '+' : ''}${value.toFixed(2)}%`
 }
 
 function formatVolume(value: number): string {

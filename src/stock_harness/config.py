@@ -53,6 +53,20 @@ class UniverseSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class AutoUpdateSettings:
+    enabled: bool
+    poll_interval_seconds: int
+    calendar_lookback_days: int
+
+
+@dataclass(frozen=True, slots=True)
+class EtfHoldingSettings:
+    enabled: bool
+    max_symbols_per_run: int
+    lookback_open_dates: int
+
+
+@dataclass(frozen=True, slots=True)
 class RuntimeSettings:
     provider_name: str
     tushare: TushareSettings
@@ -64,6 +78,8 @@ class RuntimeSettings:
     validation: ValidationSettings
     repair: RepairSettings
     universe: UniverseSettings
+    auto_update: AutoUpdateSettings
+    etf_holdings: EtfHoldingSettings
 
 
 def load_runtime_settings(provider_config: Path, storage_config: Path) -> RuntimeSettings:
@@ -87,6 +103,12 @@ def load_runtime_settings(provider_config: Path, storage_config: Path) -> Runtim
     universes = providers.get("universes", {})
     if not isinstance(universes, dict):
         raise ValueError("configuration section must be a mapping: providers.universes")
+    auto_update = providers.get("auto_update", {})
+    if not isinstance(auto_update, dict):
+        raise ValueError("configuration section must be a mapping: providers.auto_update")
+    etf_holdings = providers.get("etf_holdings", {})
+    if not isinstance(etf_holdings, dict):
+        raise ValueError("configuration section must be a mapping: providers.etf_holdings")
     storage = _mapping(storage_data, "storage")
     database_path = _resolve_path(storage_config, str(storage.get("database_path", "../data/market.sqlite")))
     sqlite_cache_size_kib = int(storage.get("sqlite_cache_size_kib", 32_768))
@@ -142,6 +164,20 @@ def load_runtime_settings(provider_config: Path, storage_config: Path) -> Runtim
             broad_indices=_universe_symbols(universes, "broad_indices"),
             sector_source=str(universes.get("sector_source", "SW2021")),
             sector_level=str(universes.get("sector_level", "L1")),
+        ),
+        auto_update=AutoUpdateSettings(
+            enabled=bool(auto_update.get("enabled", True)),
+            poll_interval_seconds=max(
+                60, int(auto_update.get("poll_interval_seconds", 900))
+            ),
+            calendar_lookback_days=max(
+                7, int(auto_update.get("calendar_lookback_days", 14))
+            ),
+        ),
+        etf_holdings=EtfHoldingSettings(
+            enabled=bool(etf_holdings.get("enabled", True)),
+            max_symbols_per_run=max(1, int(etf_holdings.get("max_symbols_per_run", 25))),
+            lookback_open_dates=max(1, int(etf_holdings.get("lookback_open_dates", 5))),
         ),
     )
 

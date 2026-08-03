@@ -10,6 +10,15 @@ providers:
     backoff_multiplier: 2
     api_url: http://api.waditu.com/dataapi
     timeout_seconds: 30
+  auto_update:
+    enabled: true
+    poll_interval_seconds: 900
+    calendar_lookback_days: 14
+  etf_holdings:
+    enabled: true
+    # Startup stays bounded; the dedicated sync command can fill the entire ETF catalog.
+    max_symbols_per_run: 25
+    lookback_open_dates: 5
   universes:
     # Keep one active, liquid, established representative for each exposure.
     etfs:

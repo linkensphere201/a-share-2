@@ -1,12 +1,19 @@
 import type { VisibleRange } from './ChartCanvas'
-import { InstrumentWindow } from './InstrumentWindow'
-import type { WindowGroupState } from './workspace'
+import { ChartWindow } from './InstrumentWindow'
+import { InstrumentListWindow } from './InstrumentListWindow'
+import { SplitLayout } from './SplitLayout'
+import type { Instrument, WindowGroupState } from './workspace'
 
 type WindowGroupProps = {
   group: WindowGroupState
   onFocusWindow: (id: string) => void
   onToggleMaximize: (id: string) => void
   onRemoveWindow: (id: string) => void
+  onResizeSplit: (id: string, ratio: number) => void
+  onSelectListInstrument: (id: string, instrument: Instrument) => void
+  onAddListInstrument: (id: string, instrument: Instrument) => void
+  onRemoveListInstrument: (id: string, symbol: string) => void
+  onSortList: (id: string, sort: NonNullable<Extract<WindowGroupState['windows'][number], { type: 'instrument-list' }>['sort']>) => void
   onCoverageChange: (id: string, symbol: string, rows: number, first?: string, last?: string) => void
   onVisibleRangeChange: (id: string, value: VisibleRange) => void
 }
@@ -16,29 +23,63 @@ export function WindowGroup({
   onFocusWindow,
   onToggleMaximize,
   onRemoveWindow,
+  onResizeSplit,
+  onSelectListInstrument,
+  onAddListInstrument,
+  onRemoveListInstrument,
+  onSortList,
   onCoverageChange,
   onVisibleRangeChange,
 }: WindowGroupProps) {
-  const visibleWindows = group.maximizedWindowId
-    ? group.windows.filter(item => item.id === group.maximizedWindowId)
-    : group.windows
-
-  return (
-    <div className={`window-group window-count-${visibleWindows.length}`} data-group-id={group.id}>
-      {visibleWindows.map(item => (
-        <InstrumentWindow
-          key={item.id}
+  const renderWindow = (windowId: string) => {
+    const item = group.windows.find(window => window.id === windowId)
+    if (!item) return null
+    if (item.type === 'instrument-list') {
+      const incoming = group.attachments.filter(edge => edge.type === 'show-members' && edge.targetWindowId === item.id)
+      const sourceEdge = incoming.find(edge => edge.sourceWindowId === item.memberSourceWindowId) ?? incoming[0]
+      const sourceWindow = group.windows.find(window => window.id === sourceEdge?.sourceWindowId)
+      const memberSource = sourceWindow?.type === 'instrument-list'
+        ? sourceWindow.content.instruments.find(instrument => instrument.symbol === sourceWindow.selectedSymbol)
+        : undefined
+      return (
+        <InstrumentListWindow
           windowState={item}
           focused={group.focusedWindowId === item.id}
           maximized={group.maximizedWindowId === item.id}
           removable={group.windows.length > 1}
           onFocus={() => onFocusWindow(item.id)}
           onToggleMaximize={() => onToggleMaximize(item.id)}
-          onRemove={() => onRemoveWindow(item.id)}
-          onCoverageChange={(rows, first, last) => onCoverageChange(item.id, item.instrument.symbol, rows, first, last)}
-          onVisibleRangeChange={value => onVisibleRangeChange(item.id, value)}
+          onRemoveWindow={() => onRemoveWindow(item.id)}
+          onSelect={instrument => onSelectListInstrument(item.id, instrument)}
+          onAddInstrument={instrument => onAddListInstrument(item.id, instrument)}
+          onRemoveInstrument={symbol => onRemoveListInstrument(item.id, symbol)}
+          derived={item.mode === 'attached'}
+          memberSource={memberSource}
+          onSortChange={sort => onSortList(item.id, sort)}
         />
-      ))}
+      )
+    }
+    return (
+      <ChartWindow
+        windowState={item}
+        focused={group.focusedWindowId === item.id}
+        maximized={group.maximizedWindowId === item.id}
+        removable={group.windows.length > 1}
+        onFocus={() => onFocusWindow(item.id)}
+        onToggleMaximize={() => onToggleMaximize(item.id)}
+        onRemove={() => onRemoveWindow(item.id)}
+        onCoverageChange={(rows, first, last) => onCoverageChange(item.id, item.instrument.symbol, rows, first, last)}
+        onVisibleRangeChange={value => onVisibleRangeChange(item.id, value)}
+      />
+    )
+  }
+
+  return (
+    <div className={group.maximizedWindowId ? 'window-group maximized' : 'window-group'} data-group-id={group.id}>
+      {group.maximizedWindowId
+        ? renderWindow(group.maximizedWindowId)
+        : <SplitLayout layout={group.layout} renderWindow={renderWindow} onRatioCommit={onResizeSplit}/>
+      }
     </div>
   )
 }

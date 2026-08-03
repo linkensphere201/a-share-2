@@ -157,6 +157,26 @@ class _ExpandedCatalogClient(_UniverseClient):
             "con_name": "Zhongji Innolight",
         }]
 
+    def daily(self, **kwargs):
+        return [{"ts_code": "600519.SH", "trade_date": kwargs["trade_date"], "pct_chg": 3.5}]
+
+    def daily_basic(self, **kwargs):
+        return [{"ts_code": "600519.SH", "trade_date": kwargs["trade_date"], "total_mv": 20_000}]
+
+    def etf_sh_cons(self, **kwargs):
+        return [{
+            "trade_date": kwargs["trade_date"], "ts_code": kwargs["ts_code"],
+            "con_code": "600519.SH", "con_name": "Moutai", "qty": 100,
+            "exchange": "SH",
+        }]
+
+    def etf_sz_cons(self, **kwargs):
+        return [{
+            "trade_date": kwargs["trade_date"], "ts_code": kwargs["ts_code"],
+            "con_code": "159900.SZ", "con_name": "申赎现金", "qty": 0,
+            "exchange": "SZ",
+        }]
+
 
 def _settings() -> TushareSettings:
     return TushareSettings("TUSHARE_TOKEN", None, 0, 0, 0, 1)
@@ -269,6 +289,25 @@ class TushareDailyProviderTests(unittest.TestCase):
 
         self.assertEqual((dc_bar.volume, ths_bar.volume), (12345, 6_789_000))
         self.assertEqual((dc_member.source, ths_member.source), ("tushare_dc", "tushare_ths"))
+
+    def test_market_snapshot_converts_total_market_cap_to_cny(self) -> None:
+        provider = TushareDailyProvider(_settings(), client=_ExpandedCatalogClient())
+
+        snapshot = provider.fetch_stock_market_snapshots(date(2026, 8, 3))[0]
+
+        self.assertEqual(snapshot.change_percent, 3.5)
+        self.assertEqual(snapshot.total_market_cap, 200_000_000)
+
+    def test_etf_holdings_use_dated_exchange_pcf_and_filter_cash(self) -> None:
+        provider = TushareDailyProvider(_settings(), client=_ExpandedCatalogClient())
+        target = date(2026, 8, 3)
+
+        as_of, sh = provider.fetch_etf_holdings("510300.SH", [target])
+        _, sz = provider.fetch_etf_holdings("159915.SZ", [target])
+
+        self.assertEqual(as_of, target)
+        self.assertEqual((sh[0].holding_symbol, sh[0].quantity), ("600519.SH", 100))
+        self.assertEqual(sz, [])
 
 
 if __name__ == "__main__":

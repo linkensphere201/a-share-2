@@ -15,8 +15,10 @@ from stock_harness.models import (
     BoardMembership,
     CatalogEntry,
     DailyBar,
+    EtfHolding,
     Instrument,
     InstrumentKind,
+    MarketSnapshot,
     ProviderBarRejection,
 )
 
@@ -69,6 +71,7 @@ class TushareDailyProvider:
         return sorted(dates)
 
     def fetch_daily_bars(self, trade_date: date) -> Sequence[DailyBar]:
+        self.rejected_bars = ()
         payload = self._call(
             "daily",
             trade_date=_compact_date(trade_date),
@@ -292,6 +295,78 @@ class TushareDailyProvider:
             if _field(row, "con_code") not in (None, "")
         ]
 
+    def fetch_stock_market_snapshots(self, trade_date: date) -> Sequence[MarketSnapshot]:
+        daily_rows = {
+            str(_field(row, "ts_code")): row
+            for row in _iter_rows(self._call(
+                "daily",
+                trade_date=_compact_date(trade_date),
+                fields="ts_code,trade_date,pct_chg",
+            ))
+        }
+        basic_rows = {
+            str(_field(row, "ts_code")): row
+            for row in _iter_rows(self._call(
+                "daily_basic",
+                trade_date=_compact_date(trade_date),
+                fields="ts_code,trade_date,total_mv",
+            ))
+        }
+        snapshots: list[MarketSnapshot] = []
+        for symbol, row in daily_rows.items():
+            row_date = _parse_compact_date(str(_field(row, "trade_date")))
+            if row_date != trade_date:
+                raise ValueError("stock market snapshot returned an unexpected trade date")
+            total_mv = _field(basic_rows.get(symbol, {}), "total_mv")
+            snapshots.append(MarketSnapshot(
+                symbol=symbol,
+                trade_date=trade_date,
+                change_percent=float(_field(row, "pct_chg")),
+                # Tushare daily_basic reports total_mv in ten-thousand CNY.
+                total_market_cap=float(total_mv) * 10_000 if total_mv not in (None, "") else None,
+            ))
+        return snapshots
+
+    def fetch_etf_holdings(
+        self, etf_symbol: str, candidate_dates: Sequence[date]
+    ) -> tuple[date | None, Sequence[EtfHolding]]:
+        api_name = "etf_sh_cons" if etf_symbol.endswith(".SH") else "etf_sz_cons"
+        if not etf_symbol.endswith((".SH", ".SZ")):
+            raise ValueError(f"unsupported ETF exchange: {etf_symbol}")
+        for candidate in candidate_dates:
+            rows = list(_iter_rows(self._call(
+                api_name,
+                ts_code=etf_symbol,
+                trade_date=_compact_date(candidate),
+                fields="trade_date,ts_code,con_code,con_name,qty,exchange",
+            )))
+            if not rows:
+                continue
+            holdings: dict[str, EtfHolding] = {}
+            for rank, row in enumerate(rows, start=1):
+                row_etf = str(_field(row, "ts_code"))
+                row_date = _parse_compact_date(str(_field(row, "trade_date")))
+                if row_etf != etf_symbol or row_date != candidate:
+                    raise ValueError("ETF holding response identity mismatch")
+                symbol = str(_field(row, "con_code") or "").strip().upper()
+                name = str(_field(row, "con_name") or "").strip()
+                if not symbol or "申赎现金" in name or symbol == etf_symbol:
+                    continue
+                quantity_value = _field(row, "qty")
+                holdings[symbol] = EtfHolding(
+                    etf_symbol=etf_symbol,
+                    holding_symbol=symbol,
+                    holding_name=name or symbol,
+                    as_of_date=candidate,
+                    quantity=(
+                        float(quantity_value)
+                        if quantity_value not in (None, "", "-") else None
+                    ),
+                    rank=rank,
+                )
+            return candidate, list(holdings.values())
+        return None, []
+
     def _latest_dated_rows(
         self, api_name: str, observed_on: date, fields: str
     ) -> tuple[date, list[Mapping[str, Any]]]:
@@ -416,6 +491,67 @@ class TushareDailyProvider:
             )
         self.rejected_bars = tuple(rejected_bars)
         return [bars[key] for key in sorted(bars)]
+
+    def fetch_daily_snapshot(
+        self, kind: InstrumentKind, trade_date: date
+    ) -> Sequence[DailyBar]:
+        api_name, volume_multiplier = {
+            InstrumentKind.ETF: ("fund_daily", 100),
+            InstrumentKind.INDEX: ("index_daily", 100),
+            InstrumentKind.SECTOR: ("sw_daily", 10_000),
+        }.get(kind, (None, None))
+        if api_name is None or volume_multiplier is None:
+            raise ValueError(f"unsupported daily snapshot kind: {kind}")
+        return self._fetch_snapshot(api_name, trade_date, volume_multiplier)
+
+    def fetch_board_daily_snapshot(
+        self, source_system: str, trade_date: date
+    ) -> Sequence[DailyBar]:
+        api_name, volume_multiplier = {
+            "eastmoney": ("dc_daily", 1),
+            "ths": ("ths_daily", 100),
+        }.get(source_system, (None, None))
+        if api_name is None or volume_multiplier is None:
+            raise ValueError(f"unsupported board source system: {source_system}")
+        return self._fetch_snapshot(api_name, trade_date, volume_multiplier)
+
+    def _fetch_snapshot(
+        self, api_name: str, trade_date: date, volume_multiplier: int
+    ) -> Sequence[DailyBar]:
+        payload = self._call(
+            api_name,
+            trade_date=_compact_date(trade_date),
+            fields="ts_code,trade_date,open,high,low,close,vol",
+        )
+        bars: list[DailyBar] = []
+        rejected: list[ProviderBarRejection] = []
+        for row in _iter_rows(payload):
+            if any(
+                _field(row, field) in (None, "")
+                for field in ("ts_code", "open", "high", "low", "close", "vol")
+            ):
+                continue
+            symbol = str(_field(row, "ts_code"))
+            row_date = _parse_compact_date(str(_field(row, "trade_date")))
+            bar = DailyBar(
+                symbol=symbol,
+                trade_date=row_date,
+                open=float(_field(row, "open")),
+                high=float(_field(row, "high")),
+                low=float(_field(row, "low")),
+                close=float(_field(row, "close")),
+                volume=_scaled_volume(_field(row, "vol"), volume_multiplier),
+            )
+            try:
+                bar.validate()
+                if row_date != trade_date:
+                    raise ValueError("snapshot returned an unexpected trade date")
+            except ValueError as exc:
+                rejected.append(ProviderBarRejection(symbol, row_date, str(exc)))
+            else:
+                bars.append(bar)
+        self.rejected_bars = tuple(rejected)
+        return bars
 
     def _call(self, method_name: str, **kwargs: object):
         attempts = self.settings.retries + 1

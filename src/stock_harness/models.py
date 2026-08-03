@@ -122,6 +122,26 @@ class BoardMembership:
 
 
 @dataclass(frozen=True, slots=True)
+class MarketSnapshot:
+    symbol: str
+    trade_date: date
+    change_percent: float
+    total_market_cap: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class EtfHolding:
+    etf_symbol: str
+    holding_symbol: str
+    holding_name: str
+    as_of_date: date
+    quantity: float | None = None
+    weight_percent: float | None = None
+    market_value: float | None = None
+    rank: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class CoverageGap:
     source: str
     scope: str

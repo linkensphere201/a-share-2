@@ -16,6 +16,8 @@ venv/
 node_modules/
 dist/
 build/
+dist-*/
+build-*/
 *.tsbuildinfo
 
 # Local data and run artifacts
