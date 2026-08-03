@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import socket
 import sys
 import threading
@@ -19,12 +20,15 @@ from stock_harness.api import create_app
 from stock_harness.auto_update import AutoUpdateService
 from stock_harness.config import load_runtime_settings
 
+DEFAULT_DESKTOP_PORT = 8765
+
 
 @dataclass(frozen=True, slots=True)
 class DesktopPaths:
     provider_config: Path
     storage_config: Path
     web_dist: Path
+    webview_storage: Path
 
 
 class DesktopServer:
@@ -90,15 +94,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
         import webview
 
-        webview.create_window(
-            "StockHarness",
-            url,
-            width=1440,
-            height=900,
-            min_size=(960, 640),
-            text_select=True,
-        )
-        webview.start(gui="edgechromium", debug=args.debug)
+        open_desktop_window(webview, url, args.debug, paths.webview_storage)
     finally:
         if update_service is not None:
             update_service.stop()
@@ -126,6 +122,7 @@ def resolve_desktop_paths(
         provider_config=Path(provider_config).resolve() if provider_config else config_root / "providers.local.yaml",
         storage_config=Path(storage_config).resolve() if storage_config else config_root / "storage.local.yaml",
         web_dist=Path(web_dist).resolve() if web_dist else resource_root / ("web" if getattr(sys, "frozen", False) else "web/dist"),
+        webview_storage=resolve_webview_storage_path(install_root),
     )
     for label, path in (
         ("provider configuration", paths.provider_config),
@@ -135,6 +132,31 @@ def resolve_desktop_paths(
         if not path.exists():
             raise FileNotFoundError(f"{label} not found: {path}")
     return paths
+
+
+def resolve_webview_storage_path(install_root: Path) -> Path:
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if local_app_data:
+        return Path(local_app_data).resolve() / "StockHarness" / "WebView"
+    return install_root / "data" / "webview"
+
+
+def open_desktop_window(webview_module: object, url: str, debug: bool, storage_path: Path) -> None:
+    storage_path.mkdir(parents=True, exist_ok=True)
+    webview_module.create_window(
+        "StockHarness",
+        url,
+        width=1440,
+        height=900,
+        min_size=(960, 640),
+        text_select=True,
+    )
+    webview_module.start(
+        gui="edgechromium",
+        debug=debug,
+        private_mode=False,
+        storage_path=str(storage_path),
+    )
 
 
 def find_available_port(host: str = "127.0.0.1") -> int:
@@ -150,7 +172,12 @@ def _project_root() -> Path:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Launch the StockHarness desktop application")
     parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=0)
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=DEFAULT_DESKTOP_PORT,
+        help=f"Local UI port; defaults to stable port {DEFAULT_DESKTOP_PORT} for persistent WebView storage",
+    )
     parser.add_argument("--provider-config")
     parser.add_argument("--storage-config")
     parser.add_argument("--web-dist")

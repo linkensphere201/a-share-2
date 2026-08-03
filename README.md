@@ -60,7 +60,7 @@ Build the Windows desktop package:
 powershell -ExecutionPolicy Bypass -File scripts\build_desktop.ps1
 ```
 
-The package is written to `dist\StockHarness\StockHarness.exe`. It starts the local FastAPI service, serves the production React build from the same origin, opens a WebView2 window, and stops the service when the window closes. WebView2 must be available on the machine.
+The package is written to `dist\StockHarness\StockHarness.exe`. It starts the local FastAPI service on stable loopback origin `http://127.0.0.1:8765`, serves the production React build from that origin, opens a WebView2 window, and stops the service when the window closes. WebView2 runs with a persistent profile under `%LOCALAPPDATA%\StockHarness\WebView`, so workspace layouts survive application restarts. WebView2 must be available on the machine.
 
 The package contains credential-free `config\providers.local.yaml` and `config\storage.local.yaml` defaults. When the executable remains under this repository's `dist` directory, it detects and reuses the repository's ignored local configuration and existing database. A package copied elsewhere uses its own `config` directory and defaults to its own `data\market.sqlite`. Set `TUSHARE_TOKEN` in the environment or provide the ignored `.env` referenced by the active Provider configuration before relying on automatic updates.
 
