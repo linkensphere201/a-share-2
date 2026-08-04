@@ -394,6 +394,41 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .chart-stage, .chart-host { position: absolute; inset: 0; min-height: 0; }
 .chart-stage { overflow: hidden; }
 .chart-stage.selecting { cursor: crosshair; }
+.chart-drawing-toolbar {
+  position: absolute;
+  z-index: 9;
+  top: 5px;
+  right: 7px;
+  display: flex;
+  gap: 1px;
+  padding: 2px;
+  border: 1px solid #303946;
+  border-radius: 3px;
+  background: #11161be8;
+  box-shadow: 0 2px 8px #0006;
+}
+.chart-drawing-toolbar button {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  color: #788493;
+}
+.chart-drawing-toolbar button:hover:not(:disabled) { background: #27303a; color: #fff; }
+.chart-drawing-toolbar button.active { background: #31465d; color: #dbeaff; }
+.chart-drawing-toolbar button:disabled { color: #46515e; }
+.chart-drawing-input { position: absolute; z-index: 8; inset: 0; cursor: crosshair; touch-action: none; }
+.chart-trend-lines { position: absolute; z-index: 5; inset: 0; pointer-events: none; }
+.chart-trend-lines svg { display: block; overflow: hidden; }
+.trend-line-stroke { fill: none; vector-effect: non-scaling-stroke; pointer-events: none; }
+.trend-line-hit { stroke: transparent; stroke-width: 12; pointer-events: stroke; cursor: pointer; }
+.trend-line circle { fill: #0d1014; stroke: #f0b85a; stroke-width: 1.5; vector-effect: non-scaling-stroke; pointer-events: none; }
+.trend-line.selected .trend-line-stroke { filter: drop-shadow(0 0 2px #f0b85acc); }
+.trend-line.draft .trend-line-stroke { stroke: #f0b85a; stroke-width: 1.5; stroke-dasharray: 5 3; }
 .chart-pane-header {
   position: absolute;
   z-index: 6;
@@ -526,7 +561,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
   z-index: 2;
   top: 8px;
   left: 10px;
-  right: 74px;
+  right: 112px;
   display: flex;
   flex-wrap: wrap;
   gap: 4px 12px;

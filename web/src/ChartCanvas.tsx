@@ -1,6 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
-import { EyeOff, Percent, X, ZoomIn } from 'lucide-react'
+import { EyeOff, MousePointer2, PencilLine, Percent, Trash2, X, ZoomIn } from 'lucide-react'
 import { logInfo, logWarning } from './eventLogger'
+import {
+  createTrendLine,
+  deleteTrendLine,
+  loadSymbolDrawings,
+  saveTrendLine,
+  subscribeSymbolDrawings,
+  type TrendLineAnchor,
+  type TrendLineDrawing,
+} from './drawingStore'
+import { barsInRenderPeriod, chooseAnchor, renderDateForAnchor } from './trendLines'
 import {
   CandlestickSeries,
   ColorType,
@@ -47,6 +57,21 @@ type RangeSelection = {
   box: SelectionBox
   menuLeft: number
   menuTop: number
+}
+
+type DrawingDrag = {
+  pointerId: number
+  start: TrendLineAnchor
+  startX: number
+  startY: number
+}
+
+type ProjectedTrendLine = {
+  drawing: TrendLineDrawing
+  x1: number
+  y1: number
+  x2: number
+  y2: number
 }
 
 export type RangeMeasurement = {
@@ -136,6 +161,7 @@ export function ChartCanvas({
   const renderedBarsRef = useRef<Map<string, RenderBar>>(new Map())
   const renderedBarListRef = useRef<RenderBar[]>([])
   const selectionDragRef = useRef<{ pointerId: number; startX: number; startY: number } | undefined>(undefined)
+  const drawingDragRef = useRef<DrawingDrag | undefined>(undefined)
   const bucketRef = useRef(1)
   const applyBucketRef = useRef<(bucket: number, preserve?: IRange<Time>) => void>(() => undefined)
   const recalculateLodRef = useRef<() => void>(() => undefined)
@@ -152,6 +178,10 @@ export function ChartCanvas({
   const [selectionBox, setSelectionBox] = useState<SelectionBox>()
   const [rangeSelection, setRangeSelection] = useState<RangeSelection>()
   const [measurement, setMeasurement] = useState<RangeMeasurement>()
+  const [drawingTool, setDrawingTool] = useState<'browse' | 'trend-line'>('browse')
+  const [drawings, setDrawings] = useState<TrendLineDrawing[]>(() => loadSymbolDrawings(symbol))
+  const [drawingDraft, setDrawingDraft] = useState<[TrendLineAnchor, TrendLineAnchor]>()
+  const [selectedDrawingId, setSelectedDrawingId] = useState<string>()
   const [overlayRevision, setOverlayRevision] = useState(0)
   const liveFailureCountRef = useRef(0)
 
@@ -165,6 +195,16 @@ export function ChartCanvas({
 
   useEffect(() => { coverageCallbackRef.current = onCoverageChange }, [onCoverageChange])
   useEffect(() => { visibleRangeCallbackRef.current = onVisibleRangeChange }, [onVisibleRangeChange])
+
+  useEffect(() => {
+    const reload = () => setDrawings(loadSymbolDrawings(symbol))
+    reload()
+    setSelectedDrawingId(undefined)
+    setDrawingDraft(undefined)
+    drawingDragRef.current = undefined
+    setDrawingTool('browse')
+    return subscribeSymbolDrawings(symbol, reload)
+  }, [symbol])
 
   const replaceBars = useCallback((next: DailyBar[], preserveView = false) => {
     if (preserveView) {
@@ -535,6 +575,7 @@ export function ChartCanvas({
       mode: priceMode === 'log' ? PriceScaleMode.Logarithmic : PriceScaleMode.Normal,
     })
     chartRef.current?.priceScale('right', 1).applyOptions({ autoScale: true })
+    window.requestAnimationFrame(() => setOverlayRevision(value => value + 1))
   }, [priceMode])
 
   useEffect(() => {
@@ -633,6 +674,98 @@ export function ChartCanvas({
     setRangeSelection(undefined)
   }
 
+  const resolveDrawingAnchor = (x: number, y: number): TrendLineAnchor | undefined => {
+    const chart = chartRef.current
+    const candles = candleRef.current
+    if (!chart || !candles || renderedBarListRef.current.length === 0) return undefined
+    let nearest: RenderBar | undefined
+    let nearestX = 0
+    let nearestDistance = Number.POSITIVE_INFINITY
+    for (const period of renderedBarListRef.current) {
+      const periodX = chart.timeScale().timeToCoordinate(period.trade_date)
+      if (periodX === null) continue
+      const distance = Math.abs(periodX - x)
+      if (distance < nearestDistance) {
+        nearest = period
+        nearestX = periodX
+        nearestDistance = distance
+      }
+    }
+    const price = candles.coordinateToPrice(y)
+    if (!nearest || price === null || !Number.isFinite(price)) return undefined
+    const fallback: TrendLineAnchor = { date: nearest.trade_date, price, snap: 'free' }
+    const candidates = barsInRenderPeriod(nearest, barsRef.current).flatMap(bar => {
+      const highY = candles.priceToCoordinate(bar.high)
+      const lowY = candles.priceToCoordinate(bar.low)
+      return [
+        ...(highY === null ? [] : [{ date: bar.trade_date, price: bar.high, snap: 'high' as const, x: nearestX, y: highY }]),
+        ...(lowY === null ? [] : [{ date: bar.trade_date, price: bar.low, snap: 'low' as const, x: nearestX, y: lowY }]),
+      ]
+    })
+    return chooseAnchor(x, y, fallback, candidates)
+  }
+
+  const handleDrawingStart = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0 || drawingTool !== 'trend-line' || !chartRef.current) return
+    const point = localPoint(event)
+    const paneHeight = chartRef.current.panes()[0]?.getHeight() ?? event.currentTarget.clientHeight
+    if (point.y > paneHeight) return
+    const anchor = resolveDrawingAnchor(point.x, point.y)
+    if (!anchor) return
+    event.preventDefault()
+    event.currentTarget.setPointerCapture(event.pointerId)
+    drawingDragRef.current = { pointerId: event.pointerId, start: anchor, startX: point.x, startY: point.y }
+    setSelectedDrawingId(undefined)
+    setDrawingDraft([anchor, anchor])
+  }
+
+  const handleDrawingMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = drawingDragRef.current
+    if (!drag || drag.pointerId !== event.pointerId || !chartRef.current) return
+    const point = localPoint(event)
+    const paneHeight = chartRef.current.panes()[0]?.getHeight() ?? event.currentTarget.clientHeight
+    const anchor = resolveDrawingAnchor(point.x, clamp(point.y, 0, paneHeight))
+    if (anchor) setDrawingDraft([drag.start, anchor])
+  }
+
+  const handleDrawingEnd = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = drawingDragRef.current
+    if (!drag || drag.pointerId !== event.pointerId || !chartRef.current) return
+    const rawPoint = localPoint(event)
+    const paneHeight = chartRef.current.panes()[0]?.getHeight() ?? event.currentTarget.clientHeight
+    const point = {
+      x: clamp(rawPoint.x, 0, event.currentTarget.clientWidth),
+      y: clamp(rawPoint.y, 0, paneHeight),
+    }
+    const anchor = resolveDrawingAnchor(point.x, point.y)
+    drawingDragRef.current = undefined
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+    setDrawingDraft(undefined)
+    setDrawingTool('browse')
+    if (!anchor || Math.hypot(point.x - drag.startX, point.y - drag.startY) < 6) return
+    try {
+      const drawing = createTrendLine(symbol, [drag.start, anchor], priceMode)
+      saveTrendLine(drawing)
+      setSelectedDrawingId(drawing.id)
+      logInfo('drawing', '趋势线已保存', { symbol, drawingId: drawing.id })
+    } catch (error) {
+      logWarning('drawing', '趋势线保存失败', { symbol, error })
+    }
+  }
+
+  const cancelDrawing = () => {
+    drawingDragRef.current = undefined
+    setDrawingDraft(undefined)
+    setDrawingTool('browse')
+  }
+
+  const removeSelectedDrawing = () => {
+    if (!selectedDrawingId) return
+    deleteTrendLine(symbol, selectedDrawingId)
+    logInfo('drawing', '趋势线已删除', { symbol, drawingId: selectedDrawingId })
+    setSelectedDrawingId(undefined)
+  }
+
   const showRangeMeasurement = () => {
     if (!rangeSelection) return
     setMeasurement(createRangeMeasurement(rangeSelection.first, rangeSelection.last, rangeSelection.count))
@@ -669,6 +802,16 @@ export function ChartCanvas({
     lodBucket,
     overlayRevision,
   )
+  const projectedDrawings = projectTrendLines(
+    drawings,
+    renderedBarListRef.current,
+    chartRef.current,
+    candleRef.current,
+    overlayRevision,
+  )
+  const projectedDraft = drawingDraft
+    ? projectTrendLineAnchors(drawingDraft, renderedBarListRef.current, chartRef.current, candleRef.current)
+    : undefined
   const volumePaneTop = projectPaneTop(chartRef.current, volumePaneRef.current)
   const macdPaneTop = projectPaneTop(chartRef.current, macdPaneRef.current)
 
@@ -682,6 +825,43 @@ export function ChartCanvas({
       onContextMenu={event => event.preventDefault()}
     >
       <div ref={hostRef} className="chart-host"/>
+      <div className="chart-drawing-toolbar" onPointerDown={event => event.stopPropagation()}>
+        <button
+          className={drawingTool === 'browse' ? 'active' : ''}
+          title="浏览并选择趋势线"
+          aria-label="浏览并选择趋势线"
+          aria-pressed={drawingTool === 'browse'}
+          onClick={() => cancelDrawing()}
+        ><MousePointer2 size={13}/></button>
+        <button
+          className={drawingTool === 'trend-line' ? 'active' : ''}
+          title="绘制趋势线"
+          aria-label="绘制趋势线"
+          aria-pressed={drawingTool === 'trend-line'}
+          onClick={() => {
+            setDrawingTool('trend-line')
+            setSelectedDrawingId(undefined)
+          }}
+        ><PencilLine size={13}/></button>
+        <button title="删除选中的趋势线" aria-label="删除选中的趋势线" disabled={!selectedDrawingId} onClick={removeSelectedDrawing}><Trash2 size={13}/></button>
+        {drawingTool === 'trend-line' && <button title="取消画线" aria-label="取消画线" onClick={cancelDrawing}><X size={13}/></button>}
+      </div>
+      <TrendLineOverlay
+        lines={projectedDrawings}
+        draft={projectedDraft}
+        selectedId={selectedDrawingId}
+        onSelect={setSelectedDrawingId}
+      />
+      {drawingTool === 'trend-line' && (
+        <div
+          className="chart-drawing-input"
+          onPointerDown={handleDrawingStart}
+          onPointerMove={handleDrawingMove}
+          onPointerUp={handleDrawingEnd}
+          onPointerCancel={cancelDrawing}
+          onContextMenu={event => event.preventDefault()}
+        />
+      )}
       {readout && <ChartReadout value={readout} lodBucket={lodBucket}/>}
       {volumePaneTop !== undefined && <PaneHeader kind="volume" top={volumePaneTop} onHide={() => onVolumeVisibleChange?.(false)}/>}
       {macdPaneTop !== undefined && <PaneHeader kind="macd" top={macdPaneTop} onHide={() => onIndicatorChange?.('none')}/>}
@@ -731,6 +911,94 @@ function PaneHeader({ kind, top, onHide }: { kind: 'volume' | 'macd'; top: numbe
       <button title={`隐藏${label}栏`} aria-label={`隐藏${label}栏`} onClick={onHide}><EyeOff size={11}/></button>
     </div>
   )
+}
+
+function TrendLineOverlay({
+  lines,
+  draft,
+  selectedId,
+  onSelect,
+}: {
+  lines: ProjectedTrendLine[]
+  draft?: Omit<ProjectedTrendLine, 'drawing'>
+  selectedId?: string
+  onSelect: (id: string) => void
+}) {
+  return (
+    <div className="chart-trend-lines">
+      <svg width="100%" height="100%" aria-label="趋势线图层">
+        {lines.map(line => (
+          <g key={line.drawing.id} className={line.drawing.id === selectedId ? 'trend-line selected' : 'trend-line'}>
+            <line
+              className="trend-line-hit"
+              x1={line.x1}
+              y1={line.y1}
+              x2={line.x2}
+              y2={line.y2}
+              onPointerDown={event => {
+                event.preventDefault()
+                event.stopPropagation()
+                onSelect(line.drawing.id)
+              }}
+            />
+            <line
+              className="trend-line-stroke"
+              x1={line.x1}
+              y1={line.y1}
+              x2={line.x2}
+              y2={line.y2}
+              stroke={line.drawing.style.color}
+              strokeWidth={line.drawing.style.width}
+              strokeDasharray={line.drawing.style.dash === 'dashed' ? '6 4' : undefined}
+            />
+            {line.drawing.id === selectedId && <>
+              <circle cx={line.x1} cy={line.y1} r="3.5"/>
+              <circle cx={line.x2} cy={line.y2} r="3.5"/>
+            </>}
+          </g>
+        ))}
+        {draft && (
+          <g className="trend-line draft">
+            <line className="trend-line-stroke" x1={draft.x1} y1={draft.y1} x2={draft.x2} y2={draft.y2}/>
+            <circle cx={draft.x1} cy={draft.y1} r="3.5"/>
+            <circle cx={draft.x2} cy={draft.y2} r="3.5"/>
+          </g>
+        )}
+      </svg>
+    </div>
+  )
+}
+
+function projectTrendLines(
+  drawings: TrendLineDrawing[],
+  periods: RenderBar[],
+  chart: IChartApi | null,
+  candles: ISeriesApi<'Candlestick'> | null,
+  _revision: number,
+): ProjectedTrendLine[] {
+  if (!chart || !candles) return []
+  return drawings.flatMap(drawing => {
+    const projected = projectTrendLineAnchors(drawing.anchors, periods, chart, candles)
+    return projected ? [{ drawing, ...projected }] : []
+  })
+}
+
+function projectTrendLineAnchors(
+  anchors: [TrendLineAnchor, TrendLineAnchor],
+  periods: RenderBar[],
+  chart: IChartApi | null,
+  candles: ISeriesApi<'Candlestick'> | null,
+): Omit<ProjectedTrendLine, 'drawing'> | undefined {
+  if (!chart || !candles) return undefined
+  const firstDate = renderDateForAnchor(anchors[0].date, periods)
+  const secondDate = renderDateForAnchor(anchors[1].date, periods)
+  if (!firstDate || !secondDate) return undefined
+  const x1 = chart.timeScale().timeToCoordinate(firstDate)
+  const x2 = chart.timeScale().timeToCoordinate(secondDate)
+  const y1 = candles.priceToCoordinate(anchors[0].price)
+  const y2 = candles.priceToCoordinate(anchors[1].price)
+  if (x1 === null || x2 === null || y1 === null || y2 === null) return undefined
+  return { x1, y1, x2, y2 }
 }
 
 type PricePointGeometry = {
