@@ -13,7 +13,7 @@ from stock_harness.sqlite_store import SQLiteMarketDataStore
 
 def _client():
     store = SQLiteMarketDataStore(":memory:")
-    stock = Instrument("300308.SZ", "Innolight", InstrumentKind.STOCK, "SZ")
+    stock = Instrument("300308.SZ", "中际旭创", InstrumentKind.STOCK, "SZ")
     board = Instrument("BK1128.DC", "CPO", InstrumentKind.SECTOR, "DC")
     store.upsert_instruments([stock])
     store.upsert_catalog_entries([
@@ -45,6 +45,16 @@ def test_search_and_instrument_detail():
     assert "optical module" in detail.json()["aliases"]
     assert detail.json()["catalog_source"] == "tushare_dc"
     assert detail.json()["open_incidents"] == []
+
+
+def test_search_supports_pinyin_initials():
+    store, client = _client()
+    with client:
+        response = client.get("/api/instruments", params={"query": "zjxc"})
+    store.close()
+
+    assert response.status_code == 200
+    assert response.json()["items"][0]["symbol"] == "300308.SZ"
 
 
 def test_daily_bars_and_membership_directions():
@@ -127,6 +137,18 @@ def test_custom_group_crud_search_and_member_resolution():
     assert members.json()["items"][0]["tags"] == ["CPO"]
     assert renamed.json()["name"] == "CPO Leaders"
     assert deleted.status_code == 204
+
+
+def test_custom_group_search_supports_pinyin_initials():
+    store, client = _client()
+    payload = {"name": "光模块龙头", "description": "", "members": []}
+    with client:
+        created = client.post("/api/custom-groups", json=payload)
+        search = client.get("/api/instruments", params={"query": "gmklt"})
+    store.close()
+
+    assert created.status_code == 201
+    assert search.json()["items"][0]["name"] == "光模块龙头"
 
 
 def test_serves_built_frontend_and_update_status(tmp_path: Path):

@@ -9,6 +9,7 @@ description = "Performance-first local stock visualization data service"
 requires-python = ">=3.12,<3.15"
 dependencies = [
   "fastapi>=0.115,<1",
+  "pypinyin>=0.55,<1",
   "pyyaml>=6.0",
   "uvicorn>=0.30,<1",
 ]

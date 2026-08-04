@@ -30,6 +30,7 @@ from stock_harness.models import (
     ValidationResult,
     WriteStats,
 )
+from stock_harness.search_terms import matches_name_or_pinyin, pinyin_search_aliases
 
 
 _SCHEMA = """
@@ -448,6 +449,7 @@ class SQLiteMarketDataStore:
         self._configure()
         with self._writer_lock:
             self._connection.executescript(_SCHEMA)
+        self._backfill_pinyin_aliases()
 
     def __enter__(self) -> SQLiteMarketDataStore:
         return self
@@ -518,6 +520,7 @@ class SQLiteMarketDataStore:
         if not rows:
             return 0
         with self._lock, self._transaction():
+            existing_names = self._instrument_names({item.symbol for item in instruments})
             self._connection.executemany(
                 """
                 INSERT INTO instruments(symbol, name, kind, exchange, active)
@@ -534,6 +537,8 @@ class SQLiteMarketDataStore:
                 """,
                 rows,
             )
+            changed = [item for item in instruments if existing_names.get(item.symbol) != item.name]
+            self._replace_pinyin_aliases_locked(changed)
         return len(rows)
 
     def upsert_catalog_entries(self, entries: Sequence[CatalogEntry]) -> int:
@@ -580,17 +585,24 @@ class SQLiteMarketDataStore:
                     ),
                 )
                 aliases = {entry.instrument.name, *entry.aliases}
+                search_aliases = [
+                    (alias.strip(), "display_name")
+                    for alias in aliases if alias.strip()
+                ]
+                for alias in aliases:
+                    search_aliases.extend(pinyin_search_aliases(alias))
                 self._connection.executemany(
                     """
                     INSERT INTO instrument_aliases(
                         catalog_source_id, instrument_id, alias, alias_type, updated_at_ms
-                    ) VALUES (?, ?, ?, 'display_name', ?)
+                    ) VALUES (?, ?, ?, ?, ?)
                     ON CONFLICT(catalog_source_id, instrument_id, alias) DO UPDATE SET
+                        alias_type = excluded.alias_type,
                         updated_at_ms = excluded.updated_at_ms
                     """,
                     (
-                        (source_id, instrument_id, alias.strip(), now_ms)
-                        for alias in aliases if alias.strip()
+                        (source_id, instrument_id, alias, alias_type, now_ms)
+                        for alias, alias_type in search_aliases
                     ),
                 )
         return len(entries)
@@ -1300,7 +1312,6 @@ class SQLiteMarketDataStore:
         ]
 
     def list_custom_groups(self, query: str = "") -> list[dict[str, object]]:
-        pattern = f"%{query.strip()}%"
         with self._lock:
             rows = self._connection.execute(
                 """
@@ -1308,13 +1319,11 @@ class SQLiteMarketDataStore:
                        custom.created_at_ms, custom.updated_at_ms, count(member.instrument_id)
                 FROM custom_instrument_groups AS custom
                 LEFT JOIN custom_instrument_group_members AS member USING (group_id)
-                WHERE ? = '%%' OR custom.name LIKE ? OR custom.description LIKE ?
                 GROUP BY custom.group_id
                 ORDER BY custom.name COLLATE NOCASE, custom.group_id
-                """,
-                (pattern, pattern, pattern),
+                """
             ).fetchall()
-        return [
+        groups = [
             {
                 "id": str(row[0]), "symbol": f"CUSTOM:{row[0]}",
                 "name": str(row[1]), "description": str(row[2]),
@@ -1322,6 +1331,10 @@ class SQLiteMarketDataStore:
                 "updated_at_ms": int(row[4]),
             }
             for row in rows
+        ]
+        return groups if not query.strip() else [
+            item for item in groups
+            if matches_name_or_pinyin(query, str(item["name"]), str(item["description"]))
         ]
 
     def get_custom_group(self, group_id: str) -> dict[str, object] | None:
@@ -1557,7 +1570,8 @@ class SQLiteMarketDataStore:
             aliases = self._connection.execute(
                 """
                 SELECT DISTINCT alias FROM instrument_aliases
-                WHERE instrument_id = ? ORDER BY alias
+                WHERE instrument_id = ? AND alias_type = 'display_name'
+                ORDER BY alias
                 """,
                 (instrument_id,),
             ).fetchall()
@@ -2192,6 +2206,74 @@ class SQLiteMarketDataStore:
             ).fetchall()
             result.update((str(row[0]), int(row[1])) for row in rows)
         return result
+
+    def _instrument_names(self, symbols: set[str]) -> dict[str, str]:
+        result: dict[str, str] = {}
+        ordered = sorted(symbols)
+        for offset in range(0, len(ordered), 900):
+            chunk = ordered[offset : offset + 900]
+            placeholders = ",".join("?" for _ in chunk)
+            rows = self._connection.execute(
+                f"SELECT symbol, name FROM instruments WHERE symbol IN ({placeholders})",
+                chunk,
+            ).fetchall()
+            result.update((str(row[0]), str(row[1])) for row in rows)
+        return result
+
+    def _replace_pinyin_aliases_locked(self, instruments: Sequence[Instrument]) -> int:
+        if not instruments:
+            return 0
+        source_id = self._source_id(
+            "stock_harness_search", acquired_via="derived", source_system="stock_harness"
+        )
+        instrument_ids = self._instrument_ids({item.symbol for item in instruments})
+        ids = [instrument_ids[item.symbol] for item in instruments]
+        self._connection.executemany(
+            "DELETE FROM instrument_aliases WHERE catalog_source_id = ? AND instrument_id = ?",
+            ((source_id, instrument_id) for instrument_id in ids),
+        )
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        rows = [
+            (source_id, instrument_ids[item.symbol], alias, alias_type, now_ms)
+            for item in instruments
+            for alias, alias_type in pinyin_search_aliases(item.name)
+        ]
+        self._connection.executemany(
+            """
+            INSERT INTO instrument_aliases(
+                catalog_source_id, instrument_id, alias, alias_type, updated_at_ms
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            rows,
+        )
+        return len(rows)
+
+    def _backfill_pinyin_aliases(self) -> int:
+        migration_id = "2026-08-04-instrument-pinyin-aliases-v1"
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        with self._lock, self._transaction():
+            existing = self._connection.execute(
+                "SELECT affected_rows FROM data_migrations WHERE migration_id = ?",
+                (migration_id,),
+            ).fetchone()
+            if existing is not None:
+                return int(existing[0])
+            rows = self._connection.execute(
+                "SELECT symbol, name, kind, exchange, active FROM instruments"
+            ).fetchall()
+            instruments = [
+                Instrument(str(row[0]), str(row[1]), InstrumentKind(str(row[2])), str(row[3]), bool(row[4]))
+                for row in rows
+            ]
+            affected = self._replace_pinyin_aliases_locked(instruments)
+            self._connection.execute(
+                """
+                INSERT INTO data_migrations(migration_id, applied_at_ms, affected_rows, details)
+                VALUES (?, ?, ?, ?)
+                """,
+                (migration_id, now_ms, affected, "backfilled full and initial pinyin aliases"),
+            )
+        return affected
 
     def _transaction(self):
         return _Transaction(self._connection, self._writer_lock)

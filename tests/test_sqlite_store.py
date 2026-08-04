@@ -219,6 +219,25 @@ class SQLiteMarketDataStoreTests(unittest.TestCase):
         self.assertEqual(tuple(catalog), ("tushare", "eastmoney", "eastmoney_board", "concept", "BK1128.DC"))
         self.assertEqual(tuple(membership), ("300308.SZ", 1))
 
+    def test_instrument_search_matches_full_and_initial_pinyin(self) -> None:
+        instrument = Instrument("600519.SH", "贵州茅台", InstrumentKind.STOCK, "SH")
+        self.store.upsert_instruments([instrument])
+
+        initials = self.store.search_instruments("GZMT")
+        full = self.store.search_instruments("guizhoumaotai")
+
+        self.assertEqual([item["symbol"] for item in initials], [instrument.symbol])
+        self.assertEqual([item["symbol"] for item in full], [instrument.symbol])
+
+    def test_instrument_name_change_replaces_pinyin_aliases(self) -> None:
+        original = Instrument("600519.SH", "贵州茅台", InstrumentKind.STOCK, "SH")
+        renamed = Instrument("600519.SH", "茅台集团", InstrumentKind.STOCK, "SH")
+        self.store.upsert_instruments([original])
+        self.store.upsert_instruments([renamed])
+
+        self.assertEqual(self.store.search_instruments("gzmt"), [])
+        self.assertEqual(self.store.search_instruments("mtjt")[0]["symbol"], original.symbol)
+
     def test_market_snapshots_are_derived_and_stock_cap_is_enriched(self) -> None:
         self.store.upsert_daily_bars("tushare", [
             DailyBar("600519.SH", date(2026, 7, 31), 10, 10, 10, 10, 100),
