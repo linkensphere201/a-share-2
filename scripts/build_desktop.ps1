@@ -8,9 +8,35 @@ $python = Join-Path $root ".venv\Scripts\python.exe"
 $buildRoot = Join-Path $root "build\desktop"
 $distRoot = Join-Path $root "dist"
 $packageRoot = Join-Path $distRoot "StockHarness"
+$packagePrefix = [IO.Path]::GetFullPath($packageRoot).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
 
 if (-not (Test-Path -LiteralPath $python)) {
     throw "Python environment not found: $python"
+}
+
+$runningPackageProcesses = @(Get-Process -Name "StockHarness" -ErrorAction SilentlyContinue | Where-Object {
+    try {
+        $processPath = [IO.Path]::GetFullPath($_.Path)
+        $processPath.StartsWith($packagePrefix, [StringComparison]::OrdinalIgnoreCase)
+    }
+    catch {
+        $false
+    }
+})
+
+foreach ($process in $runningPackageProcesses) {
+    Write-Host "Stopping running package process: $($process.Id) $($process.Path)"
+    Stop-Process -Id $process.Id -Force
+}
+
+foreach ($process in $runningPackageProcesses) {
+    $deadline = [DateTime]::UtcNow.AddSeconds(10)
+    while ((Get-Process -Id $process.Id -ErrorAction SilentlyContinue) -and [DateTime]::UtcNow -lt $deadline) {
+        Start-Sleep -Milliseconds 100
+    }
+    if (Get-Process -Id $process.Id -ErrorAction SilentlyContinue) {
+        throw "Running package process did not stop: $($process.Id)"
+    }
 }
 
 Push-Location (Join-Path $root "web")
