@@ -26,10 +26,13 @@ describe('StockWorkspace', () => {
 
     expect(screen.getByText('表1')).toBeTruthy()
     expect(screen.getByTestId('chart-canvas').textContent).toBe('BK1128.DC')
+    const chartWindow = screen.getByTestId('chart-canvas').closest('section')!
+    expect(within(chartWindow).getByText('CPO概念')).toBeTruthy()
+    expect(within(chartWindow).queryByText('表2')).toBeNull()
     expect(screen.getByText('2/8')).toBeTruthy()
     expect(screen.getByRole('button', { name: '刷新应用' })).toBeTruthy()
     expect(screen.getByRole('button', { name: '编辑 表1 标的' })).toBeTruthy()
-    expect(screen.queryByRole('button', { name: '编辑 表2 标的' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '编辑 CPO概念 标的' })).toBeNull()
     await user.click(screen.getByRole('button', { name: '收起对话栏' }))
     expect(screen.getByRole('button', { name: '展开对话栏' })).toBeTruthy()
   })
@@ -80,7 +83,7 @@ describe('StockWorkspace', () => {
     const user = userEvent.setup()
 
     render(<App />)
-    await user.click(screen.getByRole('button', { name: '编辑 表2 标的' }))
+    await user.click(screen.getByRole('button', { name: '编辑 CPO概念 标的' }))
     await user.type(screen.getByRole('textbox', { name: '搜索可添加标的' }), '贵州茅台')
     await user.click(await screen.findByRole('button', { name: /贵州茅台/ }))
     await user.click(screen.getByRole('button', { name: '保存并退出' }))
