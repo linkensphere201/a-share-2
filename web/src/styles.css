@@ -381,6 +381,42 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .chart-stage, .chart-host { position: absolute; inset: 0; min-height: 0; }
 .chart-stage { overflow: hidden; }
 .chart-stage.selecting { cursor: crosshair; }
+.chart-pane-header {
+  position: absolute;
+  z-index: 6;
+  top: 2px;
+  left: 5px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 2px 0 4px;
+  border-radius: 2px;
+  background: #0d1014d9;
+  color: #788493;
+  font-size: 8px;
+  line-height: 1;
+  pointer-events: auto;
+}
+.chart-pane-title { color: #8d98a6; font-size: 8px; }
+.chart-pane-header button {
+  width: 16px;
+  height: 16px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  color: #657180;
+}
+.chart-pane-header button:hover { background: #252b34; color: #e4e8ed; }
+.macd-legend { display: flex; align-items: center; gap: 3px; white-space: nowrap; }
+.macd-legend > span { color: #aeb7c3; font-size: 8px; }
+.macd-legend i { width: 5px; height: 2px; display: inline-block; }
+.macd-legend .macd-dif { background: #e5b85c; }
+.macd-legend .macd-dea { background: #57a7d9; }
+.macd-legend .macd-bars { height: 5px; background: #8b96a5; }
 .chart-range-selection {
   position: absolute;
   z-index: 4;

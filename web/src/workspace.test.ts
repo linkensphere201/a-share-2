@@ -57,6 +57,23 @@ describe('workspace persistence', () => {
     })
   })
 
+  it('defaults missing volume visibility to shown and preserves a hidden pane', () => {
+    const state = createDefaultWorkspace()
+    const chart = state.groups[0].windows.find(item => item.type === 'chart')!
+    if (chart.type !== 'chart') throw new Error('expected chart')
+    delete (chart.chart as Partial<typeof chart.chart>).volumeVisible
+    window.localStorage.setItem(workspaceStorageKey, JSON.stringify(state))
+    expect(loadWorkspace().groups[0].windows.find(item => item.type === 'chart')).toMatchObject({
+      chart: { volumeVisible: true },
+    })
+
+    chart.chart.volumeVisible = false
+    window.localStorage.setItem(workspaceStorageKey, JSON.stringify(state))
+    expect(loadWorkspace().groups[0].windows.find(item => item.type === 'chart')).toMatchObject({
+      chart: { volumeVisible: false },
+    })
+  })
+
   it('falls back when persisted state is invalid', () => {
     window.localStorage.setItem(workspaceStorageKey, '{invalid')
     expect(loadWorkspace()).toEqual(createDefaultWorkspace())
@@ -124,7 +141,7 @@ describe('workspace persistence', () => {
       title: '表3',
       mode: 'detached',
       instrument: instrument('510300.SH'),
-      chart: { range: '1Y', priceMode: 'normal', indicator: 'macd' },
+      chart: { range: '1Y', priceMode: 'normal', volumeVisible: true, indicator: 'macd' },
     })
     window.localStorage.setItem(workspaceStorageKey, JSON.stringify(state))
 

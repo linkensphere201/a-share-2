@@ -25,6 +25,7 @@ export type Instrument = {
 export type ChartViewState = {
   range: ChartRange
   priceMode: PriceMode
+  volumeVisible: boolean
   indicator: ChartIndicator
   visibleRange?: VisibleRange
 }
@@ -116,7 +117,7 @@ export function createWindowGroup(
     title: nextTitle(),
     mode,
     instrument: { ...fallbackInstrument },
-    chart: { range: '3Y', priceMode: 'normal', indicator: 'macd' },
+    chart: { range: '3Y', priceMode: 'normal', volumeVisible: true, indicator: 'macd' },
   })
   const list = (): InstrumentListWindowState => ({
     id: createId('list'),
@@ -187,7 +188,7 @@ export function createDefaultWorkspace(): WorkspaceState {
     title: '表2',
     mode: 'attached',
     instrument: fallbackInstrument,
-    chart: { range: '3Y', priceMode: 'normal', indicator: 'macd' },
+    chart: { range: '3Y', priceMode: 'normal', volumeVisible: true, indicator: 'macd' },
   }
   const group = createGroup('group-primary', '默认窗口组', [listWindow, chartWindow], chartWindow.id, [{
     id: 'attachment-primary',
@@ -355,6 +356,7 @@ function normalizeChartWindow(value: unknown): ChartWindowState | undefined {
     chart: {
       range: value.chart.range,
       priceMode: value.chart.priceMode,
+      volumeVisible: value.chart.volumeVisible !== false,
       indicator: value.chart.indicator === 'none' ? 'none' : 'macd',
       visibleRange: normalizeVisibleRange(value.chart.visibleRange),
     },
@@ -410,7 +412,7 @@ function migrateLegacyWindow(value: unknown): ChartWindowState | undefined {
     title: legacy.instrument.name,
     mode: 'detached',
     instrument: legacy.instrument,
-    chart: { range: legacy.range, priceMode: legacy.priceMode, indicator: 'macd', visibleRange: normalizeVisibleRange(legacy.visibleRange) },
+    chart: { range: legacy.range, priceMode: legacy.priceMode, volumeVisible: true, indicator: 'macd', visibleRange: normalizeVisibleRange(legacy.visibleRange) },
   }
 }
 

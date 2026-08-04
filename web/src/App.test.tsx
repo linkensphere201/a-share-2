@@ -8,7 +8,23 @@ import { App } from './App'
 import { createDefaultWorkspace, workspaceStorageKey } from './workspace'
 
 vi.mock('./ChartCanvas', () => ({
-  ChartCanvas: ({ symbol }: { symbol: string }) => <div data-testid="chart-canvas">{symbol}</div>,
+  ChartCanvas: ({
+    symbol,
+    volumeVisible,
+    indicator,
+    onVolumeVisibleChange,
+    onIndicatorChange,
+  }: {
+    symbol: string
+    volumeVisible: boolean
+    indicator: 'macd' | 'none'
+    onVolumeVisibleChange: (visible: boolean) => void
+    onIndicatorChange: (indicator: 'macd' | 'none') => void
+  }) => <div data-testid="chart-canvas">
+    {symbol}
+    {volumeVisible && <button aria-label="隐藏成交量栏" onClick={() => onVolumeVisibleChange(false)}/>}
+    {indicator === 'macd' && <button aria-label="隐藏MACD栏" onClick={() => onIndicatorChange('none')}/>}
+  </div>,
 }))
 
 afterEach(() => {
@@ -35,6 +51,24 @@ describe('StockWorkspace', () => {
     expect(screen.queryByRole('button', { name: '编辑 CPO概念 标的' })).toBeNull()
     await user.click(screen.getByRole('button', { name: '收起对话栏' }))
     expect(screen.getByRole('button', { name: '展开对话栏' })).toBeTruthy()
+  })
+
+  it('hides volume and MACD from their pane controls and persists both states', async () => {
+    vi.stubGlobal('fetch', emptyFetch())
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(screen.getByRole('button', { name: '隐藏成交量栏' }))
+    await user.click(screen.getByRole('button', { name: '隐藏MACD栏' }))
+
+    expect(screen.queryByRole('button', { name: '隐藏成交量栏' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '隐藏MACD栏' })).toBeNull()
+    expect(screen.getByTitle('显示成交量')).toBeTruthy()
+    expect(screen.getByTitle('显示 MACD')).toBeTruthy()
+    await waitFor(() => {
+      const state = JSON.parse(window.localStorage.getItem(workspaceStorageKey) ?? '{}')
+      expect(state.groups[0].windows[1].chart).toMatchObject({ volumeVisible: false, indicator: 'none' })
+    })
   })
 
   it('adds a manual-list instrument and drives the attached chart', async () => {

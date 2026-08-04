@@ -1,4 +1,4 @@
-import type { VisibleRange } from './ChartCanvas'
+import type { ChartIndicator, VisibleRange } from './ChartCanvas'
 import { ChartWindow } from './InstrumentWindow'
 import { InstrumentListWindow } from './InstrumentListWindow'
 import { SplitLayout } from './SplitLayout'
@@ -15,6 +15,8 @@ type WindowGroupProps = {
   onSortList: (id: string, sort: NonNullable<Extract<WindowGroupState['windows'][number], { type: 'instrument-list' }>['sort']>) => void
   onCoverageChange: (id: string, symbol: string, rows: number, first?: string, last?: string) => void
   onVisibleRangeChange: (id: string, value: VisibleRange) => void
+  onVolumeVisibleChange: (id: string, visible: boolean) => void
+  onIndicatorChange: (id: string, indicator: ChartIndicator) => void
   onReferencedSymbolsChange: (id: string, symbols: string[]) => void
 }
 
@@ -29,6 +31,8 @@ export function WindowGroup({
   onSortList,
   onCoverageChange,
   onVisibleRangeChange,
+  onVolumeVisibleChange,
+  onIndicatorChange,
   onReferencedSymbolsChange,
 }: WindowGroupProps) {
   const renderWindow = (windowId: string) => {
@@ -71,6 +75,8 @@ export function WindowGroup({
         onEdit={() => onEditWindow(item.id)}
         onCoverageChange={(rows, first, last) => onCoverageChange(item.id, item.instrument.symbol, rows, first, last)}
         onVisibleRangeChange={value => onVisibleRangeChange(item.id, value)}
+        onVolumeVisibleChange={visible => onVolumeVisibleChange(item.id, visible)}
+        onIndicatorChange={indicator => onIndicatorChange(item.id, indicator)}
       />
     )
   }

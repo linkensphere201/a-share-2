@@ -165,6 +165,18 @@ export function StockWorkspace() {
     })
   }, [updateWindow])
 
+  const handleVolumeVisible = useCallback((id: string, volumeVisible: boolean) => {
+    updateWindow(id, item => item.type === 'chart'
+      ? { ...item, chart: { ...item.chart, volumeVisible } }
+      : item)
+  }, [updateWindow])
+
+  const handleIndicator = useCallback((id: string, indicator: ChartWindowState['chart']['indicator']) => {
+    updateWindow(id, item => item.type === 'chart'
+      ? { ...item, chart: { ...item.chart, indicator } }
+      : item)
+  }, [updateWindow])
+
   const updateActiveChart = (update: (chart: ChartWindowState) => ChartWindowState) => {
     if (!activeChart) return
     updateWindow(activeChart.id, item => item.type === 'chart' ? update(item) : item)
@@ -236,10 +248,16 @@ export function StockWorkspace() {
               <button className={activeChart.chart.priceMode === 'normal' ? 'active' : ''} onClick={() => setPriceMode('normal')}>普通</button>
               <button className={activeChart.chart.priceMode === 'log' ? 'active' : ''} onClick={() => setPriceMode('log')}>对数</button>
             </div>
-            <div className="indicator-tabs" aria-label="MACD indicator">
+            <div className="indicator-tabs" aria-label="图表分栏">
+              <button
+                className={activeChart.chart.volumeVisible ? 'active' : ''}
+                title={activeChart.chart.volumeVisible ? '隐藏成交量' : '显示成交量'}
+                aria-pressed={activeChart.chart.volumeVisible}
+                onClick={() => handleVolumeVisible(activeChart.id, !activeChart.chart.volumeVisible)}
+              ><BarChart3 size={12}/>成交量</button>
               <button
                 className={activeChart.chart.indicator === 'macd' ? 'active' : ''}
-                title={activeChart.chart.indicator === 'macd' ? 'Hide MACD' : 'Show MACD'}
+                title={activeChart.chart.indicator === 'macd' ? '隐藏 MACD' : '显示 MACD'}
                 aria-pressed={activeChart.chart.indicator === 'macd'}
                 onClick={() => updateActiveChart(item => ({
                   ...item,
@@ -269,6 +287,8 @@ export function StockWorkspace() {
           onSortList={sortList}
           onCoverageChange={handleCoverage}
           onVisibleRangeChange={handleVisibleRange}
+          onVolumeVisibleChange={handleVolumeVisible}
+          onIndicatorChange={handleIndicator}
           onReferencedSymbolsChange={updateReferencedSymbols}
         />
         <footer className="statusbar">

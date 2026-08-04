@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
-import { Percent, X, ZoomIn } from 'lucide-react'
+import { EyeOff, Percent, X, ZoomIn } from 'lucide-react'
 import { logInfo, logWarning } from './eventLogger'
 import {
   CandlestickSeries,
@@ -12,6 +12,7 @@ import {
   type CandlestickData,
   type HistogramData,
   type IChartApi,
+  type IPaneApi,
   type IRange,
   type ISeriesApi,
   type LineData,
@@ -80,10 +81,13 @@ type ChartCanvasProps = {
   symbol: string
   range: ChartRange
   priceMode: PriceMode
+  volumeVisible: boolean
   indicator: ChartIndicator
   initialVisibleRange?: VisibleRange
   onCoverageChange?: (bars: number, first?: string, last?: string) => void
   onVisibleRangeChange?: (value: VisibleRange) => void
+  onVolumeVisibleChange?: (visible: boolean) => void
+  onIndicatorChange?: (indicator: ChartIndicator) => void
 }
 
 const rising = '#ef5350'
@@ -107,21 +111,26 @@ export function ChartCanvas({
   symbol,
   range,
   priceMode,
+  volumeVisible,
   indicator,
   initialVisibleRange,
   onCoverageChange,
   onVisibleRangeChange,
+  onVolumeVisibleChange,
+  onIndicatorChange,
 }: ChartCanvasProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const candleRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
   const volumeRef = useRef<ISeriesApi<'Histogram'> | null>(null)
+  const volumePaneRef = useRef<IPaneApi<Time> | null>(null)
   const ma5Ref = useRef<ISeriesApi<'Line'> | null>(null)
   const ma20Ref = useRef<ISeriesApi<'Line'> | null>(null)
   const ma60Ref = useRef<ISeriesApi<'Line'> | null>(null)
   const macdDifRef = useRef<ISeriesApi<'Line'> | null>(null)
   const macdDeaRef = useRef<ISeriesApi<'Line'> | null>(null)
   const macdHistogramRef = useRef<ISeriesApi<'Histogram'> | null>(null)
+  const macdPaneRef = useRef<IPaneApi<Time> | null>(null)
   const barsRef = useRef<DailyBar[]>([])
   const previousCloseByDateRef = useRef<Map<string, number>>(new Map())
   const renderedBarsRef = useRef<Map<string, RenderBar>>(new Map())
@@ -205,17 +214,10 @@ export function ChartCanvas({
     const ma5 = chart.addSeries(LineSeries, { color: '#e5b85c', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, ...compactCrosshairMarkerOptions })
     const ma20 = chart.addSeries(LineSeries, { color: '#57a7d9', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, ...compactCrosshairMarkerOptions })
     const ma60 = chart.addSeries(LineSeries, { color: '#b984cc', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, ...compactCrosshairMarkerOptions })
-    const volume = chart.addSeries(HistogramSeries, {
-      priceFormat: { type: 'volume' },
-      priceLineVisible: false,
-      lastValueVisible: false,
-    }, 1)
-    chart.panes()[0]?.setStretchFactor(3)
-    chart.panes()[1]?.setStretchFactor(1)
     const resetAutoScale = () => {
-      chart.priceScale('right', 0).applyOptions({ autoScale: true })
-      chart.priceScale('right', 1).applyOptions({ autoScale: true })
-      if (chart.panes().length > 2) chart.priceScale('right', 2).applyOptions({ autoScale: true })
+      chart.panes().forEach((_, paneIndex) => {
+        chart.priceScale('right', paneIndex).applyOptions({ autoScale: true })
+      })
     }
     resetAutoScaleRef.current = resetAutoScale
 
@@ -276,7 +278,6 @@ export function ChartCanvas({
 
     chartRef.current = chart
     candleRef.current = candles
-    volumeRef.current = volume
     ma5Ref.current = ma5
     ma20Ref.current = ma20
     ma60Ref.current = ma60
@@ -292,47 +293,88 @@ export function ChartCanvas({
 
   useEffect(() => {
     const chart = chartRef.current
+    if (!chart || !volumeVisible) {
+      if (chart) setPaneStretchFactors(chart)
+      return
+    }
+    const pane = chart.addPane(true)
+    pane.moveTo(1)
+    const volume = chart.addSeries(HistogramSeries, {
+      priceFormat: { type: 'volume' },
+      priceLineVisible: false,
+      lastValueVisible: false,
+    }, pane.paneIndex())
+    volumePaneRef.current = pane
+    volumeRef.current = volume
+    const paneObserver = new ResizeObserver(() => setOverlayRevision(value => value + 1))
+    const paneElement = pane.getHTMLElement()
+    if (paneElement) paneObserver.observe(paneElement)
+    applyVolumeSeries(renderedBarListRef.current, previousCloseByDateRef.current, volume)
+    setPaneStretchFactors(chart)
+    setOverlayRevision(value => value + 1)
+    return () => {
+      volumeRef.current = null
+      volumePaneRef.current = null
+      paneObserver.disconnect()
+      if (chartRef.current !== chart) return
+      chart.removeSeries(volume)
+      const paneIndex = chart.panes().indexOf(pane)
+      if (paneIndex >= 0) chart.removePane(paneIndex)
+      setPaneStretchFactors(chart)
+      setOverlayRevision(value => value + 1)
+    }
+  }, [volumeVisible])
+
+  useEffect(() => {
+    const chart = chartRef.current
     if (!chart || indicator !== 'macd') {
-      if (chart) setPaneStretchFactors(chart, false)
+      if (chart) setPaneStretchFactors(chart)
       return
     }
     const pane = chart.addPane(true)
     const paneIndex = pane.paneIndex()
     const histogram = chart.addSeries(HistogramSeries, {
-      title: 'MACD',
+      title: '',
       base: 0,
       priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
       priceLineVisible: false,
-      lastValueVisible: true,
+      lastValueVisible: false,
       ...compactCrosshairMarkerOptions,
     }, paneIndex)
     const dif = chart.addSeries(LineSeries, {
-      title: 'DIF',
+      title: '',
       color: '#e5b85c',
       lineWidth: 1,
       priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
       priceLineVisible: false,
-      lastValueVisible: true,
+      lastValueVisible: false,
       ...compactCrosshairMarkerOptions,
     }, paneIndex)
     const dea = chart.addSeries(LineSeries, {
-      title: 'DEA',
+      title: '',
       color: '#57a7d9',
       lineWidth: 1,
       priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
       priceLineVisible: false,
-      lastValueVisible: true,
+      lastValueVisible: false,
+      ...compactCrosshairMarkerOptions,
     }, paneIndex)
+    macdPaneRef.current = pane
     macdHistogramRef.current = histogram
     macdDifRef.current = dif
     macdDeaRef.current = dea
-    setPaneStretchFactors(chart, true)
+    const paneObserver = new ResizeObserver(() => setOverlayRevision(value => value + 1))
+    const paneElement = pane.getHTMLElement()
+    if (paneElement) paneObserver.observe(paneElement)
+    setPaneStretchFactors(chart)
     chart.priceScale('right', paneIndex).applyOptions({ autoScale: true, scaleMargins: { top: 0.12, bottom: 0.12 } })
     const times = new Set(renderedBarListRef.current.map(item => item.trade_date))
     applyMacdSeries(macd, times, dif, dea, histogram)
     setOverlayRevision(value => value + 1)
     return () => {
       macdHistogramRef.current = null
+      macdPaneRef.current = null
+      paneObserver.disconnect()
       macdDifRef.current = null
       macdDeaRef.current = null
       if (chartRef.current !== chart) return
@@ -341,7 +383,7 @@ export function ChartCanvas({
       chart.removeSeries(dea)
       const currentPaneIndex = chart.panes().indexOf(pane)
       if (currentPaneIndex >= 0) chart.removePane(currentPaneIndex)
-      setPaneStretchFactors(chart, false)
+      setPaneStretchFactors(chart)
       setOverlayRevision(value => value + 1)
     }
   }, [indicator])
@@ -627,6 +669,8 @@ export function ChartCanvas({
     lodBucket,
     overlayRevision,
   )
+  const volumePaneTop = projectPaneTop(chartRef.current, volumePaneRef.current)
+  const macdPaneTop = projectPaneTop(chartRef.current, macdPaneRef.current)
 
   return (
     <div
@@ -639,6 +683,8 @@ export function ChartCanvas({
     >
       <div ref={hostRef} className="chart-host"/>
       {readout && <ChartReadout value={readout} lodBucket={lodBucket}/>}
+      {volumePaneTop !== undefined && <PaneHeader kind="volume" top={volumePaneTop} onHide={() => onVolumeVisibleChange?.(false)}/>}
+      {macdPaneTop !== undefined && <PaneHeader kind="macd" top={macdPaneTop} onHide={() => onIndicatorChange?.('none')}/>}
       {selectionBox && <div className="chart-range-selection" style={selectionBox}/>}
       {rangeSelection && (
         <div
@@ -661,6 +707,28 @@ export function ChartCanvas({
       {state === 'loading' && <div className="chart-state">加载日线数据</div>}
       {state === 'error' && <div className="chart-state error">日线数据加载失败</div>}
       {state === 'ready' && bars.length === 0 && <div className="chart-state">暂无日线数据</div>}
+    </div>
+  )
+}
+
+function projectPaneTop(chart: IChartApi | null, pane: IPaneApi<Time> | null): number | undefined {
+  if (!chart || !pane) return undefined
+  const panes = chart.panes()
+  const paneIndex = panes.indexOf(pane)
+  if (paneIndex < 0) return undefined
+  return panes.slice(0, paneIndex).reduce((top, item) => top + item.getHeight(), 0)
+}
+
+function PaneHeader({ kind, top, onHide }: { kind: 'volume' | 'macd'; top: number; onHide: () => void }) {
+  const label = kind === 'volume' ? '成交量' : 'MACD'
+  return (
+    <div className={`chart-pane-header chart-pane-header-${kind}`} style={{ top: top + 2 }} onPointerDown={event => event.stopPropagation()}>
+      {kind === 'volume'
+        ? <span className="chart-pane-title">VOL</span>
+        : <div className="macd-legend" aria-label="MACD 图例">
+            <span>MACD</span><i className="macd-dif"/>DIF<i className="macd-dea"/>DEA<i className="macd-bars"/>柱
+          </div>}
+      <button title={`隐藏${label}栏`} aria-label={`隐藏${label}栏`} onClick={onHide}><EyeOff size={11}/></button>
     </div>
   )
 }
@@ -848,10 +916,21 @@ function applyMacdSeries(
   })))
 }
 
-function setPaneStretchFactors(chart: IChartApi, showIndicator: boolean) {
+function applyVolumeSeries(
+  bars: RenderBar[],
+  previousCloseByDate: Map<string, number>,
+  volume: ISeriesApi<'Histogram'>,
+) {
+  volume.setData(bars.map(item => ({
+    time: item.trade_date,
+    value: item.volume,
+    color: `${candleColor(item, previousCloseByDate.get(item.period_start))}99`,
+  })))
+}
+
+function setPaneStretchFactors(chart: IChartApi) {
   chart.panes()[0]?.setStretchFactor(3)
-  chart.panes()[1]?.setStretchFactor(1)
-  if (showIndicator) chart.panes()[2]?.setStretchFactor(1)
+  chart.panes().slice(1).forEach(pane => pane.setStretchFactor(1))
 }
 
 export function mergeProvisionalBar(bars: DailyBar[], provisional: DailyBar): DailyBar[] {

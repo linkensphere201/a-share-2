@@ -1,5 +1,5 @@
 import { Maximize2, Minimize2, Pencil, X } from 'lucide-react'
-import { ChartCanvas, type VisibleRange } from './ChartCanvas'
+import { ChartCanvas, type ChartIndicator, type VisibleRange } from './ChartCanvas'
 import type { ChartWindowState } from './workspace'
 
 type InstrumentWindowProps = {
@@ -13,6 +13,8 @@ type InstrumentWindowProps = {
   onEdit: () => void
   onCoverageChange: (rows: number, first?: string, last?: string) => void
   onVisibleRangeChange: (value: VisibleRange) => void
+  onVolumeVisibleChange: (visible: boolean) => void
+  onIndicatorChange: (indicator: ChartIndicator) => void
 }
 
 export function ChartWindow({
@@ -26,6 +28,8 @@ export function ChartWindow({
   onEdit,
   onCoverageChange,
   onVisibleRangeChange,
+  onVolumeVisibleChange,
+  onIndicatorChange,
 }: InstrumentWindowProps) {
   const { chart, instrument } = windowState
   return (
@@ -54,10 +58,13 @@ export function ChartWindow({
           symbol={instrument.symbol}
           range={chart.range}
           priceMode={chart.priceMode}
+          volumeVisible={chart.volumeVisible}
           indicator={chart.indicator}
           initialVisibleRange={chart.visibleRange}
           onCoverageChange={onCoverageChange}
           onVisibleRangeChange={onVisibleRangeChange}
+          onVolumeVisibleChange={onVolumeVisibleChange}
+          onIndicatorChange={onIndicatorChange}
         />
       </div>
     </section>
