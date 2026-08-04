@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { BarChart3, FolderKanban, LayoutGrid, MessageSquare, PanelRightClose, RefreshCw, Settings2 } from 'lucide-react'
+import { Activity, BarChart3, FolderKanban, LayoutGrid, MessageSquare, PanelRightClose, RefreshCw, Settings2 } from 'lucide-react'
 import type { PriceMode, VisibleRange } from './ChartCanvas'
 import { InstrumentEditor } from './InstrumentEditor'
 import { logInfo, logWarning } from './eventLogger'
@@ -235,6 +235,17 @@ export function StockWorkspace() {
             <div className="coordinate-tabs" aria-label="价格坐标">
               <button className={activeChart.chart.priceMode === 'normal' ? 'active' : ''} onClick={() => setPriceMode('normal')}>普通</button>
               <button className={activeChart.chart.priceMode === 'log' ? 'active' : ''} onClick={() => setPriceMode('log')}>对数</button>
+            </div>
+            <div className="indicator-tabs" aria-label="MACD indicator">
+              <button
+                className={activeChart.chart.indicator === 'macd' ? 'active' : ''}
+                title={activeChart.chart.indicator === 'macd' ? 'Hide MACD' : 'Show MACD'}
+                aria-pressed={activeChart.chart.indicator === 'macd'}
+                onClick={() => updateActiveChart(item => ({
+                  ...item,
+                  chart: { ...item.chart, indicator: item.chart.indicator === 'macd' ? 'none' : 'macd' },
+                }))}
+              ><Activity size={12}/>MACD</button>
             </div>
             <span className="ma ma-short">MA 5</span><span className="ma ma-mid">MA 20</span><span className="ma ma-long">MA 60</span>
           </>}

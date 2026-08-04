@@ -2,15 +2,20 @@ import { describe, expect, it } from 'vitest'
 
 import {
   aggregateBars,
+  calculateMacd,
   calculateChangePercent,
   candleColor,
   chartLayoutOptions,
   chooseLodBucket,
   createRangeMeasurement,
+  detectPriceGaps,
   movingAverage,
   mergeProvisionalBar,
   millisecondsUntilMarketSession,
+  visibleExtrema,
+  visibleUnfilledPriceGaps,
   type DailyBar,
+  type PriceGap,
 } from './ChartCanvas'
 
 describe('chart layout', () => {
@@ -36,6 +41,21 @@ describe('movingAverage', () => {
       { time: '2026-08-04', value: 3 },
       { time: '2026-08-05', value: 4 },
     ])
+  })
+})
+
+describe('MACD', () => {
+  it('uses 2x DIF minus DEA histogram semantics', () => {
+    const values = calculateMacd([
+      { trade_date: '2026-08-01', close: 10 },
+      { trade_date: '2026-08-02', close: 11 },
+      { trade_date: '2026-08-03', close: 12 },
+    ], 2, 3, 2)
+    expect(values[0]).toEqual({ time: '2026-08-01', dif: 0, dea: 0, histogram: 0 })
+    expect(values[1].dif).toBeCloseTo(1 / 6)
+    expect(values[1].dea).toBeCloseTo(1 / 9)
+    expect(values[1].histogram).toBeCloseTo(1 / 9)
+    expect(values[2].histogram).toBeGreaterThan(0)
   })
 })
 
@@ -86,6 +106,67 @@ describe('chart level of detail', () => {
   it('uses power-of-two buckets only when density exceeds the viewport', () => {
     expect(chooseLodBucket(800, 800)).toBe(1)
     expect(chooseLodBucket(5_457, 800)).toBe(8)
+  })
+})
+
+describe('market annotations', () => {
+  const bar = (trade_date: string, open: number, high: number, low: number, close: number): DailyBar => ({
+    trade_date, open, high, low, close, volume: 100, source: 'test',
+  })
+
+  it('finds the highest high and lowest low inside the visible date range', () => {
+    const bars = [
+      bar('2026-08-01', 10, 15, 8, 12),
+      bar('2026-08-02', 12, 14, 9, 13),
+      bar('2026-08-03', 13, 16, 11, 15),
+    ]
+    const extrema = visibleExtrema(bars, '2026-08-02', '2026-08-03')
+    expect(extrema?.high.trade_date).toBe('2026-08-03')
+    expect(extrema?.high.high).toBe(16)
+    expect(extrema?.low.trade_date).toBe('2026-08-02')
+    expect(extrema?.low.low).toBe(9)
+  })
+
+  it('detects upward and downward gaps and their first complete fills', () => {
+    const gaps = detectPriceGaps([
+      bar('2026-08-01', 10, 10, 8, 9),
+      bar('2026-08-02', 12, 13, 12, 12.5),
+      bar('2026-08-03', 12, 12.5, 10.5, 11),
+      bar('2026-08-04', 7, 7.5, 6, 7),
+      bar('2026-08-05', 7, 10.6, 6.5, 10),
+    ])
+    expect(gaps).toEqual([
+      {
+        direction: 'up', previousDate: '2026-08-01', startDate: '2026-08-02',
+        fillDate: '2026-08-04', lower: 10, upper: 12,
+      },
+      {
+        direction: 'down', previousDate: '2026-08-03', startDate: '2026-08-04',
+        fillDate: '2026-08-05', lower: 7.5, upper: 10.5,
+      },
+    ])
+  })
+
+  it('keeps an unfilled gap open', () => {
+    expect(detectPriceGaps([
+      bar('2026-08-01', 10, 10, 8, 9),
+      bar('2026-08-02', 12, 13, 12, 12.5),
+      bar('2026-08-03', 13, 14, 11, 12),
+    ])[0].fillDate).toBeUndefined()
+  })
+
+  it('limits the overlay to the latest four unfilled gaps', () => {
+    const gaps: PriceGap[] = Array.from({ length: 6 }, (_, index) => ({
+      direction: 'up' as const,
+      previousDate: `2026-08-0${index + 1}`,
+      startDate: `2026-08-0${index + 2}`,
+      lower: 10 + index,
+      upper: 11 + index,
+    }))
+    gaps[5].fillDate = '2026-08-08'
+    expect(visibleUnfilledPriceGaps(gaps, '2026-08-10').map(gap => gap.startDate)).toEqual([
+      '2026-08-03', '2026-08-04', '2026-08-05', '2026-08-06',
+    ])
   })
 })
 

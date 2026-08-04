@@ -20,6 +20,7 @@ import {
 
 export type ChartRange = '1M' | '1Y' | '3Y' | '10Y' | 'ALL'
 export type PriceMode = 'normal' | 'log'
+export type ChartIndicator = 'macd' | 'none'
 export type VisibleRange = { from: string; to: string }
 
 export type DailyBar = {
@@ -59,10 +60,27 @@ export type RangeMeasurement = {
   kLineCount: number
 }
 
+export type PriceGap = {
+  direction: 'up' | 'down'
+  previousDate: string
+  startDate: string
+  fillDate?: string
+  lower: number
+  upper: number
+}
+
+export type MacdPoint = {
+  time: string
+  dif: number
+  dea: number
+  histogram: number
+}
+
 type ChartCanvasProps = {
   symbol: string
   range: ChartRange
   priceMode: PriceMode
+  indicator: ChartIndicator
   initialVisibleRange?: VisibleRange
   onCoverageChange?: (bars: number, first?: string, last?: string) => void
   onVisibleRangeChange?: (value: VisibleRange) => void
@@ -84,6 +102,7 @@ export function ChartCanvas({
   symbol,
   range,
   priceMode,
+  indicator,
   initialVisibleRange,
   onCoverageChange,
   onVisibleRangeChange,
@@ -95,6 +114,9 @@ export function ChartCanvas({
   const ma5Ref = useRef<ISeriesApi<'Line'> | null>(null)
   const ma20Ref = useRef<ISeriesApi<'Line'> | null>(null)
   const ma60Ref = useRef<ISeriesApi<'Line'> | null>(null)
+  const macdDifRef = useRef<ISeriesApi<'Line'> | null>(null)
+  const macdDeaRef = useRef<ISeriesApi<'Line'> | null>(null)
+  const macdHistogramRef = useRef<ISeriesApi<'Histogram'> | null>(null)
   const barsRef = useRef<DailyBar[]>([])
   const previousCloseByDateRef = useRef<Map<string, number>>(new Map())
   const renderedBarsRef = useRef<Map<string, RenderBar>>(new Map())
@@ -124,6 +146,8 @@ export function ChartCanvas({
     ma20: movingAverage(bars, 20),
     ma60: movingAverage(bars, 60),
   }), [bars])
+  const priceGaps = useMemo(() => detectPriceGaps(bars), [bars])
+  const macd = useMemo(() => calculateMacd(bars), [bars])
 
   useEffect(() => { coverageCallbackRef.current = onCoverageChange }, [onCoverageChange])
   useEffect(() => { visibleRangeCallbackRef.current = onVisibleRangeChange }, [onVisibleRangeChange])
@@ -186,6 +210,7 @@ export function ChartCanvas({
     const resetAutoScale = () => {
       chart.priceScale('right', 0).applyOptions({ autoScale: true })
       chart.priceScale('right', 1).applyOptions({ autoScale: true })
+      if (chart.panes().length > 2) chart.priceScale('right', 2).applyOptions({ autoScale: true })
     }
     resetAutoScaleRef.current = resetAutoScale
 
@@ -259,6 +284,60 @@ export function ChartCanvas({
       chartRef.current = null
     }
   }, [])
+
+  useEffect(() => {
+    const chart = chartRef.current
+    if (!chart || indicator !== 'macd') {
+      if (chart) setPaneStretchFactors(chart, false)
+      return
+    }
+    const pane = chart.addPane(true)
+    const paneIndex = pane.paneIndex()
+    const histogram = chart.addSeries(HistogramSeries, {
+      title: 'MACD',
+      base: 0,
+      priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
+      priceLineVisible: false,
+      lastValueVisible: true,
+    }, paneIndex)
+    const dif = chart.addSeries(LineSeries, {
+      title: 'DIF',
+      color: '#e5b85c',
+      lineWidth: 1,
+      priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
+      priceLineVisible: false,
+      lastValueVisible: true,
+    }, paneIndex)
+    const dea = chart.addSeries(LineSeries, {
+      title: 'DEA',
+      color: '#57a7d9',
+      lineWidth: 1,
+      priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
+      priceLineVisible: false,
+      lastValueVisible: true,
+    }, paneIndex)
+    macdHistogramRef.current = histogram
+    macdDifRef.current = dif
+    macdDeaRef.current = dea
+    setPaneStretchFactors(chart, true)
+    chart.priceScale('right', paneIndex).applyOptions({ autoScale: true, scaleMargins: { top: 0.12, bottom: 0.12 } })
+    const times = new Set(renderedBarListRef.current.map(item => item.trade_date))
+    applyMacdSeries(macd, times, dif, dea, histogram)
+    setOverlayRevision(value => value + 1)
+    return () => {
+      macdHistogramRef.current = null
+      macdDifRef.current = null
+      macdDeaRef.current = null
+      if (chartRef.current !== chart) return
+      chart.removeSeries(histogram)
+      chart.removeSeries(dif)
+      chart.removeSeries(dea)
+      const currentPaneIndex = chart.panes().indexOf(pane)
+      if (currentPaneIndex >= 0) chart.removePane(currentPaneIndex)
+      setPaneStretchFactors(chart, false)
+      setOverlayRevision(value => value + 1)
+    }
+  }, [indicator])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -377,10 +456,18 @@ export function ChartCanvas({
       ma5Ref.current?.setData(averages.ma5.filter(item => times.has(String(item.time))))
       ma20Ref.current?.setData(averages.ma20.filter(item => times.has(String(item.time))))
       ma60Ref.current?.setData(averages.ma60.filter(item => times.has(String(item.time))))
+      applyMacdSeries(
+        macd,
+        times,
+        macdDifRef.current,
+        macdDeaRef.current,
+        macdHistogramRef.current,
+      )
       renderedBarsRef.current = new Map(renderedBars.map(item => [item.trade_date, item]))
       renderedBarListRef.current = renderedBars
       bucketRef.current = bucket
       setLodBucket(bucket)
+      setOverlayRevision(value => value + 1)
       window.requestAnimationFrame(() => {
         if (preserve) chartRef.current?.timeScale().setVisibleRange(preserve)
         resetAutoScaleRef.current()
@@ -391,7 +478,7 @@ export function ChartCanvas({
     }
     applyBucketRef.current(1, pendingVisibleRangeRef.current)
     pendingVisibleRangeRef.current = undefined
-  }, [bars, averages])
+  }, [bars, averages, macd])
 
   useEffect(() => {
     chartRef.current?.priceScale('right', 0).applyOptions({
@@ -524,6 +611,15 @@ export function ChartCanvas({
     hostRef.current,
     overlayRevision,
   )
+  const marketAnnotations = projectMarketAnnotations(
+    renderedBarListRef.current,
+    priceGaps,
+    chartRef.current,
+    candleRef.current,
+    hostRef.current,
+    lodBucket,
+    overlayRevision,
+  )
 
   return (
     <div
@@ -554,9 +650,72 @@ export function ChartCanvas({
       {measurement && measurementGeometry && (
         <MeasurementOverlay measurement={measurement} geometry={measurementGeometry}/>
       )}
+      {marketAnnotations && <MarketAnnotationOverlay geometry={marketAnnotations}/>}
       {state === 'loading' && <div className="chart-state">加载日线数据</div>}
       {state === 'error' && <div className="chart-state error">日线数据加载失败</div>}
       {state === 'ready' && bars.length === 0 && <div className="chart-state">暂无日线数据</div>}
+    </div>
+  )
+}
+
+type PricePointGeometry = {
+  kind: 'high' | 'low'
+  x: number
+  y: number
+  price: number
+}
+
+type GapGeometry = PriceGap & {
+  x1: number
+  x2: number
+  y1: number
+  y2: number
+}
+
+type MarketAnnotationGeometry = {
+  width: number
+  height: number
+  extrema: PricePointGeometry[]
+  gaps: GapGeometry[]
+}
+
+function MarketAnnotationOverlay({ geometry }: { geometry: MarketAnnotationGeometry }) {
+  return (
+    <div className="chart-market-annotations">
+      <svg width={geometry.width} height={geometry.height} aria-hidden="true">
+        {geometry.gaps.map(gap => {
+          const top = Math.min(gap.y1, gap.y2)
+          const height = Math.max(1, Math.abs(gap.y2 - gap.y1))
+          const width = Math.max(1, gap.x2 - gap.x1)
+          return (
+            <g key={`${gap.direction}-${gap.startDate}`} className={`price-gap price-gap-${gap.direction}`}>
+              <rect x={gap.x1} y={top} width={width} height={height}/>
+              <line x1={gap.x1} y1={top} x2={gap.x2} y2={top}/>
+              <line x1={gap.x1} y1={top + height} x2={gap.x2} y2={top + height}/>
+              {width >= 38 && (
+                <text x={gap.x2 - 4} y={clamp(top - 4, 10, geometry.height - 5)} textAnchor="end">
+                  缺口
+                </text>
+              )}
+            </g>
+          )
+        })}
+        {geometry.extrema.map(point => {
+          const drawLeft = point.x > geometry.width * 0.72
+          const lineEnd = point.x + (drawLeft ? -24 : 24)
+          const textX = lineEnd + (drawLeft ? -3 : 3)
+          const textY = point.kind === 'high'
+            ? clamp(point.y - 5, 12, geometry.height - 8)
+            : clamp(point.y + 12, 12, geometry.height - 5)
+          return (
+            <g key={point.kind} className={`extreme-price extreme-price-${point.kind}`}>
+              <circle cx={point.x} cy={point.y} r="2"/>
+              <line x1={point.x} y1={point.y} x2={lineEnd} y2={point.y}/>
+              <text x={textX} y={textY} textAnchor={drawLeft ? 'end' : 'start'}>{formatPrice(point.price)}</text>
+            </g>
+          )
+        })}
+      </svg>
     </div>
   )
 }
@@ -640,6 +799,59 @@ export function movingAverage(bars: DailyBar[], window: number): LineData<Time>[
     if (index >= window - 1) output.push({ time: bars[index].trade_date, value: sum / window })
   }
   return output
+}
+
+export function calculateMacd(
+  bars: Pick<DailyBar, 'trade_date' | 'close'>[],
+  fastPeriod = 12,
+  slowPeriod = 26,
+  signalPeriod = 9,
+): MacdPoint[] {
+  if (bars.length === 0) return []
+  const fastAlpha = 2 / (fastPeriod + 1)
+  const slowAlpha = 2 / (slowPeriod + 1)
+  const signalAlpha = 2 / (signalPeriod + 1)
+  let fast = bars[0].close
+  let slow = bars[0].close
+  let signal = 0
+  return bars.map((bar, index) => {
+    if (index > 0) {
+      fast += fastAlpha * (bar.close - fast)
+      slow += slowAlpha * (bar.close - slow)
+    }
+    const dif = fast - slow
+    signal = index === 0 ? dif : signal + signalAlpha * (dif - signal)
+    return {
+      time: bar.trade_date,
+      dif,
+      dea: signal,
+      histogram: 2 * (dif - signal),
+    }
+  })
+}
+
+function applyMacdSeries(
+  values: MacdPoint[],
+  times: Set<string>,
+  dif: ISeriesApi<'Line'> | null,
+  dea: ISeriesApi<'Line'> | null,
+  histogram: ISeriesApi<'Histogram'> | null,
+) {
+  if (!dif || !dea || !histogram) return
+  const visible = values.filter(item => times.has(item.time))
+  dif.setData(visible.map(item => ({ time: item.time, value: item.dif })))
+  dea.setData(visible.map(item => ({ time: item.time, value: item.dea })))
+  histogram.setData(visible.map(item => ({
+    time: item.time,
+    value: item.histogram,
+    color: item.histogram >= 0 ? `${rising}b3` : `${falling}b3`,
+  })))
+}
+
+function setPaneStretchFactors(chart: IChartApi, showIndicator: boolean) {
+  chart.panes()[0]?.setStretchFactor(3)
+  chart.panes()[1]?.setStretchFactor(1)
+  if (showIndicator) chart.panes()[2]?.setStretchFactor(1)
 }
 
 export function mergeProvisionalBar(bars: DailyBar[], provisional: DailyBar): DailyBar[] {
@@ -729,6 +941,70 @@ export function candleColor(bar: Pick<DailyBar, 'open' | 'close'>, previousClose
   return Math.abs(changePercent) < 3 ? fallingSoft : falling
 }
 
+export function visibleExtrema(
+  bars: DailyBar[],
+  from: string,
+  to: string,
+): { high: DailyBar; low: DailyBar } | undefined {
+  let high: DailyBar | undefined
+  let low: DailyBar | undefined
+  for (const bar of bars) {
+    if (bar.trade_date < from || bar.trade_date > to) continue
+    if (!high || bar.high > high.high) high = bar
+    if (!low || bar.low < low.low) low = bar
+  }
+  return high && low ? { high, low } : undefined
+}
+
+export function detectPriceGaps(bars: DailyBar[]): PriceGap[] {
+  const gaps: PriceGap[] = []
+  for (let index = 1; index < bars.length; index += 1) {
+    const previous = bars[index - 1]
+    const current = bars[index]
+    let gap: PriceGap | undefined
+    if (current.low > previous.high) {
+      gap = {
+        direction: 'up',
+        previousDate: previous.trade_date,
+        startDate: current.trade_date,
+        lower: previous.high,
+        upper: current.low,
+      }
+    } else if (current.high < previous.low) {
+      gap = {
+        direction: 'down',
+        previousDate: previous.trade_date,
+        startDate: current.trade_date,
+        lower: current.high,
+        upper: previous.low,
+      }
+    }
+    if (!gap) continue
+    for (let fillIndex = index + 1; fillIndex < bars.length; fillIndex += 1) {
+      const candidate = bars[fillIndex]
+      const filled = gap.direction === 'up'
+        ? candidate.low <= gap.lower
+        : candidate.high >= gap.upper
+      if (filled) {
+        gap.fillDate = candidate.trade_date
+        break
+      }
+    }
+    gaps.push(gap)
+  }
+  return gaps
+}
+
+export function visibleUnfilledPriceGaps(
+  gaps: PriceGap[],
+  to: string,
+  limit = 4,
+): PriceGap[] {
+  return gaps
+    .filter(gap => gap.fillDate === undefined && gap.startDate <= to)
+    .slice(-Math.max(0, limit))
+}
+
 export function createRangeMeasurement(
   first: DailyBar & { period_start?: string },
   last: DailyBar,
@@ -803,6 +1079,59 @@ function projectMeasurement(
     labelLeft: clamp(midpointX + 8, 8, Math.max(8, host.clientWidth - labelWidth - 8)),
     labelTop: clamp(midpointY - 24, 36, Math.max(36, height - 66)),
   }
+}
+
+function projectMarketAnnotations(
+  renderedBars: RenderBar[],
+  priceGaps: PriceGap[],
+  chart: IChartApi | null,
+  candles: ISeriesApi<'Candlestick'> | null,
+  host: HTMLDivElement | null,
+  lodBucket: number,
+  revision: number,
+): MarketAnnotationGeometry | undefined {
+  void revision
+  if (!chart || !candles || !host || renderedBars.length === 0) return undefined
+  const visible = chart.timeScale().getVisibleRange()
+  if (!visible) return undefined
+  const from = String(visible.from)
+  const to = String(visible.to)
+  const extrema = visibleExtrema(renderedBars, from, to)
+  if (!extrema) return undefined
+  const height = chart.panes()[0]?.getHeight() ?? host.clientHeight
+  const projectPoint = (kind: 'high' | 'low', bar: DailyBar): PricePointGeometry | undefined => {
+    const x = chart.timeScale().timeToCoordinate(bar.trade_date)
+    const price = kind === 'high' ? bar.high : bar.low
+    const y = candles.priceToCoordinate(price)
+    return x === null || y === null ? undefined : { kind, x, y, price }
+  }
+  const projectedExtrema = [
+    projectPoint('high', extrema.high),
+    projectPoint('low', extrema.low),
+  ].filter((item): item is PricePointGeometry => item !== undefined)
+  const visibleBars = renderedBars.filter(bar => bar.trade_date >= from && bar.trade_date <= to)
+  const lastVisibleDate = visibleBars.at(-1)?.trade_date
+  const gaps = lodBucket === 1 && lastVisibleDate
+    ? visibleUnfilledPriceGaps(priceGaps, to).flatMap(gap => {
+        const effectiveEnd = gap.fillDate ?? lastVisibleDate
+        const startDate = gap.startDate < from ? visibleBars.at(0)?.trade_date : gap.startDate
+        const endDate = effectiveEnd > to ? lastVisibleDate : effectiveEnd
+        if (!startDate || !endDate) return []
+        const startX = chart.timeScale().timeToCoordinate(startDate)
+        const endX = chart.timeScale().timeToCoordinate(endDate)
+        const upperY = candles.priceToCoordinate(gap.upper)
+        const lowerY = candles.priceToCoordinate(gap.lower)
+        if (startX === null || endX === null || upperY === null || lowerY === null) return []
+        return [{
+          ...gap,
+          x1: Math.min(startX, endX),
+          x2: Math.max(startX + 1, endX),
+          y1: upperY,
+          y2: lowerY,
+        }]
+      })
+    : []
+  return { width: host.clientWidth, height, extrema: projectedExtrema, gaps }
 }
 
 function localPoint(event: ReactPointerEvent<HTMLDivElement>): { x: number; y: number } {

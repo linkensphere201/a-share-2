@@ -59,16 +59,16 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
   color: #e8ebf0;
   font-size: 12px;
 }
-.scope-tabs, .range-tabs, .coordinate-tabs { display: flex; align-items: center; gap: 2px; }
+.scope-tabs, .range-tabs, .coordinate-tabs, .indicator-tabs { display: flex; align-items: center; gap: 2px; }
 .scope-tabs { padding: 0 6px; border-bottom: 1px solid #272d36; }
-.scope-tabs button, .range-tabs button, .coordinate-tabs button {
+.scope-tabs button, .range-tabs button, .coordinate-tabs button, .indicator-tabs button {
   border: 0;
   background: transparent;
   color: #8e99a8;
   font-size: 11px;
   padding: 7px 7px;
 }
-.scope-tabs button.active, .range-tabs button.active, .coordinate-tabs button.active { color: #f0f3f7; background: #252b34; border-radius: 3px; }
+.scope-tabs button.active, .range-tabs button.active, .coordinate-tabs button.active, .indicator-tabs button.active { color: #f0f3f7; background: #252b34; border-radius: 3px; }
 .instrument-list { overflow: auto; padding: 5px; }
 .instrument-row {
   width: 100%;
@@ -245,6 +245,8 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 }
 .coordinate-tabs { height: 24px; padding: 2px; background: #171c22; border: 1px solid #272d36; border-radius: 3px; }
 .coordinate-tabs button { padding: 2px 6px; font-size: 10px; }
+.indicator-tabs { height: 24px; padding: 2px; background: #171c22; border: 1px solid #272d36; border-radius: 3px; }
+.indicator-tabs button { display: inline-flex; align-items: center; gap: 4px; padding: 2px 6px; font-size: 10px; }
 .ma { position: relative; padding-left: 9px; }
 .ma::before { content: ""; position: absolute; left: 0; top: 4px; width: 5px; height: 5px; border-radius: 50%; }
 .ma-short::before { background: #e5b85c; }
@@ -428,6 +430,34 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 }
 .chart-measurement-overlay { position: absolute; z-index: 3; inset: 0; pointer-events: none; }
 .chart-measurement-overlay svg { position: absolute; top: 0; left: 0; overflow: hidden; }
+.chart-market-annotations { position: absolute; z-index: 1; inset: 0; pointer-events: none; }
+.chart-market-annotations svg { position: absolute; top: 0; left: 0; overflow: hidden; }
+.extreme-price line { stroke: #aab3bf; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.extreme-price circle { fill: #d8dde6; }
+.extreme-price text {
+  fill: #d8dde6;
+  font-size: 10px;
+  font-weight: 500;
+  paint-order: stroke;
+  stroke: #0d1014;
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+.price-gap rect { stroke: none; }
+.price-gap line { stroke-width: 1; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; }
+.price-gap text {
+  font-size: 9px;
+  paint-order: stroke;
+  stroke: #0d1014;
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+.price-gap-up rect { fill: #ef535012; }
+.price-gap-up line { stroke: #ef535080; }
+.price-gap-up text { fill: #e99693; }
+.price-gap-down rect { fill: #26a26912; }
+.price-gap-down line { stroke: #26a26980; }
+.price-gap-down text { fill: #70be9a; }
 .measurement-triangle { fill: transparent; stroke-width: 1.5; stroke-dasharray: 6 4; vector-effect: non-scaling-stroke; }
 .measurement-triangle.measurement-rise { stroke: #ef5350; fill: transparent; }
 .measurement-triangle.measurement-fall { stroke: #26a269; fill: transparent; }

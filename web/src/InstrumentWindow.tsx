@@ -54,6 +54,7 @@ export function ChartWindow({
           symbol={instrument.symbol}
           range={chart.range}
           priceMode={chart.priceMode}
+          indicator={chart.indicator}
           initialVisibleRange={chart.visibleRange}
           onCoverageChange={onCoverageChange}
           onVisibleRangeChange={onVisibleRangeChange}

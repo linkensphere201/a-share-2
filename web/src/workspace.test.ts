@@ -40,6 +40,23 @@ describe('workspace persistence', () => {
     })
   })
 
+  it('migrates missing indicators to MACD and preserves an explicit hidden state', () => {
+    const state = createDefaultWorkspace()
+    const chart = state.groups[0].windows.find(item => item.type === 'chart')!
+    if (chart.type !== 'chart') throw new Error('expected chart')
+    delete (chart.chart as Partial<typeof chart.chart>).indicator
+    window.localStorage.setItem(workspaceStorageKey, JSON.stringify(state))
+    expect(loadWorkspace().groups[0].windows.find(item => item.type === 'chart')).toMatchObject({
+      chart: { indicator: 'macd' },
+    })
+
+    chart.chart.indicator = 'none'
+    window.localStorage.setItem(workspaceStorageKey, JSON.stringify(state))
+    expect(loadWorkspace().groups[0].windows.find(item => item.type === 'chart')).toMatchObject({
+      chart: { indicator: 'none' },
+    })
+  })
+
   it('falls back when persisted state is invalid', () => {
     window.localStorage.setItem(workspaceStorageKey, '{invalid')
     expect(loadWorkspace()).toEqual(createDefaultWorkspace())
@@ -107,7 +124,7 @@ describe('workspace persistence', () => {
       title: '表3',
       mode: 'detached',
       instrument: instrument('510300.SH'),
-      chart: { range: '1Y', priceMode: 'normal' },
+      chart: { range: '1Y', priceMode: 'normal', indicator: 'macd' },
     })
     window.localStorage.setItem(workspaceStorageKey, JSON.stringify(state))
 
