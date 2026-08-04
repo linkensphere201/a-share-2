@@ -98,6 +98,11 @@ export const chartLayoutOptions = {
   attributionLogo: false,
 } as const
 
+export const compactCrosshairMarkerOptions = {
+  crosshairMarkerRadius: 2,
+  crosshairMarkerBorderWidth: 1,
+} as const
+
 export function ChartCanvas({
   symbol,
   range,
@@ -197,9 +202,9 @@ export function ChartCanvas({
       wickDownColor: falling,
       priceLineColor: '#8e99a8',
     })
-    const ma5 = chart.addSeries(LineSeries, { color: '#e5b85c', lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
-    const ma20 = chart.addSeries(LineSeries, { color: '#57a7d9', lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
-    const ma60 = chart.addSeries(LineSeries, { color: '#b984cc', lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
+    const ma5 = chart.addSeries(LineSeries, { color: '#e5b85c', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, ...compactCrosshairMarkerOptions })
+    const ma20 = chart.addSeries(LineSeries, { color: '#57a7d9', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, ...compactCrosshairMarkerOptions })
+    const ma60 = chart.addSeries(LineSeries, { color: '#b984cc', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, ...compactCrosshairMarkerOptions })
     const volume = chart.addSeries(HistogramSeries, {
       priceFormat: { type: 'volume' },
       priceLineVisible: false,
@@ -299,6 +304,7 @@ export function ChartCanvas({
       priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
       priceLineVisible: false,
       lastValueVisible: true,
+      ...compactCrosshairMarkerOptions,
     }, paneIndex)
     const dif = chart.addSeries(LineSeries, {
       title: 'DIF',
@@ -307,6 +313,7 @@ export function ChartCanvas({
       priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
       priceLineVisible: false,
       lastValueVisible: true,
+      ...compactCrosshairMarkerOptions,
     }, paneIndex)
     const dea = chart.addSeries(LineSeries, {
       title: 'DEA',
@@ -690,13 +697,6 @@ function MarketAnnotationOverlay({ geometry }: { geometry: MarketAnnotationGeome
           return (
             <g key={`${gap.direction}-${gap.startDate}`} className={`price-gap price-gap-${gap.direction}`}>
               <rect x={gap.x1} y={top} width={width} height={height}/>
-              <line x1={gap.x1} y1={top} x2={gap.x2} y2={top}/>
-              <line x1={gap.x1} y1={top + height} x2={gap.x2} y2={top + height}/>
-              {width >= 38 && (
-                <text x={gap.x2 - 4} y={clamp(top - 4, 10, geometry.height - 5)} textAnchor="end">
-                  缺口
-                </text>
-              )}
             </g>
           )
         })}

@@ -7,6 +7,7 @@ import {
   candleColor,
   chartLayoutOptions,
   chooseLodBucket,
+  compactCrosshairMarkerOptions,
   createRangeMeasurement,
   detectPriceGaps,
   movingAverage,
@@ -21,6 +22,13 @@ import {
 describe('chart layout', () => {
   it('does not render the TradingView attribution over the chart', () => {
     expect(chartLayoutOptions.attributionLogo).toBe(false)
+  })
+
+  it('uses compact line-series markers at crosshair intersections', () => {
+    expect(compactCrosshairMarkerOptions).toEqual({
+      crosshairMarkerRadius: 2,
+      crosshairMarkerBorderWidth: 1,
+    })
   })
 })
 
