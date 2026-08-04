@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowDown, ArrowUp, ArrowUpDown, Maximize2, Minimize2, Plus, Search, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, ArrowUpDown, Maximize2, Minimize2, Pencil, X } from 'lucide-react'
 import type { Instrument, InstrumentListWindowState } from './workspace'
 
 type MarketSnapshot = {
@@ -20,8 +20,7 @@ type InstrumentListWindowProps = {
   onToggleMaximize: () => void
   onRemoveWindow: () => void
   onSelect: (instrument: Instrument) => void
-  onAddInstrument: (instrument: Instrument) => void
-  onRemoveInstrument: (symbol: string) => void
+  onEdit: () => void
   derived: boolean
   memberSource?: Instrument
   onSortChange: (sort: NonNullable<InstrumentListWindowState['sort']>) => void
@@ -36,14 +35,11 @@ export function InstrumentListWindow({
   onToggleMaximize,
   onRemoveWindow,
   onSelect,
-  onAddInstrument,
-  onRemoveInstrument,
+  onEdit,
   derived,
   memberSource,
   onSortChange,
 }: InstrumentListWindowProps) {
-  const [query, setQuery] = useState('')
-  const [results, setResults] = useState<Instrument[]>([])
   const [members, setMembers] = useState<ListInstrument[]>([])
   const [snapshots, setSnapshots] = useState<Record<string, MarketSnapshot>>({})
   const [memberMeta, setMemberMeta] = useState<{ asOf?: string; source?: string }>({})
@@ -58,29 +54,6 @@ export function InstrumentListWindow({
     window.addEventListener('stock-harness:custom-groups-changed', refresh)
     return () => window.removeEventListener('stock-harness:custom-groups-changed', refresh)
   }, [memberSource?.symbol])
-
-  useEffect(() => {
-    if (!query.trim()) {
-      setResults([])
-      return
-    }
-    const controller = new AbortController()
-    const handle = window.setTimeout(async () => {
-      try {
-        const params = new URLSearchParams({ query, limit: '12' })
-        const response = await fetch(`/api/instruments?${params}`, { signal: controller.signal })
-        if (!response.ok) throw new Error(`HTTP ${response.status}`)
-        const body = await response.json() as { items: Instrument[] }
-        setResults(body.items)
-      } catch (error) {
-        if ((error as Error).name !== 'AbortError') setResults([])
-      }
-    }, 120)
-    return () => {
-      window.clearTimeout(handle)
-      controller.abort()
-    }
-  }, [query])
 
   useEffect(() => {
     if (!derived || !memberSource) {
@@ -141,7 +114,6 @@ export function InstrumentListWindow({
     return () => controller.abort()
   }, [derived, manualInstruments.map(item => item.symbol).join('|')])
 
-  const symbols = new Set(windowState.content.instruments.map(item => item.symbol))
   const sourceItems: ListInstrument[] = derived ? members : manualInstruments
   const displayedItems = useMemo(
     () => sortListInstruments(sourceItems, snapshots, windowState.sort),
@@ -160,6 +132,7 @@ export function InstrumentListWindow({
           <strong>{windowState.title}</strong><small>{detail}</small>
         </button>
         <div className="instrument-window-actions">
+          {!derived && <button title="编辑标的" aria-label={`编辑 ${windowState.title} 标的`} onClick={onEdit}><Pencil size={13}/></button>}
           <button
             title={maximized ? '还原窗口' : '最大化窗口'}
             aria-label={maximized ? '还原窗口' : `最大化 ${windowState.title} 窗口`}
@@ -174,34 +147,6 @@ export function InstrumentListWindow({
         </div>
       </header>
       <div className={derived ? 'list-window-body derived' : 'list-window-body'} onPointerDown={onFocus}>
-        {!derived && <label className="list-window-search">
-          <Search size={14}/>
-          <input
-            value={query}
-            onChange={event => setQuery(event.target.value)}
-            placeholder="添加代码、名称或板块"
-            aria-label="搜索待添加标的"
-          />
-        </label>}
-        {!derived && query.trim() && (
-          <div className="list-search-results">
-            {results.length === 0 && <div className="list-window-empty">没有匹配标的</div>}
-            {results.map(item => (
-              <div className="list-search-row" key={item.symbol}>
-                <span><strong>{item.name}</strong><small>{item.symbol}</small></span>
-                <button
-                  title={symbols.has(item.symbol) ? '已在列表中' : '添加到列表'}
-                  aria-label={`添加 ${item.name} 到列表`}
-                  disabled={symbols.has(item.symbol)}
-                  onClick={() => {
-                    onAddInstrument(item)
-                    setQuery('')
-                  }}
-                ><Plus size={14}/></button>
-              </div>
-            ))}
-          </div>
-        )}
         <div className="list-window-table-header">
           <SortButton label="名称" field="name" sort={windowState.sort} onChange={onSortChange}/>
           <SortButton label="总市值" field="total_market_cap" sort={windowState.sort} onChange={onSortChange}/>
@@ -226,12 +171,7 @@ export function InstrumentListWindow({
               </button>
               <span className="list-market-cap">{formatMarketCap(snapshot?.total_market_cap)}</span>
               <span className={changeClass(snapshot?.change_percent)}>{formatChange(snapshot?.change_percent)}</span>
-              {!derived ? <button
-                className="list-window-remove"
-                title="从列表移除"
-                aria-label={`从列表移除 ${item.name}`}
-                onClick={() => onRemoveInstrument(item.symbol)}
-              ><X size={13}/></button> : <span/>}
+              <span/>
             </div>
           })}
         </div>

@@ -28,6 +28,8 @@ describe('StockWorkspace', () => {
     expect(screen.getByTestId('chart-canvas').textContent).toBe('BK1128.DC')
     expect(screen.getByText('2/8')).toBeTruthy()
     expect(screen.getByRole('button', { name: '刷新应用' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '编辑 表1 标的' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '编辑 表2 标的' })).toBeNull()
     await user.click(screen.getByRole('button', { name: '收起对话栏' }))
     expect(screen.getByRole('button', { name: '展开对话栏' })).toBeTruthy()
   })
@@ -38,8 +40,10 @@ describe('StockWorkspace', () => {
     const user = userEvent.setup()
 
     render(<App />)
-    await user.type(screen.getByRole('textbox', { name: '搜索待添加标的' }), '沪深300')
-    await user.click(await screen.findByRole('button', { name: '添加 沪深300ETF 到列表' }))
+    await user.click(screen.getByRole('button', { name: '编辑 表1 标的' }))
+    await user.type(screen.getByRole('textbox', { name: '搜索可添加标的' }), '沪深300')
+    await user.click(await screen.findByRole('button', { name: /沪深300ETF/ }))
+    await user.click(screen.getByRole('button', { name: '保存并退出' }))
     await user.click(screen.getByRole('button', { name: '选择 沪深300ETF' }))
 
     expect(screen.getByTestId('chart-canvas').textContent).toBe('510300.SH')
@@ -58,8 +62,34 @@ describe('StockWorkspace', () => {
       })
     })
 
-    await user.click(screen.getByRole('button', { name: '从列表移除 沪深300ETF' }))
+    await user.click(screen.getByRole('button', { name: '编辑 表1 标的' }))
+    await user.click(screen.getByRole('button', { name: '删除 沪深300ETF' }))
+    await user.click(screen.getByRole('button', { name: '保存并退出' }))
     expect(screen.getByTestId('chart-canvas').textContent).toBe('BK1128.DC')
+  })
+
+  it('replaces the instrument of a detached chart through the unified editor', async () => {
+    const state = createDefaultWorkspace()
+    const chart = state.groups[0].windows[1]
+    if (chart.type !== 'chart') throw new Error('expected chart')
+    chart.mode = 'detached'
+    state.groups[0].attachments = []
+    window.localStorage.setItem(workspaceStorageKey, JSON.stringify(state))
+    const instrument = { symbol: '600519.SH', name: '贵州茅台', kind: 'stock', exchange: 'SH', rows: 5000 }
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ items: [instrument] }) }))
+    const user = userEvent.setup()
+
+    render(<App />)
+    await user.click(screen.getByRole('button', { name: '编辑 表2 标的' }))
+    await user.type(screen.getByRole('textbox', { name: '搜索可添加标的' }), '贵州茅台')
+    await user.click(await screen.findByRole('button', { name: /贵州茅台/ }))
+    await user.click(screen.getByRole('button', { name: '保存并退出' }))
+
+    expect(screen.getByTestId('chart-canvas').textContent).toBe('600519.SH')
+    await waitFor(() => {
+      const persisted = JSON.parse(window.localStorage.getItem(workspaceStorageKey) ?? '{}')
+      expect(persisted.groups[0].windows[1]).toMatchObject({ mode: 'detached', instrument })
+    })
   })
 
   it('maximizes and restores the list without rewriting the group layout', async () => {
@@ -199,7 +229,7 @@ describe('StockWorkspace', () => {
     await user.click(screen.getByRole('button', { name: '选择 CPO概念' }))
     expect(await screen.findByRole('button', { name: '选择 平安银行' })).toBeTruthy()
     const derivedWindow = screen.getByText('成分列表').closest('section')!
-    expect(within(derivedWindow).queryByRole('textbox', { name: '搜索待添加标的' })).toBeNull()
+    expect(within(derivedWindow).queryByRole('button', { name: '编辑 成分列表 标的' })).toBeNull()
 
     await user.click(within(derivedWindow).getByRole('button', { name: /涨跌幅/ }))
     await user.click(screen.getByRole('button', { name: '选择 贵州茅台' }))
@@ -240,7 +270,7 @@ describe('StockWorkspace', () => {
     const user = userEvent.setup()
 
     render(<App />)
-    await user.click(screen.getByRole('button', { name: '自定义分组' }))
+    await user.click(screen.getByRole('button', { name: '标的与自选集合' }))
     await user.click(await screen.findByRole('button', { name: '新建分组' }))
     const name = screen.getByRole('textbox', { name: '集合名' })
     await user.clear(name)

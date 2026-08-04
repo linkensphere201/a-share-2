@@ -11,8 +11,7 @@ type WindowGroupProps = {
   onRemoveWindow: (id: string) => void
   onResizeSplit: (id: string, ratio: number) => void
   onSelectListInstrument: (id: string, instrument: Instrument) => void
-  onAddListInstrument: (id: string, instrument: Instrument) => void
-  onRemoveListInstrument: (id: string, symbol: string) => void
+  onEditWindow: (id: string) => void
   onSortList: (id: string, sort: NonNullable<Extract<WindowGroupState['windows'][number], { type: 'instrument-list' }>['sort']>) => void
   onCoverageChange: (id: string, symbol: string, rows: number, first?: string, last?: string) => void
   onVisibleRangeChange: (id: string, value: VisibleRange) => void
@@ -25,8 +24,7 @@ export function WindowGroup({
   onRemoveWindow,
   onResizeSplit,
   onSelectListInstrument,
-  onAddListInstrument,
-  onRemoveListInstrument,
+  onEditWindow,
   onSortList,
   onCoverageChange,
   onVisibleRangeChange,
@@ -51,8 +49,7 @@ export function WindowGroup({
           onToggleMaximize={() => onToggleMaximize(item.id)}
           onRemoveWindow={() => onRemoveWindow(item.id)}
           onSelect={instrument => onSelectListInstrument(item.id, instrument)}
-          onAddInstrument={instrument => onAddListInstrument(item.id, instrument)}
-          onRemoveInstrument={symbol => onRemoveListInstrument(item.id, symbol)}
+          onEdit={() => onEditWindow(item.id)}
           derived={item.mode === 'attached'}
           memberSource={memberSource}
           onSortChange={sort => onSortList(item.id, sort)}
@@ -68,6 +65,7 @@ export function WindowGroup({
         onFocus={() => onFocusWindow(item.id)}
         onToggleMaximize={() => onToggleMaximize(item.id)}
         onRemove={() => onRemoveWindow(item.id)}
+        onEdit={() => onEditWindow(item.id)}
         onCoverageChange={(rows, first, last) => onCoverageChange(item.id, item.instrument.symbol, rows, first, last)}
         onVisibleRangeChange={value => onVisibleRangeChange(item.id, value)}
       />

@@ -23,7 +23,7 @@ type CustomGroupDraft = {
   members: CustomGroupMember[]
 }
 
-export function CustomGroupManager({ onClose }: { onClose: () => void }) {
+export function CustomGroupManager({ onClose, embedded = false }: { onClose: () => void; embedded?: boolean }) {
   const [groups, setGroups] = useState<CustomGroupSummary[]>([])
   const [draft, setDraft] = useState<CustomGroupDraft>()
   const [query, setQuery] = useState('')
@@ -156,10 +156,7 @@ export function CustomGroupManager({ onClose }: { onClose: () => void }) {
     setDraft({ ...draft, members })
   }
 
-  return <div className="modal-backdrop" role="presentation" onMouseDown={event => {
-    if (event.target === event.currentTarget) onClose()
-  }}>
-    <section className="custom-group-modal" role="dialog" aria-modal="true" aria-label="自定义分组管理">
+  const panel = <section className={embedded ? 'custom-group-modal embedded' : 'custom-group-modal'} role="dialog" aria-modal="true" aria-label="自定义分组管理">
       <header>
         <div><FolderPlus size={17}/><strong>自定义分组</strong></div>
         <button className="icon-button" title="关闭" aria-label="关闭自定义分组" onClick={onClose}><X size={17}/></button>
@@ -230,5 +227,7 @@ export function CustomGroupManager({ onClose }: { onClose: () => void }) {
         </>}
       </div>
     </section>
-  </div>
+  return embedded ? panel : <div className="modal-backdrop" role="presentation" onMouseDown={event => {
+    if (event.target === event.currentTarget) onClose()
+  }}>{panel}</div>
 }

@@ -1,4 +1,4 @@
-import { Maximize2, Minimize2, X } from 'lucide-react'
+import { Maximize2, Minimize2, Pencil, X } from 'lucide-react'
 import { ChartCanvas, type VisibleRange } from './ChartCanvas'
 import type { ChartWindowState } from './workspace'
 
@@ -10,6 +10,7 @@ type InstrumentWindowProps = {
   onFocus: () => void
   onToggleMaximize: () => void
   onRemove: () => void
+  onEdit: () => void
   onCoverageChange: (rows: number, first?: string, last?: string) => void
   onVisibleRangeChange: (value: VisibleRange) => void
 }
@@ -22,6 +23,7 @@ export function ChartWindow({
   onFocus,
   onToggleMaximize,
   onRemove,
+  onEdit,
   onCoverageChange,
   onVisibleRangeChange,
 }: InstrumentWindowProps) {
@@ -33,6 +35,7 @@ export function ChartWindow({
           <strong>{windowState.title}</strong><small>{instrument.name} · {instrument.symbol}</small>
         </button>
         <div className="instrument-window-actions">
+          {windowState.mode === 'detached' && <button title="编辑标的" aria-label={`编辑 ${windowState.title} 标的`} onClick={onEdit}><Pencil size={13}/></button>}
           <button
             title={maximized ? '还原窗口' : '最大化窗口'}
             aria-label={maximized ? '还原窗口' : `最大化 ${windowState.title} 窗口`}

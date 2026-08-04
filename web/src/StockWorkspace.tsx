@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { BarChart3, FolderKanban, LayoutGrid, MessageSquare, PanelRightClose, RefreshCw, Settings2 } from 'lucide-react'
 import type { PriceMode, VisibleRange } from './ChartCanvas'
-import { CustomGroupManager } from './CustomGroupManager'
+import { InstrumentEditor } from './InstrumentEditor'
 import { LayoutManager } from './LayoutManager'
 import { removeLayoutWindow, updateSplitRatio } from './layoutTree'
 import { WindowGroup } from './WindowGroup'
@@ -22,7 +22,7 @@ export function StockWorkspace() {
   const [workspace, setWorkspace] = useState<WorkspaceState>(loadWorkspace)
   const [chatOpen, setChatOpen] = useState(true)
   const [layoutManagerOpen, setLayoutManagerOpen] = useState(false)
-  const [customGroupsOpen, setCustomGroupsOpen] = useState(false)
+  const [instrumentEditor, setInstrumentEditor] = useState<{ windowId?: string; tab: 'instruments' | 'groups' }>()
   const activeGroup = workspace.groups.find(group => group.id === workspace.activeGroupId) ?? workspace.groups[0]
   const focusedWindow = activeGroup.windows.find(item => item.id === activeGroup.focusedWindowId) ?? activeGroup.windows[0]
   const activeChart = resolveActiveChart(activeGroup, focusedWindow)
@@ -67,24 +67,21 @@ export function StockWorkspace() {
     updateActiveGroup(group => applyListSelection(group, id, instrument))
   }, [updateActiveGroup])
 
-  const addListInstrument = useCallback((id: string, instrument: Instrument) => {
-    updateWindow(id, item => {
-      if (item.type !== 'instrument-list') return item
-      if (item.content.instruments.some(existing => existing.symbol === instrument.symbol)) return item
-      return { ...item, content: { ...item.content, instruments: [...item.content.instruments, instrument] } }
-    })
-  }, [updateWindow])
-
-  const removeListInstrument = useCallback((id: string, symbol: string) => {
+  const saveWindowInstruments = useCallback((id: string, instruments: Instrument[]) => {
     updateActiveGroup(group => {
       const source = group.windows.find(item => item.id === id)
-      if (!source || source.type !== 'instrument-list') return group
-      const removedIndex = source.content.instruments.findIndex(item => item.symbol === symbol)
-      if (removedIndex < 0) return group
-      const instruments = source.content.instruments.filter(item => item.symbol !== symbol)
-      const nextSelection = source.selectedSymbol === symbol
-        ? instruments[Math.min(removedIndex, instruments.length - 1)]
-        : instruments.find(item => item.symbol === source.selectedSymbol)
+      if (!source || source.mode !== 'detached') return group
+      if (source.type === 'chart') {
+        const instrument = instruments[0]
+        if (!instrument || instrument.kind === 'custom-group') return group
+        return {
+          ...group,
+          windows: group.windows.map(item => item.id === id
+            ? { ...source, instrument, chart: { ...source.chart, visibleRange: undefined } }
+            : item),
+        }
+      }
+      const nextSelection = instruments.find(item => item.symbol === source.selectedSymbol) ?? instruments[0]
       const updated = {
         ...group,
         windows: group.windows.map(item => item.id === id ? {
@@ -93,9 +90,7 @@ export function StockWorkspace() {
           selectedSymbol: nextSelection?.symbol,
         } : item),
       }
-      return nextSelection && source.selectedSymbol === symbol
-        ? applyListSelection(updated, id, nextSelection)
-        : updated
+      return nextSelection ? applyListSelection(updated, id, nextSelection) : updated
     })
   }, [updateActiveGroup])
 
@@ -164,7 +159,7 @@ export function StockWorkspace() {
               </div>
             )}
             <button className="command-button layout-entry" title="布局管理" aria-label="布局管理" onClick={() => setLayoutManagerOpen(true)}><Settings2 size={15}/>布局管理</button>
-            <button className="icon-button" title="自定义分组" aria-label="自定义分组" onClick={() => setCustomGroupsOpen(true)}><FolderKanban size={16}/></button>
+            <button className="icon-button" title="标的与自选集合" aria-label="标的与自选集合" onClick={() => setInstrumentEditor({ tab: 'groups' })}><FolderKanban size={16}/></button>
             <button
               className="icon-button"
               title="刷新应用"
@@ -204,8 +199,7 @@ export function StockWorkspace() {
             layout: updateSplitRatio(group.layout, id, ratio),
           }))}
           onSelectListInstrument={selectListInstrument}
-          onAddListInstrument={addListInstrument}
-          onRemoveListInstrument={removeListInstrument}
+          onEditWindow={id => setInstrumentEditor({ windowId: id, tab: 'instruments' })}
           onSortList={sortList}
           onCoverageChange={handleCoverage}
           onVisibleRangeChange={handleVisibleRange}
@@ -226,7 +220,12 @@ export function StockWorkspace() {
           <div className="chat-input"><input disabled aria-label="消息"/><button disabled aria-label="发送">›</button></div>
         </aside>
       )}
-      {customGroupsOpen && <CustomGroupManager onClose={() => setCustomGroupsOpen(false)} />}
+      {instrumentEditor && <InstrumentEditor
+        target={activeGroup.windows.find(item => item.id === instrumentEditor.windowId)}
+        initialTab={instrumentEditor.tab}
+        onSave={saveWindowInstruments}
+        onClose={() => setInstrumentEditor(undefined)}
+      />}
     </main>
   )
 }
