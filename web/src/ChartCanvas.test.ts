@@ -7,6 +7,8 @@ import {
   chooseLodBucket,
   createRangeMeasurement,
   movingAverage,
+  mergeProvisionalBar,
+  millisecondsUntilMarketSession,
   type DailyBar,
 } from './ChartCanvas'
 
@@ -27,6 +29,30 @@ describe('movingAverage', () => {
       { time: '2026-08-04', value: 3 },
       { time: '2026-08-05', value: 4 },
     ])
+  })
+})
+
+describe('provisional daily bars', () => {
+  const finalBar: DailyBar = {
+    trade_date: '2026-08-03', open: 10, high: 11, low: 9, close: 10, volume: 100,
+    source: 'tushare', bar_state: 'final',
+  }
+  const liveBar: DailyBar = {
+    trade_date: '2026-08-04', open: 10, high: 12, low: 9, close: 11, volume: 200,
+    source: 'eastmoney_selected', bar_state: 'intraday', stale: false,
+  }
+
+  it('appends and then replaces only the current provisional day', () => {
+    const appended = mergeProvisionalBar([finalBar], liveBar)
+    expect(appended).toHaveLength(2)
+    expect(mergeProvisionalBar(appended, { ...liveBar, close: 11.5 }).at(-1)?.close).toBe(11.5)
+    expect(mergeProvisionalBar([finalBar], { ...liveBar, trade_date: finalBar.trade_date })).toEqual([finalBar])
+  })
+
+  it('does not poll during lunch or after close', () => {
+    expect(millisecondsUntilMarketSession(new Date(2026, 7, 4, 10, 0))).toBe(0)
+    expect(millisecondsUntilMarketSession(new Date(2026, 7, 4, 12, 0))).toBeGreaterThan(0)
+    expect(millisecondsUntilMarketSession(new Date(2026, 7, 4, 15, 1))).toBeGreaterThan(0)
   })
 })
 

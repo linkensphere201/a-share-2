@@ -68,10 +68,16 @@ The package contains credential-free `config\providers.local.yaml` and `config\s
 
 At application startup, a background worker immediately refreshes the recent trading calendar and missing completed-day snapshots for stocks, exchange ETFs, configured indices, SW sectors, Eastmoney boards, and THS boards. It then polls every 15 minutes. The UI starts independently; Provider failures are retained as update status and retried on the next poll. The current trading day is eligible only after 18:00 local time, preventing an intraday partial daily snapshot from being marked complete.
 
+During an open trading session, the active window group derives one deduplicated referenced-symbol set from its lists, resolved members, custom groups, and charts. A lightweight quote worker polls only that set every 30 seconds, uses Eastmoney selected-symbol quotes with Sina selected-symbol fallback, and appends an in-memory provisional daily bar at API read time. Lunch, after-close periods, weekends, and known non-trading dates perform no quote polling. Provisional rows never enter `daily_bars`; the completed-day updater remains authoritative. Use `--no-intraday` for offline diagnostics.
+
+The desktop writes rotating application logs to `%LOCALAPPDATA%\StockHarness\logs\stock-harness.log` with five retained 5 MiB backups. Backend warnings/errors and reported frontend failures also enter a bounded runtime event feed. The bottom status bar shows the latest WARN/ERROR and can expand the recent event list; normal chart history remains usable when the quote source fails.
+
 Inspect the worker without blocking chart requests:
 
 ```text
 GET /api/update-status
+GET /api/intraday/status
+GET /api/runtime-events?min_level=WARNING
 ```
 
 Use `--no-auto-update` for offline diagnostics and `--smoke-test` for a packaged backend/frontend startup check.

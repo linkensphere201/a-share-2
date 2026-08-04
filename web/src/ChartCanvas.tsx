@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { Percent, X, ZoomIn } from 'lucide-react'
+import { logInfo, logWarning } from './eventLogger'
 import {
   CandlestickSeries,
   ColorType,
@@ -29,6 +30,9 @@ export type DailyBar = {
   close: number
   volume: number
   source: string
+  bar_state?: 'final' | 'intraday'
+  stale?: boolean
+  provider_time?: string
 }
 
 type Readout = DailyBar & { changePercent?: number; ma5?: number; ma20?: number; ma60?: number }
@@ -96,6 +100,8 @@ export function ChartCanvas({
   const suppressLodRef = useRef(false)
   const coverageCallbackRef = useRef(onCoverageChange)
   const visibleRangeCallbackRef = useRef(onVisibleRangeChange)
+  const pendingVisibleRangeRef = useRef<IRange<Time> | undefined>(undefined)
+  const skipRangeResetRef = useRef(false)
   const [bars, setBars] = useState<DailyBar[]>([])
   const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading')
   const [readout, setReadout] = useState<Readout | null>(null)
@@ -104,6 +110,7 @@ export function ChartCanvas({
   const [rangeSelection, setRangeSelection] = useState<RangeSelection>()
   const [measurement, setMeasurement] = useState<RangeMeasurement>()
   const [overlayRevision, setOverlayRevision] = useState(0)
+  const liveFailureCountRef = useRef(0)
 
   const averages = useMemo(() => ({
     ma5: movingAverage(bars, 5),
@@ -113,6 +120,17 @@ export function ChartCanvas({
 
   useEffect(() => { coverageCallbackRef.current = onCoverageChange }, [onCoverageChange])
   useEffect(() => { visibleRangeCallbackRef.current = onVisibleRangeChange }, [onVisibleRangeChange])
+
+  const replaceBars = useCallback((next: DailyBar[], preserveView = false) => {
+    if (preserveView) {
+      pendingVisibleRangeRef.current = chartRef.current?.timeScale().getVisibleRange() ?? undefined
+      skipRangeResetRef.current = true
+    }
+    barsRef.current = next
+    previousCloseByDateRef.current = previousCloseByDate(next)
+    setBars(next)
+    setReadout(latestReadout(next))
+  }, [])
 
   useEffect(() => {
     if (!hostRef.current) return
@@ -252,22 +270,77 @@ export function ChartCanvas({
         return response.json() as Promise<{ items: DailyBar[] }>
       })
       .then(body => {
-        barsRef.current = body.items
-        previousCloseByDateRef.current = previousCloseByDate(body.items)
-        setBars(body.items)
-        setReadout(latestReadout(body.items))
+        replaceBars(body.items)
         setState('ready')
+        const finalItems = body.items.filter(item => item.bar_state !== 'intraday')
         coverageCallbackRef.current?.(
-          body.items.length,
-          body.items.at(0)?.trade_date,
-          body.items.at(-1)?.trade_date,
+          finalItems.length,
+          finalItems.at(0)?.trade_date,
+          finalItems.at(-1)?.trade_date,
         )
+        logInfo('chart', '日线数据加载完成', { symbol, rows: finalItems.length })
       })
       .catch(error => {
-        if ((error as Error).name !== 'AbortError') setState('error')
+        if ((error as Error).name !== 'AbortError') {
+          setState('error')
+          logWarning('chart', '日线数据加载失败', { symbol, error })
+        }
       })
     return () => controller.abort()
-  }, [symbol])
+  }, [symbol, replaceBars])
+
+  useEffect(() => {
+    let stopped = false
+    let timer = 0
+    const schedule = (delay: number) => {
+      timer = window.setTimeout(refresh, delay)
+    }
+    const refresh = () => {
+      if (stopped) return
+      const delayUntilSession = millisecondsUntilMarketSession(new Date())
+      if (delayUntilSession > 0) {
+        schedule(delayUntilSession)
+        return
+      }
+      const params = new URLSearchParams({ symbol })
+      fetch(`/api/intraday-bars?${params}`)
+        .then(response => {
+          if (!response.ok) throw new Error(`HTTP ${response.status}`)
+          return response.json() as Promise<{
+            items: DailyBar[]
+            status: { state: string }
+          }>
+        })
+        .then(body => {
+          if (stopped) return
+          const live = body.items[0]
+          if (live) {
+            const next = mergeProvisionalBar(barsRef.current, live)
+            if (next !== barsRef.current) replaceBars(next, true)
+          }
+          if (liveFailureCountRef.current > 0) {
+            logInfo('intraday', '盘中行情读取恢复', { symbol })
+            liveFailureCountRef.current = 0
+          }
+          schedule(body.status.state === 'market_closed'
+            ? millisecondsUntilNextMarketDay(new Date())
+            : 30_000)
+        })
+        .catch(error => {
+          if (stopped) return
+          liveFailureCountRef.current += 1
+          if (liveFailureCountRef.current === 1 || liveFailureCountRef.current % 10 === 0) {
+            logWarning('intraday', '读取盘中临时日K失败，保留现有图表', { symbol, error })
+          }
+          schedule(30_000)
+        })
+    }
+    schedule(0)
+    return () => {
+      stopped = true
+      window.clearTimeout(timer)
+    }
+  }, [symbol, replaceBars])
 
   useEffect(() => {
     applyBucketRef.current = (bucket, preserve) => {
@@ -313,7 +386,8 @@ export function ChartCanvas({
         })
       })
     }
-    applyBucketRef.current(1)
+    applyBucketRef.current(1, pendingVisibleRangeRef.current)
+    pendingVisibleRangeRef.current = undefined
   }, [bars, averages])
 
   useEffect(() => {
@@ -327,6 +401,10 @@ export function ChartCanvas({
   useEffect(() => {
     const chart = chartRef.current
     if (!chart || bars.length === 0) return
+    if (skipRangeResetRef.current) {
+      skipRangeResetRef.current = false
+      return
+    }
     if (initialVisibleRange) {
       chart.timeScale().setVisibleRange(initialVisibleRange)
       resetAutoScaleRef.current()
@@ -534,6 +612,7 @@ function ChartReadout({ value, lodBucket }: { value: Readout; lodBucket: number 
   return (
     <div className="chart-readout">
       <span className="lod-badge">{lodBucket}D</span>
+      {value.bar_state === 'intraday' && <span className={value.stale ? 'live-badge stale' : 'live-badge'}>{value.stale ? '盘中延迟' : '盘中'}</span>}
       <span>{value.trade_date}</span>
       <span>开 <b>{formatPrice(value.open)}</b></span>
       <span>高 <b>{formatPrice(value.high)}</b></span>
@@ -558,6 +637,53 @@ export function movingAverage(bars: DailyBar[], window: number): LineData<Time>[
     if (index >= window - 1) output.push({ time: bars[index].trade_date, value: sum / window })
   }
   return output
+}
+
+export function mergeProvisionalBar(bars: DailyBar[], provisional: DailyBar): DailyBar[] {
+  const last = bars.at(-1)
+  if (!last) return [provisional]
+  if (provisional.trade_date < last.trade_date) return bars
+  if (provisional.trade_date === last.trade_date) {
+    if (last.bar_state === 'final') return bars
+    if (
+      last.open === provisional.open
+      && last.high === provisional.high
+      && last.low === provisional.low
+      && last.close === provisional.close
+      && last.volume === provisional.volume
+      && last.stale === provisional.stale
+    ) return bars
+    return [...bars.slice(0, -1), provisional]
+  }
+  return [...bars, provisional]
+}
+
+export function millisecondsUntilMarketSession(now: Date): number {
+  const day = now.getDay()
+  const minutes = now.getHours() * 60 + now.getMinutes()
+  if (day >= 1 && day <= 5) {
+    if (minutes < 9 * 60 + 30) return millisecondsUntil(now, 9, 30)
+    if (minutes <= 11 * 60 + 30) return 0
+    if (minutes < 13 * 60) return millisecondsUntil(now, 13, 0)
+    if (minutes <= 15 * 60) return 0
+  }
+  return millisecondsUntilNextMarketDay(now)
+}
+
+export function millisecondsUntilNextMarketDay(now: Date): number {
+  const target = new Date(now)
+  target.setDate(target.getDate() + 1)
+  target.setHours(9, 30, 0, 0)
+  while (target.getDay() === 0 || target.getDay() === 6) {
+    target.setDate(target.getDate() + 1)
+  }
+  return Math.max(1000, target.getTime() - now.getTime())
+}
+
+function millisecondsUntil(now: Date, hour: number, minute: number): number {
+  const target = new Date(now)
+  target.setHours(hour, minute, 0, 0)
+  return Math.max(1000, target.getTime() - now.getTime())
 }
 
 export function aggregateBars(bars: DailyBar[], bucket: number): RenderBar[] {

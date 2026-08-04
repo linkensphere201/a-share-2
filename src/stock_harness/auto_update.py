@@ -231,12 +231,14 @@ class AutoUpdateService:
 
     def start(self) -> None:
         if not self._thread.is_alive():
+            LOGGER.info("auto_update_service_start interval_seconds=%s", self._interval_seconds)
             self._thread.start()
 
     def stop(self) -> None:
         self._stop.set()
         if self._thread.is_alive():
             self._thread.join(timeout=10.0)
+        LOGGER.info("auto_update_service_stop")
 
     def status(self) -> dict[str, object]:
         with self._lock:
@@ -247,6 +249,7 @@ class AutoUpdateService:
             started = datetime.now()
             self._set_status(UpdateStatus(state="running", started_at=started.isoformat()))
             try:
+                LOGGER.info("auto_update_run_start started_at=%s", started.isoformat())
                 result = self._updater.run_once(started)
                 completed = datetime.now()
                 next_run = completed + timedelta(seconds=self._interval_seconds)
@@ -265,6 +268,18 @@ class AutoUpdateService:
                     holding_rows=result.holding_rows,
                     error="; ".join(result.errors[:5]) if result.errors else None,
                 ))
+                LOGGER.info(
+                    "auto_update_run_complete state=%s snapshots_written=%s rows_changed=%s errors=%s",
+                    "warning" if result.errors else "idle",
+                    result.snapshots_written,
+                    result.rows_changed,
+                    len(result.errors),
+                )
+                if result.errors:
+                    LOGGER.warning(
+                        "auto_update_completed_with_warnings count=%s errors=%s",
+                        len(result.errors), "; ".join(result.errors[:5]),
+                    )
             except Exception as exc:
                 LOGGER.exception("auto_update_failed")
                 completed = datetime.now()

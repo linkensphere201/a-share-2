@@ -1,13 +1,16 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { BarChart3, FolderKanban, LayoutGrid, MessageSquare, PanelRightClose, RefreshCw, Settings2 } from 'lucide-react'
 import type { PriceMode, VisibleRange } from './ChartCanvas'
 import { InstrumentEditor } from './InstrumentEditor'
+import { logInfo, logWarning } from './eventLogger'
 import { LayoutManager } from './LayoutManager'
+import { RuntimeEventBar } from './RuntimeEventBar'
 import { removeLayoutWindow, updateSplitRatio } from './layoutTree'
 import { WindowGroup } from './WindowGroup'
 import { removeWindowAttachments } from './windowAttachments'
 import {
   chartRanges,
+  deriveReferencedSymbols,
   loadWorkspace,
   saveWorkspace,
   type ChartWindowState,
@@ -23,11 +26,51 @@ export function StockWorkspace() {
   const [chatOpen, setChatOpen] = useState(true)
   const [layoutManagerOpen, setLayoutManagerOpen] = useState(false)
   const [instrumentEditor, setInstrumentEditor] = useState<{ windowId?: string; tab: 'instruments' | 'groups' }>()
+  const [resolvedWindowSymbols, setResolvedWindowSymbols] = useState<Record<string, string[]>>({})
   const activeGroup = workspace.groups.find(group => group.id === workspace.activeGroupId) ?? workspace.groups[0]
   const focusedWindow = activeGroup.windows.find(item => item.id === activeGroup.focusedWindowId) ?? activeGroup.windows[0]
   const activeChart = resolveActiveChart(activeGroup, focusedWindow)
+  const referencedSymbols = useMemo(
+    () => deriveReferencedSymbols(activeGroup, resolvedWindowSymbols),
+    [activeGroup, resolvedWindowSymbols],
+  )
+  const referencedSymbolsKey = referencedSymbols.join('|')
 
   useEffect(() => saveWorkspace(workspace), [workspace])
+
+  useEffect(() => {
+    let stopped = false
+    let retryTimer = 0
+    let failures = 0
+    const synchronize = () => {
+      fetch('/api/intraday/subscription', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ group_id: activeGroup.id, symbols: referencedSymbols }),
+      }).then(response => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`)
+        return response.json() as Promise<{ state: string; symbol_count?: number }>
+      }).then(status => {
+        failures = 0
+        logInfo('intraday', '活动窗体组行情订阅已更新', {
+          group: activeGroup.id,
+          symbols: status.symbol_count ?? referencedSymbols.length,
+        })
+      }).catch(error => {
+        if (stopped) return
+        failures += 1
+        if (failures === 1 || failures % 6 === 0) {
+          logWarning('intraday', '活动窗体组行情订阅失败，将自动重试', { group: activeGroup.id, error })
+        }
+        retryTimer = window.setTimeout(synchronize, 5000)
+      })
+    }
+    synchronize()
+    return () => {
+      stopped = true
+      window.clearTimeout(retryTimer)
+    }
+  }, [activeGroup.id, referencedSymbolsKey])
 
   const updateActiveGroup = useCallback((update: (group: WindowGroupState) => WindowGroupState) => {
     setWorkspace(current => ({
@@ -42,6 +85,14 @@ export function StockWorkspace() {
       windows: group.windows.map(item => item.id === id ? update(item) : item),
     }))
   }, [updateActiveGroup])
+
+  const updateReferencedSymbols = useCallback((id: string, symbols: string[]) => {
+    setResolvedWindowSymbols(current => {
+      const normalized = [...new Set(symbols)].sort()
+      if ((current[id] ?? []).join('|') === normalized.join('|')) return current
+      return { ...current, [id]: normalized }
+    })
+  }, [])
 
   const removeWindow = (id: string) => {
     if (activeGroup.windows.length === 1) return
@@ -141,7 +192,11 @@ export function StockWorkspace() {
             )}
           </div>
           <div className="toolbar-actions">
-            <select aria-label="切换窗口组" value={activeGroup.id} onChange={event => setWorkspace(current => ({ ...current, activeGroupId: event.target.value }))}>
+            <select aria-label="切换窗口组" value={activeGroup.id} onChange={event => {
+              const groupId = event.target.value
+              logInfo('workspace', '切换活动窗体组', { from: activeGroup.id, to: groupId })
+              setWorkspace(current => ({ ...current, activeGroupId: groupId }))
+            }}>
               {workspace.groups.map(group => <option key={group.id} value={group.id}>{group.name}</option>)}
             </select>
             {activeChart && (
@@ -203,8 +258,10 @@ export function StockWorkspace() {
           onSortList={sortList}
           onCoverageChange={handleCoverage}
           onVisibleRangeChange={handleVisibleRange}
+          onReferencedSymbolsChange={updateReferencedSymbols}
         />
         <footer className="statusbar">
+          <RuntimeEventBar/>
           {activeChart && <>
             <span>{activeChart.instrument.first_trade_date ?? '—'} → {activeChart.instrument.last_trade_date ?? '—'}</span>
             <span>{activeChart.instrument.rows.toLocaleString()} 根日线</span>

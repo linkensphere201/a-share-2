@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ArrowDown, ArrowUp, ArrowUpDown, Maximize2, Minimize2, Pencil, X } from 'lucide-react'
 import type { Instrument, InstrumentListWindowState } from './workspace'
+import { logWarning } from './eventLogger'
 
 type MarketSnapshot = {
   symbol: string
@@ -24,6 +25,7 @@ type InstrumentListWindowProps = {
   derived: boolean
   memberSource?: Instrument
   onSortChange: (sort: NonNullable<InstrumentListWindowState['sort']>) => void
+  onReferencedSymbolsChange: (id: string, symbols: string[]) => void
 }
 
 export function InstrumentListWindow({
@@ -39,6 +41,7 @@ export function InstrumentListWindow({
   derived,
   memberSource,
   onSortChange,
+  onReferencedSymbolsChange,
 }: InstrumentListWindowProps) {
   const [members, setMembers] = useState<ListInstrument[]>([])
   const [snapshots, setSnapshots] = useState<Record<string, MarketSnapshot>>({})
@@ -88,6 +91,7 @@ export function InstrumentListWindow({
       if ((error as Error).name !== 'AbortError') {
         setMembers([])
         setMemberMeta({})
+        logWarning('members', '加载派生列表成分失败', { source: memberSource.symbol, error })
       }
     }).finally(() => setMembersLoading(false))
     return () => controller.abort()
@@ -109,12 +113,19 @@ export function InstrumentListWindow({
       })
       .then(body => setSnapshots(Object.fromEntries(body.items.map(item => [item.symbol, item]))))
       .catch(error => {
-        if ((error as Error).name !== 'AbortError') setSnapshots({})
+        if ((error as Error).name !== 'AbortError') {
+          setSnapshots({})
+          logWarning('snapshots', '加载列表行情快照失败', { symbols: manualInstruments.length, error })
+        }
       })
     return () => controller.abort()
   }, [derived, manualInstruments.map(item => item.symbol).join('|')])
 
   const sourceItems: ListInstrument[] = derived ? members : manualInstruments
+  useEffect(() => {
+    onReferencedSymbolsChange(windowState.id, sourceItems.map(item => item.symbol))
+    return () => onReferencedSymbolsChange(windowState.id, [])
+  }, [onReferencedSymbolsChange, windowState.id, sourceItems.map(item => item.symbol).join('|')])
   const displayedItems = useMemo(
     () => sortListInstruments(sourceItems, snapshots, windowState.sort),
     [sourceItems, snapshots, windowState.sort],

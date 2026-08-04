@@ -15,6 +15,7 @@ type WindowGroupProps = {
   onSortList: (id: string, sort: NonNullable<Extract<WindowGroupState['windows'][number], { type: 'instrument-list' }>['sort']>) => void
   onCoverageChange: (id: string, symbol: string, rows: number, first?: string, last?: string) => void
   onVisibleRangeChange: (id: string, value: VisibleRange) => void
+  onReferencedSymbolsChange: (id: string, symbols: string[]) => void
 }
 
 export function WindowGroup({
@@ -28,6 +29,7 @@ export function WindowGroup({
   onSortList,
   onCoverageChange,
   onVisibleRangeChange,
+  onReferencedSymbolsChange,
 }: WindowGroupProps) {
   const renderWindow = (windowId: string) => {
     const item = group.windows.find(window => window.id === windowId)
@@ -53,6 +55,7 @@ export function WindowGroup({
           derived={item.mode === 'attached'}
           memberSource={memberSource}
           onSortChange={sort => onSortList(item.id, sort)}
+          onReferencedSymbolsChange={onReferencedSymbolsChange}
         />
       )
     }

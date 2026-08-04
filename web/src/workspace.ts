@@ -216,6 +216,22 @@ export function saveWorkspace(state: WorkspaceState, storage: Pick<Storage, 'set
   storage.setItem(workspaceStorageKey, JSON.stringify({ ...state, recoveryGroups }))
 }
 
+export function deriveReferencedSymbols(
+  group: WindowGroupState,
+  resolvedByWindow: Record<string, string[]> = {},
+): string[] {
+  const symbols = new Set<string>()
+  group.windows.forEach(window => {
+    if (window.type === 'chart') {
+      symbols.add(window.instrument.symbol)
+      return
+    }
+    window.content.instruments.forEach(instrument => symbols.add(instrument.symbol))
+    resolvedByWindow[window.id]?.forEach(symbol => symbols.add(symbol))
+  })
+  return [...symbols].sort()
+}
+
 function normalizeWorkspace(value: unknown): WorkspaceState | undefined {
   if (!isRecord(value) || value.version !== 3 || !Array.isArray(value.groups)) return undefined
   const recovered = isRecord(value.recoveryGroups)

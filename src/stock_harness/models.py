@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from enum import StrEnum
 
 
@@ -127,6 +127,23 @@ class MarketSnapshot:
     trade_date: date
     change_percent: float
     total_market_cap: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ProvisionalDailyBar:
+    symbol: str
+    trade_date: date
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: int
+    amount: float
+    previous_close: float
+    change_percent: float
+    source: str
+    provider_time: datetime
+    received_at: datetime
 
 
 @dataclass(frozen=True, slots=True)

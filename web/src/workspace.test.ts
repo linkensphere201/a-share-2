@@ -6,6 +6,7 @@ import {
   createWindowGroup,
   chartRanges,
   duplicateWindowGroup,
+  deriveReferencedSymbols,
   legacyWorkspaceStorageKey,
   loadWorkspace,
   previousWorkspaceStorageKey,
@@ -15,6 +16,18 @@ import {
 afterEach(() => window.localStorage.clear())
 
 describe('workspace persistence', () => {
+  it('derives and deduplicates every active group window reference', () => {
+    const state = createDefaultWorkspace()
+    const group = state.groups[0]
+    const list = group.windows.find(item => item.type === 'instrument-list')!
+    if (list.type !== 'instrument-list') throw new Error('expected list')
+    list.content.instruments.push(instrument('510300.SH'))
+
+    expect(deriveReferencedSymbols(group, {
+      [list.id]: ['300308.SZ', '510300.SH'],
+    })).toEqual(['300308.SZ', '510300.SH', 'BK1128.DC'])
+  })
+
   it('accepts the one-month chart range', () => {
     const state = createDefaultWorkspace()
     const chart = state.groups[0].windows.find(item => item.type === 'chart')!

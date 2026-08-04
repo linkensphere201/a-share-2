@@ -60,6 +60,17 @@ class AutoUpdateSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class IntradaySettings:
+    enabled: bool
+    poll_interval_seconds: int
+    request_timeout_seconds: float
+    stale_after_seconds: int
+    circuit_breaker_failures: int
+    circuit_breaker_seconds: int
+    max_symbols: int
+
+
+@dataclass(frozen=True, slots=True)
 class EtfHoldingSettings:
     enabled: bool
     max_symbols_per_run: int
@@ -79,6 +90,7 @@ class RuntimeSettings:
     repair: RepairSettings
     universe: UniverseSettings
     auto_update: AutoUpdateSettings
+    intraday: IntradaySettings
     etf_holdings: EtfHoldingSettings
 
 
@@ -106,6 +118,9 @@ def load_runtime_settings(provider_config: Path, storage_config: Path) -> Runtim
     auto_update = providers.get("auto_update", {})
     if not isinstance(auto_update, dict):
         raise ValueError("configuration section must be a mapping: providers.auto_update")
+    intraday = providers.get("intraday", {})
+    if not isinstance(intraday, dict):
+        raise ValueError("configuration section must be a mapping: providers.intraday")
     etf_holdings = providers.get("etf_holdings", {})
     if not isinstance(etf_holdings, dict):
         raise ValueError("configuration section must be a mapping: providers.etf_holdings")
@@ -173,6 +188,15 @@ def load_runtime_settings(provider_config: Path, storage_config: Path) -> Runtim
             calendar_lookback_days=max(
                 7, int(auto_update.get("calendar_lookback_days", 14))
             ),
+        ),
+        intraday=IntradaySettings(
+            enabled=bool(intraday.get("enabled", True)),
+            poll_interval_seconds=max(10, int(intraday.get("poll_interval_seconds", 30))),
+            request_timeout_seconds=max(1.0, float(intraday.get("request_timeout_seconds", 8))),
+            stale_after_seconds=max(30, int(intraday.get("stale_after_seconds", 90))),
+            circuit_breaker_failures=max(1, int(intraday.get("circuit_breaker_failures", 3))),
+            circuit_breaker_seconds=max(30, int(intraday.get("circuit_breaker_seconds", 60))),
+            max_symbols=max(1, min(5000, int(intraday.get("max_symbols", 1000)))),
         ),
         etf_holdings=EtfHoldingSettings(
             enabled=bool(etf_holdings.get("enabled", True)),

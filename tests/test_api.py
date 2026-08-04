@@ -173,3 +173,69 @@ def test_serves_built_frontend_and_update_status(tmp_path: Path):
     assert root.status_code == 200
     assert "StockHarness" in root.text
     assert status.json() == {"state": "running", "rows_changed": 10}
+
+
+class _FakeIntradayService:
+    def __init__(self):
+        self.subscribed = []
+
+    def status(self):
+        return {"state": "ready", "enabled": True, "symbol_count": len(self.subscribed)}
+
+    def subscribe(self, _group_id, symbols):
+        self.subscribed = list(symbols)
+        return self.status()
+
+    def list(self, symbols):
+        item = self.get(next(iter(symbols), ""))
+        return [item] if item else []
+
+    def get(self, symbol):
+        if symbol != "BK1128.DC":
+            return None
+        return {
+            "symbol": symbol,
+            "trade_date": date(2026, 8, 4),
+            "open": 11,
+            "high": 13,
+            "low": 10,
+            "close": 12,
+            "volume": 200,
+            "source": "test_live",
+            "stale": False,
+            "provider_time": "2026-08-04T14:30:00+08:00",
+        }
+
+
+def test_intraday_subscription_expands_custom_groups_and_merges_provisional_bar():
+    store, _ = _client()
+    group = store.create_custom_group(
+        "group-live", "Live", "", [{"symbol": "300308.SZ", "tags": [], "note": ""}]
+    )
+    service = _FakeIntradayService()
+    client = TestClient(create_app(store, intraday_service=service))
+    with client:
+        subscribed = client.post(
+            "/api/intraday/subscription",
+            json={"group_id": "workspace", "symbols": [group["symbol"], "BK1128.DC"]},
+        )
+        bars = client.get("/api/instruments/BK1128.DC/daily-bars")
+    store.close()
+
+    assert subscribed.status_code == 200
+    assert service.subscribed == ["300308.SZ", "BK1128.DC"]
+    assert [item["bar_state"] for item in bars.json()["items"]] == ["final", "intraday"]
+    assert bars.json()["items"][-1]["close"] == 12
+
+
+def test_frontend_warning_is_available_in_runtime_event_feed():
+    store, client = _client()
+    with client:
+        accepted = client.post("/api/runtime-events", json={
+            "level": "WARNING", "logger": "test", "message": "frontend warning",
+        })
+        events = client.get("/api/runtime-events", params={"min_level": "WARNING"})
+    store.close()
+
+    assert accepted.status_code == 202
+    assert any(item["message"] == "frontend warning" for item in events.json()["items"])

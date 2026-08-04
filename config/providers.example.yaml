@@ -14,6 +14,14 @@ providers:
     enabled: true
     poll_interval_seconds: 900
     calendar_lookback_days: 14
+  intraday:
+    enabled: true
+    poll_interval_seconds: 30
+    request_timeout_seconds: 8
+    stale_after_seconds: 90
+    circuit_breaker_failures: 3
+    circuit_breaker_seconds: 60
+    max_symbols: 1000
   etf_holdings:
     enabled: true
     # Startup stays bounded; the dedicated sync command can fill the entire ETF catalog.

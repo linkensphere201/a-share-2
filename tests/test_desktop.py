@@ -4,6 +4,7 @@ from stock_harness.desktop import (
     DEFAULT_DESKTOP_PORT,
     _parser,
     open_desktop_window,
+    resolve_log_directory,
     resolve_webview_storage_path,
 )
 
@@ -53,4 +54,7 @@ def test_webview_storage_prefers_local_app_data(
 
     assert resolve_webview_storage_path(Path("unused")) == (
         tmp_path.resolve() / "StockHarness" / "WebView"
+    )
+    assert resolve_log_directory(Path("unused")) == (
+        tmp_path.resolve() / "StockHarness" / "logs"
     )
