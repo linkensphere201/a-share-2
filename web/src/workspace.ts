@@ -17,6 +17,11 @@ export type Instrument = {
   kind: string
   exchange: string
   category?: string
+  source_system?: string
+  family?: string
+  classification?: string
+  classification_label?: string
+  source_label?: string
   first_trade_date?: string
   last_trade_date?: string
   rows: number

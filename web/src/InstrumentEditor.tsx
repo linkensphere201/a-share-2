@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowDown, ArrowUp, ListPlus, Plus, Save, Search, Trash2, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, ListPlus, Save, Trash2, X } from 'lucide-react'
 import { CustomGroupManager } from './CustomGroupManager'
+import { InstrumentBrowser, instrumentClassLabel } from './InstrumentBrowser'
 import type { ChartWindowState, Instrument, InstrumentListWindowState } from './workspace'
 
 type EditableWindow = ChartWindowState | InstrumentListWindowState
@@ -20,8 +21,6 @@ export function InstrumentEditor({
   onClose,
 }: InstrumentEditorProps) {
   const [tab, setTab] = useState<EditorTab>(initialTab)
-  const [query, setQuery] = useState('')
-  const [results, setResults] = useState<Instrument[]>([])
   const [draft, setDraft] = useState<Instrument[]>(() => instrumentsFor(target))
   const [savedDraft, setSavedDraft] = useState<Instrument[]>(() => instrumentsFor(target))
 
@@ -29,35 +28,7 @@ export function InstrumentEditor({
     const instruments = instrumentsFor(target)
     setDraft(instruments)
     setSavedDraft(instruments)
-    setQuery('')
-    setResults([])
   }, [target?.id])
-
-  useEffect(() => {
-    if (tab !== 'instruments' || !query.trim()) {
-      setResults([])
-      return
-    }
-    const controller = new AbortController()
-    const handle = window.setTimeout(() => {
-      const params = new URLSearchParams({ query, limit: '24' })
-      fetch(`/api/instruments?${params}`, { signal: controller.signal })
-        .then(response => response.ok ? response.json() : Promise.reject(new Error(`HTTP ${response.status}`)))
-        .then((body: { items: Instrument[] }) => {
-          const items = target?.type === 'chart'
-            ? body.items.filter(item => item.kind !== 'custom-group')
-            : body.items
-          setResults(items)
-        })
-        .catch(error => {
-          if ((error as Error).name !== 'AbortError') setResults([])
-        })
-    }, 120)
-    return () => {
-      window.clearTimeout(handle)
-      controller.abort()
-    }
-  }, [query, tab, target?.type])
 
   const selectedSymbols = useMemo(() => new Set(draft.map(item => item.symbol)), [draft])
   const dirty = JSON.stringify(draft) !== JSON.stringify(savedDraft)
@@ -69,8 +40,6 @@ export function InstrumentEditor({
     } else if (!selectedSymbols.has(instrument.symbol)) {
       setDraft(items => [...items, instrument])
     }
-    setQuery('')
-    setResults([])
   }
 
   const moveInstrument = (index: number, offset: -1 | 1) => {
@@ -104,25 +73,13 @@ export function InstrumentEditor({
         {tab === 'groups'
           ? <CustomGroupManager embedded onClose={onClose}/>
           : target && <div className="instrument-target-editor">
-            <div className="instrument-editor-search">
-              <label><Search size={15}/><input
-                value={query}
-                onChange={event => setQuery(event.target.value)}
-                placeholder={target.type === 'chart' ? '搜索并替换图表标的' : '搜索代码、名称、ETF、板块或自选集合'}
-                aria-label="搜索可添加标的"
-              /></label>
-              {query.trim() && <div className="instrument-editor-results">
-                {results.length === 0 && <div className="instrument-editor-empty">没有匹配标的</div>}
-                {results.map(item => <button
-                  key={item.symbol}
-                  disabled={target.type === 'instrument-list' && selectedSymbols.has(item.symbol)}
-                  onClick={() => addInstrument(item)}
-                >
-                  <span><strong>{item.name}</strong><small>{item.symbol} · {item.category ?? item.kind}</small></span>
-                  <Plus size={14}/>
-                </button>)}
-              </div>}
-            </div>
+            <InstrumentBrowser
+              selectedSymbols={selectedSymbols}
+              onSelect={addInstrument}
+              excludeCustomGroups={target.type === 'chart'}
+              searchLabel="搜索可添加标的"
+              placeholder={target.type === 'chart' ? '在当前分类中搜索并替换图表标的' : '在当前分类中搜索代码、名称或拼音'}
+            />
             <div className="instrument-editor-summary">
               <strong>{target.type === 'chart' ? '图表标的' : '列表成员'}</strong>
               <span>{target.type === 'chart' ? '固定图表只能保存一个可绘制标的' : `${draft.length} 个标的，保存后统一生效`}</span>
@@ -132,7 +89,7 @@ export function InstrumentEditor({
                 {target.type === 'chart' ? '请选择一个图表标的' : '固定列表可以为空'}
               </div>}
               {draft.map((item, index) => <div className="instrument-editor-member" key={item.symbol}>
-                <span><strong>{item.name}</strong><small>{item.symbol} · {item.category ?? item.kind}</small></span>
+                <span><strong>{item.name}</strong><small>{item.symbol} · {instrumentClassLabel(item)}</small></span>
                 {target.type === 'instrument-list' && <div>
                   <button title="上移" aria-label={`上移 ${item.name}`} disabled={index === 0} onClick={() => moveInstrument(index, -1)}><ArrowUp size={13}/></button>
                   <button title="下移" aria-label={`下移 ${item.name}`} disabled={index === draft.length - 1} onClick={() => moveInstrument(index, 1)}><ArrowDown size={13}/></button>

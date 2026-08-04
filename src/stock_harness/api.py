@@ -149,6 +149,7 @@ def create_app(
         request: Request,
         query: str = "",
         kind: list[InstrumentKind] | None = Query(default=None),
+        classification: Literal["stock", "etf", "index", "concept", "industry", "sector"] | None = None,
         source_system: str | None = None,
         family: str | None = None,
         category: str | None = None,
@@ -158,25 +159,35 @@ def create_app(
         rows = _store(request).search_instruments(
             query=query,
             kinds=set(kind) if kind else None,
+            classification=classification,
             source_system=source_system,
             family=family,
             category=category,
-            limit=limit,
+            limit=limit + 1,
             offset=offset,
         )
-        if offset == 0 and not kind and not source_system and not family and not category:
+        market_rows = rows
+        custom_rows: list[dict[str, object]] = []
+        if offset == 0 and not kind and not classification and not source_system and not family and not category:
             groups = _store(request).list_custom_groups(query)
             custom_rows = [
                 {
                     "symbol": item["symbol"], "name": item["name"],
                     "kind": "custom-group", "exchange": "LOCAL", "active": True,
                     "category": "自定义分组", "rows": item["member_count"],
+                    "classification": "custom-group", "classification_label": "自选集合",
+                    "source_label": "本地",
                     "first_trade_date": None, "last_trade_date": None,
                 }
                 for item in groups
-            ]
-            rows = (custom_rows + rows)[:limit]
-        return {"items": rows, "limit": limit, "offset": offset}
+            ][:max(0, limit - 1)]
+        market_limit = limit - len(custom_rows)
+        rows = market_rows[:market_limit]
+        has_more = len(market_rows) > market_limit
+        return {
+            "items": custom_rows + rows, "limit": limit, "offset": offset,
+            "has_more": has_more, "next_offset": offset + len(rows),
+        }
 
     @app.get("/api/custom-groups")
     def custom_groups(request: Request, query: str = "") -> dict[str, object]:

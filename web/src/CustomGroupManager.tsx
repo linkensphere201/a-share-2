@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react'
-import { ArrowDown, ArrowUp, FolderPlus, Plus, Save, Search, Trash2, X } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { ArrowDown, ArrowUp, FolderPlus, Plus, Save, Trash2, X } from 'lucide-react'
+import { InstrumentBrowser } from './InstrumentBrowser'
 import type { Instrument } from './workspace'
 
 type CustomGroupSummary = {
@@ -26,8 +27,6 @@ type CustomGroupDraft = {
 export function CustomGroupManager({ onClose, embedded = false }: { onClose: () => void; embedded?: boolean }) {
   const [groups, setGroups] = useState<CustomGroupSummary[]>([])
   const [draft, setDraft] = useState<CustomGroupDraft>()
-  const [query, setQuery] = useState('')
-  const [results, setResults] = useState<Instrument[]>([])
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [draggedSymbol, setDraggedSymbol] = useState<string>()
@@ -47,34 +46,11 @@ export function CustomGroupManager({ onClose, embedded = false }: { onClose: () 
     if (!response.ok) throw new Error(`HTTP ${response.status}`)
     const body = await response.json() as CustomGroupDraft & { id: string }
     setDraft(body)
-    setQuery('')
-    setResults([])
   }
 
   useEffect(() => {
     reloadGroups().catch(() => setError('自定义分组加载失败'))
   }, [])
-
-  useEffect(() => {
-    if (!query.trim()) {
-      setResults([])
-      return
-    }
-    const controller = new AbortController()
-    const handle = window.setTimeout(() => {
-      const params = new URLSearchParams({ query, limit: '16' })
-      fetch(`/api/instruments?${params}`, { signal: controller.signal })
-        .then(response => response.ok ? response.json() : Promise.reject(new Error(`HTTP ${response.status}`)))
-        .then((body: { items: Instrument[] }) => setResults(body.items.filter(item => item.kind !== 'custom-group')))
-        .catch(cause => {
-          if ((cause as Error).name !== 'AbortError') setResults([])
-        })
-    }, 120)
-    return () => {
-      window.clearTimeout(handle)
-      controller.abort()
-    }
-  }, [query])
 
   const save = async () => {
     if (!draft?.name.trim()) return
@@ -132,9 +108,12 @@ export function CustomGroupManager({ onClose, embedded = false }: { onClose: () 
   const addMember = (instrument: Instrument) => {
     if (!draft || draft.members.some(member => member.symbol === instrument.symbol)) return
     setDraft({ ...draft, members: [...draft.members, { ...instrument, tags: [], note: '' }] })
-    setQuery('')
-    setResults([])
   }
+
+  const selectedSymbols = useMemo(
+    () => new Set(draft?.members.map(member => member.symbol) ?? []),
+    [draft?.members],
+  )
 
   const moveMember = (index: number, offset: -1 | 1) => {
     if (!draft) return
@@ -183,14 +162,13 @@ export function CustomGroupManager({ onClose, embedded = false }: { onClose: () 
               <button className="primary-button" disabled={saving || !draft.name.trim()} onClick={save}><Save size={14}/>{saving ? '保存中' : '保存'}</button>
             </div>
           </div>
-          <div className="custom-member-search">
-            <label><Search size={14}/><input value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索代码或名称添加标的" aria-label="搜索分组成员"/></label>
-            {query.trim() && <div className="custom-member-results">
-              {results.map(item => <button key={item.symbol} disabled={draft.members.some(member => member.symbol === item.symbol)} onClick={() => addMember(item)}>
-                <span><strong>{item.name}</strong><small>{item.symbol}</small></span><Plus size={14}/>
-              </button>)}
-            </div>}
-          </div>
+          <InstrumentBrowser
+            selectedSymbols={selectedSymbols}
+            onSelect={addMember}
+            excludeCustomGroups
+            searchLabel="搜索分组成员"
+            placeholder="在当前分类中搜索代码、名称或拼音"
+          />
           <div className="custom-member-table">
             <div className="custom-member-header"><span>标的</span><span>标签</span><span>备注</span><span/></div>
             {draft.members.map((member, index) => <div

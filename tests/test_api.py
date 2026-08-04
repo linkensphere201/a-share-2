@@ -57,6 +57,49 @@ def test_search_supports_pinyin_initials():
     assert response.json()["items"][0]["symbol"] == "300308.SZ"
 
 
+def test_classified_browsing_normalizes_board_sources_and_allows_empty_query():
+    store, client = _client()
+    observed_on = date(2026, 8, 3)
+    entries = [
+        CatalogEntry(
+            Instrument("BK0475.DC", "半导体", InstrumentKind.SECTOR, "DC"),
+            "tushare_dc", "eastmoney", "eastmoney_board", "行业板块",
+            "BK0475.DC", observed_on,
+        ),
+        CatalogEntry(
+            Instrument("885001.TI", "光模块", InstrumentKind.SECTOR, "TI"),
+            "tushare_ths", "ths", "ths_board", "N", "885001.TI", observed_on,
+        ),
+        CatalogEntry(
+            Instrument("881001.TI", "通信设备", InstrumentKind.SECTOR, "TI"),
+            "tushare_ths", "ths", "ths_board", "I", "881001.TI", observed_on,
+        ),
+    ]
+    store.upsert_catalog_entries(entries)
+    store.upsert_instruments([
+        Instrument("801010.SI", "农林牧渔", InstrumentKind.SECTOR, "SI"),
+        Instrument("510300.SH", "沪深300ETF", InstrumentKind.ETF, "SH"),
+    ])
+
+    with client:
+        concepts = client.get("/api/instruments", params={"classification": "concept", "query": ""})
+        industries = client.get("/api/instruments", params={"classification": "industry", "query": ""})
+        etfs = client.get("/api/instruments", params={"classification": "etf", "query": ""})
+    store.close()
+
+    assert concepts.status_code == industries.status_code == etfs.status_code == 200
+    concept_rows = {item["symbol"]: item for item in concepts.json()["items"]}
+    industry_rows = {item["symbol"]: item for item in industries.json()["items"]}
+    assert concept_rows["BK1128.DC"]["classification_label"] == "概念板块"
+    assert concept_rows["BK1128.DC"]["source_label"] == "东财"
+    assert concept_rows["885001.TI"]["source_label"] == "同花顺"
+    assert industry_rows["BK0475.DC"]["classification_label"] == "行业板块"
+    assert industry_rows["881001.TI"]["source_label"] == "同花顺"
+    assert industry_rows["801010.SI"]["source_label"] == "申万"
+    assert etfs.json()["items"][0]["classification_label"] == "ETF"
+    assert "has_more" in concepts.json() and "next_offset" in concepts.json()
+
+
 def test_daily_bars_and_membership_directions():
     store, client = _client()
     with client:

@@ -1477,14 +1477,17 @@ class SQLiteMarketDataStore:
         self,
         query: str = "",
         kinds: set[InstrumentKind] | None = None,
+        classification: str | None = None,
         source_system: str | None = None,
         family: str | None = None,
         category: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[dict[str, object]]:
-        if not 1 <= limit <= 500 or offset < 0:
+        if not 1 <= limit <= 501 or offset < 0:
             raise ValueError("invalid instrument pagination")
+        if classification not in {None, "stock", "etf", "index", "concept", "industry", "sector"}:
+            raise ValueError("invalid instrument classification")
         clauses: list[str] = []
         parameters: list[object] = []
         if query.strip():
@@ -1499,6 +1502,10 @@ class SQLiteMarketDataStore:
             values = sorted(item.value for item in kinds)
             clauses.append("instrument.kind IN (" + ",".join("?" for _ in values) + ")")
             parameters.extend(values)
+        if classification:
+            class_clause, class_parameters = _instrument_classification_clause(classification)
+            clauses.append(class_clause)
+            parameters.extend(class_parameters)
         for column, value in (
             ("catalog.source_system", source_system),
             ("catalog.family", family),
@@ -2374,14 +2381,87 @@ def _source_profile(source: str) -> tuple[str, str]:
 
 
 def _instrument_row(row: sqlite3.Row) -> dict[str, object]:
+    classification = _instrument_classification(
+        str(row[2]), str(row[3]), row[5], row[7]
+    )
     return {
         "symbol": str(row[0]), "name": str(row[1]), "kind": str(row[2]),
         "exchange": str(row[3]), "active": bool(row[4]),
         "source_system": row[5], "family": row[6], "category": row[7],
+        "classification": classification,
+        "classification_label": {
+            "stock": "个股", "etf": "ETF", "index": "指数",
+            "concept": "概念板块", "industry": "行业板块", "sector": "其他板块",
+        }[classification],
+        "source_label": _instrument_source_label(
+            classification, str(row[3]), row[5]
+        ),
         "first_trade_date": _date_from_key(int(row[8])) if row[8] is not None else None,
         "last_trade_date": _date_from_key(int(row[9])) if row[9] is not None else None,
         "rows": int(row[10]),
     }
+
+
+def _instrument_classification_clause(classification: str) -> tuple[str, list[object]]:
+    if classification in {"stock", "etf", "index"}:
+        return "instrument.kind = ?", [classification]
+    concept = (
+        "(instrument.kind = 'sector' AND ("
+        "catalog.category IN ('概念板块', 'concept') OR "
+        "(catalog.source_system = 'ths' AND catalog.category = 'N')))"
+    )
+    industry = (
+        "(instrument.kind = 'sector' AND (instrument.exchange = 'SI' OR "
+        "catalog.category IN ('行业板块', 'industry') OR "
+        "(catalog.source_system = 'ths' AND catalog.category = 'I')))"
+    )
+    if classification == "concept":
+        return concept, []
+    if classification == "industry":
+        return industry, []
+    return f"(instrument.kind = 'sector' AND NOT {concept} AND NOT {industry})", []
+
+
+def _instrument_classification(
+    kind: str,
+    exchange: str,
+    source_system: object,
+    category: object,
+) -> str:
+    if kind != "sector":
+        return kind
+    category_value = str(category or "")
+    source_value = str(source_system or "")
+    if category_value in {"概念板块", "concept"} or (
+        source_value == "ths" and category_value == "N"
+    ):
+        return "concept"
+    if exchange == "SI" or category_value in {"行业板块", "industry"} or (
+        source_value == "ths" and category_value == "I"
+    ):
+        return "industry"
+    return "sector"
+
+
+def _instrument_source_label(
+    classification: str, exchange: str, source_system: object
+) -> str:
+    source_value = str(source_system or "")
+    if source_value == "eastmoney":
+        return "东财"
+    if source_value == "ths":
+        return "同花顺"
+    if exchange == "SI":
+        return "申万"
+    if classification in {"etf", "stock"}:
+        return {"SH": "上交所", "SZ": "深交所", "BJ": "北交所"}.get(
+            exchange, exchange
+        )
+    if classification == "index":
+        return {"CSI": "中证", "SH": "上证", "SZ": "深证"}.get(
+            exchange, "主要指数"
+        )
+    return "其他"
 
 
 def _snapshot_hash(bars: Sequence[DailyBar]) -> bytes:
