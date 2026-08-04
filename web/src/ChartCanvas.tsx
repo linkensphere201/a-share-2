@@ -73,6 +73,13 @@ const falling = '#26a269'
 const risingSoft = '#e99693'
 const fallingSoft = '#70be9a'
 
+export const chartLayoutOptions = {
+  background: { type: ColorType.Solid, color: '#0d1014' },
+  textColor: '#7f8997',
+  panes: { separatorColor: '#303743', separatorHoverColor: '#4b84c6', enableResize: true },
+  attributionLogo: false,
+} as const
+
 export function ChartCanvas({
   symbol,
   range,
@@ -136,11 +143,7 @@ export function ChartCanvas({
     if (!hostRef.current) return
     const chart = createChart(hostRef.current, {
       autoSize: true,
-      layout: {
-        background: { type: ColorType.Solid, color: '#0d1014' },
-        textColor: '#7f8997',
-        panes: { separatorColor: '#303743', separatorHoverColor: '#4b84c6', enableResize: true },
-      },
+      layout: chartLayoutOptions,
       grid: {
         vertLines: { color: '#1c222a' },
         horzLines: { color: '#1c222a' },

@@ -4,6 +4,7 @@ import {
   aggregateBars,
   calculateChangePercent,
   candleColor,
+  chartLayoutOptions,
   chooseLodBucket,
   createRangeMeasurement,
   movingAverage,
@@ -11,6 +12,12 @@ import {
   millisecondsUntilMarketSession,
   type DailyBar,
 } from './ChartCanvas'
+
+describe('chart layout', () => {
+  it('does not render the TradingView attribution over the chart', () => {
+    expect(chartLayoutOptions.attributionLogo).toBe(false)
+  })
+})
 
 describe('movingAverage', () => {
   it('starts only after the full window and uses close prices', () => {
