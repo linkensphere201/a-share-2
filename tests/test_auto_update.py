@@ -7,6 +7,7 @@ from stock_harness.auto_update import IncrementalUpdater
 from stock_harness.config import load_runtime_settings
 from stock_harness.models import (
     CatalogEntry, DailyBar, EtfHolding, Instrument, InstrumentKind, MarketSnapshot,
+    ProviderBarRejection,
 )
 from stock_harness.sqlite_store import SQLiteMarketDataStore
 
@@ -82,7 +83,19 @@ class FakeProvider:
         )
 
 
-def test_incremental_update_persists_calendar_and_skips_completed_snapshots(tmp_path: Path):
+class OutOfScopeSectorRejectionProvider(FakeProvider):
+    def fetch_daily_snapshot(self, kind, trade_date):
+        bars = super().fetch_daily_snapshot(kind, trade_date)
+        if kind is InstrumentKind.SECTOR:
+            self.rejected_bars = (
+                ProviderBarRejection(
+                    "801280.SI", trade_date, "daily bar close must be inside low/high"
+                ),
+            )
+        return bars
+
+
+def _settings(tmp_path: Path):
     provider_config = tmp_path / "providers.yaml"
     storage_config = tmp_path / "storage.yaml"
     provider_config.write_text(
@@ -105,7 +118,11 @@ providers:
         "storage: {database_path: market.sqlite, sqlite_mmap_size_mib: 0}",
         encoding="utf-8",
     )
-    settings = load_runtime_settings(provider_config, storage_config)
+    return load_runtime_settings(provider_config, storage_config)
+
+
+def test_incremental_update_persists_calendar_and_skips_completed_snapshots(tmp_path: Path):
+    settings = _settings(tmp_path)
     providers: list[FakeProvider] = []
 
     def factory():
@@ -132,3 +149,31 @@ providers:
         assert store.list_trading_dates(
             "tushare", date(2026, 7, 1), date(2026, 8, 3)
         ) == [date(2026, 7, 31), date(2026, 8, 3)]
+
+
+def test_incremental_update_ignores_out_of_scope_rejections_and_resolves_incident(
+    tmp_path: Path,
+):
+    settings = _settings(tmp_path)
+    with SQLiteMarketDataStore(settings.database_path, mmap_size_mib=0) as store:
+        store.record_provider_incident(
+            "tushare",
+            "daily_ohlcv",
+            "sector",
+            date(2026, 7, 31),
+            "invalid_daily_bar",
+            "801280.SI: daily bar close must be inside low/high",
+        )
+
+    result = IncrementalUpdater(settings, OutOfScopeSectorRejectionProvider).run_once(
+        datetime(2026, 8, 3, 19, 0)
+    )
+
+    assert result.errors == ()
+    with SQLiteMarketDataStore(settings.database_path, mmap_size_mib=0) as store:
+        assert store.has_daily_snapshot("tushare", "sector", date(2026, 7, 31))
+        incident = next(
+            item for item in store.list_provider_incidents()
+            if item.trade_date == date(2026, 7, 31)
+        )
+        assert incident.status == "resolved"

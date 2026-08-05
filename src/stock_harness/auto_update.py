@@ -90,7 +90,10 @@ class IncrementalUpdater:
                         continue
                     try:
                         bars = [bar for bar in fetch(trade_date) if bar.symbol in symbols]
-                        rejected = provider.rejected_bars
+                        rejected = tuple(
+                            item for item in provider.rejected_bars
+                            if item.symbol in symbols
+                        )
                         if rejected:
                             for item in rejected:
                                 store.record_provider_incident(
@@ -114,6 +117,14 @@ class IncrementalUpdater:
                             errors.append(f"{scope} {trade_date}: empty snapshot")
                             continue
                         stats = store.upsert_daily_snapshot(source, scope, trade_date, bars)
+                        store.resolve_provider_incident(
+                            source,
+                            "daily_ohlcv",
+                            scope,
+                            trade_date,
+                            "invalid_daily_bar",
+                            "configured-scope daily snapshot stored after provider retry",
+                        )
                         written += 1
                         changed += stats.changed
                     except Exception as exc:
