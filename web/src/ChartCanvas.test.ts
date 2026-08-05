@@ -11,6 +11,8 @@ import {
   calculateChangePercent,
   candleColor,
   chooseLodBucket,
+  remapLogicalRange,
+  snapLogicalRangeToDataEdge,
   createRangeMeasurement,
   detectPriceGaps,
   movingAverage,
@@ -148,6 +150,16 @@ describe('chart level of detail', () => {
   it('uses power-of-two buckets only when density exceeds the viewport', () => {
     expect(chooseLodBucket(800, 800)).toBe(1)
     expect(chooseLodBucket(5_457, 800)).toBe(8)
+  })
+
+  it('keeps off-data whitespace when LOD data counts change', () => {
+    expect(remapLogicalRange({ from: -20, to: 120 }, 101, 51)).toEqual({ from: -10, to: 60 })
+  })
+
+  it('snaps only after a data edge is within the pixel magnet threshold', () => {
+    expect(snapLogicalRangeToDataEdge({ from: -1, to: 99 }, 100, 10)).toEqual({ from: 0, to: 100 })
+    expect(snapLogicalRangeToDataEdge({ from: -3, to: 97 }, 100, 10)).toBeUndefined()
+    expect(snapLogicalRangeToDataEdge({ from: 2, to: 101 }, 100, 10)).toEqual({ from: 3, to: 102 })
   })
 })
 

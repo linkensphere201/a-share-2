@@ -11,7 +11,7 @@ import {
   type TrendLineDash,
   type TrendLineDrawing,
 } from './drawingStore'
-import { barsInRenderPeriod, chooseAnchor, type LineGeometry } from './trendLines'
+import { barsInRenderPeriod, chooseAnchor, translateTrendLineAnchors, type LineGeometry } from './trendLines'
 import type { ThemeDefinition } from './themeStore'
 import {
   projectMarketAnnotations,
@@ -39,6 +39,8 @@ import {
   millisecondsUntilNextMarketDay,
   movingAverage,
   previousCloseByDate,
+  remapLogicalRange,
+  snapLogicalRangeToDataEdge,
   subtractMonths,
   subtractYears,
   visibleBarStats,
@@ -88,6 +90,22 @@ type DrawingDrag = {
   startY: number
 }
 
+type ViewportSnapshot = {
+  logical: IRange<number>
+  dataCount: number
+}
+
+type TrendLineMoveDrag = {
+  pointerId: number
+  drawing: TrendLineDrawing
+  startDateIndex: number
+  startPrice: number
+  startX: number
+  startY: number
+  latest: TrendLineDrawing
+  moved: boolean
+}
+
 
 type ChartCanvasProps = {
   symbol: string
@@ -107,7 +125,12 @@ const rising = '#ef5350'
 const falling = '#26a269'
 const risingSoft = '#e99693'
 const fallingSoft = '#70be9a'
-const trendLineColors = ['#f0b85a', '#ef5350', '#26a269', '#57a7d9', '#b984cc', '#d8dde6'] as const
+const trendLineColors = [
+  '#f0b85a', '#ef5350', '#ff7a45', '#e85d91',
+  '#26a269', '#8ac926', '#26b5a8', '#49c6e5',
+  '#57a7d9', '#4776e6', '#7b68ee', '#b984cc',
+  '#d8dde6', '#9aa6b4', '#f4d35e', '#00c2a8',
+] as const
 const trendLineDashOptions: Array<{ value: TrendLineDash; label: string }> = [
   { value: 'solid', label: '实线' },
   { value: 'dotted', label: '点线' },
@@ -159,15 +182,18 @@ export function ChartCanvas({
   const renderedBarListRef = useRef<RenderBar[]>([])
   const selectionDragRef = useRef<{ pointerId: number; startX: number; startY: number } | undefined>(undefined)
   const drawingDragRef = useRef<DrawingDrag | undefined>(undefined)
+  const lineMoveDragRef = useRef<TrendLineMoveDrag | undefined>(undefined)
   const bucketRef = useRef(1)
-  const applyBucketRef = useRef<(bucket: number, preserve?: IRange<Time>) => void>(() => undefined)
+  const applyBucketRef = useRef<(bucket: number, preserve?: ViewportSnapshot) => void>(() => undefined)
   const recalculateLodRef = useRef<() => void>(() => undefined)
   const resetAutoScaleRef = useRef<(visibleBars?: number, width?: number, low?: number, high?: number) => void>(() => undefined)
   const suppressLodRef = useRef(false)
+  const timeAxisPointerActiveRef = useRef(false)
   const coverageCallbackRef = useRef(onCoverageChange)
   const visibleRangeCallbackRef = useRef(onVisibleRangeChange)
+  const emittedVisibleRangeRef = useRef<VisibleRange | undefined>(undefined)
   const priceModeRef = useRef(priceMode)
-  const pendingVisibleRangeRef = useRef<IRange<Time> | undefined>(undefined)
+  const pendingViewportRef = useRef<ViewportSnapshot | undefined>(undefined)
   const skipRangeResetRef = useRef(false)
   const [bars, setBars] = useState<DailyBar[]>([])
   const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading')
@@ -181,6 +207,7 @@ export function ChartCanvas({
   const [drawingDraft, setDrawingDraft] = useState<[TrendLineAnchor, TrendLineAnchor]>()
   const [selectedDrawingId, setSelectedDrawingId] = useState<string>()
   const [drawingManagerOpen, setDrawingManagerOpen] = useState(false)
+  const [movingDrawingId, setMovingDrawingId] = useState<string>()
   const [toolbarCollapsed, setToolbarCollapsed] = useState(false)
   const [overlayRevision, setOverlayRevision] = useState(0)
   const liveFailureCountRef = useRef(0)
@@ -208,6 +235,8 @@ export function ChartCanvas({
     setSelectedDrawingId(undefined)
     setDrawingDraft(undefined)
     drawingDragRef.current = undefined
+    lineMoveDragRef.current = undefined
+    setMovingDrawingId(undefined)
     setDrawingTool('browse')
     setDrawingManagerOpen(false)
     return subscribeSymbolDrawings(symbol, reload)
@@ -215,7 +244,7 @@ export function ChartCanvas({
 
   const replaceBars = useCallback((next: DailyBar[], preserveView = false) => {
     if (preserveView) {
-      pendingVisibleRangeRef.current = chartRef.current?.timeScale().getVisibleRange() ?? undefined
+      pendingViewportRef.current = captureViewport(chartRef.current, renderedBarListRef.current.length)
       skipRangeResetRef.current = true
     }
     barsRef.current = next
@@ -274,6 +303,9 @@ export function ChartCanvas({
         borderColor: initialTheme.colors.border,
         rightOffset: 3,
         minBarSpacing: 0.08,
+        fixLeftEdge: false,
+        fixRightEdge: false,
+        rightBarStaysOnScroll: false,
         timeVisible: false,
         secondsVisible: false,
       },
@@ -347,6 +379,7 @@ export function ChartCanvas({
 
     let lodFrame = 0
     let visibleRangeTimer = 0
+    let edgeSnapTimer = 0
     const recalculateLod = () => {
       if (suppressLodRef.current) return
       window.cancelAnimationFrame(lodFrame)
@@ -357,17 +390,32 @@ export function ChartCanvas({
         const stats = visibleBarStats(barsRef.current, String(visible.from), String(visible.to))
         resetAutoScale(stats.count, chart.timeScale().width(), stats.low, stats.high)
         const nextBucket = chooseLodBucket(stats.count, hostRef.current.clientWidth)
-        if (nextBucket !== bucketRef.current) applyBucketRef.current(nextBucket, visible)
+        if (nextBucket !== bucketRef.current) {
+          applyBucketRef.current(nextBucket, captureViewport(chart, renderedBarListRef.current.length))
+        }
       })
       window.clearTimeout(visibleRangeTimer)
       visibleRangeTimer = window.setTimeout(() => {
         const visible = chart.timeScale().getVisibleRange()
         if (visible && !suppressLodRef.current) {
-          visibleRangeCallbackRef.current?.({ from: String(visible.from), to: String(visible.to) })
+          const value = { from: String(visible.from), to: String(visible.to) }
+          emittedVisibleRangeRef.current = value
+          visibleRangeCallbackRef.current?.(value)
         }
       }, 180)
+      window.clearTimeout(edgeSnapTimer)
+      edgeSnapTimer = window.setTimeout(() => {
+        if (suppressLodRef.current || timeAxisPointerActiveRef.current) return
+        const logical = chart.timeScale().getVisibleLogicalRange()
+        const snapped = logical && snapLogicalRangeToDataEdge(
+          logical,
+          renderedBarListRef.current.length,
+          chart.timeScale().options().barSpacing,
+        )
+        if (snapped) chart.timeScale().setVisibleLogicalRange(snapped)
+      }, 240)
     }
-    chart.timeScale().subscribeVisibleTimeRangeChange(recalculateLod)
+    chart.timeScale().subscribeVisibleLogicalRangeChange(recalculateLod)
     recalculateLodRef.current = recalculateLod
     const resizeObserver = new ResizeObserver(recalculateLod)
     resizeObserver.observe(hostRef.current)
@@ -380,8 +428,9 @@ export function ChartCanvas({
     return () => {
       window.cancelAnimationFrame(lodFrame)
       window.clearTimeout(visibleRangeTimer)
+      window.clearTimeout(edgeSnapTimer)
       resizeObserver.disconnect()
-      chart.timeScale().unsubscribeVisibleTimeRangeChange(recalculateLod)
+      chart.timeScale().unsubscribeVisibleLogicalRangeChange(recalculateLod)
       chart.remove()
       chartRef.current = null
     }
@@ -696,15 +745,21 @@ export function ChartCanvas({
       setLodBucket(bucket)
       setOverlayRevision(value => value + 1)
       window.requestAnimationFrame(() => {
-        if (preserve) chartRef.current?.timeScale().setVisibleRange(preserve)
+        if (preserve) {
+          chartRef.current?.timeScale().setVisibleLogicalRange(remapLogicalRange(
+            preserve.logical,
+            preserve.dataCount,
+            renderedBars.length,
+          ))
+        }
         resetAutoScaleRef.current()
         window.requestAnimationFrame(() => {
           suppressLodRef.current = false
         })
       })
     }
-    applyBucketRef.current(1, pendingVisibleRangeRef.current)
-    pendingVisibleRangeRef.current = undefined
+    applyBucketRef.current(1, pendingViewportRef.current)
+    pendingViewportRef.current = undefined
   }, [bars, averages, macd])
 
   useEffect(() => {
@@ -725,6 +780,8 @@ export function ChartCanvas({
       return
     }
     if (initialVisibleRange) {
+      const emitted = emittedVisibleRangeRef.current
+      if (emitted?.from === initialVisibleRange.from && emitted.to === initialVisibleRange.to) return
       chart.timeScale().setVisibleRange(initialVisibleRange)
       resetAutoScaleRef.current()
       window.requestAnimationFrame(() => recalculateLodRef.current())
@@ -844,6 +901,21 @@ export function ChartCanvas({
     return chooseAnchor(x, y, fallback, candidates)
   }
 
+  const resolveTradingDateIndexAtX = (x: number): number | undefined => {
+    const chart = chartRef.current
+    if (!chart || barsRef.current.length === 0 || renderedBarListRef.current.length === 0) return undefined
+    const logical = chart.timeScale().coordinateToLogical(x)
+    if (logical === null) return undefined
+    const renderedIndex = clamp(Math.round(Number(logical)), 0, renderedBarListRef.current.length - 1)
+    const nearestDate = renderedBarListRef.current[renderedIndex].trade_date
+    const exact = barsRef.current.findIndex(bar => bar.trade_date === nearestDate)
+    if (exact >= 0) return exact
+    return barsRef.current.reduce((nearest, bar, index) => (
+      Math.abs(Date.parse(bar.trade_date) - Date.parse(nearestDate!))
+        < Math.abs(Date.parse(barsRef.current[nearest].trade_date) - Date.parse(nearestDate!)) ? index : nearest
+    ), 0)
+  }
+
   const handleDrawingStart = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0 || drawingTool !== 'trend-line' || !chartRef.current) return
     const point = localPoint(event)
@@ -896,6 +968,86 @@ export function ChartCanvas({
     drawingDragRef.current = undefined
     setDrawingDraft(undefined)
     setDrawingTool('browse')
+  }
+
+  const previewTrendLineMove = (event: ReactPointerEvent<SVGLineElement>): TrendLineMoveDrag | undefined => {
+    const drag = lineMoveDragRef.current
+    const chart = chartRef.current
+    const candles = candleRef.current
+    if (!drag || drag.pointerId !== event.pointerId || !chart || !candles) return undefined
+    const point = chartPoint(event, hostRef.current)
+    const paneHeight = chart.panes()[0]?.getHeight() ?? hostRef.current?.clientHeight ?? 0
+    const dateIndex = resolveTradingDateIndexAtX(point.x)
+    const currentPrice = candles.coordinateToPrice(clamp(point.y, 0, paneHeight))
+    if (dateIndex === undefined || currentPrice === null || !Number.isFinite(currentPrice)) return drag
+    const anchors = translateTrendLineAnchors(
+      drag.drawing.anchors,
+      barsRef.current.map(bar => bar.trade_date),
+      dateIndex - drag.startDateIndex,
+      drag.startPrice,
+      currentPrice,
+      priceMode,
+    )
+    drag.latest = { ...drag.drawing, anchors }
+    drag.moved ||= Math.hypot(point.x - drag.startX, point.y - drag.startY) >= 3
+    setDrawings(current => current.map(item => item.id === drag.drawing.id ? drag.latest : item))
+    return drag
+  }
+
+  const handleTrendLineMoveStart = (event: ReactPointerEvent<SVGLineElement>, drawing: TrendLineDrawing) => {
+    const chart = chartRef.current
+    const candles = candleRef.current
+    if (event.button !== 0 || drawingTool !== 'browse' || !chart || !candles) return
+    const point = chartPoint(event, hostRef.current)
+    const paneHeight = chart.panes()[0]?.getHeight() ?? hostRef.current?.clientHeight ?? 0
+    if (point.y > paneHeight) return
+    const startDateIndex = resolveTradingDateIndexAtX(point.x)
+    const startPrice = candles.coordinateToPrice(point.y)
+    if (startDateIndex === undefined || startPrice === null || !Number.isFinite(startPrice)) return
+    event.preventDefault()
+    event.stopPropagation()
+    event.currentTarget.setPointerCapture(event.pointerId)
+    lineMoveDragRef.current = {
+      pointerId: event.pointerId,
+      drawing,
+      startDateIndex,
+      startPrice,
+      startX: point.x,
+      startY: point.y,
+      latest: drawing,
+      moved: false,
+    }
+    setSelectedDrawingId(drawing.id)
+    setMovingDrawingId(drawing.id)
+  }
+
+  const handleTrendLineMove = (event: ReactPointerEvent<SVGLineElement>) => {
+    if (lineMoveDragRef.current?.pointerId !== event.pointerId) return
+    event.preventDefault()
+    event.stopPropagation()
+    previewTrendLineMove(event)
+  }
+
+  const finishTrendLineMove = (event: ReactPointerEvent<SVGLineElement>, cancelled = false) => {
+    const drag = lineMoveDragRef.current
+    if (!drag || drag.pointerId !== event.pointerId) return
+    event.preventDefault()
+    event.stopPropagation()
+    if (!cancelled) previewTrendLineMove(event)
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+    lineMoveDragRef.current = undefined
+    setMovingDrawingId(undefined)
+    if (cancelled || !drag.moved) {
+      setDrawings(current => current.map(item => item.id === drag.drawing.id ? drag.drawing : item))
+      return
+    }
+    try {
+      saveTrendLine({ ...drag.latest, updatedAt: new Date().toISOString() })
+      logInfo('drawing', '趋势线位置已更新', { symbol, drawingId: drag.drawing.id })
+    } catch (error) {
+      setDrawings(current => current.map(item => item.id === drag.drawing.id ? drag.drawing : item))
+      logWarning('drawing', '趋势线移动保存失败', { symbol, drawingId: drag.drawing.id, error })
+    }
   }
 
   const updateDrawing = (id: string, update: (drawing: TrendLineDrawing) => TrendLineDrawing) => {
@@ -973,9 +1125,21 @@ export function ChartCanvas({
     <div
       className={selectionDragRef.current ? 'chart-stage selecting' : 'chart-stage'}
       onPointerDown={handleSelectionStart}
+      onPointerDownCapture={event => {
+        if (event.button === 0) timeAxisPointerActiveRef.current = true
+      }}
       onPointerMove={handleSelectionMove}
       onPointerUp={handleSelectionEnd}
+      onPointerUpCapture={event => {
+        if (event.button !== 0) return
+        timeAxisPointerActiveRef.current = false
+        recalculateLodRef.current()
+      }}
       onPointerCancel={handleSelectionCancel}
+      onPointerCancelCapture={() => {
+        timeAxisPointerActiveRef.current = false
+        recalculateLodRef.current()
+      }}
       onContextMenu={event => event.preventDefault()}
     >
       <div ref={hostRef} className="chart-host"/>
@@ -1055,7 +1219,12 @@ export function ChartCanvas({
         lines={projectedDrawings}
         draft={projectedDraft}
         selectedId={selectedDrawingId}
+        movingId={movingDrawingId}
         onSelect={setSelectedDrawingId}
+        onMoveStart={handleTrendLineMoveStart}
+        onMove={handleTrendLineMove}
+        onMoveEnd={event => finishTrendLineMove(event)}
+        onMoveCancel={event => finishTrendLineMove(event, true)}
       />
       {drawingTool === 'trend-line' && (
         <div
@@ -1177,18 +1346,32 @@ function TrendLineOverlay({
   lines,
   draft,
   selectedId,
+  movingId,
   onSelect,
+  onMoveStart,
+  onMove,
+  onMoveEnd,
+  onMoveCancel,
 }: {
   lines: ProjectedTrendLine[]
   draft?: LineGeometry
   selectedId?: string
+  movingId?: string
   onSelect: (id: string) => void
+  onMoveStart: (event: ReactPointerEvent<SVGLineElement>, drawing: TrendLineDrawing) => void
+  onMove: (event: ReactPointerEvent<SVGLineElement>) => void
+  onMoveEnd: (event: ReactPointerEvent<SVGLineElement>) => void
+  onMoveCancel: (event: ReactPointerEvent<SVGLineElement>) => void
 }) {
   return (
     <div className="chart-trend-lines">
       <svg width="100%" height="100%" aria-label="趋势线图层">
         {lines.map(line => (
-          <g key={line.drawing.id} className={line.drawing.id === selectedId ? 'trend-line selected' : 'trend-line'}>
+          <g key={line.drawing.id} className={[
+            'trend-line',
+            line.drawing.id === selectedId ? 'selected' : '',
+            line.drawing.id === movingId ? 'moving' : '',
+          ].filter(Boolean).join(' ')}>
             <line
               className="trend-line-hit"
               x1={line.line.x1}
@@ -1199,7 +1382,11 @@ function TrendLineOverlay({
                 event.preventDefault()
                 event.stopPropagation()
                 onSelect(line.drawing.id)
+                onMoveStart(event, line.drawing)
               }}
+              onPointerMove={onMove}
+              onPointerUp={onMoveEnd}
+              onPointerCancel={onMoveCancel}
             />
             <line
               className="trend-line-stroke"
@@ -1364,6 +1551,11 @@ function setPaneStretchFactors(chart: IChartApi) {
   chart.panes().slice(1).forEach(pane => pane.setStretchFactor(1))
 }
 
+function captureViewport(chart: IChartApi | null, dataCount: number): ViewportSnapshot | undefined {
+  const logical = chart?.timeScale().getVisibleLogicalRange()
+  return logical ? { logical: { from: logical.from, to: logical.to }, dataCount } : undefined
+}
+
 function resolveRangeSelection(
   chart: IChartApi,
   renderedBars: RenderBar[],
@@ -1394,6 +1586,13 @@ function resolveRangeSelection(
 function localPoint(event: ReactPointerEvent<HTMLDivElement>): { x: number; y: number } {
   const bounds = event.currentTarget.getBoundingClientRect()
   return { x: event.clientX - bounds.left, y: event.clientY - bounds.top }
+}
+
+function chartPoint(event: ReactPointerEvent<Element>, host: HTMLDivElement | null): { x: number; y: number } {
+  const bounds = host?.getBoundingClientRect()
+  return bounds
+    ? { x: event.clientX - bounds.left, y: event.clientY - bounds.top }
+    : { x: event.clientX, y: event.clientY }
 }
 
 function rectangleFromPoints(startX: number, startY: number, endX: number, endY: number): SelectionBox {

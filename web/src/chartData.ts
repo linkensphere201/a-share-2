@@ -158,6 +158,36 @@ export function chooseLodBucket(visibleBars: number, width: number): number {
   return Math.min(32, 2 ** Math.ceil(Math.log2(required)))
 }
 
+export function remapLogicalRange(
+  range: { from: number; to: number },
+  previousCount: number,
+  nextCount: number,
+): { from: number; to: number } {
+  if (previousCount <= 1 || nextCount <= 1) return { ...range }
+  const scale = (nextCount - 1) / (previousCount - 1)
+  return { from: range.from * scale, to: range.to * scale }
+}
+
+export function snapLogicalRangeToDataEdge(
+  range: { from: number; to: number },
+  dataCount: number,
+  barSpacing: number,
+  thresholdPixels = 14,
+  rightOffsetBars = 3,
+): { from: number; to: number } | undefined {
+  if (dataCount <= 0 || barSpacing <= 0) return undefined
+  const leftDistance = Math.abs(range.from) * barSpacing
+  const rightTarget = dataCount - 1 + rightOffsetBars
+  const rightDistance = Math.abs(range.to - rightTarget) * barSpacing
+  const delta = leftDistance <= thresholdPixels && leftDistance <= rightDistance
+    ? -range.from
+    : rightDistance <= thresholdPixels
+      ? rightTarget - range.to
+      : undefined
+  if (delta === undefined || Math.abs(delta) < 0.001) return undefined
+  return { from: range.from + delta, to: range.to + delta }
+}
+
 export function calculatePriceScaleMargins(
   visibleBars: number,
   width: number,

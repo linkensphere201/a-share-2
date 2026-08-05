@@ -1,5 +1,6 @@
 import type { DailyBar } from './chartData'
 import type { TrendLineAnchor, TrendLineSnap } from './drawingStore'
+import type { PriceMode } from './ChartCanvas'
 
 export type RenderPeriod = {
   period_start: string
@@ -59,6 +60,32 @@ export function renderDateForAnchor(anchorDate: string, periods: RenderPeriod[])
   )).trade_date
 }
 
+export function translateTrendLineAnchors(
+  anchors: [TrendLineAnchor, TrendLineAnchor],
+  tradingDates: string[],
+  requestedDateDelta: number,
+  startPrice: number,
+  currentPrice: number,
+  priceMode: PriceMode,
+): [TrendLineAnchor, TrendLineAnchor] {
+  if (tradingDates.length === 0) return anchors.map(anchor => ({ ...anchor })) as [TrendLineAnchor, TrendLineAnchor]
+  const indexes = anchors.map(anchor => nearestDateIndex(anchor.date, tradingDates)) as [number, number]
+  const dateDelta = clamp(
+    Math.round(requestedDateDelta),
+    -Math.min(...indexes),
+    tradingDates.length - 1 - Math.max(...indexes),
+  )
+  const priceRatio = priceMode === 'log' && startPrice > 0 && currentPrice > 0
+    ? currentPrice / startPrice
+    : 1
+  const priceDelta = priceMode === 'normal' ? currentPrice - startPrice : 0
+  return anchors.map((anchor, index) => ({
+    date: tradingDates[indexes[index] + dateDelta],
+    price: Math.max(Number.EPSILON, priceMode === 'log' ? anchor.price * priceRatio : anchor.price + priceDelta),
+    snap: 'free',
+  })) as [TrendLineAnchor, TrendLineAnchor]
+}
+
 export function extendLineToBounds(line: LineGeometry, width: number, height: number): LineGeometry {
   const dx = line.x2 - line.x1
   const dy = line.y2 - line.y1
@@ -90,6 +117,14 @@ export function extendLineToBounds(line: LineGeometry, width: number, height: nu
 
 function dateDistance(left: string, right: string): number {
   return Math.abs(Date.parse(`${left}T00:00:00Z`) - Date.parse(`${right}T00:00:00Z`))
+}
+
+function nearestDateIndex(date: string, dates: string[]): number {
+  let nearest = 0
+  for (let index = 1; index < dates.length; index += 1) {
+    if (dateDistance(date, dates[index]) < dateDistance(date, dates[nearest])) nearest = index
+  }
+  return nearest
 }
 
 function clamp(value: number, minimum: number, maximum: number): number {

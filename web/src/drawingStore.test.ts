@@ -9,7 +9,7 @@ import {
   saveTrendLine,
   subscribeSymbolDrawings,
 } from './drawingStore'
-import { chooseAnchor, extendLineToBounds, renderDateForAnchor } from './trendLines'
+import { chooseAnchor, extendLineToBounds, renderDateForAnchor, translateTrendLineAnchors } from './trendLines'
 
 describe('symbol drawing repository', () => {
   beforeEach(() => window.localStorage.clear())
@@ -105,5 +105,25 @@ describe('trend-line anchors', () => {
     expect(extendLineToBounds({ x1: 50, y1: 25, x2: 50, y2: 75 }, 100, 100)).toEqual({
       x1: 50, y1: 0, x2: 50, y2: 100,
     })
+  })
+
+  it('moves both anchors together by trading date and linear price delta', () => {
+    expect(translateTrendLineAnchors([
+      { date: '2026-08-02', price: 10, snap: 'low' },
+      { date: '2026-08-04', price: 12, snap: 'high' },
+    ], ['2026-08-01', '2026-08-02', '2026-08-03', '2026-08-04', '2026-08-05'], 1, 11, 13, 'normal')).toEqual([
+      { date: '2026-08-03', price: 12, snap: 'free' },
+      { date: '2026-08-05', price: 14, snap: 'free' },
+    ])
+  })
+
+  it('preserves visual slope on logarithmic movement and clamps dates as a pair', () => {
+    expect(translateTrendLineAnchors([
+      { date: '2026-08-02', price: 10, snap: 'free' },
+      { date: '2026-08-04', price: 20, snap: 'free' },
+    ], ['2026-08-01', '2026-08-02', '2026-08-03', '2026-08-04', '2026-08-05'], 3, 10, 15, 'log')).toEqual([
+      { date: '2026-08-03', price: 15, snap: 'free' },
+      { date: '2026-08-05', price: 30, snap: 'free' },
+    ])
   })
 })
