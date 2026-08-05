@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import logging
 import os
 import socket
@@ -77,6 +78,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     configure_runtime_logging(resolve_runtime_log_directory(paths.log_dir, args.smoke_test))
     port = args.port or find_available_port(args.host)
     url = f"http://{args.host}:{port}"
+    frontend_url = build_frontend_url(url, paths.web_dist / "index.html")
     settings = load_runtime_settings(paths.provider_config, paths.storage_config)
     store = SQLiteMarketDataStore(
         settings.database_path,
@@ -114,7 +116,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             update_service.start()
         if intraday_service is not None:
             intraday_service.start()
-        LOGGER.info("desktop_ready url=%s", url)
+        LOGGER.info("desktop_ready url=%s frontend_url=%s", url, frontend_url)
         if args.smoke_test:
             with urllib.request.urlopen(url, timeout=5.0) as response:
                 if response.status != 200 or b"StockHarness" not in response.read():
@@ -122,7 +124,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
         import webview
 
-        open_desktop_window(webview, url, args.debug, paths.webview_storage)
+        open_desktop_window(webview, frontend_url, args.debug, paths.webview_storage)
     finally:
         if intraday_service is not None:
             intraday_service.stop()
@@ -202,6 +204,11 @@ def open_desktop_window(webview_module: object, url: str, debug: bool, storage_p
         private_mode=False,
         storage_path=str(storage_path),
     )
+
+
+def build_frontend_url(base_url: str, index_file: Path) -> str:
+    revision = hashlib.sha256(index_file.read_bytes()).hexdigest()[:12]
+    return f"{base_url.rstrip('/')}/?v={revision}"
 
 
 def find_available_port(host: str = "127.0.0.1") -> int:

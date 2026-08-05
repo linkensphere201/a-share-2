@@ -222,6 +222,7 @@ def test_serves_built_frontend_and_update_status(tmp_path: Path):
 
     assert root.status_code == 200
     assert "StockHarness" in root.text
+    assert root.headers["cache-control"] == "no-store"
     assert status.json() == {"state": "running", "rows_changed": 10}
 
 

@@ -409,6 +409,14 @@ def create_app(
         index_file = web_dist / "index.html"
         if not index_file.is_file():
             raise ValueError(f"frontend build not found: {index_file}")
+
+        @app.middleware("http")
+        async def disable_frontend_entry_cache(request: Request, call_next):
+            response = await call_next(request)
+            if request.url.path in {"/", "/index.html"}:
+                response.headers["Cache-Control"] = "no-store"
+            return response
+
         app.mount("/", StaticFiles(directory=web_dist, html=True), name="web")
 
     return app

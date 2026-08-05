@@ -3,6 +3,7 @@ from pathlib import Path
 from stock_harness.desktop import (
     DEFAULT_DESKTOP_PORT,
     _parser,
+    build_frontend_url,
     open_desktop_window,
     resolve_log_directory,
     resolve_runtime_log_directory,
@@ -45,6 +46,19 @@ def test_webview_uses_persistent_profile(tmp_path: Path) -> None:
         "private_mode": False,
         "storage_path": str(storage_path),
     }
+
+
+def test_frontend_url_changes_with_built_index(tmp_path: Path) -> None:
+    index_file = tmp_path / "index.html"
+    index_file.write_text("first build", encoding="utf-8")
+    first = build_frontend_url("http://127.0.0.1:8765", index_file)
+
+    index_file.write_text("second build", encoding="utf-8")
+    second = build_frontend_url("http://127.0.0.1:8765/", index_file)
+
+    assert first.startswith("http://127.0.0.1:8765/?v=")
+    assert second.startswith("http://127.0.0.1:8765/?v=")
+    assert first != second
 
 
 def test_webview_storage_prefers_local_app_data(
