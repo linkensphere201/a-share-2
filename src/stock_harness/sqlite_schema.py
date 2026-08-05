@@ -369,4 +369,3 @@ BEGIN
       AND status IN ('queued', 'running', 'partial', 'failed');
 END;
 """
-
