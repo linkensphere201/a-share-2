@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   aggregateBars,
   calculateMacd,
+  calculatePriceScaleMargins,
   calculateChangePercent,
   candleColor,
   chartLayoutOptions,
@@ -29,6 +30,37 @@ describe('chart layout', () => {
       crosshairMarkerRadius: 2,
       crosshairMarkerBorderWidth: 1,
     })
+  })
+})
+
+describe('density-coupled price scale', () => {
+  const occupancy = (bars: number, width = 800) => {
+    const margins = calculatePriceScaleMargins(bars, width)
+    return 1 - margins.top - margins.bottom
+  }
+
+  it('keeps short ranges readable and progressively shrinks long-history shapes', () => {
+    expect(occupancy(250)).toBeCloseTo(0.88)
+    expect(occupancy(750)).toBeGreaterThan(0.65)
+    expect(occupancy(750)).toBeLessThan(0.72)
+    expect(occupancy(2500)).toBeGreaterThan(0.48)
+    expect(occupancy(2500)).toBeLessThan(0.54)
+    expect(occupancy(6000)).toBeGreaterThan(0.39)
+    expect(occupancy(6000)).toBeLessThan(0.43)
+  })
+
+  it('uses symmetric margins and enforces a long-history readability floor', () => {
+    const margins = calculatePriceScaleMargins(20_000, 800)
+    expect(margins.top).toBeCloseTo(margins.bottom)
+    expect(1 - margins.top - margins.bottom).toBeCloseTo(0.38)
+  })
+
+  it('moves unsafe bottom padding above the data instead of extending a positive price scale below zero', () => {
+    const margins = calculatePriceScaleMargins(5_500, 800, 0.89, 36.88)
+    const dataOccupancy = 1 - margins.top - margins.bottom
+    const projectedLowerExtension = (36.88 - 0.89) * margins.bottom / dataOccupancy
+    expect(projectedLowerExtension).toBeCloseTo(0.89)
+    expect(margins.top).toBeGreaterThan(margins.bottom)
   })
 })
 

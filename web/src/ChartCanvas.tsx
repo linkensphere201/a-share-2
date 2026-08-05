@@ -172,10 +172,11 @@ export function ChartCanvas({
   const bucketRef = useRef(1)
   const applyBucketRef = useRef<(bucket: number, preserve?: IRange<Time>) => void>(() => undefined)
   const recalculateLodRef = useRef<() => void>(() => undefined)
-  const resetAutoScaleRef = useRef<() => void>(() => undefined)
+  const resetAutoScaleRef = useRef<(visibleBars?: number, width?: number, low?: number, high?: number) => void>(() => undefined)
   const suppressLodRef = useRef(false)
   const coverageCallbackRef = useRef(onCoverageChange)
   const visibleRangeCallbackRef = useRef(onVisibleRangeChange)
+  const priceModeRef = useRef(priceMode)
   const pendingVisibleRangeRef = useRef<IRange<Time> | undefined>(undefined)
   const skipRangeResetRef = useRef(false)
   const [bars, setBars] = useState<DailyBar[]>([])
@@ -240,7 +241,7 @@ export function ChartCanvas({
         vertLine: { color: '#687383', labelBackgroundColor: '#303743' },
         horzLine: { color: '#687383', labelBackgroundColor: '#303743' },
       },
-      rightPriceScale: { borderColor: '#303743', scaleMargins: { top: 0.05, bottom: 0.02 } },
+      rightPriceScale: { borderColor: '#303743', scaleMargins: calculatePriceScaleMargins(0, 1) },
       timeScale: {
         borderColor: '#303743',
         rightOffset: 3,
@@ -263,9 +264,27 @@ export function ChartCanvas({
     const ma5 = chart.addSeries(LineSeries, { color: '#e5b85c', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, ...compactCrosshairMarkerOptions })
     const ma20 = chart.addSeries(LineSeries, { color: '#57a7d9', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, ...compactCrosshairMarkerOptions })
     const ma60 = chart.addSeries(LineSeries, { color: '#b984cc', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, ...compactCrosshairMarkerOptions })
-    const resetAutoScale = () => {
-      chart.panes().forEach((_, paneIndex) => {
-        chart.priceScale('right', paneIndex).applyOptions({ autoScale: true })
+    const resetAutoScale = (visibleBars?: number, width?: number, low?: number, high?: number) => {
+      const visible = chart.timeScale().getVisibleRange()
+      const stats = visibleBars === undefined || low === undefined || high === undefined
+        ? visible
+          ? visibleBarStats(barsRef.current, String(visible.from), String(visible.to))
+          : visibleBarStats(barsRef.current)
+        : { count: visibleBars, low, high }
+      const resolvedBars = visibleBars ?? stats.count
+      const resolvedWidth = width ?? chart.timeScale().width() ?? hostRef.current?.clientWidth ?? 1
+      const zeroSafeRange = priceModeRef.current === 'normal'
+      chart.priceScale('right', 0).applyOptions({
+        autoScale: true,
+        scaleMargins: calculatePriceScaleMargins(
+          resolvedBars,
+          resolvedWidth,
+          zeroSafeRange ? low ?? stats.low : undefined,
+          zeroSafeRange ? high ?? stats.high : undefined,
+        ),
+      })
+      chart.panes().slice(1).forEach((_, index) => {
+        chart.priceScale('right', index + 1).applyOptions({ autoScale: true })
       })
     }
     resetAutoScaleRef.current = resetAutoScale
@@ -304,12 +323,12 @@ export function ChartCanvas({
       if (suppressLodRef.current) return
       window.cancelAnimationFrame(lodFrame)
       lodFrame = window.requestAnimationFrame(() => {
-        resetAutoScale()
         setOverlayRevision(value => value + 1)
         const visible = chart.timeScale().getVisibleRange()
         if (!visible || !hostRef.current) return
-        const count = countBarsInRange(barsRef.current, String(visible.from), String(visible.to))
-        const nextBucket = chooseLodBucket(count, hostRef.current.clientWidth)
+        const stats = visibleBarStats(barsRef.current, String(visible.from), String(visible.to))
+        resetAutoScale(stats.count, chart.timeScale().width(), stats.low, stats.high)
+        const nextBucket = chooseLodBucket(stats.count, hostRef.current.clientWidth)
         if (nextBucket !== bucketRef.current) applyBucketRef.current(nextBucket, visible)
       })
       window.clearTimeout(visibleRangeTimer)
@@ -579,11 +598,12 @@ export function ChartCanvas({
   }, [bars, averages, macd])
 
   useEffect(() => {
+    priceModeRef.current = priceMode
     chartRef.current?.priceScale('right', 0).applyOptions({
       autoScale: true,
       mode: priceMode === 'log' ? PriceScaleMode.Logarithmic : PriceScaleMode.Normal,
     })
-    chartRef.current?.priceScale('right', 1).applyOptions({ autoScale: true })
+    resetAutoScaleRef.current()
     window.requestAnimationFrame(() => setOverlayRevision(value => value + 1))
   }, [priceMode])
 
@@ -1395,6 +1415,25 @@ export function chooseLodBucket(visibleBars: number, width: number): number {
   return Math.min(32, 2 ** Math.ceil(Math.log2(required)))
 }
 
+export function calculatePriceScaleMargins(
+  visibleBars: number,
+  width: number,
+  low?: number,
+  high?: number,
+): { top: number; bottom: number } {
+  const density = Math.max(0, visibleBars) / Math.max(1, width)
+  const referenceDensity = 0.35
+  const compression = Math.max(1, density / referenceDensity)
+  const occupancy = clamp(0.88 / compression ** 0.25, 0.38, 0.88)
+  const totalMargin = 1 - occupancy
+  let bottom = totalMargin / 2
+  if (low !== undefined && high !== undefined && low > 0 && high > low) {
+    const zeroSafeBottom = low * occupancy / (high - low)
+    bottom = Math.min(bottom, zeroSafeBottom)
+  }
+  return { top: totalMargin - bottom, bottom }
+}
+
 export function calculateChangePercent(close: number, previousClose?: number): number | undefined {
   if (previousClose === undefined || previousClose === 0) return undefined
   return (close - previousClose) / previousClose * 100
@@ -1632,12 +1671,21 @@ function previousCloseByDate(bars: DailyBar[]): Map<string, number> {
   return output
 }
 
-function countBarsInRange(bars: DailyBar[], from: string, to: string): number {
+function visibleBarStats(bars: DailyBar[], from?: string, to?: string): { count: number; low?: number; high?: number } {
   let count = 0
+  let low = Number.POSITIVE_INFINITY
+  let high = Number.NEGATIVE_INFINITY
   for (const bar of bars) {
-    if (bar.trade_date >= from && bar.trade_date <= to) count += 1
+    if ((from && bar.trade_date < from) || (to && bar.trade_date > to)) continue
+    count += 1
+    low = Math.min(low, bar.low)
+    high = Math.max(high, bar.high)
   }
-  return count
+  return {
+    count,
+    low: Number.isFinite(low) ? low : undefined,
+    high: Number.isFinite(high) ? high : undefined,
+  }
 }
 
 function latestReadout(bars: DailyBar[]): Readout | null {
