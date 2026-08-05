@@ -69,4 +69,46 @@ describe('InstrumentBrowser', () => {
     expect(await screen.findByText('农林牧渔')).toBeTruthy()
     expect(requests.some(url => url.includes('classification=industry') && url.includes('offset=80'))).toBe(true)
   })
+
+  it('ignores a stale load-more response after the query changes', async () => {
+    let resolveStale!: (value: { ok: boolean; json: () => Promise<unknown> }) => void
+    const stalePage = new Promise<{ ok: boolean; json: () => Promise<unknown> }>(resolve => {
+      resolveStale = resolve
+    })
+    vi.stubGlobal('fetch', vi.fn((input: string | URL | Request) => {
+      const url = new URL(String(input), 'http://local')
+      const query = url.searchParams.get('query')
+      const offset = url.searchParams.get('offset')
+      if (query === '' && offset === '80') return stalePage
+      const items = query === 'new'
+        ? [{ symbol: 'NEW.SZ', name: 'NEW', kind: 'stock', exchange: 'SZ', rows: 1 }]
+        : [{ symbol: 'OLD.SZ', name: 'OLD', kind: 'stock', exchange: 'SZ', rows: 1 }]
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({ items, has_more: query === '', next_offset: 80 }),
+      })
+    }))
+    const user = userEvent.setup()
+
+    render(<InstrumentBrowser
+      selectedSymbols={new Set()}
+      onSelect={() => undefined}
+      searchLabel="Search instruments"
+      placeholder="Search"
+    />)
+    expect(await screen.findByText('OLD')).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: /加载更多/ }))
+    await user.type(screen.getByRole('textbox', { name: 'Search instruments' }), 'new')
+    expect(await screen.findByText('NEW')).toBeTruthy()
+
+    resolveStale({
+      ok: true,
+      json: async () => ({
+        items: [{ symbol: 'STALE.SZ', name: 'STALE', kind: 'stock', exchange: 'SZ', rows: 1 }],
+        has_more: false,
+        next_offset: 81,
+      }),
+    })
+    await waitFor(() => expect(screen.queryByText('STALE')).toBeNull())
+  })
 })

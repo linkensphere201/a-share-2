@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Plus, Search } from 'lucide-react'
 import type { Instrument } from './workspace'
 
@@ -36,26 +36,32 @@ export function InstrumentBrowser({
   const [hasMore, setHasMore] = useState(false)
   const [loading, setLoading] = useState(false)
   const [failed, setFailed] = useState(false)
+  const generationRef = useRef(0)
+  const loadMoreControllerRef = useRef<AbortController | undefined>(undefined)
 
   useEffect(() => {
+    const generation = ++generationRef.current
+    loadMoreControllerRef.current?.abort()
+    loadMoreControllerRef.current = undefined
     const controller = new AbortController()
     const handle = window.setTimeout(() => {
       setLoading(true)
       setFailed(false)
-      fetchInstrumentPage(query, classification, 0, controller.signal)
+        fetchInstrumentPage(query, classification, 0, controller.signal)
         .then(body => {
+          if (generation !== generationRef.current) return
           setResults(filterResults(body.items, excludeCustomGroups))
           setNextOffset(body.next_offset)
           setHasMore(body.has_more)
         })
         .catch(error => {
-          if ((error as Error).name !== 'AbortError') {
+          if ((error as Error).name !== 'AbortError' && generation === generationRef.current) {
             setResults([])
             setFailed(true)
           }
         })
         .finally(() => {
-          if (!controller.signal.aborted) setLoading(false)
+          if (!controller.signal.aborted && generation === generationRef.current) setLoading(false)
         })
     }, query.trim() ? 120 : 0)
     return () => {
@@ -66,16 +72,26 @@ export function InstrumentBrowser({
 
   const loadMore = () => {
     if (loading || !hasMore) return
+    const generation = generationRef.current
+    const controller = new AbortController()
+    loadMoreControllerRef.current?.abort()
+    loadMoreControllerRef.current = controller
     setLoading(true)
     setFailed(false)
-    fetchInstrumentPage(query, classification, nextOffset)
+    fetchInstrumentPage(query, classification, nextOffset, controller.signal)
       .then(body => {
+        if (generation !== generationRef.current) return
         setResults(current => uniqueBySymbol([...current, ...filterResults(body.items, excludeCustomGroups)]))
         setNextOffset(body.next_offset)
         setHasMore(body.has_more)
       })
-      .catch(() => setFailed(true))
-      .finally(() => setLoading(false))
+      .catch(error => {
+        if ((error as Error).name !== 'AbortError' && generation === generationRef.current) setFailed(true)
+      })
+      .finally(() => {
+        if (loadMoreControllerRef.current === controller) loadMoreControllerRef.current = undefined
+        if (!controller.signal.aborted && generation === generationRef.current) setLoading(false)
+      })
   }
 
   return <section className="instrument-browser" aria-label="标的分类浏览">
