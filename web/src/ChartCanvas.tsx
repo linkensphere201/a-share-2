@@ -491,6 +491,7 @@ export function ChartCanvas({
   useEffect(() => {
     let stopped = false
     let timer = 0
+    let controller: AbortController | undefined
     const schedule = (delay: number) => {
       timer = window.setTimeout(refresh, delay)
     }
@@ -502,7 +503,8 @@ export function ChartCanvas({
         return
       }
       const params = new URLSearchParams({ symbol })
-      fetch(`/api/intraday-bars?${params}`)
+      controller = new AbortController()
+      fetch(`/api/intraday-bars?${params}`, { signal: controller.signal })
         .then(response => {
           if (!response.ok) throw new Error(`HTTP ${response.status}`)
           return response.json() as Promise<{
@@ -538,6 +540,7 @@ export function ChartCanvas({
     return () => {
       stopped = true
       window.clearTimeout(timer)
+      controller?.abort()
     }
   }, [symbol, replaceBars])
 

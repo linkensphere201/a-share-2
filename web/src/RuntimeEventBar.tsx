@@ -17,8 +17,17 @@ export function RuntimeEventBar() {
 
   useEffect(() => {
     let stopped = false
+    let timer = 0
+    let controller: AbortController | undefined
+    const schedule = (delay: number) => {
+      timer = window.setTimeout(poll, delay)
+    }
     const poll = () => {
-      fetch(`/api/runtime-events?min_level=WARNING&after_id=${lastEventId.current}&limit=50`)
+      if (stopped) return
+      controller = new AbortController()
+      fetch(`/api/runtime-events?min_level=WARNING&after_id=${lastEventId.current}&limit=50`, {
+        signal: controller.signal,
+      })
         .then(response => {
           if (!response.ok) throw new Error(`HTTP ${response.status}`)
           return response.json() as Promise<{ items: RuntimeEvent[] }>
@@ -29,13 +38,21 @@ export function RuntimeEventBar() {
           lastEventId.current = validEvents.at(-1)!.event_id
           setEvents(current => [...current, ...validEvents].slice(-50))
         })
-        .catch(error => console.warn('[RuntimeEventBar] Event polling failed', error))
+        .catch(error => {
+          if ((error as Error).name !== 'AbortError') {
+            console.warn('[RuntimeEventBar] Event polling failed', error)
+          }
+        })
+        .finally(() => {
+          controller = undefined
+          if (!stopped) schedule(5_000)
+        })
     }
-    poll()
-    const timer = window.setInterval(poll, 5000)
+    schedule(0)
     return () => {
       stopped = true
-      window.clearInterval(timer)
+      window.clearTimeout(timer)
+      controller?.abort()
     }
   }, [])
 
