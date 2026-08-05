@@ -267,8 +267,8 @@ describe('StockWorkspace', () => {
     vi.stubGlobal('fetch', vi.fn((input: string | URL | Request) => {
       const url = String(input)
       const items = url.includes('/members') ? [
-        { symbol: '000001.SZ', name: '平安银行', kind: 'stock', exchange: 'SZ', rows: 6000, available: true, change_percent: -1.2, total_market_cap: 200_000_000_000 },
-        { symbol: '600519.SH', name: '贵州茅台', kind: 'stock', exchange: 'SH', rows: 5000, available: true, change_percent: 2.5, total_market_cap: 1_800_000_000_000 },
+        { symbol: '000001.SZ', name: '平安银行', kind: 'stock', exchange: 'SZ', rows: 6000, available: true, close: 10.5, volume: 100_000_000, amount: 1_050_000_000, change_percent: -1.2, total_market_cap: 200_000_000_000 },
+        { symbol: '600519.SH', name: '贵州茅台', kind: 'stock', exchange: 'SH', rows: 5000, available: true, close: 1_420.5, volume: 2_000_000, amount: 2_840_000_000, change_percent: 2.5, total_market_cap: 1_800_000_000_000 },
       ] : []
       return Promise.resolve({ ok: true, json: async () => ({ items, as_of_date: '2026-08-03', source: 'eastmoney_board' }) })
     }))
@@ -280,6 +280,9 @@ describe('StockWorkspace', () => {
     expect(await screen.findByRole('button', { name: '选择 平安银行' })).toBeTruthy()
     const derivedWindow = screen.getByText('成分列表').closest('section')!
     expect(within(derivedWindow).queryByRole('button', { name: '编辑 成分列表 标的' })).toBeNull()
+    expect(within(derivedWindow).getByRole('button', { name: /价格/ })).toBeTruthy()
+    expect(within(derivedWindow).getByRole('button', { name: /成交量/ })).toBeTruthy()
+    expect(within(derivedWindow).getByRole('button', { name: /成交额/ })).toBeTruthy()
 
     await user.click(within(derivedWindow).getByRole('button', { name: /涨跌幅/ }))
     await user.click(screen.getByRole('button', { name: '选择 贵州茅台' }))

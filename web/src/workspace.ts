@@ -56,7 +56,7 @@ export type InstrumentListWindowState = {
   selectedSymbol?: string
   memberSourceWindowId?: string
   sort?: {
-    key: 'name' | 'total_market_cap' | 'change_percent'
+    key: 'name' | 'close' | 'change_percent' | 'volume' | 'amount' | 'total_market_cap'
     direction: 'asc' | 'desc'
   }
 }
@@ -392,7 +392,7 @@ function normalizeListWindow(value: Record<string, unknown>): InstrumentListWind
 
 function normalizeListSort(value: unknown): InstrumentListWindowState['sort'] {
   if (!isRecord(value)) return undefined
-  if (!['name', 'total_market_cap', 'change_percent'].includes(String(value.key))) return undefined
+  if (!['name', 'close', 'change_percent', 'volume', 'amount', 'total_market_cap'].includes(String(value.key))) return undefined
   if (value.direction !== 'asc' && value.direction !== 'desc') return undefined
   return {
     key: value.key as NonNullable<InstrumentListWindowState['sort']>['key'],

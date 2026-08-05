@@ -8,6 +8,9 @@ type MarketSnapshot = {
   trade_date: string
   change_percent: number
   total_market_cap?: number
+  close?: number
+  volume?: number
+  amount?: number
 }
 
 type ListInstrument = Instrument & { available?: boolean }
@@ -158,13 +161,16 @@ export function InstrumentListWindow({
         </div>
       </header>
       <div className={derived ? 'list-window-body derived' : 'list-window-body'} onPointerDown={onFocus}>
-        <div className="list-window-table-header">
-          <SortButton label="名称" field="name" sort={windowState.sort} onChange={onSortChange}/>
-          <SortButton label="总市值" field="total_market_cap" sort={windowState.sort} onChange={onSortChange}/>
-          <SortButton label="涨跌幅" field="change_percent" sort={windowState.sort} onChange={onSortChange}/>
-          <span/>
-        </div>
-        <div className="list-window-items">
+        <div className="list-window-table">
+          <div className="list-window-table-header">
+            <SortButton label="名称" field="name" sort={windowState.sort} onChange={onSortChange}/>
+            <SortButton label="价格" field="close" sort={windowState.sort} onChange={onSortChange}/>
+            <SortButton label="涨跌幅" field="change_percent" sort={windowState.sort} onChange={onSortChange}/>
+            <SortButton label="成交量" field="volume" sort={windowState.sort} onChange={onSortChange}/>
+            <SortButton label="成交额" field="amount" sort={windowState.sort} onChange={onSortChange}/>
+            <SortButton label="总市值" field="total_market_cap" sort={windowState.sort} onChange={onSortChange}/>
+          </div>
+          <div className="list-window-items">
           {membersLoading && <div className="list-window-empty">加载成分...</div>}
           {!membersLoading && sourceItems.length === 0 && <div className="list-window-empty">
             {derived && !memberSource ? '上游列表尚未选择标的' : '列表为空'}
@@ -180,11 +186,14 @@ export function InstrumentListWindow({
               >
                 <span><strong>{item.name}</strong><small>{item.symbol}</small></span>
               </button>
-              <span className="list-market-cap">{formatMarketCap(snapshot?.total_market_cap)}</span>
+              <span className="list-price">{formatPrice(snapshot?.close)}</span>
               <span className={changeClass(snapshot?.change_percent)}>{formatChange(snapshot?.change_percent)}</span>
-              <span/>
+              <span className="list-volume">{formatQuantity(snapshot?.volume)}</span>
+              <span className="list-amount">{formatMoney(snapshot?.amount)}</span>
+              <span className="list-market-cap">{formatMoney(snapshot?.total_market_cap)}</span>
             </div>
           })}
+          </div>
         </div>
       </div>
     </section>
@@ -220,10 +229,23 @@ export function sortListInstruments(
   })
 }
 
-function formatMarketCap(value?: number): string {
+function formatPrice(value?: number): string {
+  if (value === undefined || value === null) return '—'
+  return value.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 3 })
+}
+
+function formatQuantity(value?: number): string {
+  if (value === undefined || value === null) return '—'
+  if (value >= 100_000_000) return `${(value / 100_000_000).toFixed(1)}亿`
+  if (value >= 10_000) return `${(value / 10_000).toFixed(1)}万`
+  return value.toLocaleString('zh-CN')
+}
+
+function formatMoney(value?: number): string {
   if (value === undefined || value === null) return '—'
   if (value >= 100_000_000) return `${(value / 100_000_000).toFixed(value >= 10_000_000_000 ? 0 : 1)}亿`
-  return `${(value / 10_000).toFixed(0)}万`
+  if (value >= 10_000) return `${(value / 10_000).toFixed(0)}万`
+  return value.toLocaleString('zh-CN', { maximumFractionDigits: 0 })
 }
 
 function formatChange(value?: number): string {

@@ -265,7 +265,10 @@ class SQLiteMarketDataStoreTests(unittest.TestCase):
         ])
         self.store.derive_market_snapshots(date(2026, 8, 3))
         self.store.upsert_market_snapshots("tushare", [
-            MarketSnapshot("600519.SH", date(2026, 8, 3), 10.0, 2_000_000_000),
+            MarketSnapshot(
+                "600519.SH", date(2026, 8, 3), 10.0, 2_000_000_000,
+                close=11, volume=100, amount=1_100,
+            ),
         ])
 
         snapshot = self.store.list_market_snapshots(["600519.SH"])[0]
@@ -273,6 +276,9 @@ class SQLiteMarketDataStoreTests(unittest.TestCase):
         self.assertEqual(snapshot["trade_date"], date(2026, 8, 3))
         self.assertAlmostEqual(snapshot["change_percent"], 10.0)
         self.assertEqual(snapshot["total_market_cap"], 2_000_000_000)
+        self.assertEqual(snapshot["close"], 11)
+        self.assertEqual(snapshot["volume"], 100)
+        self.assertEqual(snapshot["amount"], 1_100)
 
     def test_etf_holdings_keep_as_of_date_and_receipt(self) -> None:
         etf = Instrument("510300.SH", "ETF", InstrumentKind.ETF, "SH")

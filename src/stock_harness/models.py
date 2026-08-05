@@ -127,6 +127,9 @@ class MarketSnapshot:
     trade_date: date
     change_percent: float
     total_market_cap: float | None = None
+    close: float | None = None
+    volume: int | None = None
+    amount: float | None = None
 
 
 @dataclass(frozen=True, slots=True)

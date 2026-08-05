@@ -301,7 +301,7 @@ class TushareDailyProvider:
             for row in _iter_rows(self._call(
                 "daily",
                 trade_date=_compact_date(trade_date),
-                fields="ts_code,trade_date,pct_chg",
+                fields="ts_code,trade_date,close,pct_chg,vol,amount",
             ))
         }
         basic_rows = {
@@ -324,6 +324,10 @@ class TushareDailyProvider:
                 change_percent=float(_field(row, "pct_chg")),
                 # Tushare daily_basic reports total_mv in ten-thousand CNY.
                 total_market_cap=float(total_mv) * 10_000 if total_mv not in (None, "") else None,
+                close=float(_field(row, "close")),
+                # Tushare daily reports volume in lots and amount in thousand CNY.
+                volume=int(round(float(_field(row, "vol")) * 100)),
+                amount=float(_field(row, "amount")) * 1_000,
             ))
         return snapshots
 

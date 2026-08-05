@@ -158,7 +158,11 @@ class _ExpandedCatalogClient(_UniverseClient):
         }]
 
     def daily(self, **kwargs):
-        return [{"ts_code": "600519.SH", "trade_date": kwargs["trade_date"], "pct_chg": 3.5}]
+        return [{
+            "ts_code": "600519.SH", "trade_date": kwargs["trade_date"],
+            "close": 1_420.5, "pct_chg": 3.5, "vol": 12_345.6,
+            "amount": 1_750_000.25,
+        }]
 
     def daily_basic(self, **kwargs):
         return [{"ts_code": "600519.SH", "trade_date": kwargs["trade_date"], "total_mv": 20_000}]
@@ -297,6 +301,9 @@ class TushareDailyProviderTests(unittest.TestCase):
 
         self.assertEqual(snapshot.change_percent, 3.5)
         self.assertEqual(snapshot.total_market_cap, 200_000_000)
+        self.assertEqual(snapshot.close, 1_420.5)
+        self.assertEqual(snapshot.volume, 1_234_560)
+        self.assertEqual(snapshot.amount, 1_750_000_250)
 
     def test_etf_holdings_use_dated_exchange_pcf_and_filter_cash(self) -> None:
         provider = TushareDailyProvider(_settings(), client=_ExpandedCatalogClient())

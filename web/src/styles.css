@@ -329,10 +329,12 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .instrument-window-actions button { width: 23px; height: 23px; display: grid; place-items: center; border: 0; border-radius: 3px; background: transparent; color: #657180; }
 .instrument-window-actions button:hover:not(:disabled) { color: #e8ebf0; background: #252b34; }
 .instrument-window-body { min-width: 0; min-height: 0; position: relative; }
-.list-window-body { min-width: 0; min-height: 0; position: relative; display: grid; grid-template-rows: 25px minmax(0, 1fr); background: #10141a; }
-.list-window-table-header, .list-window-row { min-width: 0; display: grid; grid-template-columns: minmax(76px, 1fr) 66px 56px 24px; align-items: center; }
+.list-window-body { min-width: 0; min-height: 0; position: relative; overflow-x: auto; background: #10141a; }
+.list-window-table { min-width: 284px; height: 100%; display: grid; grid-template-rows: 25px minmax(0, 1fr); }
+.list-window-table-header, .list-window-row { min-width: 0; display: grid; grid-template-columns: minmax(64px, 1fr) 38px 43px 43px 43px 43px; align-items: center; }
 .list-window-table-header { padding: 0 5px; border-bottom: 1px solid #252c35; color: #657180; }
-.list-window-table-header button { min-width: 0; height: 24px; padding: 0 4px; display: flex; align-items: center; gap: 2px; border: 0; background: transparent; color: inherit; font-size: 9px; white-space: nowrap; }
+.list-window-table-header button { min-width: 0; height: 24px; padding: 0 2px; display: flex; align-items: center; gap: 1px; border: 0; background: transparent; color: inherit; font-size: 8px; white-space: nowrap; }
+.list-window-table-header button svg { width: 8px; height: 8px; }
 .list-window-table-header button:hover { color: #d8dde6; }
 .list-window-select > span { min-width: 0; display: grid; gap: 2px; text-align: left; }
 .list-window-select strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #d8dde6; font-size: 11px; }
@@ -342,7 +344,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .list-window-row:hover, .list-window-row.selected { background: #1b2129; }
 .list-window-row.selected { box-shadow: inset 2px 0 #4b84c6; }
 .list-window-select { height: 100%; min-width: 0; padding: 4px 7px; border: 0; background: transparent; }
-.list-market-cap, .list-change { padding: 0 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #8b96a5; font-size: 9px; text-align: right; }
+.list-price, .list-volume, .list-amount, .list-market-cap, .list-change { padding: 0 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #8b96a5; font-size: 9px; text-align: right; }
 .list-change.rise { color: #df6267; }
 .list-change.fall { color: #55ad79; }
 .modal-backdrop { position: fixed; z-index: 30; inset: 0; display: grid; place-items: center; padding: 24px; background: #05070ab8; }

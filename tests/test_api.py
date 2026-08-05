@@ -116,7 +116,10 @@ def test_daily_bars_and_membership_directions():
 def test_batch_snapshots_and_generic_board_members():
     store, client = _client()
     store.upsert_market_snapshots("tushare", [
-        MarketSnapshot("300308.SZ", date(2026, 8, 3), 2.5, 100_000_000),
+        MarketSnapshot(
+            "300308.SZ", date(2026, 8, 3), 2.5, 100_000_000,
+            close=52.35, volume=12_300_000, amount=645_000_000,
+        ),
     ])
     with client:
         snapshots = client.get("/api/market-snapshots", params=[("symbol", "300308.SZ")])
@@ -124,8 +127,12 @@ def test_batch_snapshots_and_generic_board_members():
     store.close()
 
     assert snapshots.json()["items"][0]["total_market_cap"] == 100_000_000
+    assert snapshots.json()["items"][0]["close"] == 52.35
+    assert snapshots.json()["items"][0]["volume"] == 12_300_000
+    assert snapshots.json()["items"][0]["amount"] == 645_000_000
     assert members.json()["relation"] == "board_constituents"
     assert members.json()["items"][0]["change_percent"] == 2.5
+    assert members.json()["items"][0]["close"] == 52.35
 
 
 def test_generic_etf_members_include_disclosure_metadata():

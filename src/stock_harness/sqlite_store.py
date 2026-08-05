@@ -90,6 +90,7 @@ class SQLiteMarketDataStore:
         self._configure()
         with self._writer_lock:
             self._connection.executescript(_SCHEMA)
+        self._ensure_market_snapshot_metrics()
         self._backfill_pinyin_aliases()
 
     def __enter__(self) -> SQLiteMarketDataStore:
@@ -305,11 +306,11 @@ class SQLiteMarketDataStore:
                 """
                 INSERT INTO market_snapshots(
                     instrument_id, trade_date, change_percent, total_market_cap,
-                    source_id, updated_at_ms
+                    close, volume, amount, source_id, updated_at_ms
                 )
                 SELECT current.instrument_id, current.trade_date,
                        (current.close / previous.close - 1.0) * 100.0,
-                       NULL, current.source_id, ?
+                       NULL, current.close, current.volume, NULL, current.source_id, ?
                 FROM daily_bars AS current
                 JOIN daily_bars AS previous
                   ON previous.instrument_id = current.instrument_id
@@ -322,6 +323,8 @@ class SQLiteMarketDataStore:
                 WHERE current.trade_date = ? AND previous.close <> 0
                 ON CONFLICT(instrument_id, trade_date) DO UPDATE SET
                     change_percent = excluded.change_percent,
+                    close = excluded.close,
+                    volume = excluded.volume,
                     source_id = excluded.source_id,
                     updated_at_ms = excluded.updated_at_ms
                 """,
@@ -348,18 +351,22 @@ class SQLiteMarketDataStore:
                 """
                 INSERT INTO market_snapshots(
                     instrument_id, trade_date, change_percent, total_market_cap,
-                    source_id, updated_at_ms
-                ) VALUES (?, ?, ?, ?, ?, ?)
+                    close, volume, amount, source_id, updated_at_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(instrument_id, trade_date) DO UPDATE SET
                     change_percent = excluded.change_percent,
-                    total_market_cap = excluded.total_market_cap,
+                    total_market_cap = COALESCE(excluded.total_market_cap, market_snapshots.total_market_cap),
+                    close = COALESCE(excluded.close, market_snapshots.close),
+                    volume = COALESCE(excluded.volume, market_snapshots.volume),
+                    amount = COALESCE(excluded.amount, market_snapshots.amount),
                     source_id = excluded.source_id,
                     updated_at_ms = excluded.updated_at_ms
                 """,
                 (
                     (
                         instrument_ids[item.symbol], _date_key(item.trade_date),
-                        item.change_percent, item.total_market_cap, source_id, now_ms,
+                        item.change_percent, item.total_market_cap, item.close,
+                        item.volume, item.amount, source_id, now_ms,
                     )
                     for item in snapshots
                 ),
@@ -382,6 +389,7 @@ class SQLiteMarketDataStore:
                     SELECT instrument.symbol, instrument.name, instrument.kind,
                            instrument.exchange, snapshot.trade_date,
                            snapshot.change_percent, snapshot.total_market_cap,
+                           snapshot.close, snapshot.volume, snapshot.amount,
                            source.code, snapshot.updated_at_ms
                     FROM instruments AS instrument
                     JOIN market_snapshots AS snapshot USING (instrument_id)
@@ -402,11 +410,49 @@ class SQLiteMarketDataStore:
                 "trade_date": _date_from_key(int(row[4])),
                 "change_percent": float(row[5]),
                 "total_market_cap": float(row[6]) if row[6] is not None else None,
-                "source": str(row[7]), "updated_at_ms": int(row[8]),
+                "close": float(row[7]) if row[7] is not None else None,
+                "volume": int(row[8]) if row[8] is not None else None,
+                "amount": float(row[9]) if row[9] is not None else None,
+                "source": str(row[10]), "updated_at_ms": int(row[11]),
             }
             for row in rows
         }
         return [by_symbol[symbol] for symbol in ordered if symbol in by_symbol]
+
+    def _ensure_market_snapshot_metrics(self) -> None:
+        columns = {
+            str(row[1])
+            for row in self._connection.execute("PRAGMA table_info(market_snapshots)")
+        }
+        additions = {
+            "close": "REAL",
+            "volume": "INTEGER",
+            "amount": "REAL",
+        }
+        missing = [(name, sql_type) for name, sql_type in additions.items() if name not in columns]
+        if not missing:
+            return
+        with self._lock, self._transaction():
+            for name, sql_type in missing:
+                self._connection.execute(
+                    f"ALTER TABLE market_snapshots ADD COLUMN {name} {sql_type}"
+                )
+            self._connection.execute(
+                """
+                UPDATE market_snapshots
+                SET close = (
+                        SELECT bar.close FROM daily_bars AS bar
+                        WHERE bar.instrument_id = market_snapshots.instrument_id
+                          AND bar.trade_date = market_snapshots.trade_date
+                    ),
+                    volume = (
+                        SELECT bar.volume FROM daily_bars AS bar
+                        WHERE bar.instrument_id = market_snapshots.instrument_id
+                          AND bar.trade_date = market_snapshots.trade_date
+                    )
+                WHERE close IS NULL OR volume IS NULL
+                """
+            )
 
     def replace_etf_holdings(
         self,
