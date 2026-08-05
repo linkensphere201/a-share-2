@@ -5,6 +5,7 @@ from stock_harness.desktop import (
     _parser,
     open_desktop_window,
     resolve_log_directory,
+    resolve_runtime_log_directory,
     resolve_webview_storage_path,
 )
 
@@ -58,3 +59,8 @@ def test_webview_storage_prefers_local_app_data(
     assert resolve_log_directory(Path("unused")) == (
         tmp_path.resolve() / "StockHarness" / "logs"
     )
+
+
+def test_smoke_test_uses_independent_log_directory(tmp_path: Path) -> None:
+    assert resolve_runtime_log_directory(tmp_path, False) == tmp_path
+    assert resolve_runtime_log_directory(tmp_path, True) == tmp_path / "smoke"

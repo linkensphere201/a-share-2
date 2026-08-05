@@ -74,7 +74,7 @@ class DesktopServer:
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     paths = resolve_desktop_paths(args.provider_config, args.storage_config, args.web_dist)
-    configure_runtime_logging(paths.log_dir)
+    configure_runtime_logging(resolve_runtime_log_directory(paths.log_dir, args.smoke_test))
     port = args.port or find_available_port(args.host)
     url = f"http://{args.host}:{port}"
     settings = load_runtime_settings(paths.provider_config, paths.storage_config)
@@ -178,6 +178,11 @@ def resolve_log_directory(install_root: Path) -> Path:
     if local_app_data:
         return Path(local_app_data).resolve() / "StockHarness" / "logs"
     return install_root / "logs"
+
+
+def resolve_runtime_log_directory(log_dir: Path, smoke_test: bool) -> Path:
+    """Keep package smoke checks independent from a running app's Windows log lock."""
+    return log_dir / "smoke" if smoke_test else log_dir
 
 
 def open_desktop_window(webview_module: object, url: str, debug: bool, storage_path: Path) -> None:
