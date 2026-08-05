@@ -2,7 +2,7 @@ import type { ChartIndicator, VisibleRange } from './ChartCanvas'
 import { ChartWindow } from './InstrumentWindow'
 import { InstrumentListWindow } from './InstrumentListWindow'
 import { SplitLayout } from './SplitLayout'
-import type { Instrument, WindowGroupState } from './workspace'
+import type { Instrument, ListColumnKey, WindowGroupState } from './workspace'
 import type { ThemeDefinition } from './themeStore'
 
 type WindowGroupProps = {
@@ -15,6 +15,7 @@ type WindowGroupProps = {
   onSelectListInstrument: (id: string, instrument: Instrument) => void
   onEditWindow: (id: string) => void
   onSortList: (id: string, sort: NonNullable<Extract<WindowGroupState['windows'][number], { type: 'instrument-list' }>['sort']>) => void
+  onListColumnsChange: (id: string, columns: ListColumnKey[]) => void
   onCoverageChange: (id: string, symbol: string, rows: number, first?: string, last?: string) => void
   onVisibleRangeChange: (id: string, value: VisibleRange) => void
   onVolumeVisibleChange: (id: string, visible: boolean) => void
@@ -32,6 +33,7 @@ export function WindowGroup({
   onSelectListInstrument,
   onEditWindow,
   onSortList,
+  onListColumnsChange,
   onCoverageChange,
   onVisibleRangeChange,
   onVolumeVisibleChange,
@@ -62,6 +64,7 @@ export function WindowGroup({
           derived={item.mode === 'attached'}
           memberSource={memberSource}
           onSortChange={sort => onSortList(item.id, sort)}
+          onVisibleColumnsChange={columns => onListColumnsChange(item.id, columns)}
           onReferencedSymbolsChange={onReferencedSymbolsChange}
         />
       )

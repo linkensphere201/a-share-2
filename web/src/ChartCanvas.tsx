@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
-import { AlertTriangle, Check, Eye, EyeOff, MousePointer2, PencilLine, Percent, RefreshCw, Settings2, Trash2, X, ZoomIn } from 'lucide-react'
+import { AlertTriangle, Check, ChevronLeft, ChevronRight, Eye, EyeOff, MousePointer2, PencilLine, Percent, RefreshCw, Settings2, Trash2, X, ZoomIn } from 'lucide-react'
 import { logInfo, logWarning } from './eventLogger'
 import {
   createTrendLine,
@@ -181,6 +181,7 @@ export function ChartCanvas({
   const [drawingDraft, setDrawingDraft] = useState<[TrendLineAnchor, TrendLineAnchor]>()
   const [selectedDrawingId, setSelectedDrawingId] = useState<string>()
   const [drawingManagerOpen, setDrawingManagerOpen] = useState(false)
+  const [toolbarCollapsed, setToolbarCollapsed] = useState(false)
   const [overlayRevision, setOverlayRevision] = useState(0)
   const liveFailureCountRef = useRef(0)
   const initialTheme = useRef(theme).current
@@ -978,7 +979,8 @@ export function ChartCanvas({
       onContextMenu={event => event.preventDefault()}
     >
       <div ref={hostRef} className="chart-host"/>
-      <div className="chart-drawing-toolbar" onPointerDown={event => event.stopPropagation()}>
+      <div className={toolbarCollapsed ? 'chart-drawing-toolbar collapsed' : 'chart-drawing-toolbar'} onPointerDown={event => event.stopPropagation()}>
+        <div className="chart-drawing-toolbar-actions" aria-hidden={toolbarCollapsed}>
         <button
           className={manualRefreshing ? 'refreshing' : manualRefreshFeedback ?? ''}
           title={manualRefreshing
@@ -1024,6 +1026,19 @@ export function ChartCanvas({
         ><Settings2 size={13}/></button>
         <button title="删除选中的趋势线" aria-label="删除选中的趋势线" disabled={!selectedDrawingId} onClick={removeSelectedDrawing}><Trash2 size={13}/></button>
         {drawingTool === 'trend-line' && <button title="取消画线" aria-label="取消画线" onClick={cancelDrawing}><X size={13}/></button>}
+        </div>
+        <button
+          className="chart-toolbar-toggle"
+          title={toolbarCollapsed ? '展开图表工具栏' : '最小化图表工具栏'}
+          aria-label={toolbarCollapsed ? '展开图表工具栏' : '最小化图表工具栏'}
+          aria-expanded={!toolbarCollapsed}
+          onClick={() => {
+            setToolbarCollapsed(value => {
+              if (!value) setDrawingManagerOpen(false)
+              return !value
+            })
+          }}
+        >{toolbarCollapsed ? <ChevronLeft size={13}/> : <ChevronRight size={13}/>}</button>
       </div>
       {drawingManagerOpen && (
         <TrendLineManager
@@ -1052,7 +1067,7 @@ export function ChartCanvas({
           onContextMenu={event => event.preventDefault()}
         />
       )}
-      {readout && <ChartReadout value={readout} lodBucket={lodBucket}/>}
+      {readout && <ChartReadout value={readout}/>}
       {volumePaneTop !== undefined && <PaneHeader kind="volume" top={volumePaneTop} onHide={() => onVolumeVisibleChange?.(false)}/>}
       {macdPaneTop !== undefined && <PaneHeader kind="macd" top={macdPaneTop} onHide={() => onIndicatorChange?.('none')}/>}
       {selectionBox && <div className="chart-range-selection" style={selectionBox}/>}
@@ -1290,7 +1305,7 @@ function MeasurementOverlay({
   )
 }
 
-function ChartReadout({ value, lodBucket }: { value: Readout; lodBucket: number }) {
+function ChartReadout({ value }: { value: Readout }) {
   const candleTone = value.changePercent === undefined
     ? value.close >= value.open ? 'rise' : 'fall'
     : value.changePercent >= 0 ? 'rise' : 'fall'
@@ -1299,7 +1314,6 @@ function ChartReadout({ value, lodBucket }: { value: Readout; lodBucket: number 
     : value.changePercent >= 0 ? 'rise' : 'fall'
   return (
     <div className="chart-readout">
-      <span className="lod-badge">{lodBucket}D</span>
       {value.bar_state === 'intraday' && <span className={value.stale ? 'live-badge stale' : 'live-badge'}>{value.stale ? '盘中延迟' : '盘中'}</span>}
       <span>{value.trade_date}</span>
       <span>开 <b>{formatPrice(value.open)}</b></span>

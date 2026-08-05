@@ -328,7 +328,8 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .instrument-window-actions { display: flex; gap: 2px; }
 .instrument-window-actions button { width: 23px; height: 23px; display: grid; place-items: center; border: 0; border-radius: 3px; background: transparent; color: #657180; }
 .instrument-window-actions button:hover:not(:disabled) { color: #e8ebf0; background: #252b34; }
-.instrument-window-body { min-width: 0; min-height: 0; position: relative; }
+.instrument-window-actions button.active { color: #dbeaff; background: #31465d; }
+.instrument-window-body { min-width: 0; min-height: 0; position: relative; container-type: size; }
 .list-window-body { min-width: 0; min-height: 0; position: relative; overflow-x: auto; background: #10141a; }
 .list-window-table { min-width: 284px; height: 100%; display: grid; grid-template-rows: 25px minmax(0, 1fr); }
 .list-window-table-header, .list-window-row { min-width: 0; display: grid; grid-template-columns: minmax(64px, 1fr) 38px 43px 43px 43px 43px; align-items: center; }
@@ -336,6 +337,24 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .list-window-table-header button { min-width: 0; height: 24px; padding: 0 2px; display: flex; align-items: center; gap: 1px; border: 0; background: transparent; color: inherit; font-size: 8px; white-space: nowrap; }
 .list-window-table-header button svg { width: 8px; height: 8px; }
 .list-window-table-header button:hover { color: #d8dde6; }
+.list-column-editor {
+  position: absolute;
+  z-index: 12;
+  top: 27px;
+  right: 4px;
+  width: 126px;
+  display: grid;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid #3a4552;
+  border-radius: 4px;
+  background: #141a20f5;
+  box-shadow: 0 8px 22px #000a;
+}
+.list-column-editor strong { padding: 0 2px 4px; color: #d8dde6; font-size: 10px; }
+.list-column-editor label { display: flex; align-items: center; gap: 6px; min-height: 23px; color: #aeb7c3; font-size: 9px; cursor: pointer; }
+.list-column-editor input { width: 13px; height: 13px; margin: 0; accent-color: #4b84c6; }
+.list-column-editor label:has(input:disabled) { color: #657180; cursor: default; }
 .list-window-select > span { min-width: 0; display: grid; gap: 2px; text-align: left; }
 .list-window-select strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #d8dde6; font-size: 11px; }
 .list-window-select small { color: #657180; font-size: 9px; }
@@ -442,7 +461,24 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
   border-radius: 3px;
   background: #11161be8;
   box-shadow: 0 2px 8px #0006;
+  transition: padding 160ms ease, border-color 160ms ease, background-color 160ms ease;
 }
+.chart-drawing-toolbar-actions {
+  display: flex;
+  gap: 1px;
+  max-width: 180px;
+  overflow: hidden;
+  opacity: 1;
+  transform: translateX(0);
+  transition: max-width 180ms ease, opacity 120ms ease, transform 180ms ease;
+}
+.chart-drawing-toolbar.collapsed .chart-drawing-toolbar-actions {
+  max-width: 0;
+  opacity: 0;
+  transform: translateX(8px);
+  pointer-events: none;
+}
+.chart-drawing-toolbar .chart-toolbar-toggle { color: #9aa6b4; }
 .chart-drawing-toolbar button {
   width: 22px;
   height: 22px;
@@ -654,7 +690,6 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
   pointer-events: none;
 }
 .chart-readout b { color: #c6ccd5; font-weight: 500; }
-.chart-readout .lod-badge { color: #d8dde6; background: #303743; padding: 1px 4px; border-radius: 2px; }
 .chart-readout .live-badge { color: #71c69a; background: #173226; padding: 1px 4px; border-radius: 2px; }
 .chart-readout .live-badge.stale { color: #e1b66d; background: #342916; }
 .chart-readout .rise { color: #ef5350; }
@@ -662,6 +697,12 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .chart-readout .ma5-value { color: #e5b85c; }
 .chart-readout .ma20-value { color: #57a7d9; }
 .chart-readout .ma60-value { color: #b984cc; }
+@container (max-width: 520px) {
+  .chart-readout { display: none; }
+}
+@container (max-height: 280px) {
+  .chart-readout { display: none; }
+}
 .chart-state {
   position: absolute;
   z-index: 3;

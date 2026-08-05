@@ -18,6 +18,7 @@ import {
   type ChartWindowState,
   type Instrument,
   type InstrumentListWindowState,
+  type ListColumnKey,
   type WindowGroupState,
   type WorkspaceState,
   type WorkspaceWindowState,
@@ -26,7 +27,7 @@ import {
 export function StockWorkspace() {
   const [workspace, setWorkspace] = useState<WorkspaceState>(loadWorkspace)
   const [theme, setTheme] = useState<ThemeDefinition>(loadTheme)
-  const [chatOpen, setChatOpen] = useState(true)
+  const [chatOpen, setChatOpen] = useState(false)
   const [layoutManagerOpen, setLayoutManagerOpen] = useState(false)
   const [instrumentEditor, setInstrumentEditor] = useState<{ windowId?: string; tab: 'instruments' | 'groups' }>()
   const [resolvedWindowSymbols, setResolvedWindowSymbols] = useState<Record<string, string[]>>({})
@@ -149,6 +150,10 @@ export function StockWorkspace() {
 
   const sortList = useCallback((id: string, sort: NonNullable<InstrumentListWindowState['sort']>) => {
     updateWindow(id, item => item.type === 'instrument-list' ? { ...item, sort } : item)
+  }, [updateWindow])
+
+  const updateListColumns = useCallback((id: string, visibleColumns: ListColumnKey[]) => {
+    updateWindow(id, item => item.type === 'instrument-list' ? { ...item, visibleColumns } : item)
   }, [updateWindow])
 
   const handleCoverage = useCallback((id: string, symbol: string, rows: number, first?: string, last?: string) => {
@@ -299,6 +304,7 @@ export function StockWorkspace() {
           onSelectListInstrument={selectListInstrument}
           onEditWindow={id => setInstrumentEditor({ windowId: id, tab: 'instruments' })}
           onSortList={sortList}
+          onListColumnsChange={updateListColumns}
           onCoverageChange={handleCoverage}
           onVisibleRangeChange={handleVisibleRange}
           onVolumeVisibleChange={handleVolumeVisible}

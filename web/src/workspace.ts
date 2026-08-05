@@ -44,6 +44,9 @@ export type ChartWindowState = {
   chart: ChartViewState
 }
 
+export type ListColumnKey = 'name' | 'close' | 'change_percent' | 'volume' | 'amount' | 'total_market_cap'
+export const defaultListColumns: ListColumnKey[] = ['name', 'close', 'change_percent', 'volume', 'amount', 'total_market_cap']
+
 export type InstrumentListWindowState = {
   id: string
   type: 'instrument-list'
@@ -55,8 +58,9 @@ export type InstrumentListWindowState = {
   }
   selectedSymbol?: string
   memberSourceWindowId?: string
+  visibleColumns: ListColumnKey[]
   sort?: {
-    key: 'name' | 'close' | 'change_percent' | 'volume' | 'amount' | 'total_market_cap'
+    key: ListColumnKey
     direction: 'asc' | 'desc'
   }
 }
@@ -131,6 +135,7 @@ export function createWindowGroup(
     mode: 'detached',
     content: { mode: 'manual', instruments: [{ ...fallbackInstrument }] },
     selectedSymbol: fallbackInstrument.symbol,
+    visibleColumns: [...defaultListColumns],
   })
 
   if (template === 'four-charts') {
@@ -186,6 +191,7 @@ export function createDefaultWorkspace(): WorkspaceState {
     mode: 'detached',
     content: { mode: 'manual', instruments: [fallbackInstrument] },
     selectedSymbol: fallbackInstrument.symbol,
+    visibleColumns: [...defaultListColumns],
   }
   const chartWindow: ChartWindowState = {
     id: 'chart-primary',
@@ -383,11 +389,18 @@ function normalizeListWindow(value: Record<string, unknown>): InstrumentListWind
     mode: value.mode === 'attached' ? 'attached' : 'detached',
     content: { mode: 'manual', instruments },
     selectedSymbol,
+    visibleColumns: normalizeListColumns(value.visibleColumns),
     memberSourceWindowId: typeof value.memberSourceWindowId === 'string'
       ? value.memberSourceWindowId
       : undefined,
     sort: normalizeListSort(value.sort),
   }
+}
+
+function normalizeListColumns(value: unknown): ListColumnKey[] {
+  if (!Array.isArray(value)) return [...defaultListColumns]
+  const selected = defaultListColumns.filter(column => value.includes(column))
+  return ['name', ...selected.filter(column => column !== 'name')]
 }
 
 function normalizeListSort(value: unknown): InstrumentListWindowState['sort'] {

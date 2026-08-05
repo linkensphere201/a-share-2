@@ -5,23 +5,28 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import userEvent from '@testing-library/user-event'
 
 import { App } from './App'
-import { createDefaultWorkspace, workspaceStorageKey } from './workspace'
+import { createDefaultWorkspace, defaultListColumns, workspaceStorageKey } from './workspace'
 
 vi.mock('./ChartCanvas', () => ({
   ChartCanvas: ({
     symbol,
     volumeVisible,
     indicator,
+    initialVisibleRange,
+    onVisibleRangeChange,
     onVolumeVisibleChange,
     onIndicatorChange,
   }: {
     symbol: string
     volumeVisible: boolean
     indicator: 'macd' | 'none'
+    initialVisibleRange?: { from: string; to: string }
+    onVisibleRangeChange: (value: { from: string; to: string }) => void
     onVolumeVisibleChange: (visible: boolean) => void
     onIndicatorChange: (indicator: 'macd' | 'none') => void
-  }) => <div data-testid="chart-canvas">
+  }) => <div data-testid="chart-canvas" data-visible-from={initialVisibleRange?.from} data-visible-to={initialVisibleRange?.to}>
     {symbol}
+    <button aria-label="模拟缩放图表" onClick={() => onVisibleRangeChange({ from: '2025-04-01', to: '2026-08-05' })}/>
     {volumeVisible && <button aria-label="隐藏成交量栏" onClick={() => onVolumeVisibleChange(false)}/>}
     {indicator === 'macd' && <button aria-label="隐藏MACD栏" onClick={() => onIndicatorChange('none')}/>}
   </div>,
@@ -50,8 +55,9 @@ describe('StockWorkspace', () => {
     expect(screen.getByRole('combobox', { name: '主题配色' }).querySelectorAll('option')).toHaveLength(20)
     expect(screen.getByRole('button', { name: '编辑 表1 标的' })).toBeTruthy()
     expect(screen.queryByRole('button', { name: '编辑 CPO概念 标的' })).toBeNull()
-    await user.click(screen.getByRole('button', { name: '收起对话栏' }))
     expect(screen.getByRole('button', { name: '展开对话栏' })).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: '展开对话栏' }))
+    expect(screen.getByRole('button', { name: '收起对话栏' })).toBeTruthy()
   })
 
   it('switches and persists the workstation theme from the outer toolbar', async () => {
@@ -82,6 +88,45 @@ describe('StockWorkspace', () => {
       const state = JSON.parse(window.localStorage.getItem(workspaceStorageKey) ?? '{}')
       expect(state.groups[0].windows[1].chart).toMatchObject({ volumeVisible: false, indicator: 'none' })
     })
+  })
+
+  it('persists each chart window visible range and restores it on reopen', async () => {
+    vi.stubGlobal('fetch', emptyFetch())
+    const user = userEvent.setup()
+    const first = render(<App />)
+
+    await user.click(screen.getByRole('button', { name: '模拟缩放图表' }))
+    await waitFor(() => {
+      const state = JSON.parse(window.localStorage.getItem(workspaceStorageKey) ?? '{}')
+      expect(state.groups[0].windows[1].chart.visibleRange).toEqual({ from: '2025-04-01', to: '2026-08-05' })
+    })
+
+    first.unmount()
+    render(<App />)
+    expect(screen.getByTestId('chart-canvas').dataset).toMatchObject({
+      visibleFrom: '2025-04-01',
+      visibleTo: '2026-08-05',
+    })
+  })
+
+  it('persists visible columns independently for each list window', async () => {
+    vi.stubGlobal('fetch', emptyFetch())
+    const user = userEvent.setup()
+    const first = render(<App />)
+
+    await user.click(screen.getByRole('button', { name: '编辑 表1 表头' }))
+    await user.click(screen.getByRole('checkbox', { name: '成交额' }))
+    expect(screen.queryByRole('button', { name: /成交额/ })).toBeNull()
+    await waitFor(() => {
+      const state = JSON.parse(window.localStorage.getItem(workspaceStorageKey) ?? '{}')
+      expect(state.groups[0].windows[0].visibleColumns).toEqual([
+        'name', 'close', 'change_percent', 'volume', 'total_market_cap',
+      ])
+    })
+
+    first.unmount()
+    render(<App />)
+    expect(screen.queryByRole('button', { name: /成交额/ })).toBeNull()
   })
 
   it('adds a manual-list instrument and drives the attached chart', async () => {
@@ -247,6 +292,7 @@ describe('StockWorkspace', () => {
       title: '成分列表',
       mode: 'attached' as const,
       content: { mode: 'manual' as const, instruments: [] },
+      visibleColumns: [...defaultListColumns],
     }
     group.windows.splice(1, 0, derived)
     group.layout = {

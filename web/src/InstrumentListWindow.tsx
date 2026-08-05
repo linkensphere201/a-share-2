@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
-import { ArrowDown, ArrowUp, ArrowUpDown, Maximize2, Minimize2, Pencil, X } from 'lucide-react'
-import type { Instrument, InstrumentListWindowState } from './workspace'
+import { useEffect, useMemo, useState, type CSSProperties } from 'react'
+import { ArrowDown, ArrowUp, ArrowUpDown, Columns3, Maximize2, Minimize2, Pencil, X } from 'lucide-react'
+import { defaultListColumns, type Instrument, type InstrumentListWindowState, type ListColumnKey } from './workspace'
 import { logWarning } from './eventLogger'
 
 type MarketSnapshot = {
@@ -28,6 +28,7 @@ type InstrumentListWindowProps = {
   derived: boolean
   memberSource?: Instrument
   onSortChange: (sort: NonNullable<InstrumentListWindowState['sort']>) => void
+  onVisibleColumnsChange: (columns: ListColumnKey[]) => void
   onReferencedSymbolsChange: (id: string, symbols: string[]) => void
 }
 
@@ -44,6 +45,7 @@ export function InstrumentListWindow({
   derived,
   memberSource,
   onSortChange,
+  onVisibleColumnsChange,
   onReferencedSymbolsChange,
 }: InstrumentListWindowProps) {
   const [members, setMembers] = useState<ListInstrument[]>([])
@@ -51,6 +53,7 @@ export function InstrumentListWindow({
   const [memberMeta, setMemberMeta] = useState<{ asOf?: string; source?: string }>({})
   const [membersLoading, setMembersLoading] = useState(false)
   const [memberRefresh, setMemberRefresh] = useState(0)
+  const [columnEditorOpen, setColumnEditorOpen] = useState(false)
 
   useEffect(() => {
     const refresh = (event: Event) => {
@@ -138,6 +141,9 @@ export function InstrumentListWindow({
       ? memberMeta.asOf ? `${memberMeta.asOf} · ${memberMeta.source ?? '成分'}` : '暂无成分数据'
       : '等待上游选择'
     : `${sourceItems.length} 个标的`
+  const visibleColumns = defaultListColumns.filter(column => windowState.visibleColumns.includes(column))
+  const gridStyle = { gridTemplateColumns: visibleColumns.map(columnWidth).join(' ') } satisfies CSSProperties
+  const tableStyle = { minWidth: Math.max(96, 96 + (visibleColumns.length - 1) * 48) } satisfies CSSProperties
 
   return (
     <section className={focused ? 'instrument-window list-window focused' : 'instrument-window list-window'}>
@@ -146,6 +152,13 @@ export function InstrumentListWindow({
           <strong>{windowState.title}</strong><small>{detail}</small>
         </button>
         <div className="instrument-window-actions">
+          <button
+            className={columnEditorOpen ? 'active' : ''}
+            title="编辑表头"
+            aria-label={`编辑 ${windowState.title} 表头`}
+            aria-expanded={columnEditorOpen}
+            onClick={() => setColumnEditorOpen(value => !value)}
+          ><Columns3 size={13}/></button>
           {!derived && <button title="编辑标的" aria-label={`编辑 ${windowState.title} 标的`} onClick={onEdit}><Pencil size={13}/></button>}
           <button
             title={maximized ? '还原窗口' : '最大化窗口'}
@@ -160,15 +173,33 @@ export function InstrumentListWindow({
           ><X size={14}/></button>
         </div>
       </header>
+      {columnEditorOpen && <div className="list-column-editor" onPointerDown={event => event.stopPropagation()}>
+        <strong>显示列</strong>
+        {listColumnOptions.map(option => {
+          const checked = visibleColumns.includes(option.key)
+          return <label key={option.key}>
+            <input
+              type="checkbox"
+              checked={checked}
+              disabled={option.key === 'name'}
+              onChange={() => onVisibleColumnsChange(checked
+                ? visibleColumns.filter(column => column !== option.key)
+                : defaultListColumns.filter(column => [...visibleColumns, option.key].includes(column)))}
+            />
+            <span>{option.label}</span>
+          </label>
+        })}
+      </div>}
       <div className={derived ? 'list-window-body derived' : 'list-window-body'} onPointerDown={onFocus}>
-        <div className="list-window-table">
-          <div className="list-window-table-header">
-            <SortButton label="名称" field="name" sort={windowState.sort} onChange={onSortChange}/>
-            <SortButton label="价格" field="close" sort={windowState.sort} onChange={onSortChange}/>
-            <SortButton label="涨跌幅" field="change_percent" sort={windowState.sort} onChange={onSortChange}/>
-            <SortButton label="成交量" field="volume" sort={windowState.sort} onChange={onSortChange}/>
-            <SortButton label="成交额" field="amount" sort={windowState.sort} onChange={onSortChange}/>
-            <SortButton label="总市值" field="total_market_cap" sort={windowState.sort} onChange={onSortChange}/>
+        <div className="list-window-table" style={tableStyle}>
+          <div className="list-window-table-header" style={gridStyle}>
+            {visibleColumns.map(column => <SortButton
+              key={column}
+              label={listColumnOptions.find(option => option.key === column)!.label}
+              field={column}
+              sort={windowState.sort}
+              onChange={onSortChange}
+            />)}
           </div>
           <div className="list-window-items">
           {membersLoading && <div className="list-window-empty">加载成分...</div>}
@@ -177,20 +208,20 @@ export function InstrumentListWindow({
           </div>}
           {displayedItems.map(item => {
             const snapshot = snapshots[item.symbol]
-            return <div className={windowState.selectedSymbol === item.symbol ? 'list-window-row selected' : 'list-window-row'} key={item.symbol}>
-              <button
+            return <div className={windowState.selectedSymbol === item.symbol ? 'list-window-row selected' : 'list-window-row'} key={item.symbol} style={gridStyle}>
+              {visibleColumns.includes('name') && <button
                 className="list-window-select"
                 aria-label={`选择 ${item.name}`}
                 disabled={item.available === false}
                 onClick={() => onSelect(item)}
               >
                 <span><strong>{item.name}</strong><small>{item.symbol}</small></span>
-              </button>
-              <span className="list-price">{formatPrice(snapshot?.close)}</span>
-              <span className={changeClass(snapshot?.change_percent)}>{formatChange(snapshot?.change_percent)}</span>
-              <span className="list-volume">{formatQuantity(snapshot?.volume)}</span>
-              <span className="list-amount">{formatMoney(snapshot?.amount)}</span>
-              <span className="list-market-cap">{formatMoney(snapshot?.total_market_cap)}</span>
+              </button>}
+              {visibleColumns.includes('close') && <span className="list-price">{formatPrice(snapshot?.close)}</span>}
+              {visibleColumns.includes('change_percent') && <span className={changeClass(snapshot?.change_percent)}>{formatChange(snapshot?.change_percent)}</span>}
+              {visibleColumns.includes('volume') && <span className="list-volume">{formatQuantity(snapshot?.volume)}</span>}
+              {visibleColumns.includes('amount') && <span className="list-amount">{formatMoney(snapshot?.amount)}</span>}
+              {visibleColumns.includes('total_market_cap') && <span className="list-market-cap">{formatMoney(snapshot?.total_market_cap)}</span>}
             </div>
           })}
           </div>
@@ -198,6 +229,19 @@ export function InstrumentListWindow({
       </div>
     </section>
   )
+}
+
+const listColumnOptions: Array<{ key: ListColumnKey; label: string }> = [
+  { key: 'name', label: '名称' },
+  { key: 'close', label: '价格' },
+  { key: 'change_percent', label: '涨跌幅' },
+  { key: 'volume', label: '成交量' },
+  { key: 'amount', label: '成交额' },
+  { key: 'total_market_cap', label: '总市值' },
+]
+
+function columnWidth(column: ListColumnKey): string {
+  return column === 'name' ? 'minmax(64px, 1fr)' : '48px'
 }
 
 function SortButton({ label, field, sort, onChange }: {

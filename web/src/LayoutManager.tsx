@@ -19,6 +19,7 @@ import { removeWindowAttachments, validateWindowAttachments } from './windowAtta
 import { SplitLayout } from './SplitLayout'
 import {
   createWindowGroup,
+  defaultListColumns,
   duplicateWindowGroup,
   type ChartWindowState,
   type Instrument,
@@ -126,7 +127,7 @@ export function LayoutManager({ workspace, onChange, onClose }: LayoutManagerPro
     const title = nextWindowTitle(group.windows)
     const added: WorkspaceWindowState = type === 'chart'
       ? { id, type: 'chart', title, mode, instrument, chart: { range: '3Y', priceMode: 'normal', volumeVisible: true, indicator: 'macd' } }
-      : { id, type: 'instrument-list', title, mode, content: { mode: 'manual', instruments: [] } }
+      : { id, type: 'instrument-list', title, mode, content: { mode: 'manual', instruments: [] }, visibleColumns: [...defaultListColumns] }
     updateGroup(current => ({
       ...current,
       windows: [...current.windows, added],
