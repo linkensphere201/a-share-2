@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
-import { EyeOff, MousePointer2, PencilLine, Percent, Trash2, X, ZoomIn } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
+import { Eye, EyeOff, MousePointer2, PencilLine, Percent, Settings2, Trash2, X, ZoomIn } from 'lucide-react'
 import { logInfo, logWarning } from './eventLogger'
 import {
   createTrendLine,
@@ -8,9 +8,10 @@ import {
   saveTrendLine,
   subscribeSymbolDrawings,
   type TrendLineAnchor,
+  type TrendLineDash,
   type TrendLineDrawing,
 } from './drawingStore'
-import { barsInRenderPeriod, chooseAnchor, renderDateForAnchor } from './trendLines'
+import { barsInRenderPeriod, chooseAnchor, extendLineToBounds, renderDateForAnchor, type LineGeometry } from './trendLines'
 import {
   CandlestickSeries,
   ColorType,
@@ -68,10 +69,8 @@ type DrawingDrag = {
 
 type ProjectedTrendLine = {
   drawing: TrendLineDrawing
-  x1: number
-  y1: number
-  x2: number
-  y2: number
+  line: LineGeometry
+  anchors: LineGeometry
 }
 
 export type RangeMeasurement = {
@@ -119,6 +118,14 @@ const rising = '#ef5350'
 const falling = '#26a269'
 const risingSoft = '#e99693'
 const fallingSoft = '#70be9a'
+const trendLineColors = ['#f0b85a', '#ef5350', '#26a269', '#57a7d9', '#b984cc', '#d8dde6'] as const
+const trendLineDashOptions: Array<{ value: TrendLineDash; label: string }> = [
+  { value: 'solid', label: '实线' },
+  { value: 'dotted', label: '点线' },
+  { value: 'dashed', label: '短虚线' },
+  { value: 'long-dashed', label: '长虚线' },
+  { value: 'dash-dot', label: '点划线' },
+]
 
 export const chartLayoutOptions = {
   background: { type: ColorType.Solid, color: '#0d1014' },
@@ -182,6 +189,7 @@ export function ChartCanvas({
   const [drawings, setDrawings] = useState<TrendLineDrawing[]>(() => loadSymbolDrawings(symbol))
   const [drawingDraft, setDrawingDraft] = useState<[TrendLineAnchor, TrendLineAnchor]>()
   const [selectedDrawingId, setSelectedDrawingId] = useState<string>()
+  const [drawingManagerOpen, setDrawingManagerOpen] = useState(false)
   const [overlayRevision, setOverlayRevision] = useState(0)
   const liveFailureCountRef = useRef(0)
 
@@ -203,6 +211,7 @@ export function ChartCanvas({
     setDrawingDraft(undefined)
     drawingDragRef.current = undefined
     setDrawingTool('browse')
+    setDrawingManagerOpen(false)
     return subscribeSymbolDrawings(symbol, reload)
   }, [symbol])
 
@@ -759,6 +768,24 @@ export function ChartCanvas({
     setDrawingTool('browse')
   }
 
+  const updateDrawing = (id: string, update: (drawing: TrendLineDrawing) => TrendLineDrawing) => {
+    const drawing = drawings.find(item => item.id === id)
+    if (!drawing) return
+    try {
+      saveTrendLine({ ...update(drawing), updatedAt: new Date().toISOString() })
+    } catch (error) {
+      logWarning('drawing', '趋势线设置保存失败', { symbol, drawingId: id, error })
+    }
+  }
+
+  const updateDrawingStyle = (id: string, style: Partial<TrendLineDrawing['style']>) => {
+    updateDrawing(id, drawing => ({ ...drawing, style: { ...drawing.style, ...style } }))
+  }
+
+  const toggleDrawingVisibility = (id: string) => {
+    updateDrawing(id, drawing => ({ ...drawing, visible: !drawing.visible }))
+  }
+
   const removeSelectedDrawing = () => {
     if (!selectedDrawingId) return
     deleteTrendLine(symbol, selectedDrawingId)
@@ -843,9 +870,27 @@ export function ChartCanvas({
             setSelectedDrawingId(undefined)
           }}
         ><PencilLine size={13}/></button>
+        <button
+          className={drawingManagerOpen ? 'active' : ''}
+          title="趋势线管理"
+          aria-label="趋势线管理"
+          aria-pressed={drawingManagerOpen}
+          onClick={() => setDrawingManagerOpen(value => !value)}
+        ><Settings2 size={13}/></button>
         <button title="删除选中的趋势线" aria-label="删除选中的趋势线" disabled={!selectedDrawingId} onClick={removeSelectedDrawing}><Trash2 size={13}/></button>
         {drawingTool === 'trend-line' && <button title="取消画线" aria-label="取消画线" onClick={cancelDrawing}><X size={13}/></button>}
       </div>
+      {drawingManagerOpen && (
+        <TrendLineManager
+          drawings={drawings}
+          selectedId={selectedDrawingId}
+          onSelect={setSelectedDrawingId}
+          onDashChange={(id, dash) => updateDrawingStyle(id, { dash })}
+          onColorChange={(id, color) => updateDrawingStyle(id, { color })}
+          onVisibilityChange={toggleDrawingVisibility}
+          onClose={() => setDrawingManagerOpen(false)}
+        />
+      )}
       <TrendLineOverlay
         lines={projectedDrawings}
         draft={projectedDraft}
@@ -913,6 +958,69 @@ function PaneHeader({ kind, top, onHide }: { kind: 'volume' | 'macd'; top: numbe
   )
 }
 
+function TrendLineManager({
+  drawings,
+  selectedId,
+  onSelect,
+  onDashChange,
+  onColorChange,
+  onVisibilityChange,
+  onClose,
+}: {
+  drawings: TrendLineDrawing[]
+  selectedId?: string
+  onSelect: (id: string) => void
+  onDashChange: (id: string, dash: TrendLineDash) => void
+  onColorChange: (id: string, color: string) => void
+  onVisibilityChange: (id: string) => void
+  onClose: () => void
+}) {
+  const selected = drawings.find(drawing => drawing.id === selectedId)
+  return (
+    <div className="trend-line-manager" onPointerDown={event => event.stopPropagation()}>
+      <header><strong>趋势线</strong><span>{drawings.length}</span><button title="关闭趋势线管理" aria-label="关闭趋势线管理" onClick={onClose}><X size={12}/></button></header>
+      <div className="trend-line-list">
+        {drawings.length === 0 && <span className="trend-line-empty">暂无趋势线</span>}
+        {drawings.map((drawing, index) => (
+          <div key={drawing.id} className={drawing.id === selectedId ? 'trend-line-item selected' : 'trend-line-item'}>
+            <button className="trend-line-select" onClick={() => onSelect(drawing.id)}>
+              <i style={{ background: drawing.style.color }}/>
+              <span>趋势线 {index + 1}<small>{drawing.anchors[0].date} - {drawing.anchors[1].date}</small></span>
+            </button>
+            <button
+              className="trend-line-visibility"
+              title={drawing.visible ? '隐藏趋势线' : '显示趋势线'}
+              aria-label={`${drawing.visible ? '隐藏' : '显示'}趋势线 ${index + 1}`}
+              onClick={() => onVisibilityChange(drawing.id)}
+            >{drawing.visible ? <Eye size={13}/> : <EyeOff size={13}/>}</button>
+          </div>
+        ))}
+      </div>
+      {selected && (
+        <div className="trend-line-settings">
+          <label>线型
+            <select aria-label="趋势线线型" value={selected.style.dash} onChange={event => onDashChange(selected.id, event.target.value as TrendLineDash)}>
+              {trendLineDashOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </select>
+          </label>
+          <div className="trend-line-colors" aria-label="趋势线颜色">
+            {trendLineColors.map(color => (
+              <button
+                key={color}
+                className={selected.style.color === color ? 'active' : ''}
+                title={`使用颜色 ${color}`}
+                aria-label={`趋势线颜色 ${color}`}
+                style={{ '--trend-color': color } as CSSProperties}
+                onClick={() => onColorChange(selected.id, color)}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function TrendLineOverlay({
   lines,
   draft,
@@ -920,7 +1028,7 @@ function TrendLineOverlay({
   onSelect,
 }: {
   lines: ProjectedTrendLine[]
-  draft?: Omit<ProjectedTrendLine, 'drawing'>
+  draft?: LineGeometry
   selectedId?: string
   onSelect: (id: string) => void
 }) {
@@ -931,10 +1039,10 @@ function TrendLineOverlay({
           <g key={line.drawing.id} className={line.drawing.id === selectedId ? 'trend-line selected' : 'trend-line'}>
             <line
               className="trend-line-hit"
-              x1={line.x1}
-              y1={line.y1}
-              x2={line.x2}
-              y2={line.y2}
+              x1={line.line.x1}
+              y1={line.line.y1}
+              x2={line.line.x2}
+              y2={line.line.y2}
               onPointerDown={event => {
                 event.preventDefault()
                 event.stopPropagation()
@@ -943,17 +1051,18 @@ function TrendLineOverlay({
             />
             <line
               className="trend-line-stroke"
-              x1={line.x1}
-              y1={line.y1}
-              x2={line.x2}
-              y2={line.y2}
+              x1={line.line.x1}
+              y1={line.line.y1}
+              x2={line.line.x2}
+              y2={line.line.y2}
               stroke={line.drawing.style.color}
               strokeWidth={line.drawing.style.width}
-              strokeDasharray={line.drawing.style.dash === 'dashed' ? '6 4' : undefined}
+              strokeDasharray={trendLineDashPattern(line.drawing.style.dash)}
+              strokeLinecap={line.drawing.style.dash === 'dotted' ? 'round' : 'butt'}
             />
             {line.drawing.id === selectedId && <>
-              <circle cx={line.x1} cy={line.y1} r="3.5"/>
-              <circle cx={line.x2} cy={line.y2} r="3.5"/>
+              <circle cx={line.anchors.x1} cy={line.anchors.y1} r="3.5"/>
+              <circle cx={line.anchors.x2} cy={line.anchors.y2} r="3.5"/>
             </>}
           </g>
         ))}
@@ -977,9 +1086,11 @@ function projectTrendLines(
   _revision: number,
 ): ProjectedTrendLine[] {
   if (!chart || !candles) return []
-  return drawings.flatMap(drawing => {
+  const width = chart.timeScale().width()
+  const height = chart.panes()[0]?.getHeight() ?? 0
+  return drawings.filter(drawing => drawing.visible).flatMap(drawing => {
     const projected = projectTrendLineAnchors(drawing.anchors, periods, chart, candles)
-    return projected ? [{ drawing, ...projected }] : []
+    return projected ? [{ drawing, anchors: projected, line: extendLineToBounds(projected, width, height) }] : []
   })
 }
 
@@ -988,7 +1099,7 @@ function projectTrendLineAnchors(
   periods: RenderBar[],
   chart: IChartApi | null,
   candles: ISeriesApi<'Candlestick'> | null,
-): Omit<ProjectedTrendLine, 'drawing'> | undefined {
+): LineGeometry | undefined {
   if (!chart || !candles) return undefined
   const firstDate = renderDateForAnchor(anchors[0].date, periods)
   const secondDate = renderDateForAnchor(anchors[1].date, periods)
@@ -999,6 +1110,14 @@ function projectTrendLineAnchors(
   const y2 = candles.priceToCoordinate(anchors[1].price)
   if (x1 === null || x2 === null || y1 === null || y2 === null) return undefined
   return { x1, y1, x2, y2 }
+}
+
+function trendLineDashPattern(dash: TrendLineDash): string | undefined {
+  if (dash === 'solid') return undefined
+  if (dash === 'dotted') return '1 5'
+  if (dash === 'long-dashed') return '14 7'
+  if (dash === 'dash-dot') return '12 5 2 5'
+  return '6 4'
 }
 
 type PricePointGeometry = {

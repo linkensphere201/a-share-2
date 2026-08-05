@@ -1,6 +1,7 @@
 import type { PriceMode } from './ChartCanvas'
 
 export type TrendLineSnap = 'free' | 'high' | 'low'
+export type TrendLineDash = 'solid' | 'dotted' | 'dashed' | 'long-dashed' | 'dash-dot'
 
 export type TrendLineAnchor = {
   date: string
@@ -11,7 +12,7 @@ export type TrendLineAnchor = {
 export type TrendLineStyle = {
   color: string
   width: 1 | 2 | 3
-  dash: 'solid' | 'dashed'
+  dash: TrendLineDash
 }
 
 export type TrendLineDrawing = {
@@ -21,6 +22,7 @@ export type TrendLineDrawing = {
   anchors: [TrendLineAnchor, TrendLineAnchor]
   coordinateMode: PriceMode
   style: TrendLineStyle
+  visible: boolean
   createdAt: string
   updatedAt: string
 }
@@ -36,7 +38,7 @@ const drawingChangeEvent = 'stock-harness:drawings-changed'
 export const defaultTrendLineStyle: TrendLineStyle = {
   color: '#f0b85a',
   width: 2,
-  dash: 'solid',
+  dash: 'dashed',
 }
 
 export function loadSymbolDrawings(symbol: string, storage: Storage = window.localStorage): TrendLineDrawing[] {
@@ -95,6 +97,7 @@ export function createTrendLine(
     anchors,
     coordinateMode,
     style: { ...defaultTrendLineStyle },
+    visible: true,
     createdAt: timestamp,
     updatedAt: timestamp,
   }
@@ -132,11 +135,18 @@ function normalizeDrawing(value: unknown, symbol: string): TrendLineDrawing | un
     style: {
       color: typeof style.color === 'string' ? style.color : defaultTrendLineStyle.color,
       width: style.width === 1 || style.width === 3 ? style.width : 2,
-      dash: style.dash === 'dashed' ? 'dashed' : 'solid',
+      dash: normalizeDash(style.dash),
     },
+    visible: value.visible !== false,
     createdAt: typeof value.createdAt === 'string' ? value.createdAt : '',
     updatedAt: typeof value.updatedAt === 'string' ? value.updatedAt : '',
   }
+}
+
+function normalizeDash(value: unknown): TrendLineDash {
+  return value === 'solid' || value === 'dotted' || value === 'long-dashed' || value === 'dash-dot'
+    ? value
+    : 'dashed'
 }
 
 function normalizeAnchor(value: unknown): TrendLineAnchor | undefined {
@@ -175,4 +185,3 @@ function isObject(value: unknown): value is Record<string, unknown> {
 function isDefined<T>(value: T | undefined): value is T {
   return value !== undefined
 }
-

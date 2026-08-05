@@ -9,7 +9,7 @@ import {
   saveTrendLine,
   subscribeSymbolDrawings,
 } from './drawingStore'
-import { chooseAnchor, renderDateForAnchor } from './trendLines'
+import { chooseAnchor, extendLineToBounds, renderDateForAnchor } from './trendLines'
 
 describe('symbol drawing repository', () => {
   beforeEach(() => window.localStorage.clear())
@@ -22,6 +22,8 @@ describe('symbol drawing repository', () => {
     saveTrendLine(drawing)
 
     expect(loadSymbolDrawings('000001.SZ')).toEqual([drawing])
+    expect(drawing.style.dash).toBe('dashed')
+    expect(drawing.visible).toBe(true)
     expect(loadSymbolDrawings('600000.SH')).toEqual([])
   })
 
@@ -39,6 +41,41 @@ describe('symbol drawing repository', () => {
     expect(listener).toHaveBeenCalledTimes(2)
     expect(loadSymbolDrawings('000001.SZ')).toEqual([])
     unsubscribe()
+  })
+
+  it('preserves old solid lines and defaults their missing visibility to visible', () => {
+    const drawing = createTrendLine('000001.SZ', [
+      { date: '2026-07-01', price: 10, snap: 'free' },
+      { date: '2026-07-31', price: 12, snap: 'free' },
+    ], 'normal', new Date('2026-08-05T00:00:00Z'), () => 'line-legacy')
+    const legacy = { ...drawing, style: { ...drawing.style, dash: 'solid' } }
+    delete (legacy as Partial<typeof legacy>).visible
+    window.localStorage.setItem('stock-harness.drawings.v1', JSON.stringify({
+      version: 1,
+      symbols: { '000001.SZ': [legacy] },
+    }))
+
+    expect(loadSymbolDrawings('000001.SZ')[0]).toMatchObject({
+      visible: true,
+      style: { dash: 'solid' },
+    })
+  })
+
+  it('round-trips hidden state, color, and extended dash patterns', () => {
+    const drawing = createTrendLine('000001.SZ', [
+      { date: '2026-07-01', price: 10, snap: 'free' },
+      { date: '2026-07-31', price: 12, snap: 'free' },
+    ], 'normal', new Date('2026-08-05T00:00:00Z'), () => 'line-style')
+    saveTrendLine({
+      ...drawing,
+      visible: false,
+      style: { ...drawing.style, color: '#57a7d9', dash: 'dash-dot' },
+    })
+
+    expect(loadSymbolDrawings('000001.SZ')[0]).toMatchObject({
+      visible: false,
+      style: { color: '#57a7d9', dash: 'dash-dot' },
+    })
   })
 })
 
@@ -59,5 +96,14 @@ describe('trend-line anchors', () => {
     ]
     expect(renderDateForAnchor('2026-08-02', periods)).toBe('2026-08-04')
     expect(renderDateForAnchor('2026-08-07', periods)).toBe('2026-08-08')
+  })
+
+  it('extends a two-anchor segment to both price-pane edges', () => {
+    expect(extendLineToBounds({ x1: 25, y1: 75, x2: 75, y2: 25 }, 100, 100)).toEqual({
+      x1: 0, y1: 100, x2: 100, y2: 0,
+    })
+    expect(extendLineToBounds({ x1: 50, y1: 25, x2: 50, y2: 75 }, 100, 100)).toEqual({
+      x1: 50, y1: 0, x2: 50, y2: 100,
+    })
   })
 })
