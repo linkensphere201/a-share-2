@@ -190,6 +190,24 @@ CREATE TABLE IF NOT EXISTS daily_bars (
 CREATE INDEX IF NOT EXISTS daily_bars_trade_date
 ON daily_bars(trade_date, instrument_id);
 
+CREATE TABLE IF NOT EXISTS intraday_daily_bars (
+    symbol TEXT NOT NULL,
+    trade_date INTEGER NOT NULL,
+    open REAL NOT NULL,
+    high REAL NOT NULL,
+    low REAL NOT NULL,
+    close REAL NOT NULL,
+    volume INTEGER NOT NULL,
+    amount REAL NOT NULL,
+    previous_close REAL NOT NULL,
+    change_percent REAL NOT NULL,
+    source TEXT NOT NULL,
+    provider_time TEXT NOT NULL,
+    received_at TEXT NOT NULL,
+    updated_at_ms INTEGER NOT NULL,
+    PRIMARY KEY (symbol, trade_date)
+) WITHOUT ROWID;
+
 CREATE TABLE IF NOT EXISTS sync_cursors (
     source_id INTEGER NOT NULL,
     instrument_kind TEXT NOT NULL,

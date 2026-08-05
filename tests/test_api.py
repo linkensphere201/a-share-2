@@ -288,6 +288,30 @@ def test_intraday_manual_refresh_targets_requested_chart_symbol():
     assert response.json()["items"][0]["source"] == "test_live"
 
 
+def test_final_daily_bar_suppresses_same_day_provisional_bar_for_all_endpoints():
+    store, _ = _client()
+    store.upsert_daily_bars(
+        "tushare_dc",
+        [DailyBar("BK1128.DC", date(2026, 8, 4), 11, 14, 10, 13, 300)],
+    )
+    service = _FakeIntradayService()
+    client = TestClient(create_app(store, intraday_service=service))
+    with client:
+        polled = client.get("/api/intraday-bars", params={"symbol": "BK1128.DC"})
+        refreshed = client.post(
+            "/api/intraday/refresh", json={"symbols": ["BK1128.DC"]}
+        )
+        merged = client.get("/api/instruments/BK1128.DC/daily-bars")
+    store.close()
+
+    assert polled.json()["items"] == []
+    assert refreshed.json()["items"] == []
+    assert polled.json()["canonical_symbols"] == ["BK1128.DC"]
+    assert refreshed.json()["canonical_symbols"] == ["BK1128.DC"]
+    assert merged.json()["items"][-1]["bar_state"] == "final"
+    assert merged.json()["items"][-1]["close"] == 13
+
+
 def test_frontend_warning_is_available_in_runtime_event_feed():
     store, client = _client()
     with client:

@@ -3,6 +3,7 @@ from datetime import date, datetime, timedelta, timezone
 from stock_harness.config import IntradaySettings
 from stock_harness.intraday import IntradayQuoteService, is_market_polling_time
 from stock_harness.models import ProvisionalDailyBar
+from stock_harness.sqlite_store import SQLiteMarketDataStore
 
 
 CHINA_TIME = timezone(timedelta(hours=8))
@@ -69,7 +70,7 @@ def test_service_polls_only_during_trading_session_and_keeps_cache_on_failure():
     assert service.status()["state"] == "market_closed"
 
 
-def test_subscription_removes_unreferenced_cached_symbols():
+def test_subscription_keeps_unreferenced_cached_symbols():
     provider = FakeProvider()
     service = IntradayQuoteService(_settings(), lambda _day: True, provider)
     service.subscribe("group-1", ["600519.SH", "000001.SZ"])
@@ -77,7 +78,7 @@ def test_subscription_removes_unreferenced_cached_symbols():
 
     service.subscribe("group-1", ["000001.SZ"])
 
-    assert service.get("600519.SH") is None
+    assert service.get("600519.SH") is not None
     assert service.status()["symbol_count"] == 1
 
 
@@ -93,3 +94,32 @@ def test_manual_refresh_fetches_only_requested_symbols_without_changing_subscrip
     assert provider.calls == [("510300.SH",)]
     assert [item["symbol"] for item in items] == ["510300.SH"]
     assert service.status()["symbol_count"] == 2
+
+
+def test_persisted_provisional_bar_survives_service_restart():
+    provider = FakeProvider()
+    store = SQLiteMarketDataStore(":memory:")
+    first = IntradayQuoteService(_settings(), lambda _day: True, provider, store)
+    first.subscribe("group-1", ["600519.SH"])
+    first.refresh_once(datetime(2026, 8, 4, 14, 30, tzinfo=CHINA_TIME))
+
+    restarted = IntradayQuoteService(_settings(), lambda _day: True, provider, store)
+    restored = restarted.get(
+        "600519.SH", datetime(2026, 8, 4, 14, 31, tzinfo=CHINA_TIME)
+    )
+    store.close()
+
+    assert restored is not None
+    assert restored["close"] == 11
+    assert restored["bar_state"] == "intraday"
+
+
+def test_manual_closed_session_warning_is_rate_limited(caplog):
+    service = IntradayQuoteService(_settings(), lambda _day: True, FakeProvider())
+    first = datetime(2026, 8, 4, 16, 0, tzinfo=CHINA_TIME)
+
+    service.refresh_symbols(["600519.SH"], first)
+    service.refresh_symbols(["600519.SH"], first + timedelta(seconds=30))
+
+    messages = [record.message for record in caplog.records if "manual_refresh_skipped" in record.message]
+    assert len(messages) == 1

@@ -94,6 +94,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         IntradayQuoteService(
             settings.intraday,
             lambda day: bool(store.list_trading_dates("tushare", day, day)),
+            repository=store,
         )
         if settings.intraday.enabled and not args.no_intraday and not args.smoke_test
         else None

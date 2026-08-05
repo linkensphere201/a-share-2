@@ -142,21 +142,39 @@ def create_app(
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.get("/api/intraday-bars")
-    def intraday_bars(symbol: list[str] = Query(default=[])) -> dict[str, object]:
+    def intraday_bars(
+        request: Request, symbol: list[str] = Query(default=[])
+    ) -> dict[str, object]:
         if intraday_service is None:
             return {"items": [], "status": {"state": "disabled", "enabled": False}}
         normalized = [item.upper() for item in symbol]
-        return {"items": intraday_service.list(normalized), "status": intraday_service.status()}
+        items, canonical_symbols = _effective_intraday_items(
+            _store(request), intraday_service, normalized
+        )
+        return {
+            "items": items,
+            "canonical_symbols": canonical_symbols,
+            "status": intraday_service.status(),
+        }
 
     @app.post("/api/intraday/refresh")
-    def intraday_refresh(payload: IntradayRefreshInput) -> dict[str, object]:
+    def intraday_refresh(
+        request: Request, payload: IntradayRefreshInput
+    ) -> dict[str, object]:
         if intraday_service is None:
             return {"items": [], "status": {"state": "disabled", "enabled": False}}
         try:
-            items = intraday_service.refresh_symbols(payload.symbols)
+            intraday_service.refresh_symbols(payload.symbols)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        return {"items": items, "status": intraday_service.status()}
+        items, canonical_symbols = _effective_intraday_items(
+            _store(request), intraday_service, payload.symbols
+        )
+        return {
+            "items": items,
+            "canonical_symbols": canonical_symbols,
+            "status": intraday_service.status(),
+        }
 
     @app.get("/api/instruments")
     def instruments(
@@ -415,6 +433,24 @@ def _expand_subscription_symbols(
         if custom is not None:
             expanded.update(str(item["symbol"]).upper() for item in custom["members"])
     return sorted(expanded)
+
+
+def _effective_intraday_items(
+    store: SQLiteMarketDataStore,
+    service: IntradayQuoteService,
+    symbols: list[str],
+) -> tuple[list[dict[str, object]], list[str]]:
+    items = service.list(symbols)
+    effective: list[dict[str, object]] = []
+    canonical_symbols: list[str] = []
+    for item in items:
+        symbol = str(item["symbol"]).upper()
+        final_date = store.get_latest_daily_bar_date(symbol)
+        if final_date is None or item["trade_date"] > final_date:
+            effective.append(item)
+        else:
+            canonical_symbols.append(symbol)
+    return effective, canonical_symbols
 
 
 def _enrich_members(

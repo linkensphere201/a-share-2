@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
-import { Eye, EyeOff, MousePointer2, PencilLine, Percent, RefreshCw, Settings2, Trash2, X, ZoomIn } from 'lucide-react'
+import { AlertTriangle, Check, Eye, EyeOff, MousePointer2, PencilLine, Percent, RefreshCw, Settings2, Trash2, X, ZoomIn } from 'lucide-react'
 import { logInfo, logWarning } from './eventLogger'
 import {
   createTrendLine,
@@ -185,7 +185,10 @@ export function ChartCanvas({
   const liveFailureCountRef = useRef(0)
   const initialTheme = useRef(theme).current
   const manualRefreshControllerRef = useRef<AbortController | undefined>(undefined)
+  const manualRefreshFeedbackTimerRef = useRef(0)
+  const manualRefreshWarningAtRef = useRef(0)
   const [manualRefreshing, setManualRefreshing] = useState(false)
+  const [manualRefreshFeedback, setManualRefreshFeedback] = useState<'success' | 'warning'>()
 
   const averages = useMemo(() => ({
     ma5: movingAverage(bars, 5),
@@ -512,12 +515,26 @@ export function ChartCanvas({
     return () => controller.abort()
   }, [symbol, replaceBars])
 
-  useEffect(() => () => manualRefreshControllerRef.current?.abort(), [symbol])
+  useEffect(() => () => {
+    manualRefreshControllerRef.current?.abort()
+    window.clearTimeout(manualRefreshFeedbackTimerRef.current)
+  }, [symbol])
+
+  const showManualRefreshFeedback = useCallback((value: 'success' | 'warning') => {
+    window.clearTimeout(manualRefreshFeedbackTimerRef.current)
+    setManualRefreshFeedback(value)
+    manualRefreshFeedbackTimerRef.current = window.setTimeout(
+      () => setManualRefreshFeedback(undefined),
+      3_000,
+    )
+  }, [])
 
   const refreshIntradayNow = useCallback(() => {
     manualRefreshControllerRef.current?.abort()
     const controller = new AbortController()
     manualRefreshControllerRef.current = controller
+    window.clearTimeout(manualRefreshFeedbackTimerRef.current)
+    setManualRefreshFeedback(undefined)
     setManualRefreshing(true)
     fetch('/api/intraday/refresh', {
       method: 'POST',
@@ -529,28 +546,44 @@ export function ChartCanvas({
         if (!response.ok) throw new Error(`HTTP ${response.status}`)
         return response.json() as Promise<{
           items: DailyBar[]
+          canonical_symbols?: string[]
           status: { state: string; last_error?: string }
         }>
       })
       .then(body => {
         const live = body.items[0]
         if (live) replaceBars(mergeProvisionalBar(barsRef.current, live), true)
-        if (body.status.state === 'error' || body.status.state === 'circuit_open') {
-          logWarning('intraday', '手动刷新盘中临时日K失败，保留现有图表', {
+        if (body.canonical_symbols?.includes(symbol)) {
+          showManualRefreshFeedback('success')
+          logInfo('intraday', '正式日K已覆盖当日，继续使用主行情库', {
+            symbol,
+            state: body.status.state,
+          })
+          return
+        }
+        if (body.status.state !== 'ready' || !live) {
+          showManualRefreshFeedback('warning')
+          logInfo('intraday', '手动刷新未获得新盘中日K，保留现有图表', {
             symbol,
             state: body.status.state,
             error: body.status.last_error,
           })
           return
         }
-        logInfo('intraday', live ? '手动刷新盘中临时日K完成' : '当前无可用盘中临时日K', {
+        showManualRefreshFeedback('success')
+        logInfo('intraday', '手动刷新盘中临时日K完成', {
           symbol,
           state: body.status.state,
         })
       })
       .catch(error => {
         if ((error as Error).name !== 'AbortError') {
-          logWarning('intraday', '手动刷新盘中临时日K失败，保留现有图表', { symbol, error })
+          showManualRefreshFeedback('warning')
+          const now = Date.now()
+          if (now - manualRefreshWarningAtRef.current >= 60_000) {
+            manualRefreshWarningAtRef.current = now
+            logWarning('intraday', '手动刷新盘中临时日K失败，保留现有图表', { symbol, error })
+          }
         }
       })
       .finally(() => {
@@ -559,7 +592,7 @@ export function ChartCanvas({
           setManualRefreshing(false)
         }
       })
-  }, [symbol, replaceBars])
+  }, [symbol, replaceBars, showManualRefreshFeedback])
 
   useEffect(() => {
     let stopped = false
@@ -947,12 +980,24 @@ export function ChartCanvas({
       <div ref={hostRef} className="chart-host"/>
       <div className="chart-drawing-toolbar" onPointerDown={event => event.stopPropagation()}>
         <button
-          className={manualRefreshing ? 'refreshing' : ''}
-          title="刷新当前标的盘中日K"
+          className={manualRefreshing ? 'refreshing' : manualRefreshFeedback ?? ''}
+          title={manualRefreshing
+            ? '正在刷新当前标的盘中日K'
+            : manualRefreshFeedback === 'success'
+              ? '盘中日K刷新完成'
+              : manualRefreshFeedback === 'warning'
+                ? '未获得新盘中日K，已保留现有数据'
+                : '刷新当前标的盘中日K'}
           aria-label="刷新当前标的盘中日K"
           disabled={manualRefreshing}
           onClick={refreshIntradayNow}
-        ><RefreshCw size={13}/></button>
+        >{manualRefreshing
+          ? <RefreshCw size={13}/>
+          : manualRefreshFeedback === 'success'
+          ? <Check size={13}/>
+          : manualRefreshFeedback === 'warning'
+            ? <AlertTriangle size={13}/>
+            : <RefreshCw size={13}/>}</button>
         <button
           className={drawingTool === 'browse' ? 'active' : ''}
           title="浏览并选择趋势线"

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import unittest
-from datetime import date
+from datetime import date, datetime, timezone
 
 from stock_harness.models import (
     BoardMembership,
@@ -11,6 +11,7 @@ from stock_harness.models import (
     Instrument,
     InstrumentKind,
     MarketSnapshot,
+    ProvisionalDailyBar,
 )
 from stock_harness.sqlite_store import SQLiteMarketDataStore
 
@@ -55,6 +56,25 @@ class SQLiteMarketDataStoreTests(unittest.TestCase):
 
         self.assertEqual([row.trade_date for row in rows], [date(2026, 7, 31), date(2026, 8, 1)])
         self.assertEqual([row.volume for row in rows], [200, 300])
+
+    def test_provisional_daily_bars_are_isolated_persistent_and_overwritable(self) -> None:
+        first = ProvisionalDailyBar(
+            "600519.SH", date(2026, 8, 5), 10, 12, 9, 11, 1000, 10000,
+            10, 10, "test", datetime(2026, 8, 5, 10, 0, tzinfo=timezone.utc),
+            datetime(2026, 8, 5, 10, 0, tzinfo=timezone.utc),
+        )
+        updated = ProvisionalDailyBar(
+            "600519.SH", date(2026, 8, 5), 10, 13, 9, 12, 2000, 22000,
+            10, 20, "test", datetime(2026, 8, 5, 10, 1, tzinfo=timezone.utc),
+            datetime(2026, 8, 5, 10, 1, tzinfo=timezone.utc),
+        )
+
+        self.store.upsert_provisional_daily_bars([first])
+        self.store.upsert_provisional_daily_bars([updated])
+
+        stored = self.store.get_latest_provisional_daily_bar("600519.SH")
+        self.assertIsNotNone(stored)
+        self.assertEqual((stored.close, stored.volume, stored.trade_date), (12, 2000, date(2026, 8, 5)))
 
     def test_unknown_instrument_fails_without_partial_write(self) -> None:
         with self.assertRaisesRegex(ValueError, "unknown instruments"):

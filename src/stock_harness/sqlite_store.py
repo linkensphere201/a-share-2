@@ -22,6 +22,7 @@ from stock_harness.models import (
     EtfHolding,
     MarketSnapshot,
     ProviderIncident,
+    ProvisionalDailyBar,
     RepairJob,
     StoredDailyBar,
     SymbolSyncState,
@@ -950,6 +951,96 @@ class SQLiteMarketDataStore:
             )
             for row in rows
         ]
+
+    def get_latest_daily_bar_date(self, symbol: str) -> date | None:
+        with self._lock:
+            row = self._connection.execute(
+                """
+                SELECT max(bar.trade_date)
+                FROM daily_bars AS bar
+                JOIN instruments AS instrument USING (instrument_id)
+                WHERE instrument.symbol = ?
+                """,
+                (symbol.upper(),),
+            ).fetchone()
+        return _date_from_key(int(row[0])) if row and row[0] is not None else None
+
+    def upsert_provisional_daily_bars(
+        self, bars: Sequence[ProvisionalDailyBar]
+    ) -> int:
+        if not bars:
+            return 0
+        for bar in bars:
+            DailyBar(
+                bar.symbol, bar.trade_date, bar.open, bar.high, bar.low, bar.close, bar.volume
+            ).validate()
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        rows = [
+            (
+                bar.symbol.upper(), _date_key(bar.trade_date), bar.open, bar.high, bar.low,
+                bar.close, bar.volume, bar.amount, bar.previous_close, bar.change_percent,
+                bar.source, bar.provider_time.isoformat(), bar.received_at.isoformat(), now_ms,
+            )
+            for bar in bars
+        ]
+        with self._lock, self._transaction():
+            self._connection.executemany(
+                """
+                INSERT INTO intraday_daily_bars(
+                    symbol, trade_date, open, high, low, close, volume, amount,
+                    previous_close, change_percent, source, provider_time,
+                    received_at, updated_at_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(symbol, trade_date) DO UPDATE SET
+                    open = excluded.open,
+                    high = excluded.high,
+                    low = excluded.low,
+                    close = excluded.close,
+                    volume = excluded.volume,
+                    amount = excluded.amount,
+                    previous_close = excluded.previous_close,
+                    change_percent = excluded.change_percent,
+                    source = excluded.source,
+                    provider_time = excluded.provider_time,
+                    received_at = excluded.received_at,
+                    updated_at_ms = excluded.updated_at_ms
+                """,
+                rows,
+            )
+        return len(rows)
+
+    def get_latest_provisional_daily_bar(
+        self, symbol: str
+    ) -> ProvisionalDailyBar | None:
+        with self._lock:
+            row = self._connection.execute(
+                """
+                SELECT symbol, trade_date, open, high, low, close, volume, amount,
+                       previous_close, change_percent, source, provider_time, received_at
+                FROM intraday_daily_bars
+                WHERE symbol = ?
+                ORDER BY trade_date DESC
+                LIMIT 1
+                """,
+                (symbol.upper(),),
+            ).fetchone()
+        if row is None:
+            return None
+        return ProvisionalDailyBar(
+            symbol=str(row[0]),
+            trade_date=_date_from_key(int(row[1])),
+            open=float(row[2]),
+            high=float(row[3]),
+            low=float(row[4]),
+            close=float(row[5]),
+            volume=int(row[6]),
+            amount=float(row[7]),
+            previous_close=float(row[8]),
+            change_percent=float(row[9]),
+            source=str(row[10]),
+            provider_time=datetime.fromisoformat(str(row[11])),
+            received_at=datetime.fromisoformat(str(row[12])),
+        )
 
     def list_custom_groups(self, query: str = "") -> list[dict[str, object]]:
         with self._lock:

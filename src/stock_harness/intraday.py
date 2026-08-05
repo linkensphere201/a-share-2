@@ -27,6 +27,16 @@ class IntradayQuoteProvider(Protocol):
     def fetch(self, symbols: Sequence[str]) -> Sequence[ProvisionalDailyBar]: ...
 
 
+class IntradayBarRepository(Protocol):
+    def upsert_provisional_daily_bars(
+        self, bars: Sequence[ProvisionalDailyBar]
+    ) -> int: ...
+
+    def get_latest_provisional_daily_bar(
+        self, symbol: str
+    ) -> ProvisionalDailyBar | None: ...
+
+
 class EastmoneySelectedQuoteProvider:
     """Lightweight selected-symbol adapter for the endpoint used by AKShare quotes."""
 
@@ -166,12 +176,14 @@ class IntradayQuoteService:
         settings: IntradaySettings,
         trading_day: Callable[[date], bool],
         provider: IntradayQuoteProvider | None = None,
+        repository: IntradayBarRepository | None = None,
     ) -> None:
         self.settings = settings
         self._trading_day = trading_day
         self._provider = provider or FallbackSelectedQuoteProvider(
             settings.request_timeout_seconds
         )
+        self._repository = repository
         self._stop = threading.Event()
         self._wake = threading.Event()
         self._lock = threading.RLock()
@@ -190,6 +202,7 @@ class IntradayQuoteService:
         self._circuit_open_until: datetime | None = None
         self._unsupported_symbols: tuple[str, ...] = ()
         self._missing_symbols: tuple[str, ...] = ()
+        self._warning_last_at: dict[str, datetime] = {}
 
     def start(self) -> None:
         if self.settings.enabled and not self._thread.is_alive():
@@ -217,8 +230,6 @@ class IntradayQuoteService:
                 symbol for symbol in normalized
                 if hasattr(self._provider, "supports") and not self._provider.supports(symbol)  # type: ignore[attr-defined]
             )
-            for removed in previous - current:
-                self._cache.pop(removed, None)
             added_count = len(current - previous)
             removed_count = len(previous - current)
         LOGGER.info(
@@ -237,6 +248,18 @@ class IntradayQuoteService:
         now = now or datetime.now(CHINA_TIME)
         with self._lock:
             bar = self._cache.get(symbol.upper())
+        if bar is None and self._repository is not None:
+            try:
+                bar = self._repository.get_latest_provisional_daily_bar(symbol.upper())
+                if bar is not None:
+                    with self._lock:
+                        self._cache[bar.symbol] = bar
+            except Exception as exc:
+                if self._warning_allowed(f"storage-read:{symbol.upper()}", now):
+                    LOGGER.warning(
+                        "intraday_storage_read_failed symbol=%s error=%s",
+                        symbol.upper(), exc, exc_info=True,
+                    )
         if bar is None:
             return None
         age_seconds = max(0.0, (now - bar.received_at).total_seconds())
@@ -297,15 +320,18 @@ class IntradayQuoteService:
             circuit_open_until = self._circuit_open_until
         if not self.settings.enabled:
             self._set_state("disabled")
+            self._warn_manual_skip("disabled", symbols, now, track_missing)
             return
         if not symbols:
             self._set_state("idle")
             return
         if not is_market_polling_time(now) or not self._trading_day(now.date()):
             self._set_state("market_closed")
+            self._warn_manual_skip("market_closed", symbols, now, track_missing)
             return
         if circuit_open_until is not None and now < circuit_open_until:
             self._set_state("circuit_open")
+            self._warn_manual_skip("circuit_open", symbols, now, track_missing)
             return
         with self._lock:
             self._state = "refreshing"
@@ -317,23 +343,44 @@ class IntradayQuoteService:
             )
             if not requested:
                 self._set_state("unsupported")
+                self._warn_manual_skip("unsupported", symbols, now, track_missing)
                 return
             bars = self._provider.fetch(requested)
             received = {bar.symbol: bar for bar in bars}
+            persistence_error: Exception | None = None
+            if received and self._repository is not None:
+                try:
+                    self._repository.upsert_provisional_daily_bars(tuple(received.values()))
+                except Exception as exc:
+                    persistence_error = exc
+                    if self._warning_allowed("storage-write", now):
+                        LOGGER.warning(
+                            "intraday_storage_write_failed symbols=%s error=%s",
+                            len(received), exc, exc_info=True,
+                        )
             with self._lock:
                 previous_missing = self._missing_symbols
                 if track_missing:
                     self._missing_symbols = tuple(sorted(set(requested) - set(received)))
                 self._cache.update(received)
                 self._last_success_at = now
-                self._last_error = None
+                self._last_error = str(persistence_error) if persistence_error else None
                 self._consecutive_failures = 0
                 self._circuit_open_until = None
-                self._state = "ready" if len(received) == len(requested) else "partial"
+                self._state = (
+                    "ready"
+                    if len(received) == len(requested) and persistence_error is None
+                    else "partial"
+                )
             missing_symbols = tuple(sorted(set(requested) - set(received)))
             missing = len(missing_symbols)
             if missing:
-                if not track_missing or self._missing_symbols != previous_missing:
+                if (
+                    (not track_missing or self._missing_symbols != previous_missing)
+                    and self._warning_allowed(
+                        f"{'poll' if track_missing else 'manual'}:partial", now
+                    )
+                ):
                     LOGGER.warning(
                         "intraday_partial provider=%s requested=%s received=%s missing=%s manual=%s",
                         self._provider.code, len(requested), len(received), missing, not track_missing,
@@ -355,11 +402,14 @@ class IntradayQuoteService:
                         seconds=self.settings.circuit_breaker_seconds
                     )
                     self._state = "circuit_open"
-            LOGGER.warning(
-                "intraday_refresh_failed provider=%s symbols=%s failures=%s error=%s",
-                self._provider.code, len(symbols), self._consecutive_failures, exc,
-                exc_info=True,
-            )
+            if self._warning_allowed(
+                f"{'poll' if track_missing else 'manual'}:error", now
+            ):
+                LOGGER.warning(
+                    "intraday_refresh_failed provider=%s symbols=%s failures=%s manual=%s error=%s",
+                    self._provider.code, len(symbols), self._consecutive_failures,
+                    not track_missing, exc, exc_info=True,
+                )
 
     def _run(self) -> None:
         while not self._stop.is_set():
@@ -372,6 +422,29 @@ class IntradayQuoteService:
     def _set_state(self, value: str) -> None:
         with self._lock:
             self._state = value
+
+    def _warn_manual_skip(
+        self,
+        state: str,
+        symbols: tuple[str, ...],
+        now: datetime,
+        track_missing: bool,
+    ) -> None:
+        if track_missing or not symbols:
+            return
+        if self._warning_allowed(f"manual:{state}", now):
+            LOGGER.warning(
+                "intraday_manual_refresh_skipped state=%s symbols=%s",
+                state, ",".join(symbols[:10]),
+            )
+
+    def _warning_allowed(self, key: str, now: datetime) -> bool:
+        with self._lock:
+            previous = self._warning_last_at.get(key)
+            if previous is not None and (now - previous).total_seconds() < 60:
+                return False
+            self._warning_last_at[key] = now
+            return True
 
 
 def is_market_polling_time(now: datetime) -> bool:

@@ -456,6 +456,8 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .chart-drawing-toolbar button.active { background: #31465d; color: #dbeaff; }
 .chart-drawing-toolbar button:disabled { color: #46515e; }
 .chart-drawing-toolbar button.refreshing svg { animation: chart-refresh-spin .8s linear infinite; }
+.chart-drawing-toolbar button.success { color: #62bb8c; }
+.chart-drawing-toolbar button.warning { color: #d8aa5d; }
 @keyframes chart-refresh-spin { to { transform: rotate(360deg); } }
 .trend-line-manager {
   position: absolute;
