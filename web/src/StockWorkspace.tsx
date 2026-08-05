@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Activity, BarChart3, FolderKanban, LayoutGrid, MessageSquare, PanelRightClose, RefreshCw, Settings2 } from 'lucide-react'
 import type { PriceMode, VisibleRange } from './ChartCanvas'
 import { InstrumentEditor } from './InstrumentEditor'
+import { IntradaySubscriptionCoordinator, sendIntradaySubscription } from './intradaySubscription'
 import { logInfo, logWarning } from './eventLogger'
 import { LayoutManager } from './LayoutManager'
 import { RuntimeEventBar } from './RuntimeEventBar'
@@ -35,41 +36,39 @@ export function StockWorkspace() {
     [activeGroup, resolvedWindowSymbols],
   )
   const referencedSymbolsKey = referencedSymbols.join('|')
+  const subscriptionCoordinatorRef = useRef<IntradaySubscriptionCoordinator | undefined>(undefined)
+
+  useEffect(() => {
+    const coordinator = new IntradaySubscriptionCoordinator(
+      sendIntradaySubscription,
+      {
+        onSuccess: (status, subscription) => logInfo('intraday', '活动窗体组行情订阅已更新', {
+          group: subscription.groupId,
+          symbols: status.symbol_count ?? subscription.symbols.length,
+        }),
+        onFailure: (error, failures, subscription) => {
+          if (failures === 1 || failures % 6 === 0) {
+            logWarning('intraday', '活动窗体组行情订阅失败，将自动重试', {
+              group: subscription.groupId,
+              error,
+            })
+          }
+        },
+      },
+    )
+    subscriptionCoordinatorRef.current = coordinator
+    return () => {
+      coordinator.dispose()
+      if (subscriptionCoordinatorRef.current === coordinator) {
+        subscriptionCoordinatorRef.current = undefined
+      }
+    }
+  }, [])
 
   useEffect(() => saveWorkspace(workspace), [workspace])
 
   useEffect(() => {
-    let stopped = false
-    let retryTimer = 0
-    let failures = 0
-    const synchronize = () => {
-      fetch('/api/intraday/subscription', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ group_id: activeGroup.id, symbols: referencedSymbols }),
-      }).then(response => {
-        if (!response.ok) throw new Error(`HTTP ${response.status}`)
-        return response.json() as Promise<{ state: string; symbol_count?: number }>
-      }).then(status => {
-        failures = 0
-        logInfo('intraday', '活动窗体组行情订阅已更新', {
-          group: activeGroup.id,
-          symbols: status.symbol_count ?? referencedSymbols.length,
-        })
-      }).catch(error => {
-        if (stopped) return
-        failures += 1
-        if (failures === 1 || failures % 6 === 0) {
-          logWarning('intraday', '活动窗体组行情订阅失败，将自动重试', { group: activeGroup.id, error })
-        }
-        retryTimer = window.setTimeout(synchronize, 5000)
-      })
-    }
-    synchronize()
-    return () => {
-      stopped = true
-      window.clearTimeout(retryTimer)
-    }
+    subscriptionCoordinatorRef.current?.update({ groupId: activeGroup.id, symbols: referencedSymbols })
   }, [activeGroup.id, referencedSymbolsKey])
 
   const updateActiveGroup = useCallback((update: (group: WindowGroupState) => WindowGroupState) => {
