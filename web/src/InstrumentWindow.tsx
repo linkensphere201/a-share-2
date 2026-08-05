@@ -1,9 +1,11 @@
 import { Maximize2, Minimize2, Pencil, X } from 'lucide-react'
 import { ChartCanvas, type ChartIndicator, type VisibleRange } from './ChartCanvas'
 import type { ChartWindowState } from './workspace'
+import type { ThemeDefinition } from './themeStore'
 
 type InstrumentWindowProps = {
   windowState: ChartWindowState
+  theme: ThemeDefinition
   focused: boolean
   maximized: boolean
   removable: boolean
@@ -19,6 +21,7 @@ type InstrumentWindowProps = {
 
 export function ChartWindow({
   windowState,
+  theme,
   focused,
   maximized,
   removable,
@@ -56,6 +59,7 @@ export function ChartWindow({
       <div className="instrument-window-body" onPointerDown={onFocus}>
         <ChartCanvas
           symbol={instrument.symbol}
+          theme={theme}
           range={chart.range}
           priceMode={chart.priceMode}
           volumeVisible={chart.volumeVisible}

@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Activity, BarChart3, FolderKanban, LayoutGrid, MessageSquare, PanelRightClose, RefreshCw, Settings2 } from 'lucide-react'
+import { Activity, BarChart3, FolderKanban, LayoutGrid, MessageSquare, Palette, PanelRightClose, RefreshCw, Settings2 } from 'lucide-react'
 import type { PriceMode, VisibleRange } from './ChartCanvas'
 import { InstrumentEditor } from './InstrumentEditor'
 import { IntradaySubscriptionCoordinator, sendIntradaySubscription } from './intradaySubscription'
 import { logInfo, logWarning } from './eventLogger'
 import { LayoutManager } from './LayoutManager'
 import { RuntimeEventBar } from './RuntimeEventBar'
+import { applyTheme, loadTheme, persistTheme, themes, type ThemeDefinition } from './themeStore'
 import { removeLayoutWindow, updateSplitRatio } from './layoutTree'
 import { WindowGroup } from './WindowGroup'
 import { removeWindowAttachments } from './windowAttachments'
@@ -24,6 +25,7 @@ import {
 
 export function StockWorkspace() {
   const [workspace, setWorkspace] = useState<WorkspaceState>(loadWorkspace)
+  const [theme, setTheme] = useState<ThemeDefinition>(loadTheme)
   const [chatOpen, setChatOpen] = useState(true)
   const [layoutManagerOpen, setLayoutManagerOpen] = useState(false)
   const [instrumentEditor, setInstrumentEditor] = useState<{ windowId?: string; tab: 'instruments' | 'groups' }>()
@@ -66,6 +68,7 @@ export function StockWorkspace() {
   }, [])
 
   useEffect(() => saveWorkspace(workspace), [workspace])
+  useEffect(() => applyTheme(theme), [theme])
 
   useEffect(() => {
     subscriptionCoordinatorRef.current?.update({ groupId: activeGroup.id, symbols: referencedSymbols })
@@ -224,6 +227,17 @@ export function StockWorkspace() {
                 ))}
               </div>
             )}
+            <label className="theme-picker" title="主题配色">
+              <Palette size={14}/>
+              <select aria-label="主题配色" value={theme.id} onChange={event => {
+                const next = themes.find(item => item.id === event.target.value) ?? theme
+                persistTheme(next)
+                setTheme(next)
+                logInfo('theme', '工作台主题已切换', { theme: next.id })
+              }}>
+                {themes.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+              </select>
+            </label>
             <button className="command-button layout-entry" title="布局管理" aria-label="布局管理" onClick={() => setLayoutManagerOpen(true)}><Settings2 size={15}/>布局管理</button>
             <button className="icon-button" title="标的与自选集合" aria-label="标的与自选集合" onClick={() => setInstrumentEditor({ tab: 'groups' })}><FolderKanban size={16}/></button>
             <button
@@ -270,6 +284,7 @@ export function StockWorkspace() {
         </div>
         <WindowGroup
           group={activeGroup}
+          theme={theme}
           onFocusWindow={id => updateActiveGroup(group => ({ ...group, focusedWindowId: id }))}
           onToggleMaximize={id => updateActiveGroup(group => ({
             ...group,

@@ -79,3 +79,17 @@ def test_subscription_removes_unreferenced_cached_symbols():
 
     assert service.get("600519.SH") is None
     assert service.status()["symbol_count"] == 1
+
+
+def test_manual_refresh_fetches_only_requested_symbols_without_changing_subscription():
+    provider = FakeProvider()
+    service = IntradayQuoteService(_settings(), lambda _day: True, provider)
+    service.subscribe("group-1", ["600519.SH", "000001.SZ"])
+
+    items = service.refresh_symbols(
+        ["510300.SH"], datetime(2026, 8, 4, 14, 30, tzinfo=CHINA_TIME)
+    )
+
+    assert provider.calls == [("510300.SH",)]
+    assert [item["symbol"] for item in items] == ["510300.SH"]
+    assert service.status()["symbol_count"] == 2

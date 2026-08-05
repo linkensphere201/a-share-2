@@ -233,6 +233,10 @@ class _FakeIntradayService:
         item = self.get(next(iter(symbols), ""))
         return [item] if item else []
 
+    def refresh_symbols(self, symbols):
+        self.refreshed = list(symbols)
+        return self.list(symbols)
+
     def get(self, symbol):
         if symbol != "BK1128.DC":
             return None
@@ -269,6 +273,19 @@ def test_intraday_subscription_expands_custom_groups_and_merges_provisional_bar(
     assert service.subscribed == ["300308.SZ", "BK1128.DC"]
     assert [item["bar_state"] for item in bars.json()["items"]] == ["final", "intraday"]
     assert bars.json()["items"][-1]["close"] == 12
+
+
+def test_intraday_manual_refresh_targets_requested_chart_symbol():
+    store, _ = _client()
+    service = _FakeIntradayService()
+    client = TestClient(create_app(store, intraday_service=service))
+    with client:
+        response = client.post("/api/intraday/refresh", json={"symbols": ["BK1128.DC"]})
+    store.close()
+
+    assert response.status_code == 200
+    assert service.refreshed == ["BK1128.DC"]
+    assert response.json()["items"][0]["source"] == "test_live"
 
 
 def test_frontend_warning_is_available_in_runtime_event_feed():

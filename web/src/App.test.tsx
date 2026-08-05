@@ -47,10 +47,23 @@ describe('StockWorkspace', () => {
     expect(within(chartWindow).queryByText('表2')).toBeNull()
     expect(screen.getByText('2/8')).toBeTruthy()
     expect(screen.getByRole('button', { name: '刷新应用' })).toBeTruthy()
+    expect(screen.getByRole('combobox', { name: '主题配色' }).querySelectorAll('option')).toHaveLength(20)
     expect(screen.getByRole('button', { name: '编辑 表1 标的' })).toBeTruthy()
     expect(screen.queryByRole('button', { name: '编辑 CPO概念 标的' })).toBeNull()
     await user.click(screen.getByRole('button', { name: '收起对话栏' }))
     expect(screen.getByRole('button', { name: '展开对话栏' })).toBeTruthy()
+  })
+
+  it('switches and persists the workstation theme from the outer toolbar', async () => {
+    vi.stubGlobal('fetch', emptyFetch())
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.selectOptions(screen.getByRole('combobox', { name: '主题配色' }), 'peachpuff')
+
+    expect(window.localStorage.getItem('stock-harness.theme.v1')).toBe('peachpuff')
+    expect(document.documentElement.dataset.theme).toBe('peachpuff')
+    expect(document.documentElement.dataset.themeMode).toBe('light')
   })
 
   it('hides volume and MACD from their pane controls and persists both states', async () => {

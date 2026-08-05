@@ -3,9 +3,11 @@ import { ChartWindow } from './InstrumentWindow'
 import { InstrumentListWindow } from './InstrumentListWindow'
 import { SplitLayout } from './SplitLayout'
 import type { Instrument, WindowGroupState } from './workspace'
+import type { ThemeDefinition } from './themeStore'
 
 type WindowGroupProps = {
   group: WindowGroupState
+  theme: ThemeDefinition
   onFocusWindow: (id: string) => void
   onToggleMaximize: (id: string) => void
   onRemoveWindow: (id: string) => void
@@ -22,6 +24,7 @@ type WindowGroupProps = {
 
 export function WindowGroup({
   group,
+  theme,
   onFocusWindow,
   onToggleMaximize,
   onRemoveWindow,
@@ -66,6 +69,7 @@ export function WindowGroup({
     return (
       <ChartWindow
         windowState={item}
+        theme={theme}
         focused={group.focusedWindowId === item.id}
         maximized={group.maximizedWindowId === item.id}
         removable={group.windows.length > 1}

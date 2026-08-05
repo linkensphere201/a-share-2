@@ -175,6 +175,7 @@ class IntradayQuoteService:
         self._stop = threading.Event()
         self._wake = threading.Event()
         self._lock = threading.RLock()
+        self._refresh_lock = threading.Lock()
         self._thread = threading.Thread(
             target=self._run, name="stock-harness-intraday", daemon=True
         )
@@ -271,7 +272,32 @@ class IntradayQuoteService:
         now = now or datetime.now(CHINA_TIME)
         with self._lock:
             symbols = self._symbols
+        with self._refresh_lock:
+            self._refresh_symbols(symbols, now, track_missing=True)
+
+    def refresh_symbols(
+        self, symbols: Iterable[str], now: datetime | None = None
+    ) -> list[dict[str, object]]:
+        normalized = tuple(sorted({item.strip().upper() for item in symbols if item.strip()}))
+        if len(normalized) > self.settings.max_symbols:
+            raise ValueError(f"at most {self.settings.max_symbols} intraday symbols are allowed")
+        now = now or datetime.now(CHINA_TIME)
+        with self._refresh_lock:
+            self._refresh_symbols(normalized, now, track_missing=False)
+        return self.list(normalized)
+
+    def _refresh_symbols(
+        self,
+        symbols: tuple[str, ...],
+        now: datetime,
+        *,
+        track_missing: bool,
+    ) -> None:
+        with self._lock:
             circuit_open_until = self._circuit_open_until
+        if not self.settings.enabled:
+            self._set_state("disabled")
+            return
         if not symbols:
             self._set_state("idle")
             return
@@ -296,24 +322,29 @@ class IntradayQuoteService:
             received = {bar.symbol: bar for bar in bars}
             with self._lock:
                 previous_missing = self._missing_symbols
-                self._missing_symbols = tuple(sorted(set(requested) - set(received)))
+                if track_missing:
+                    self._missing_symbols = tuple(sorted(set(requested) - set(received)))
                 self._cache.update(received)
                 self._last_success_at = now
                 self._last_error = None
                 self._consecutive_failures = 0
                 self._circuit_open_until = None
                 self._state = "ready" if len(received) == len(requested) else "partial"
-            missing = len(requested) - len(received)
+            missing_symbols = tuple(sorted(set(requested) - set(received)))
+            missing = len(missing_symbols)
             if missing:
-                if self._missing_symbols != previous_missing:
+                if not track_missing or self._missing_symbols != previous_missing:
                     LOGGER.warning(
-                        "intraday_partial provider=%s requested=%s received=%s missing=%s",
-                        self._provider.code, len(requested), len(received), missing,
+                        "intraday_partial provider=%s requested=%s received=%s missing=%s manual=%s",
+                        self._provider.code, len(requested), len(received), missing, not track_missing,
                     )
             else:
-                if previous_missing:
+                if track_missing and previous_missing:
                     LOGGER.info("intraday_missing_symbols_recovered count=%s", len(previous_missing))
-                LOGGER.info("intraday_refresh_ok provider=%s symbols=%s", self._provider.code, len(received))
+                LOGGER.info(
+                    "intraday_refresh_ok provider=%s symbols=%s manual=%s",
+                    self._provider.code, len(received), not track_missing,
+                )
         except Exception as exc:
             with self._lock:
                 self._consecutive_failures += 1

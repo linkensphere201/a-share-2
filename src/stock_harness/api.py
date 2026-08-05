@@ -43,6 +43,10 @@ class IntradaySubscriptionInput(BaseModel):
     symbols: list[str] = Field(default_factory=list, max_length=5000)
 
 
+class IntradayRefreshInput(BaseModel):
+    symbols: list[str] = Field(min_length=1, max_length=5000)
+
+
 class FrontendEventInput(BaseModel):
     level: Literal["WARNING", "ERROR"]
     logger: str = Field(default="app", max_length=100)
@@ -143,6 +147,16 @@ def create_app(
             return {"items": [], "status": {"state": "disabled", "enabled": False}}
         normalized = [item.upper() for item in symbol]
         return {"items": intraday_service.list(normalized), "status": intraday_service.status()}
+
+    @app.post("/api/intraday/refresh")
+    def intraday_refresh(payload: IntradayRefreshInput) -> dict[str, object]:
+        if intraday_service is None:
+            return {"items": [], "status": {"state": "disabled", "enabled": False}}
+        try:
+            items = intraday_service.refresh_symbols(payload.symbols)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return {"items": items, "status": intraday_service.status()}
 
     @app.get("/api/instruments")
     def instruments(

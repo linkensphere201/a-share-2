@@ -4,6 +4,18 @@
   background: #0d1014;
   font-synthesis: none;
   letter-spacing: 0;
+  --theme-base: #0d1014;
+  --theme-surface: #11151b;
+  --theme-surface-alt: #181f28;
+  --theme-raised: #191e25;
+  --theme-hover: #252b34;
+  --theme-border: #303743;
+  --theme-border-strong: #46505e;
+  --theme-text: #d8dde6;
+  --theme-text-strong: #f0f3f7;
+  --theme-muted: #788493;
+  --theme-accent: #4b84c6;
+  --theme-accent-soft: #31465d;
 }
 
 * { box-sizing: border-box; }
@@ -115,6 +127,28 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
   color: #c6ccd5;
   font-size: 11px;
 }
+.theme-picker {
+  height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 5px 0 7px;
+  border: 1px solid var(--theme-border);
+  border-radius: 4px;
+  background: var(--theme-raised);
+  color: var(--theme-muted);
+}
+.theme-picker:focus-within { border-color: var(--theme-accent); }
+.theme-picker select {
+  width: 82px;
+  height: 26px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--theme-text);
+  font-size: 10px;
+}
+.theme-picker option { color: var(--theme-text); background: var(--theme-raised); }
 .workspace-identity { min-width: 0; display: flex; align-items: center; gap: 16px; }
 .workspace-brand { flex: 0 0 auto; display: flex; align-items: center; gap: 7px; color: #f0f3f7; }
 .workspace-brand strong { font-size: 13px; }
@@ -421,6 +455,8 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .chart-drawing-toolbar button:hover:not(:disabled) { background: #27303a; color: #fff; }
 .chart-drawing-toolbar button.active { background: #31465d; color: #dbeaff; }
 .chart-drawing-toolbar button:disabled { color: #46515e; }
+.chart-drawing-toolbar button.refreshing svg { animation: chart-refresh-spin .8s linear infinite; }
+@keyframes chart-refresh-spin { to { transform: rotate(360deg); } }
 .trend-line-manager {
   position: absolute;
   z-index: 10;
@@ -698,6 +734,54 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
   font-size: 11px;
 }
 .chat-input button { width: 30px; border: 1px solid #303743; border-radius: 4px; background: #222831; color: #5f6975; }
+
+/* Runtime theme bridge. Market direction and indicator colors remain semantic. */
+body, .workstation, .layout-manager, .layout-preview, .window-group, .list-window-body,
+.instrument-editor-results { color: var(--theme-text); background: var(--theme-base); }
+.toolbar, .market-strip, .statusbar, .instrument-window-header, .symbol-rail, .chat-panel,
+.group-sidebar, .layout-inspector, .instrument-editor-modal, .custom-group-modal,
+.instrument-browser, .trend-line-manager, .chart-range-menu, .runtime-event-panel {
+  color: var(--theme-text);
+  background: var(--theme-surface);
+  border-color: var(--theme-border);
+}
+.layout-manager-header, .layout-editor-toolbar, .instrument-editor-modal > header,
+.instrument-editor-tabs, .instrument-editor-modal > footer, .custom-group-modal > header,
+.runtime-event-panel > header, .chart-drawing-toolbar, .chart-measurement-readout {
+  color: var(--theme-text);
+  background: var(--theme-surface-alt);
+  border-color: var(--theme-border);
+}
+.icon-button, .command-button, .toolbar-actions > select, .search,
+.new-group-form input, .new-group-form select, .layout-editor-toolbar input,
+.window-inspector input, .window-inspector select, .segmented-control,
+.add-window-grid button, .coordinate-tabs, .indicator-tabs,
+.instrument-editor-search > label, .custom-group-fields input,
+.custom-member-row input, .custom-member-search > label, .chat-input input {
+  color: var(--theme-text);
+  background: var(--theme-raised);
+  border-color: var(--theme-border);
+}
+.scope-tabs button, .range-tabs button, .coordinate-tabs button, .indicator-tabs button,
+.instrument-window-actions button, .chart-drawing-toolbar button, .trend-line-manager button,
+.instrument-editor-tabs button, .instrument-browser-filters button { color: var(--theme-muted); }
+.scope-tabs button.active, .range-tabs button.active, .coordinate-tabs button.active,
+.indicator-tabs button.active, .segmented-control button.active,
+.chart-drawing-toolbar button.active { color: var(--theme-text-strong); background: var(--theme-accent-soft); }
+.instrument-row:hover, .instrument-row.active, .group-list > button:hover,
+.group-list > button.active, .list-window-row:hover, .list-window-row.selected,
+.instrument-editor-results > button:hover:not(:disabled), .custom-member-results > button:hover:not(:disabled),
+.trend-line-item:hover, .trend-line-item.selected { background: var(--theme-hover); }
+.instrument-window.focused, .group-list > button.active, .list-window-row.selected {
+  box-shadow: inset 2px 0 var(--theme-accent);
+}
+.split-divider:hover, .split-divider:active { background: var(--theme-accent); }
+.workspace-brand, .instrument-window-title, .panel-heading strong,
+.list-window-select strong { color: var(--theme-text-strong); }
+.security small, .instrument-window-title small, .list-window-select small,
+.list-state, .window-count, .instrument-result-identity small,
+.instrument-editor-summary span { color: var(--theme-muted); }
+.chart-stage { background: var(--theme-base); }
 
 @media (max-width: 1100px) {
   .toolbar { min-width: 0; overflow: hidden; }

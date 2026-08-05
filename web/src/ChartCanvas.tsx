@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
-import { Eye, EyeOff, MousePointer2, PencilLine, Percent, Settings2, Trash2, X, ZoomIn } from 'lucide-react'
+import { Eye, EyeOff, MousePointer2, PencilLine, Percent, RefreshCw, Settings2, Trash2, X, ZoomIn } from 'lucide-react'
 import { logInfo, logWarning } from './eventLogger'
 import {
   createTrendLine,
@@ -12,6 +12,7 @@ import {
   type TrendLineDrawing,
 } from './drawingStore'
 import { barsInRenderPeriod, chooseAnchor, type LineGeometry } from './trendLines'
+import type { ThemeDefinition } from './themeStore'
 import {
   projectMarketAnnotations,
   projectMeasurement,
@@ -90,6 +91,7 @@ type DrawingDrag = {
 
 type ChartCanvasProps = {
   symbol: string
+  theme: ThemeDefinition
   range: ChartRange
   priceMode: PriceMode
   volumeVisible: boolean
@@ -128,6 +130,7 @@ export const compactCrosshairMarkerOptions = {
 
 export function ChartCanvas({
   symbol,
+  theme,
   range,
   priceMode,
   volumeVisible,
@@ -180,6 +183,9 @@ export function ChartCanvas({
   const [drawingManagerOpen, setDrawingManagerOpen] = useState(false)
   const [overlayRevision, setOverlayRevision] = useState(0)
   const liveFailureCountRef = useRef(0)
+  const initialTheme = useRef(theme).current
+  const manualRefreshControllerRef = useRef<AbortController | undefined>(undefined)
+  const [manualRefreshing, setManualRefreshing] = useState(false)
 
   const averages = useMemo(() => ({
     ma5: movingAverage(bars, 5),
@@ -215,22 +221,53 @@ export function ChartCanvas({
   }, [])
 
   useEffect(() => {
-    if (!hostRef.current) return
-    const chart = createChart(hostRef.current, {
-      autoSize: true,
-      layout: chartLayoutOptions,
+    chartRef.current?.applyOptions({
+      layout: {
+        ...chartLayoutOptions,
+        background: { type: ColorType.Solid, color: theme.colors.chartBackground },
+        textColor: theme.colors.text,
+        panes: { separatorColor: theme.colors.border, separatorHoverColor: theme.colors.accent },
+      },
       grid: {
-        vertLines: { color: '#1c222a' },
-        horzLines: { color: '#1c222a' },
+        vertLines: { color: theme.colors.chartGrid },
+        horzLines: { color: theme.colors.chartGrid },
       },
       crosshair: {
         mode: CrosshairMode.Normal,
-        vertLine: { color: '#687383', labelBackgroundColor: '#303743' },
-        horzLine: { color: '#687383', labelBackgroundColor: '#303743' },
+        vertLine: { color: theme.colors.crosshair, labelBackgroundColor: theme.colors.raised },
+        horzLine: { color: theme.colors.crosshair, labelBackgroundColor: theme.colors.raised },
       },
-      rightPriceScale: { borderColor: '#303743', scaleMargins: calculatePriceScaleMargins(0, 1) },
+      rightPriceScale: { borderColor: theme.colors.border },
+      timeScale: { borderColor: theme.colors.border },
+    })
+  }, [theme])
+
+  useEffect(() => {
+    if (!hostRef.current) return
+    const chart = createChart(hostRef.current, {
+      autoSize: true,
+      layout: {
+        ...chartLayoutOptions,
+        background: { type: ColorType.Solid, color: initialTheme.colors.chartBackground },
+        textColor: initialTheme.colors.text,
+        panes: {
+          ...chartLayoutOptions.panes,
+          separatorColor: initialTheme.colors.border,
+          separatorHoverColor: initialTheme.colors.accent,
+        },
+      },
+      grid: {
+        vertLines: { color: initialTheme.colors.chartGrid },
+        horzLines: { color: initialTheme.colors.chartGrid },
+      },
+      crosshair: {
+        mode: CrosshairMode.Normal,
+        vertLine: { color: initialTheme.colors.crosshair, labelBackgroundColor: initialTheme.colors.raised },
+        horzLine: { color: initialTheme.colors.crosshair, labelBackgroundColor: initialTheme.colors.raised },
+      },
+      rightPriceScale: { borderColor: initialTheme.colors.border, scaleMargins: calculatePriceScaleMargins(0, 1) },
       timeScale: {
-        borderColor: '#303743',
+        borderColor: initialTheme.colors.border,
         rightOffset: 3,
         minBarSpacing: 0.08,
         timeVisible: false,
@@ -473,6 +510,55 @@ export function ChartCanvas({
         }
       })
     return () => controller.abort()
+  }, [symbol, replaceBars])
+
+  useEffect(() => () => manualRefreshControllerRef.current?.abort(), [symbol])
+
+  const refreshIntradayNow = useCallback(() => {
+    manualRefreshControllerRef.current?.abort()
+    const controller = new AbortController()
+    manualRefreshControllerRef.current = controller
+    setManualRefreshing(true)
+    fetch('/api/intraday/refresh', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ symbols: [symbol] }),
+      signal: controller.signal,
+    })
+      .then(response => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`)
+        return response.json() as Promise<{
+          items: DailyBar[]
+          status: { state: string; last_error?: string }
+        }>
+      })
+      .then(body => {
+        const live = body.items[0]
+        if (live) replaceBars(mergeProvisionalBar(barsRef.current, live), true)
+        if (body.status.state === 'error' || body.status.state === 'circuit_open') {
+          logWarning('intraday', '手动刷新盘中临时日K失败，保留现有图表', {
+            symbol,
+            state: body.status.state,
+            error: body.status.last_error,
+          })
+          return
+        }
+        logInfo('intraday', live ? '手动刷新盘中临时日K完成' : '当前无可用盘中临时日K', {
+          symbol,
+          state: body.status.state,
+        })
+      })
+      .catch(error => {
+        if ((error as Error).name !== 'AbortError') {
+          logWarning('intraday', '手动刷新盘中临时日K失败，保留现有图表', { symbol, error })
+        }
+      })
+      .finally(() => {
+        if (manualRefreshControllerRef.current === controller) {
+          manualRefreshControllerRef.current = undefined
+          setManualRefreshing(false)
+        }
+      })
   }, [symbol, replaceBars])
 
   useEffect(() => {
@@ -860,6 +946,13 @@ export function ChartCanvas({
     >
       <div ref={hostRef} className="chart-host"/>
       <div className="chart-drawing-toolbar" onPointerDown={event => event.stopPropagation()}>
+        <button
+          className={manualRefreshing ? 'refreshing' : ''}
+          title="刷新当前标的盘中日K"
+          aria-label="刷新当前标的盘中日K"
+          disabled={manualRefreshing}
+          onClick={refreshIntradayNow}
+        ><RefreshCw size={13}/></button>
         <button
           className={drawingTool === 'browse' ? 'active' : ''}
           title="浏览并选择趋势线"
