@@ -1,4 +1,4 @@
-import type { DailyBar } from './ChartCanvas'
+import type { DailyBar } from './chartData'
 import type { TrendLineAnchor, TrendLineSnap } from './drawingStore'
 
 export type RenderPeriod = {

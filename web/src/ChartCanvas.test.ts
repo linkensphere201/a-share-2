@@ -1,14 +1,16 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  chartLayoutOptions,
+  compactCrosshairMarkerOptions,
+} from './ChartCanvas'
+import {
   aggregateBars,
   calculateMacd,
   calculatePriceScaleMargins,
   calculateChangePercent,
   candleColor,
-  chartLayoutOptions,
   chooseLodBucket,
-  compactCrosshairMarkerOptions,
   createRangeMeasurement,
   detectPriceGaps,
   movingAverage,
@@ -18,7 +20,7 @@ import {
   visibleUnfilledPriceGaps,
   type DailyBar,
   type PriceGap,
-} from './ChartCanvas'
+} from './chartData'
 
 describe('chart layout', () => {
   it('does not render the TradingView attribution over the chart', () => {
