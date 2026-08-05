@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Activity, BarChart3, FolderKanban, LayoutGrid, MessageSquare, Palette, PanelRightClose, RefreshCw, Settings2 } from 'lucide-react'
 import type { PriceMode, VisibleRange } from './ChartCanvas'
 import { InstrumentEditor } from './InstrumentEditor'
+import { DailyNote } from './DailyNote'
 import { IntradaySubscriptionCoordinator, sendIntradaySubscription } from './intradaySubscription'
 import { logInfo, logWarning } from './eventLogger'
 import { LayoutManager } from './LayoutManager'
@@ -328,6 +329,7 @@ export function StockWorkspace() {
           <div className="chat-input"><input disabled aria-label="消息"/><button disabled aria-label="发送">›</button></div>
         </aside>
       )}
+      <DailyNote/>
       {instrumentEditor && <InstrumentEditor
         target={activeGroup.windows.find(item => item.id === instrumentEditor.windowId)}
         initialTab={instrumentEditor.tab}

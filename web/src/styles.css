@@ -781,6 +781,92 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 }
 .chat-input button { width: 30px; border: 1px solid #303743; border-radius: 4px; background: #222831; color: #5f6975; }
 
+.daily-note, .daily-note-minimized {
+  position: fixed;
+  z-index: 18;
+  top: 58px;
+  left: 10px;
+  border: 1px solid var(--theme-border-strong);
+  border-radius: 6px;
+  background: var(--theme-surface);
+  color: var(--theme-text);
+  box-shadow: 0 10px 32px #0008;
+}
+.daily-note {
+  width: min(340px, calc(100vw - 20px));
+  height: min(420px, calc(100vh - 88px));
+  display: grid;
+  grid-template-rows: 34px minmax(0, 1fr) auto;
+  overflow: hidden;
+}
+.daily-note > header {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 5px 0 9px;
+  border-bottom: 1px solid var(--theme-border);
+  background: var(--theme-surface-alt);
+}
+.daily-note-title { display: flex; align-items: center; gap: 5px; color: var(--theme-text-strong); white-space: nowrap; }
+.daily-note-title strong { font-size: 10px; }
+.daily-note-date-controls, .daily-note-actions { display: flex; align-items: center; gap: 1px; }
+.daily-note-date-controls { margin-left: auto; }
+.daily-note-actions { padding-left: 3px; border-left: 1px solid var(--theme-border); }
+.daily-note header button, .daily-note-minimized {
+  width: 25px;
+  height: 25px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--theme-muted);
+}
+.daily-note header button:hover:not(:disabled), .daily-note-minimized:hover { background: var(--theme-hover); color: var(--theme-text-strong); }
+.daily-note-date-controls input {
+  width: 92px;
+  height: 24px;
+  padding: 0 3px;
+  border: 0;
+  background: transparent;
+  color: var(--theme-muted);
+  font: 10px Consolas, "Cascadia Mono", monospace;
+  color-scheme: dark;
+}
+.daily-note-body { min-width: 0; min-height: 0; overflow: auto; }
+.daily-note textarea {
+  width: 100%;
+  height: 100%;
+  resize: none;
+  padding: 10px;
+  border: 0;
+  outline: 0;
+  background: var(--theme-base);
+  color: var(--theme-text);
+  font: 11px/1.55 Consolas, "Cascadia Mono", "Microsoft YaHei UI", monospace;
+  letter-spacing: 0;
+}
+.daily-note > footer { display: flex; justify-content: flex-end; gap: 5px; padding: 5px 7px; border-top: 1px solid var(--theme-border); background: var(--theme-surface-alt); }
+.daily-note > footer button { height: 25px; display: flex; align-items: center; gap: 4px; padding: 0 8px; border: 1px solid var(--theme-border); border-radius: 3px; background: var(--theme-raised); color: var(--theme-text); font-size: 10px; }
+.daily-note > footer button.primary { border-color: var(--theme-accent); background: var(--theme-accent-soft); color: var(--theme-text-strong); }
+.daily-note-minimized { box-shadow: 0 6px 18px #0008; background: var(--theme-surface-alt); }
+.daily-note-empty { display: grid; min-height: 100%; place-items: center; color: var(--theme-muted); font: 10px Consolas, "Cascadia Mono", monospace; }
+.markdown-preview { padding: 8px 10px 14px; color: var(--theme-text); font: 11px/1.55 Consolas, "Cascadia Mono", "Microsoft YaHei UI", monospace; overflow-wrap: anywhere; }
+.markdown-preview h1, .markdown-preview h2, .markdown-preview h3 { margin: 8px 0 4px; color: var(--theme-text-strong); line-height: 1.35; }
+.markdown-preview h1 { font-size: 14px; }
+.markdown-preview h2 { font-size: 12px; }
+.markdown-preview h3 { font-size: 11px; }
+.markdown-preview p { margin: 5px 0; }
+.markdown-preview ul, .markdown-preview ol { margin: 5px 0; padding-left: 20px; }
+.markdown-preview blockquote { margin: 6px 0; padding: 2px 7px; border-left: 2px solid var(--theme-accent); color: var(--theme-muted); }
+.markdown-preview pre { overflow: auto; margin: 6px 0; padding: 7px; border: 1px solid var(--theme-border); border-radius: 3px; background: var(--theme-base); }
+.markdown-preview code { padding: 1px 3px; border-radius: 2px; background: var(--theme-raised); color: var(--theme-text-strong); }
+.markdown-preview pre code { padding: 0; background: transparent; }
+.markdown-preview a { color: var(--theme-accent); }
+.markdown-preview hr { border: 0; border-top: 1px solid var(--theme-border); }
+
 /* Runtime theme bridge. Market direction and indicator colors remain semantic. */
 body, .workstation, .layout-manager, .layout-preview, .window-group, .list-window-body,
 .instrument-editor-results { color: var(--theme-text); background: var(--theme-base); }
