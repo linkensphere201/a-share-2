@@ -810,9 +810,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 }
 .daily-note-title { display: flex; align-items: center; gap: 5px; color: var(--theme-text-strong); white-space: nowrap; }
 .daily-note-title strong { font-size: 10px; }
-.daily-note-date-controls, .daily-note-actions { display: flex; align-items: center; gap: 1px; }
-.daily-note-date-controls { margin-left: auto; }
-.daily-note-actions { padding-left: 3px; border-left: 1px solid var(--theme-border); }
+.daily-note-actions { margin-left: auto; display: flex; align-items: center; gap: 1px; padding-left: 3px; border-left: 1px solid var(--theme-border); }
 .daily-note header button, .daily-note-minimized {
   width: 25px;
   height: 25px;
@@ -825,16 +823,6 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
   color: var(--theme-muted);
 }
 .daily-note header button:hover:not(:disabled), .daily-note-minimized:hover { background: var(--theme-hover); color: var(--theme-text-strong); }
-.daily-note-date-controls input {
-  width: 92px;
-  height: 24px;
-  padding: 0 3px;
-  border: 0;
-  background: transparent;
-  color: var(--theme-muted);
-  font: 10px Consolas, "Cascadia Mono", monospace;
-  color-scheme: dark;
-}
 .daily-note-body { min-width: 0; min-height: 0; overflow: auto; }
 .daily-note textarea {
   width: 100%;
@@ -851,7 +839,20 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .daily-note > footer { display: flex; justify-content: flex-end; gap: 5px; padding: 5px 7px; border-top: 1px solid var(--theme-border); background: var(--theme-surface-alt); }
 .daily-note > footer button { height: 25px; display: flex; align-items: center; gap: 4px; padding: 0 8px; border: 1px solid var(--theme-border); border-radius: 3px; background: var(--theme-raised); color: var(--theme-text); font-size: 10px; }
 .daily-note > footer button.primary { border-color: var(--theme-accent); background: var(--theme-accent-soft); color: var(--theme-text-strong); }
-.daily-note-minimized { box-shadow: 0 6px 18px #0008; background: var(--theme-surface-alt); }
+.daily-note-minimized {
+  width: 38px;
+  height: 38px;
+  border: 1px solid color-mix(in srgb, var(--theme-accent) 60%, var(--theme-border));
+  border-radius: 50%;
+  color: var(--theme-text-strong);
+  background: color-mix(in srgb, var(--theme-accent-soft) 78%, var(--theme-surface-alt));
+  box-shadow: 0 7px 22px #0009, inset 0 0 0 3px color-mix(in srgb, var(--theme-surface) 72%, transparent);
+  touch-action: none;
+  transition: left 160ms ease, transform 120ms ease, box-shadow 120ms ease;
+}
+.daily-note-minimized::after { content: ""; position: absolute; right: 5px; bottom: 5px; width: 4px; height: 4px; border-radius: 50%; background: var(--theme-accent); }
+.daily-note-minimized:hover { transform: translateY(-1px); box-shadow: 0 9px 26px #000a, inset 0 0 0 3px color-mix(in srgb, var(--theme-surface) 72%, transparent); }
+.daily-note-minimized.dragging { cursor: grabbing; transition: none; transform: scale(1.04); }
 .daily-note-empty { display: grid; min-height: 100%; place-items: center; color: var(--theme-muted); font: 10px Consolas, "Cascadia Mono", monospace; }
 .markdown-preview { padding: 8px 10px 14px; color: var(--theme-text); font: 11px/1.55 Consolas, "Cascadia Mono", "Microsoft YaHei UI", monospace; overflow-wrap: anywhere; }
 .markdown-preview h1, .markdown-preview h2, .markdown-preview h3 { margin: 8px 0 4px; color: var(--theme-text-strong); line-height: 1.35; }

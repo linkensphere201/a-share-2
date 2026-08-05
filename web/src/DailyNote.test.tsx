@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { DailyNote } from './DailyNote'
-import { dailyNoteStorageKey, localDateKey, shiftDate } from './dailyNoteStore'
+import { dailyNotePositionStorageKey, dailyNoteStorageKey } from './dailyNoteStore'
 
 afterEach(() => {
   cleanup()
@@ -30,7 +30,7 @@ describe('DailyNote', () => {
     expect(screen.getByRole('heading', { name: '复盘' })).toBeTruthy()
   })
 
-  it('cancels drafts, isolates dates, and minimizes to one icon', async () => {
+  it('cancels drafts and minimizes to one draggable icon that snaps left', async () => {
     const user = userEvent.setup()
     render(<DailyNote/>)
 
@@ -39,13 +39,19 @@ describe('DailyNote', () => {
     await user.click(screen.getByRole('button', { name: '取消' }))
     expect(screen.queryByText('未保存')).toBeNull()
 
-    const yesterday = shiftDate(localDateKey(), -1)
-    fireEvent.change(screen.getByLabelText('便签日期'), { target: { value: yesterday } })
-    expect(screen.getByText('暂无内容')).toBeTruthy()
+    expect(screen.queryByLabelText('便签日期')).toBeNull()
 
     await user.click(screen.getByRole('button', { name: '最小化每日便签' }))
     expect(screen.queryByLabelText('每日便签')).toBeNull()
-    await user.click(screen.getByRole('button', { name: '展开每日便签' }))
+    const icon = screen.getByRole('button', { name: '展开每日便签' })
+    fireEvent.pointerDown(icon, { pointerId: 1, button: 0, clientX: 20, clientY: 70 })
+    fireEvent.pointerMove(icon, { pointerId: 1, clientX: 120, clientY: 220 })
+    fireEvent.pointerUp(icon, { pointerId: 1, clientX: 120, clientY: 220 })
+    expect(icon.style.left).toBe('10px')
+    expect(icon.style.top).toBe('208px')
+    expect(window.localStorage.getItem(dailyNotePositionStorageKey)).toContain('208')
+
+    await user.click(icon)
     expect(screen.getByLabelText('每日便签')).toBeTruthy()
   })
 })

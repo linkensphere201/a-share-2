@@ -1,23 +1,45 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it } from 'vitest'
-import { dailyNoteStorageKey, loadDailyNote, saveDailyNote, shiftDate } from './dailyNoteStore'
+import {
+  dailyNotePositionStorageKey,
+  dailyNoteStorageKey,
+  legacyDailyNoteStorageKey,
+  loadDailyNote,
+  loadDailyNoteTop,
+  saveDailyNote,
+  saveDailyNoteTop,
+} from './dailyNoteStore'
 
 afterEach(() => window.localStorage.clear())
 
 describe('dailyNoteStore', () => {
-  it('keeps notes separate by local calendar date', () => {
-    saveDailyNote('2026-08-05', '分歧日')
-    saveDailyNote('2026-08-06', '核心确认')
+  it('persists one global note', () => {
+    saveDailyNote('核心确认')
 
-    expect(loadDailyNote('2026-08-05')).toBe('分歧日')
-    expect(loadDailyNote('2026-08-06')).toBe('核心确认')
-    expect(loadDailyNote('2026-08-07')).toBe('')
+    expect(loadDailyNote()).toBe('核心确认')
+    expect(window.localStorage.getItem(dailyNoteStorageKey)).toContain('核心确认')
   })
 
-  it('recovers from corrupt storage and shifts dates across month boundaries', () => {
+  it('migrates the most recently updated legacy dated note', () => {
+    window.localStorage.setItem(legacyDailyNoteStorageKey, JSON.stringify({
+      version: 1,
+      notes: {
+        '2020-01-01': { content: '旧内容', updatedAt: '2026-08-01T10:00:00Z' },
+        '2020-01-02': { content: '最新内容', updatedAt: '2026-08-02T10:00:00Z' },
+      },
+    }))
+
+    expect(loadDailyNote()).toBe('最新内容')
+    expect(window.localStorage.getItem(dailyNoteStorageKey)).toContain('最新内容')
+  })
+
+  it('recovers defaults and persists the minimized top position', () => {
     window.localStorage.setItem(dailyNoteStorageKey, '{bad json')
-    expect(loadDailyNote('2026-08-06')).toBe('')
-    expect(shiftDate('2026-08-01', -1)).toBe('2026-07-31')
+    window.localStorage.setItem(dailyNotePositionStorageKey, '{bad json')
+    expect(loadDailyNote()).toBe('')
+    expect(loadDailyNoteTop()).toBe(58)
+    saveDailyNoteTop(240)
+    expect(loadDailyNoteTop()).toBe(240)
   })
 })
