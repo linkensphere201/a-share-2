@@ -428,6 +428,8 @@ describe('StockWorkspace', () => {
     expect(within(map).getByText('扩散补涨后排')).toBeTruthy()
 
     expect(within(map).queryByText('603039.SH')).toBeNull()
+    expect(map.getAttribute('aria-modal')).toBe('true')
+    expect(document.querySelector('.custom-group-map-interaction-shield')).toBeTruthy()
     expect(map.querySelector('strong')).toBeNull()
     expect(map.querySelector('header')).toBeNull()
     expect(map.querySelector('.custom-group-map-root')?.children).toHaveLength(2)
@@ -451,6 +453,7 @@ describe('StockWorkspace', () => {
 
     await user.click(within(map).getByRole('button', { name: /泛微网络/ }))
     expect(screen.getByTestId('chart-canvas').textContent).toBe('603039.SH')
+    expect(document.querySelector('.custom-group-map-interaction-shield')).toBeNull()
     expect(screen.queryByRole('dialog', { name: `板块分析 - ${groupInstrument.name}` })).toBeNull()
   })
 })

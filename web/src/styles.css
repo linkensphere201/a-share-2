@@ -446,6 +446,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .custom-member-row button:hover:not(:disabled) { background: #252d37; color: #fff; }
 .form-error { padding: 7px 12px; border-top: 1px solid #5d3034; color: #e58b90; font-size: 10px; }
 .list-window-empty { padding: 16px 8px; color: #657180; text-align: center; font-size: 11px; }
+.custom-group-map-interaction-shield { position: fixed; z-index: 26; inset: 0; background: transparent; }
 .custom-group-map-connector { position: fixed; z-index: 27; inset: 0; width: 100vw; height: 100vh; overflow: visible; pointer-events: none; }
 .custom-group-map-connector line { stroke: var(--theme-accent); stroke-width: 1.5; opacity: .8; }
 .custom-group-map-connector circle { fill: var(--theme-accent); }

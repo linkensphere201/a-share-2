@@ -105,6 +105,7 @@ export function CustomGroupMindMap({
   }
 
   return createPortal(<>
+    <div className="custom-group-map-interaction-shield" aria-hidden="true"/>
     <svg className="custom-group-map-connector" aria-hidden="true">
       <line x1={connection.x1} y1={connection.y1} x2={connection.x2} y2={connection.y2}/>
       <circle cx={connection.x1} cy={connection.y1} r="2.5"/>
@@ -113,6 +114,7 @@ export function CustomGroupMindMap({
     <section
       className="custom-group-mind-map"
       role="dialog"
+      aria-modal="true"
       aria-label={title}
       style={geometry}
       onPointerDown={event => event.stopPropagation()}
