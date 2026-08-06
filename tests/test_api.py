@@ -170,7 +170,10 @@ def test_custom_group_crud_search_and_member_resolution():
     payload = {
         "name": "Optical Leaders",
         "description": "manual",
-        "members": [{"symbol": "300308.SZ", "tags": ["CPO"], "note": "core"}],
+        "members": [{
+            "symbol": "300308.SZ", "role": "core_identity",
+            "tags": ["CPO"], "note": "core",
+        }],
     }
     with client:
         created = client.post("/api/custom-groups", json=payload)
@@ -189,6 +192,7 @@ def test_custom_group_crud_search_and_member_resolution():
     assert search.json()["items"][0]["member_count"] == 1
     assert search.json()["items"][0]["average_change_percent"] == 2.5
     assert members.json()["relation"] == "custom_group_members"
+    assert members.json()["items"][0]["role"] == "core_identity"
     assert members.json()["items"][0]["tags"] == ["CPO"]
     assert renamed.json()["name"] == "CPO Leaders"
     assert deleted.status_code == 204

@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS custom_instrument_group_members (
     group_id TEXT NOT NULL,
     instrument_id INTEGER NOT NULL,
     position INTEGER NOT NULL,
+    role TEXT NOT NULL DEFAULT '',
     tags_json TEXT NOT NULL,
     note TEXT NOT NULL,
     updated_at_ms INTEGER NOT NULL,

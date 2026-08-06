@@ -25,9 +25,15 @@ from stock_harness.sqlite_store import SQLiteMarketDataStore
 
 LOGGER = logging.getLogger(__name__)
 
+CustomGroupRole = Literal[
+    "", "sentiment_anchor", "liquidity_anchor", "bellwether",
+    "core_identity", "lagging_expansion",
+]
+
 
 class CustomGroupMemberInput(BaseModel):
     symbol: str
+    role: CustomGroupRole = ""
     tags: list[str] = Field(default_factory=list)
     note: str = ""
 

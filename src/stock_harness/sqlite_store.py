@@ -43,6 +43,19 @@ from stock_harness.sqlite_runtime import InterprocessWriterLock, ThreadOnlyWrite
 
 from stock_harness.sqlite_schema import SCHEMA as _SCHEMA
 
+_CUSTOM_GROUP_ROLES = {
+    "", "sentiment_anchor", "liquidity_anchor", "bellwether",
+    "core_identity", "lagging_expansion",
+}
+
+
+def _custom_group_role(value: object) -> str:
+    role = str(value).strip()
+    if role not in _CUSTOM_GROUP_ROLES:
+        raise ValueError(f"invalid custom group member role: {role}")
+    return role
+
+
 class SQLiteMarketDataStore:
     """Owns one local SQLite connection and serializes its short write transactions."""
 
@@ -90,6 +103,7 @@ class SQLiteMarketDataStore:
         self._configure()
         with self._writer_lock:
             self._connection.executescript(_SCHEMA)
+        self._ensure_custom_group_member_roles()
         self._ensure_market_snapshot_metrics()
         self._backfill_pinyin_aliases()
 
@@ -452,6 +466,21 @@ class SQLiteMarketDataStore:
                     )
                 WHERE close IS NULL OR volume IS NULL
                 """
+            )
+
+    def _ensure_custom_group_member_roles(self) -> None:
+        columns = {
+            str(row[1])
+            for row in self._connection.execute(
+                "PRAGMA table_info(custom_instrument_group_members)"
+            )
+        }
+        if "role" in columns:
+            return
+        with self._lock, self._transaction():
+            self._connection.execute(
+                "ALTER TABLE custom_instrument_group_members "
+                "ADD COLUMN role TEXT NOT NULL DEFAULT ''"
             )
 
     def replace_etf_holdings(
@@ -1136,8 +1165,8 @@ class SQLiteMarketDataStore:
             rows = self._connection.execute(
                 """
                 SELECT instrument.symbol, instrument.name, instrument.kind,
-                       instrument.exchange, member.position, member.tags_json,
-                       member.note, instrument.active
+                       instrument.exchange, member.position, member.role,
+                       member.tags_json, member.note, instrument.active
                 FROM custom_instrument_group_members AS member
                 JOIN instruments AS instrument USING (instrument_id)
                 WHERE member.group_id = ?
@@ -1153,8 +1182,9 @@ class SQLiteMarketDataStore:
                 {
                     "symbol": str(row[0]), "name": str(row[1]),
                     "kind": str(row[2]), "exchange": str(row[3]),
-                    "position": int(row[4]), "tags": json.loads(str(row[5])),
-                    "note": str(row[6]), "available": bool(row[7]),
+                    "position": int(row[4]), "role": str(row[5]),
+                    "tags": json.loads(str(row[6])),
+                    "note": str(row[7]), "available": bool(row[8]),
                 }
                 for row in rows
             ],
@@ -1242,12 +1272,13 @@ class SQLiteMarketDataStore:
         self._connection.executemany(
             """
             INSERT INTO custom_instrument_group_members(
-                group_id, instrument_id, position, tags_json, note, updated_at_ms
-            ) VALUES (?, ?, ?, ?, ?, ?)
+                group_id, instrument_id, position, role, tags_json, note, updated_at_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 (
                     group_id, instrument_ids[symbol], position,
+                    _custom_group_role(item.get("role", "")),
                     json.dumps(
                         [str(tag).strip() for tag in item.get("tags", []) if str(tag).strip()],
                         ensure_ascii=False, separators=(",", ":"),

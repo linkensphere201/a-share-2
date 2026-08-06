@@ -307,17 +307,25 @@ class SQLiteMarketDataStoreTests(unittest.TestCase):
         ])
         created = self.store.create_custom_group(
             "group-one", "Core Tech", "manual collection", [
-                {"symbol": "600519.SH", "tags": ["leader"], "note": "watch"},
+                {
+                    "symbol": "600519.SH", "role": "sentiment_anchor",
+                    "tags": ["leader"], "note": "watch",
+                },
             ],
         )
         updated = self.store.update_custom_group(
             "group-one", "Core Tech 2", "updated", [
-                {"symbol": "600519.SH", "tags": ["long-term"], "note": "hold"},
+                {
+                    "symbol": "600519.SH", "role": "bellwether",
+                    "tags": ["long-term"], "note": "hold",
+                },
             ],
         )
 
         self.assertEqual(created["members"][0]["tags"], ["leader"])
+        self.assertEqual(created["members"][0]["role"], "sentiment_anchor")
         self.assertEqual(updated["name"], "Core Tech 2")
+        self.assertEqual(updated["members"][0]["role"], "bellwether")
         self.assertEqual(updated["members"][0]["note"], "hold")
         self.assertEqual(self.store.list_custom_groups("Tech")[0]["member_count"], 1)
         self.assertAlmostEqual(
@@ -325,6 +333,14 @@ class SQLiteMarketDataStoreTests(unittest.TestCase):
         )
         self.assertTrue(self.store.delete_custom_group("group-one"))
         self.assertIsNone(self.store.get_custom_group("group-one"))
+
+    def test_custom_group_rejects_unknown_member_role(self) -> None:
+        with self.assertRaisesRegex(ValueError, "invalid custom group member role"):
+            self.store.create_custom_group(
+                "bad-role", "Bad Role", members=[
+                    {"symbol": "600519.SH", "role": "leader"},
+                ],
+            )
 
     def test_volume_scale_migration_is_idempotent(self) -> None:
         trade_date = date(2026, 7, 31)

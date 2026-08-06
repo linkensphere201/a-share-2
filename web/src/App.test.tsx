@@ -362,7 +362,7 @@ describe('StockWorkspace', () => {
       })
       if (url.endsWith('/api/custom-groups/group-1')) return response({
         id: 'group-1', symbol: 'CUSTOM:group-1', name: 'CPO自选', description: '',
-        members: [{ ...instrument, tags: ['核心'], note: '' }],
+        members: [{ ...instrument, role: 'core_identity', tags: ['核心'], note: '' }],
       })
       return response({ items: [] })
     }))
@@ -376,14 +376,60 @@ describe('StockWorkspace', () => {
     await user.type(name, 'CPO自选')
     await user.type(screen.getByRole('textbox', { name: '搜索分组成员' }), '中际旭创')
     await user.click(await screen.findByRole('button', { name: /中际旭创/ }))
+    await user.selectOptions(screen.getByRole('combobox', { name: '中际旭创 角色' }), 'core_identity')
     await user.type(screen.getByRole('textbox', { name: '中际旭创 标签' }), '核心')
     await user.click(screen.getByRole('button', { name: '保存' }))
 
     await waitFor(() => expect(savedBody).toMatchObject({
       name: 'CPO自选',
-      members: [{ symbol: '300308.SZ', tags: ['核心'] }],
+      members: [{ symbol: '300308.SZ', role: 'core_identity', tags: ['核心'] }],
     }))
     expect((await screen.findAllByText(/1 个标的/)).length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('opens a custom-group mind map and drives the attached chart from a member node', async () => {
+    const state = createDefaultWorkspace()
+    const groupInstrument = {
+      symbol: 'CUSTOM:group-ai', name: 'AI应用-企业软件核心', kind: 'custom-group',
+      exchange: 'LOCAL', rows: 2,
+    }
+    const list = state.groups[0].windows[0]
+    if (list.type !== 'instrument-list') throw new Error('expected list')
+    list.content.instruments = [groupInstrument]
+    list.selectedSymbol = groupInstrument.symbol
+    window.localStorage.setItem(workspaceStorageKey, JSON.stringify(state))
+    vi.stubGlobal('fetch', vi.fn((input: string | URL | Request) => {
+      const url = String(input)
+      if (url.endsWith('/api/custom-groups/group-ai')) return response({
+        id: 'group-ai', name: groupInstrument.name, description: '企业AI应用观察池',
+        members: [
+          {
+            symbol: '603039.SH', name: '泛微网络', kind: 'stock', exchange: 'SH',
+            role: 'sentiment_anchor', tags: ['AI智能体'], note: '情绪锚点', available: true,
+          },
+          {
+            symbol: '688111.SH', name: '金山办公', kind: 'stock', exchange: 'SH',
+            role: 'bellwether', tags: ['AI办公'], note: '趋势中军', available: true,
+          },
+        ],
+      })
+      return response({ items: [] })
+    }))
+    const user = userEvent.setup()
+
+    render(<App />)
+    await user.click(screen.getByRole('button', { name: `选择 ${groupInstrument.name}` }))
+
+    const map = await screen.findByRole('dialog', { name: `${groupInstrument.name} 思维导图` })
+    expect(within(map).getAllByText('情绪锚点')).toHaveLength(2)
+    expect(within(map).getByText('容量锚点')).toBeTruthy()
+    expect(within(map).getByText('中军')).toBeTruthy()
+    expect(within(map).getByText('核心标识度')).toBeTruthy()
+    expect(within(map).getByText('扩散补涨后排')).toBeTruthy()
+
+    await user.click(within(map).getByRole('button', { name: /泛微网络/ }))
+    expect(screen.getByTestId('chart-canvas').textContent).toBe('603039.SH')
+    expect(screen.queryByRole('dialog', { name: `${groupInstrument.name} 思维导图` })).toBeNull()
   })
 })
 

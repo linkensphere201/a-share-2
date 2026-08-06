@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { ArrowDown, ArrowUp, FolderPlus, Plus, Save, Trash2, X } from 'lucide-react'
 import { InstrumentBrowser } from './InstrumentBrowser'
 import type { Instrument } from './workspace'
+import { customGroupRoleDefinitions, customGroupRoleLabel, type CustomGroupMember } from './customGroupRoles'
 
 type CustomGroupSummary = {
   id: string
@@ -10,12 +11,6 @@ type CustomGroupSummary = {
   description: string
   member_count: number
   average_change_percent?: number | null
-}
-
-type CustomGroupMember = Instrument & {
-  tags: string[]
-  note: string
-  available?: boolean
 }
 
 type CustomGroupDraft = {
@@ -66,7 +61,7 @@ export function CustomGroupManager({ onClose, embedded = false }: { onClose: () 
           name: draft.name,
           description: draft.description,
           members: draft.members.map(member => ({
-            symbol: member.symbol, tags: member.tags, note: member.note,
+            symbol: member.symbol, role: member.role ?? '', tags: member.tags, note: member.note,
           })),
         }),
       },
@@ -108,7 +103,7 @@ export function CustomGroupManager({ onClose, embedded = false }: { onClose: () 
 
   const addMember = (instrument: Instrument) => {
     if (!draft || draft.members.some(member => member.symbol === instrument.symbol)) return
-    setDraft({ ...draft, members: [...draft.members, { ...instrument, tags: [], note: '' }] })
+    setDraft({ ...draft, members: [...draft.members, { ...instrument, role: '', tags: [], note: '' }] })
   }
 
   const selectedSymbols = useMemo(
@@ -171,7 +166,7 @@ export function CustomGroupManager({ onClose, embedded = false }: { onClose: () 
             placeholder="在当前分类中搜索代码、名称或拼音"
           />
           <div className="custom-member-table">
-            <div className="custom-member-header"><span>标的</span><span>标签</span><span>备注</span><span/></div>
+            <div className="custom-member-header"><span>标的</span><span>角色</span><span>标签</span><span>备注</span><span/></div>
             {draft.members.map((member, index) => <div
               className={draggedSymbol === member.symbol ? 'custom-member-row dragging' : 'custom-member-row'}
               key={member.symbol}
@@ -185,6 +180,14 @@ export function CustomGroupManager({ onClose, embedded = false }: { onClose: () 
               onDragEnd={() => setDraggedSymbol(undefined)}
             >
               <span><strong>{member.name}</strong><small>{member.symbol}</small></span>
+              <select value={member.role ?? ''} aria-label={`${member.name} 角色`} onChange={event => {
+                const members = [...draft.members]
+                members[index] = { ...member, role: event.target.value as CustomGroupMember['role'] }
+                setDraft({ ...draft, members })
+              }}>
+                <option value="">{customGroupRoleLabel()}</option>
+                {customGroupRoleDefinitions.map(role => <option value={role.value} key={role.value}>{role.label}</option>)}
+              </select>
               <input value={member.tags.join(', ')} aria-label={`${member.name} 标签`} onChange={event => {
                 const members = [...draft.members]
                 members[index] = { ...member, tags: event.target.value.split(',').map(tag => tag.trim()).filter(Boolean) }
