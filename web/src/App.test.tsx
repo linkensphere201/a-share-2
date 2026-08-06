@@ -420,16 +420,33 @@ describe('StockWorkspace', () => {
     render(<App />)
     await user.click(screen.getByRole('button', { name: `选择 ${groupInstrument.name}` }))
 
-    const map = await screen.findByRole('dialog', { name: `${groupInstrument.name} 思维导图` })
+    const map = await screen.findByRole('dialog', { name: `板块分析 - ${groupInstrument.name}` })
     expect(within(map).getAllByText('情绪锚点')).toHaveLength(2)
     expect(within(map).getByText('容量锚点')).toBeTruthy()
     expect(within(map).getByText('中军')).toBeTruthy()
     expect(within(map).getByText('核心标识度')).toBeTruthy()
     expect(within(map).getByText('扩散补涨后排')).toBeTruthy()
 
+    expect(within(map).queryByText('603039.SH')).toBeNull()
+    expect(map.querySelector('strong')).toBeNull()
+    expect(map.querySelector('.custom-group-map-root')?.children).toHaveLength(2)
+    expect(document.querySelector('.custom-group-map-connector')).toBeTruthy()
+
+    const initialLeft = map.style.left
+    fireEvent.pointerDown(map.querySelector('header')!, { pointerId: 1, clientX: 100, clientY: 100 })
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 140, clientY: 130 })
+    fireEvent.pointerUp(window, { pointerId: 1 })
+    expect(map.style.left).not.toBe(initialLeft)
+
+    const initialWidth = map.style.width
+    fireEvent.pointerDown(within(map).getByRole('button', { name: '调整板块分析窗口大小' }), { pointerId: 2, clientX: 0, clientY: 0 })
+    fireEvent.pointerMove(window, { pointerId: 2, clientX: 40, clientY: 30 })
+    fireEvent.pointerUp(window, { pointerId: 2 })
+    expect(map.style.width).not.toBe(initialWidth)
+
     await user.click(within(map).getByRole('button', { name: /泛微网络/ }))
     expect(screen.getByTestId('chart-canvas').textContent).toBe('603039.SH')
-    expect(screen.queryByRole('dialog', { name: `${groupInstrument.name} 思维导图` })).toBeNull()
+    expect(screen.queryByRole('dialog', { name: `板块分析 - ${groupInstrument.name}` })).toBeNull()
   })
 })
 

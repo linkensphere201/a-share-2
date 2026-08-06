@@ -3,7 +3,7 @@ import { ArrowDown, ArrowUp, ArrowUpDown, Columns3, Maximize2, Minimize2, Pencil
 import { defaultListColumns, type Instrument, type InstrumentListWindowState, type ListColumnKey } from './workspace'
 import { logWarning } from './eventLogger'
 import { instrumentSecondaryLabel } from './InstrumentBrowser'
-import { CustomGroupMindMap } from './CustomGroupMindMap'
+import { CustomGroupMindMap, type MindMapAnchor } from './CustomGroupMindMap'
 
 type MarketSnapshot = {
   symbol: string
@@ -56,12 +56,12 @@ export function InstrumentListWindow({
   const [membersLoading, setMembersLoading] = useState(false)
   const [memberRefresh, setMemberRefresh] = useState(0)
   const [columnEditorOpen, setColumnEditorOpen] = useState(false)
-  const [mindMapGroup, setMindMapGroup] = useState<Instrument>()
+  const [mindMap, setMindMap] = useState<{ group: Instrument; anchor: MindMapAnchor }>()
 
   useEffect(() => {
     const closeOtherMap = (event: Event) => {
       const sourceWindowId = (event as CustomEvent<{ sourceWindowId?: string }>).detail?.sourceWindowId
-      if (sourceWindowId !== windowState.id) setMindMapGroup(undefined)
+      if (sourceWindowId !== windowState.id) setMindMap(undefined)
     }
     window.addEventListener('stock-harness:custom-group-map-open', closeOtherMap)
     return () => window.removeEventListener('stock-harness:custom-group-map-open', closeOtherMap)
@@ -225,13 +225,20 @@ export function InstrumentListWindow({
                 className="list-window-select"
                 aria-label={`选择 ${item.name}`}
                 disabled={item.available === false}
-                onClick={() => {
+                onClick={event => {
                   onSelect(item)
                   if (item.kind === 'custom-group') {
                     window.dispatchEvent(new CustomEvent('stock-harness:custom-group-map-open', {
                       detail: { sourceWindowId: windowState.id },
                     }))
-                    setMindMapGroup(item)
+                    const rect = event.currentTarget.getBoundingClientRect()
+                    setMindMap({
+                      group: item,
+                      anchor: {
+                        left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom,
+                        width: rect.width, height: rect.height,
+                      },
+                    })
                   }
                 }}
               >
@@ -247,10 +254,11 @@ export function InstrumentListWindow({
           </div>
         </div>
       </div>
-      {mindMapGroup && <CustomGroupMindMap
-        group={mindMapGroup}
+      {mindMap && <CustomGroupMindMap
+        group={mindMap.group}
+        anchor={mindMap.anchor}
         onSelect={onSelect}
-        onClose={() => setMindMapGroup(undefined)}
+        onClose={() => setMindMap(undefined)}
       />}
     </section>
   )
