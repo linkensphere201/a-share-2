@@ -90,6 +90,45 @@ python -m stock_harness.benchmarks.sqlite_hot_path `
   --output data/benchmarks/sqlite-hot-path.sqlite
 ```
 
+## Local Codex MCP Server
+
+StockHarness includes a separately launched, read-only stdio MCP server. It reads only
+from an already-running local StockHarness API and never opens SQLite, starts the APP,
+or exposes mutation and trading tools.
+
+```powershell
+$env:STOCK_HARNESS_API_URL = "http://127.0.0.1:8001"
+.\.venv\Scripts\stock-harness-mcp.exe
+```
+
+Project-scoped Codex configuration can point at the same executable:
+
+```toml
+[mcp_servers.stock_harness]
+command = "E:\\projects\\project-manager\\stock-harness\\.venv\\Scripts\\stock-harness-mcp.exe"
+required = false
+startup_timeout_sec = 10
+tool_timeout_sec = 15
+enabled_tools = [
+  "stock_harness_health",
+  "search_instruments",
+  "get_instrument",
+  "list_custom_groups",
+  "get_custom_group",
+  "get_daily_bars",
+  "get_latest_quote",
+  "list_instrument_members",
+  "list_symbol_boards",
+]
+
+[mcp_servers.stock_harness.env]
+STOCK_HARNESS_API_URL = "http://127.0.0.1:8001"
+```
+
+All tool responses use schema version `1.0`, carry a request ID, and explicitly retain
+market source plus `final` or `intraday` bar state. The largest history response is
+8,000 daily bars, sufficient for approximately 30 years of A-share trading days.
+
 ## Provider Configuration
 
 Committed examples live in `config/providers.example.yaml` and `config/storage.example.yaml`. Local `*.local.yaml` files are ignored. Provider credentials are loaded from the configured environment variable first, then from the configured ignored `.env` file; token values are never written to logs or configuration output.
