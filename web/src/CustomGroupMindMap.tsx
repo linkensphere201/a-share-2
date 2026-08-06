@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
-import { Grip, Network, X } from 'lucide-react'
+import { Grip, Move, Network, X } from 'lucide-react'
 import { createPortal } from 'react-dom'
 import { customGroupRoleDefinitions, type CustomGroupMember } from './customGroupRoles'
 import type { Instrument } from './workspace'
@@ -117,10 +117,15 @@ export function CustomGroupMindMap({
       style={geometry}
       onPointerDown={event => event.stopPropagation()}
     >
-    <header onPointerDown={beginInteraction('move')}>
-      <div><Network size={16}/><span>{title}</span></div>
-      <button className="icon-button" title="关闭" aria-label="关闭板块分析窗口" onClick={onClose}><X size={16}/></button>
-    </header>
+    <div className="custom-group-map-controls">
+      <button
+        className="icon-button custom-group-map-move"
+        title="移动"
+        aria-label="移动板块分析窗口"
+        onPointerDown={beginInteraction('move')}
+      ><Move size={14}/></button>
+      <button className="icon-button" title="关闭" aria-label="关闭板块分析窗口" onClick={onClose}><X size={14}/></button>
+    </div>
     <div className="custom-group-map-body">
       <div className="custom-group-map-root">
         <Network size={18}/>
@@ -198,11 +203,7 @@ function clampGeometry(value: PanelGeometry): PanelGeometry {
 function connector(anchor: MindMapAnchor, panel: PanelGeometry) {
   const x1 = anchor.left + anchor.width / 2
   const y1 = anchor.top + anchor.height / 2
-  const x2 = x1 < panel.left
-    ? panel.left
-    : x1 > panel.left + panel.width ? panel.left + panel.width : x1
-  const y2 = y1 < panel.top
-    ? panel.top
-    : y1 > panel.top + panel.height ? panel.top + panel.height : y1
+  const x2 = panel.left
+  const y2 = panel.top + panel.height / 2
   return { x1, y1, x2, y2 }
 }

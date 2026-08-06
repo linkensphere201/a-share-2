@@ -429,11 +429,16 @@ describe('StockWorkspace', () => {
 
     expect(within(map).queryByText('603039.SH')).toBeNull()
     expect(map.querySelector('strong')).toBeNull()
+    expect(map.querySelector('header')).toBeNull()
     expect(map.querySelector('.custom-group-map-root')?.children).toHaveLength(2)
-    expect(document.querySelector('.custom-group-map-connector')).toBeTruthy()
+    const connector = document.querySelector('.custom-group-map-connector')!
+    expect(connector).toBeTruthy()
+    const line = connector.querySelector('line')!
+    expect(Number(line.getAttribute('x2'))).toBe(Number.parseFloat(map.style.left))
+    expect(Number(line.getAttribute('y2'))).toBe(Number.parseFloat(map.style.top) + Number.parseFloat(map.style.height) / 2)
 
     const initialLeft = map.style.left
-    fireEvent.pointerDown(map.querySelector('header')!, { pointerId: 1, clientX: 100, clientY: 100 })
+    fireEvent.pointerDown(within(map).getByRole('button', { name: '移动板块分析窗口' }), { pointerId: 1, clientX: 100, clientY: 100 })
     fireEvent.pointerMove(window, { pointerId: 1, clientX: 140, clientY: 130 })
     fireEvent.pointerUp(window, { pointerId: 1 })
     expect(map.style.left).not.toBe(initialLeft)

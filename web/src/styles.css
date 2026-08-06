@@ -449,13 +449,13 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .custom-group-map-connector { position: fixed; z-index: 27; inset: 0; width: 100vw; height: 100vh; overflow: visible; pointer-events: none; }
 .custom-group-map-connector line { stroke: var(--theme-accent); stroke-width: 1.5; opacity: .8; }
 .custom-group-map-connector circle { fill: var(--theme-accent); }
-.custom-group-mind-map { position: fixed; z-index: 28; display: grid; grid-template-rows: 38px minmax(0, 1fr); overflow: hidden; border: 1px solid var(--theme-border); border-radius: 6px; background: var(--theme-surface); color: var(--theme-text); box-shadow: 0 16px 48px #000b; }
+.custom-group-mind-map { position: fixed; z-index: 28; overflow: hidden; border: 0; border-radius: 4px; background: color-mix(in srgb, var(--theme-surface) 94%, transparent); color: var(--theme-text); box-shadow: 0 10px 28px #0008; }
 .custom-group-mind-map, .custom-group-mind-map * { font-weight: 400; }
-.custom-group-mind-map > header { display: flex; align-items: center; justify-content: space-between; padding: 0 8px 0 12px; border-bottom: 1px solid var(--theme-border); background: var(--theme-surface-alt); cursor: move; user-select: none; touch-action: none; }
-.custom-group-mind-map > header > div { min-width: 0; display: flex; align-items: center; gap: 7px; }
-.custom-group-mind-map > header span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--theme-text-strong); font-size: 12px; }
-.custom-group-mind-map > header button { cursor: pointer; }
-.custom-group-map-body { min-height: 0; display: grid; grid-template-columns: 148px 28px minmax(0, 1fr); align-items: center; overflow: auto; padding: 12px; }
+.custom-group-map-controls { position: absolute; z-index: 2; top: 5px; right: 5px; display: flex; gap: 1px; padding: 2px; border-radius: 3px; background: color-mix(in srgb, var(--theme-surface-alt) 86%, transparent); opacity: .62; transition: opacity 120ms ease; }
+.custom-group-map-controls:hover, .custom-group-map-controls:focus-within { opacity: 1; }
+.custom-group-map-controls button { width: 24px; height: 24px; cursor: pointer; }
+.custom-group-map-move { cursor: move !important; touch-action: none; }
+.custom-group-map-body { width: 100%; height: 100%; min-height: 0; display: grid; grid-template-columns: 148px 28px minmax(0, 1fr); align-items: center; overflow: auto; padding: 12px 68px 12px 12px; }
 .custom-group-map-root { min-width: 0; display: grid; justify-items: start; gap: 5px; padding: 11px; border: 1px solid var(--theme-accent); border-radius: 5px; background: var(--theme-accent-soft); }
 .custom-group-map-root span { overflow-wrap: anywhere; color: var(--theme-text-strong); font-size: 12px; line-height: 1.45; }
 .custom-group-map-trunk { height: 2px; background: var(--theme-border); }
