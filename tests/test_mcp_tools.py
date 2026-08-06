@@ -1,9 +1,13 @@
+import logging
+import socket
+
 import pytest
 
 from stock_harness.mcp_tools import (
     LocalStockHarnessApi,
     StockHarnessApiError,
     StockHarnessMcpTools,
+    _WARNING_TIMES,
 )
 
 
@@ -101,6 +105,35 @@ def test_unavailable_api_returns_bounded_structured_error():
         "code": "app_unavailable", "message": "APP unavailable", "status": None
     }
     assert result["request_id"]
+
+
+def test_timeout_has_distinct_error_code(monkeypatch):
+    def timed_out(*_args, **_kwargs):
+        raise socket.timeout("slow")
+
+    monkeypatch.setattr("stock_harness.mcp_tools.urlopen", timed_out)
+    result = StockHarnessMcpTools(
+        LocalStockHarnessApi("http://127.0.0.1:8765", timeout_seconds=0.5)
+    ).health()
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "request_timeout"
+
+
+def test_operational_warnings_are_rate_limited_per_operation(caplog):
+    _WARNING_TIMES.clear()
+    api = FakeApi(error=StockHarnessApiError("app_unavailable", "APP unavailable"))
+    tools = StockHarnessMcpTools(api)
+
+    with caplog.at_level(logging.WARNING, logger="stock_harness.mcp_tools"):
+        tools.health()
+        tools.health()
+        tools.list_custom_groups()
+
+    warnings = [record for record in caplog.records if "mcp_api_read_failed" in record.message]
+    assert len(warnings) == 2
+    assert any("operation=health" in record.getMessage() for record in warnings)
+    assert any("operation=list_custom_groups" in record.getMessage() for record in warnings)
 
 
 def test_invalid_dates_and_limits_fail_before_api_call():

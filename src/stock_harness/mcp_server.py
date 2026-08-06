@@ -5,8 +5,10 @@ from __future__ import annotations
 import logging
 import os
 import sys
+from functools import partial
 from typing import Annotated, Literal
 
+import anyio
 from mcp.server import MCPServer
 from mcp.types import ToolAnnotations
 from pydantic import Field
@@ -31,13 +33,18 @@ def build_server(tools: StockHarnessMcpTools | None = None) -> MCPServer:
     )
     server = MCPServer("StockHarness", instructions=INSTRUCTIONS)
 
+    async def invoke(callback, *args):
+        return await anyio.to_thread.run_sync(
+            partial(callback, *args), abandon_on_cancel=True
+        )
+
     @server.tool(title="Check StockHarness availability", annotations=READ_ONLY)
-    def stock_harness_health() -> dict[str, object]:
+    async def stock_harness_health() -> dict[str, object]:
         """Check whether the running local StockHarness APP API is available."""
-        return service.health()
+        return await invoke(service.health)
 
     @server.tool(title="Search StockHarness instruments", annotations=READ_ONLY)
-    def search_instruments(
+    async def search_instruments(
         query: Annotated[str, Field(max_length=100)] = "",
         classification: Literal["stock", "etf", "index", "concept", "industry", "sector"] | None = None,
         source_system: Annotated[str | None, Field(max_length=40)] = None,
@@ -47,67 +54,68 @@ def build_server(tools: StockHarnessMcpTools | None = None) -> MCPServer:
         offset: Annotated[int, Field(ge=0, le=100_000)] = 0,
     ) -> dict[str, object]:
         """Search stocks, ETFs, indices, boards, and custom groups by name, symbol, or pinyin."""
-        return service.search_instruments(
+        return await invoke(
+            service.search_instruments,
             query, classification, source_system, family, category, limit, offset
         )
 
     @server.tool(title="Get instrument metadata", annotations=READ_ONLY)
-    def get_instrument(
+    async def get_instrument(
         symbol: Annotated[str, Field(min_length=1, max_length=200)]
     ) -> dict[str, object]:
         """Get one canonical instrument's identity, catalog, coverage, and open incidents."""
-        return service.get_instrument(symbol)
+        return await invoke(service.get_instrument, symbol)
 
     @server.tool(title="List custom groups", annotations=READ_ONLY)
-    def list_custom_groups(
+    async def list_custom_groups(
         query: Annotated[str, Field(max_length=100)] = "",
         limit: Annotated[int, Field(ge=1, le=200)] = 100,
     ) -> dict[str, object]:
         """List user-defined StockHarness groups and their latest summary metrics."""
-        return service.list_custom_groups(query, limit)
+        return await invoke(service.list_custom_groups, query, limit)
 
     @server.tool(title="Get custom group", annotations=READ_ONLY)
-    def get_custom_group(
+    async def get_custom_group(
         group_id: Annotated[str, Field(min_length=1, max_length=100)],
         max_members: Annotated[int, Field(ge=1, le=500)] = 500,
     ) -> dict[str, object]:
         """Get an ordered custom group with member roles, tags, notes, and availability."""
-        return service.get_custom_group(group_id, max_members)
+        return await invoke(service.get_custom_group, group_id, max_members)
 
     @server.tool(title="Get daily OHLCV bars", annotations=READ_ONLY)
-    def get_daily_bars(
+    async def get_daily_bars(
         symbol: Annotated[str, Field(min_length=1, max_length=200)],
         start_date: Annotated[str | None, Field(description="Inclusive YYYY-MM-DD date.")] = None,
         end_date: Annotated[str | None, Field(description="Inclusive YYYY-MM-DD date.")] = None,
         max_bars: Annotated[int, Field(ge=1, le=8000)] = 8000,
     ) -> dict[str, object]:
         """Read bounded daily OHLCV with canonical/provisional fusion and explicit bar state."""
-        return service.get_daily_bars(symbol, start_date, end_date, max_bars)
+        return await invoke(service.get_daily_bars, symbol, start_date, end_date, max_bars)
 
     @server.tool(title="Get latest quote state", annotations=READ_ONLY)
-    def get_latest_quote(
+    async def get_latest_quote(
         symbol: Annotated[str, Field(min_length=1, max_length=200)]
     ) -> dict[str, object]:
         """Get latest completed daily bar and any newer provisional intraday daily bar."""
-        return service.get_latest_quote(symbol)
+        return await invoke(service.get_latest_quote, symbol)
 
     @server.tool(title="List instrument members", annotations=READ_ONLY)
-    def list_instrument_members(
+    async def list_instrument_members(
         symbol: Annotated[str, Field(min_length=1, max_length=200)],
         limit: Annotated[int, Field(ge=1, le=500)] = 100,
         offset: Annotated[int, Field(ge=0, le=100_000)] = 0,
     ) -> dict[str, object]:
         """List board constituents, ETF PCF holdings, or custom-group members with provenance."""
-        return service.list_instrument_members(symbol, limit, offset)
+        return await invoke(service.list_instrument_members, symbol, limit, offset)
 
     @server.tool(title="List reverse board memberships", annotations=READ_ONLY)
-    def list_symbol_boards(
+    async def list_symbol_boards(
         symbol: Annotated[str, Field(min_length=1, max_length=200)],
         limit: Annotated[int, Field(ge=1, le=500)] = 100,
         offset: Annotated[int, Field(ge=0, le=100_000)] = 0,
     ) -> dict[str, object]:
         """List active concept and industry boards containing a stock symbol."""
-        return service.list_symbol_boards(symbol, limit, offset)
+        return await invoke(service.list_symbol_boards, symbol, limit, offset)
 
     return server
 

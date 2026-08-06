@@ -97,15 +97,19 @@ from an already-running local StockHarness API and never opens SQLite, starts th
 or exposes mutation and trading tools.
 
 ```powershell
-$env:STOCK_HARNESS_API_URL = "http://127.0.0.1:8001"
-.\.venv\Scripts\stock-harness-mcp.exe
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run_mcp.ps1
 ```
 
-Project-scoped Codex configuration can point at the same executable:
+The committed project-scoped `.codex/config.toml` uses that script, points only at
+the stable loopback APP API on port `8765`, and allow-lists the read-only tools.
+Codex loads project configuration for trusted repositories in a new or restarted
+session. The equivalent configuration is:
 
 ```toml
 [mcp_servers.stock_harness]
-command = "E:\\projects\\project-manager\\stock-harness\\.venv\\Scripts\\stock-harness-mcp.exe"
+command = "powershell.exe"
+args = ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts\\run_mcp.ps1"]
+cwd = "."
 required = false
 startup_timeout_sec = 10
 tool_timeout_sec = 15
@@ -122,12 +126,17 @@ enabled_tools = [
 ]
 
 [mcp_servers.stock_harness.env]
-STOCK_HARNESS_API_URL = "http://127.0.0.1:8001"
+STOCK_HARNESS_API_URL = "http://127.0.0.1:8765"
+STOCK_HARNESS_MCP_TIMEOUT_SECONDS = "5"
+STOCK_HARNESS_MCP_LOG_LEVEL = "WARNING"
 ```
 
 All tool responses use schema version `1.0`, carry a request ID, and explicitly retain
 market source plus `final` or `intraday` bar state. The largest history response is
 8,000 daily bars, sufficient for approximately 30 years of A-share trading days.
+Closing the Codex stdio session terminates the MCP process. Cancelled tool calls release
+their protocol task immediately while any abandoned local HTTP read remains bounded by
+`STOCK_HARNESS_MCP_TIMEOUT_SECONDS`; timeout responses use `request_timeout`.
 
 ## Provider Configuration
 

@@ -69,7 +69,17 @@ class LocalStockHarnessApi:
             raise StockHarnessApiError(
                 code, f"StockHarness API returned HTTP {exc.code}", status=exc.code
             ) from exc
-        except (URLError, TimeoutError, socket.timeout) as exc:
+        except (TimeoutError, socket.timeout) as exc:
+            raise StockHarnessApiError(
+                "request_timeout",
+                "StockHarness API request exceeded the configured timeout",
+            ) from exc
+        except URLError as exc:
+            if isinstance(exc.reason, (TimeoutError, socket.timeout)):
+                raise StockHarnessApiError(
+                    "request_timeout",
+                    "StockHarness API request exceeded the configured timeout",
+                ) from exc
             raise StockHarnessApiError(
                 "app_unavailable",
                 "StockHarness APP is not available at the configured local API address",
@@ -289,7 +299,7 @@ class StockHarnessMcpTools:
             }
         except StockHarnessApiError as exc:
             _warn_limited(
-                exc.code,
+                f"{operation}:{exc.code}",
                 "mcp_api_read_failed request_id=%s operation=%s code=%s status=%s",
                 request_id,
                 operation,

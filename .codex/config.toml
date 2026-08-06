@@ -1,0 +1,23 @@
+[mcp_servers.stock_harness]
+command = "powershell.exe"
+args = ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts\\run_mcp.ps1"]
+cwd = "."
+required = false
+startup_timeout_sec = 10
+tool_timeout_sec = 15
+enabled_tools = [
+  "stock_harness_health",
+  "search_instruments",
+  "get_instrument",
+  "list_custom_groups",
+  "get_custom_group",
+  "get_daily_bars",
+  "get_latest_quote",
+  "list_instrument_members",
+  "list_symbol_boards",
+]
+
+[mcp_servers.stock_harness.env]
+STOCK_HARNESS_API_URL = "http://127.0.0.1:8765"
+STOCK_HARNESS_MCP_TIMEOUT_SECONDS = "5"
+STOCK_HARNESS_MCP_LOG_LEVEL = "WARNING"
