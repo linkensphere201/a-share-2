@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
-import { AlertTriangle, Check, ChevronLeft, ChevronRight, Eye, EyeOff, MousePointer2, PencilLine, Percent, RefreshCw, Settings2, Trash2, X, ZoomIn } from 'lucide-react'
+import { AlertTriangle, Check, ChevronLeft, ChevronRight, Eye, EyeOff, MousePointer2, MoveHorizontal, MoveVertical, PencilLine, Percent, RefreshCw, Settings2, Trash2, X, ZoomIn } from 'lucide-react'
 import { logInfo, logWarning } from './eventLogger'
 import {
   createTrendLine,
@@ -11,7 +11,7 @@ import {
   type TrendLineDash,
   type TrendLineDrawing,
 } from './drawingStore'
-import { barsInRenderPeriod, chooseAnchor, replaceTrendLineAnchor, translateTrendLineAnchors, type LineGeometry } from './trendLines'
+import { barsInRenderPeriod, chooseAnchor, orientTrendLineAnchors, replaceTrendLineAnchor, translateTrendLineAnchors, type LineGeometry, type TrendLineOrientation } from './trendLines'
 import type { ThemeDefinition } from './themeStore'
 import {
   projectMarketAnnotations,
@@ -1165,6 +1165,14 @@ export function ChartCanvas({
     updateDrawing(id, drawing => ({ ...drawing, visible: !drawing.visible }))
   }
 
+  const orientSelectedDrawing = (orientation: TrendLineOrientation) => {
+    if (!selectedDrawingId) return
+    updateDrawing(selectedDrawingId, drawing => ({
+      ...drawing,
+      anchors: orientTrendLineAnchors(drawing.anchors, orientation),
+    }))
+  }
+
   const removeSelectedDrawing = () => {
     if (!selectedDrawingId) return
     deleteTrendLine(symbol, selectedDrawingId)
@@ -1278,6 +1286,18 @@ export function ChartCanvas({
             setSelectedDrawingId(undefined)
           }}
         ><PencilLine size={13}/></button>
+        <button
+          title="将选中趋势线设为水平"
+          aria-label="将选中趋势线设为水平"
+          disabled={!selectedDrawingId}
+          onClick={() => orientSelectedDrawing('horizontal')}
+        ><MoveHorizontal size={13}/></button>
+        <button
+          title="将选中趋势线设为垂直"
+          aria-label="将选中趋势线设为垂直"
+          disabled={!selectedDrawingId}
+          onClick={() => orientSelectedDrawing('vertical')}
+        ><MoveVertical size={13}/></button>
         <button
           className={drawingManagerOpen ? 'active' : ''}
           title="趋势线管理"

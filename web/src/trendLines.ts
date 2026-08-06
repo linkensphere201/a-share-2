@@ -22,6 +22,8 @@ export type LineGeometry = {
   y2: number
 }
 
+export type TrendLineOrientation = 'horizontal' | 'vertical'
+
 export function chooseAnchor(
   x: number,
   y: number,
@@ -94,6 +96,16 @@ export function replaceTrendLineAnchor(
   return anchorIndex === 0
     ? [{ ...anchor }, { ...anchors[1] }]
     : [{ ...anchors[0] }, { ...anchor }]
+}
+
+export function orientTrendLineAnchors(
+  anchors: [TrendLineAnchor, TrendLineAnchor],
+  orientation: TrendLineOrientation,
+): [TrendLineAnchor, TrendLineAnchor] {
+  const [first, second] = anchors
+  return orientation === 'horizontal'
+    ? [{ ...first }, { ...second, price: first.price, snap: 'free' }]
+    : [{ ...first }, { ...second, date: first.date, snap: 'free' }]
 }
 
 export function extendLineToBounds(line: LineGeometry, width: number, height: number): LineGeometry {

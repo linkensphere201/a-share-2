@@ -8,8 +8,9 @@ import {
   loadSymbolDrawings,
   saveTrendLine,
   subscribeSymbolDrawings,
+  type TrendLineAnchor,
 } from './drawingStore'
-import { chooseAnchor, extendLineToBounds, renderDateForAnchor, replaceTrendLineAnchor, translateTrendLineAnchors } from './trendLines'
+import { chooseAnchor, extendLineToBounds, orientTrendLineAnchors, renderDateForAnchor, replaceTrendLineAnchor, translateTrendLineAnchors } from './trendLines'
 
 describe('symbol drawing repository', () => {
   beforeEach(() => window.localStorage.clear())
@@ -128,6 +129,22 @@ describe('trend-line anchors', () => {
     })).toEqual([
       { date: '2026-08-02', price: 10, snap: 'low' },
       { date: '2026-08-05', price: 13.5, snap: 'free' },
+    ])
+  })
+
+  it('orients a line around its first anchor and clears stale snap metadata', () => {
+    const anchors = [
+      { date: '2026-08-02', price: 10, snap: 'low' as const },
+      { date: '2026-08-04', price: 12, snap: 'high' as const },
+    ] as [TrendLineAnchor, TrendLineAnchor]
+
+    expect(orientTrendLineAnchors(anchors, 'horizontal')).toEqual([
+      { date: '2026-08-02', price: 10, snap: 'low' },
+      { date: '2026-08-04', price: 10, snap: 'free' },
+    ])
+    expect(orientTrendLineAnchors(anchors, 'vertical')).toEqual([
+      { date: '2026-08-02', price: 10, snap: 'low' },
+      { date: '2026-08-02', price: 12, snap: 'free' },
     ])
   })
 
