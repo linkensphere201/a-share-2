@@ -207,6 +207,8 @@ def create_app(
                     "symbol": item["symbol"], "name": item["name"],
                     "kind": "custom-group", "exchange": "LOCAL", "active": True,
                     "category": "自定义分组", "rows": item["member_count"],
+                    "member_count": item["member_count"],
+                    "average_change_percent": item["average_change_percent"],
                     "classification": "custom-group", "classification_label": "自选集合",
                     "source_label": "本地",
                     "first_trade_date": None, "last_trade_date": None,

@@ -164,6 +164,9 @@ def test_unknown_instrument_returns_404():
 
 def test_custom_group_crud_search_and_member_resolution():
     store, client = _client()
+    store.upsert_market_snapshots("tushare", [
+        MarketSnapshot("300308.SZ", date(2026, 8, 3), 2.5, 100_000_000),
+    ])
     payload = {
         "name": "Optical Leaders",
         "description": "manual",
@@ -183,6 +186,8 @@ def test_custom_group_crud_search_and_member_resolution():
 
     assert created.status_code == 201
     assert search.json()["items"][0]["kind"] == "custom-group"
+    assert search.json()["items"][0]["member_count"] == 1
+    assert search.json()["items"][0]["average_change_percent"] == 2.5
     assert members.json()["relation"] == "custom_group_members"
     assert members.json()["items"][0]["tags"] == ["CPO"]
     assert renamed.json()["name"] == "CPO Leaders"

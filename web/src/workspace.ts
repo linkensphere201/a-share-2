@@ -22,6 +22,8 @@ export type Instrument = {
   classification?: string
   classification_label?: string
   source_label?: string
+  member_count?: number
+  average_change_percent?: number | null
   first_trade_date?: string
   last_trade_date?: string
   rows: number

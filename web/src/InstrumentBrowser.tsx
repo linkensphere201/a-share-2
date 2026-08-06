@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Plus, Search } from 'lucide-react'
 import type { Instrument } from './workspace'
 
-type BrowseClass = 'all' | 'stock' | 'etf' | 'index' | 'concept' | 'industry' | 'sector'
+type BrowseClass = 'all' | 'custom-group' | 'stock' | 'etf' | 'index' | 'concept' | 'industry' | 'sector'
 
 type InstrumentBrowserProps = {
   selectedSymbols: Set<string>
@@ -14,6 +14,7 @@ type InstrumentBrowserProps = {
 
 const browseClasses: { value: BrowseClass; label: string }[] = [
   { value: 'all', label: '全部' },
+  { value: 'custom-group', label: '自选集合' },
   { value: 'concept', label: '概念板块' },
   { value: 'industry', label: '行业板块' },
   { value: 'etf', label: 'ETF' },
@@ -38,6 +39,13 @@ export function InstrumentBrowser({
   const [failed, setFailed] = useState(false)
   const generationRef = useRef(0)
   const loadMoreControllerRef = useRef<AbortController | undefined>(undefined)
+  const visibleBrowseClasses = excludeCustomGroups
+    ? browseClasses.filter(item => item.value !== 'custom-group')
+    : browseClasses
+
+  useEffect(() => {
+    if (excludeCustomGroups && classification === 'custom-group') setClassification('all')
+  }, [classification, excludeCustomGroups])
 
   useEffect(() => {
     const generation = ++generationRef.current
@@ -104,7 +112,7 @@ export function InstrumentBrowser({
       /></label>
     </div>
     <div className="instrument-browser-filters" role="tablist" aria-label="标的分类">
-      {browseClasses.map(item => <button
+      {visibleBrowseClasses.map(item => <button
         key={item.value}
         role="tab"
         aria-selected={classification === item.value}
@@ -123,7 +131,7 @@ export function InstrumentBrowser({
       >
         <span className="instrument-result-identity">
           <strong>{item.name}</strong>
-          <small>{item.symbol}</small>
+          <small>{instrumentSecondaryLabel(item)}</small>
         </span>
         <span className="instrument-result-meta">
           <b className={`instrument-type-badge type-${item.classification ?? item.kind}`}>{instrumentClassLabel(item)}</b>
@@ -146,6 +154,13 @@ async function fetchInstrumentPage(
   offset: number,
   signal?: AbortSignal,
 ): Promise<InstrumentPage> {
+  if (classification === 'custom-group') {
+    const params = new URLSearchParams({ query })
+    const response = await fetch(`/api/custom-groups?${params}`, { signal })
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    const body = await response.json() as { items: CustomGroupSummary[] }
+    return { items: body.items.map(customGroupInstrument), has_more: false, next_offset: body.items.length }
+  }
   const params = new URLSearchParams({ query, limit: '80', offset: String(offset) })
   if (classification !== 'all') params.set('classification', classification)
   const response = await fetch(`/api/instruments?${params}`, { signal })
@@ -156,6 +171,39 @@ async function fetchInstrumentPage(
     has_more: body.has_more ?? body.items.length >= 80,
     next_offset: body.next_offset ?? offset + body.items.length,
   }
+}
+
+type CustomGroupSummary = {
+  id: string
+  symbol: string
+  name: string
+  member_count: number
+  average_change_percent?: number | null
+}
+
+function customGroupInstrument(group: CustomGroupSummary): Instrument {
+  return {
+    symbol: group.symbol,
+    name: group.name,
+    kind: 'custom-group',
+    exchange: 'LOCAL',
+    rows: group.member_count,
+    member_count: group.member_count,
+    average_change_percent: group.average_change_percent,
+    classification: 'custom-group',
+    classification_label: '自选集合',
+    source_label: '本地',
+  }
+}
+
+export function instrumentSecondaryLabel(item: Instrument): string {
+  if (item.kind !== 'custom-group') return item.symbol
+  const count = item.member_count ?? item.rows
+  const average = item.average_change_percent
+  const change = average === null || average === undefined
+    ? '--'
+    : `${average > 0 ? '+' : ''}${average.toFixed(2)}%`
+  return `${count} 只标的 · 平均涨跌幅 ${change}`
 }
 
 function filterResults(items: Instrument[], excludeCustomGroups: boolean): Instrument[] {

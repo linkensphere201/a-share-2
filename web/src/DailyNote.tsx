@@ -7,7 +7,7 @@ export function DailyNote() {
   const [content, setContent] = useState(loadDailyNote)
   const [draft, setDraft] = useState(content)
   const [editing, setEditing] = useState(false)
-  const [minimized, setMinimized] = useState(false)
+  const [minimized, setMinimized] = useState(true)
   const [minimizedTop, setMinimizedTop] = useState(() => clamp(loadDailyNoteTop(), 8, window.innerHeight - 48))
   const [minimizedLeft, setMinimizedLeft] = useState(10)
   const [dragging, setDragging] = useState(false)

@@ -111,4 +111,54 @@ describe('InstrumentBrowser', () => {
     })
     await waitFor(() => expect(screen.queryByText('STALE')).toBeNull())
   })
+
+  it('browses custom groups with a market summary instead of the internal id', async () => {
+    const group = {
+      id: 'group-sha-like-id', symbol: 'CUSTOM:group-sha-like-id', name: 'AI营销核心辨识度',
+      description: '', member_count: 10, average_change_percent: 2.345,
+    }
+    const requests: string[] = []
+    vi.stubGlobal('fetch', vi.fn((input: string | URL | Request) => {
+      const url = String(input)
+      requests.push(url)
+      const items = url.startsWith('/api/custom-groups?') ? [group] : []
+      return Promise.resolve({ ok: true, json: async () => ({ items, has_more: false, next_offset: items.length }) })
+    }))
+    const onSelect = vi.fn()
+    const user = userEvent.setup()
+
+    render(<InstrumentBrowser
+      selectedSymbols={new Set()}
+      onSelect={onSelect}
+      searchLabel="搜索可添加标的"
+      placeholder="搜索"
+    />)
+    await user.click(screen.getByRole('tab', { name: '自选集合' }))
+
+    expect(await screen.findByText('AI营销核心辨识度')).toBeTruthy()
+    expect(screen.getByText('10 只标的 · 平均涨跌幅 +2.35%')).toBeTruthy()
+    expect(screen.queryByText('CUSTOM:group-sha-like-id')).toBeNull()
+    expect(requests.some(url => url.startsWith('/api/custom-groups?query='))).toBe(true)
+    await user.click(screen.getByRole('button', { name: /AI营销核心辨识度/ }))
+    expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({
+      symbol: group.symbol, kind: 'custom-group', member_count: 10,
+    }))
+  })
+
+  it('does not offer custom groups when editing a chart instrument', () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({
+      ok: true,
+      json: async () => ({ items: [], has_more: false, next_offset: 0 }),
+    })))
+
+    render(<InstrumentBrowser
+      selectedSymbols={new Set()}
+      onSelect={() => undefined}
+      excludeCustomGroups
+      searchLabel="搜索可添加标的"
+      placeholder="搜索"
+    />)
+
+    expect(screen.queryByRole('tab', { name: '自选集合' })).toBeNull()
+  })
 })

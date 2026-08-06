@@ -302,6 +302,9 @@ class SQLiteMarketDataStoreTests(unittest.TestCase):
         )
 
     def test_custom_groups_persist_order_tags_and_updates(self) -> None:
+        self.store.upsert_market_snapshots("tushare", [
+            MarketSnapshot("600519.SH", date(2026, 8, 3), 3.5, 2_000_000_000),
+        ])
         created = self.store.create_custom_group(
             "group-one", "Core Tech", "manual collection", [
                 {"symbol": "600519.SH", "tags": ["leader"], "note": "watch"},
@@ -317,6 +320,9 @@ class SQLiteMarketDataStoreTests(unittest.TestCase):
         self.assertEqual(updated["name"], "Core Tech 2")
         self.assertEqual(updated["members"][0]["note"], "hold")
         self.assertEqual(self.store.list_custom_groups("Tech")[0]["member_count"], 1)
+        self.assertAlmostEqual(
+            self.store.list_custom_groups("Tech")[0]["average_change_percent"], 3.5
+        )
         self.assertTrue(self.store.delete_custom_group("group-one"))
         self.assertIsNone(self.store.get_custom_group("group-one"))
 

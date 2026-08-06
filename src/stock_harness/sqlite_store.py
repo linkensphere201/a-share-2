@@ -1093,7 +1093,14 @@ class SQLiteMarketDataStore:
             rows = self._connection.execute(
                 """
                 SELECT custom.group_id, custom.name, custom.description,
-                       custom.created_at_ms, custom.updated_at_ms, count(member.instrument_id)
+                       custom.created_at_ms, custom.updated_at_ms, count(member.instrument_id),
+                       avg((
+                           SELECT snapshot.change_percent
+                           FROM market_snapshots AS snapshot
+                           WHERE snapshot.instrument_id = member.instrument_id
+                           ORDER BY snapshot.trade_date DESC
+                           LIMIT 1
+                       ))
                 FROM custom_instrument_groups AS custom
                 LEFT JOIN custom_instrument_group_members AS member USING (group_id)
                 GROUP BY custom.group_id
@@ -1106,6 +1113,7 @@ class SQLiteMarketDataStore:
                 "name": str(row[1]), "description": str(row[2]),
                 "member_count": int(row[5]), "created_at_ms": int(row[3]),
                 "updated_at_ms": int(row[4]),
+                "average_change_percent": float(row[6]) if row[6] is not None else None,
             }
             for row in rows
         ]

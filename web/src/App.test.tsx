@@ -383,7 +383,7 @@ describe('StockWorkspace', () => {
       name: 'CPO自选',
       members: [{ symbol: '300308.SZ', tags: ['核心'] }],
     }))
-    expect((await screen.findAllByText('1 个标的')).length).toBeGreaterThanOrEqual(2)
+    expect((await screen.findAllByText(/1 个标的/)).length).toBeGreaterThanOrEqual(2)
   })
 })
 

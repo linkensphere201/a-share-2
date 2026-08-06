@@ -9,6 +9,7 @@ type CustomGroupSummary = {
   name: string
   description: string
   member_count: number
+  average_change_percent?: number | null
 }
 
 type CustomGroupMember = Instrument & {
@@ -149,7 +150,7 @@ export function CustomGroupManager({ onClose, embedded = false }: { onClose: () 
             key={group.id}
             className={draft?.id === group.id ? 'active' : ''}
             onClick={() => openGroup(group.id).catch(() => setError('分组加载失败'))}
-          ><span><strong>{group.name}</strong><small>{group.member_count} 个标的</small></span></button>)}
+          ><span><strong>{group.name}</strong><small>{group.member_count} 个标的 · 平均涨跌幅 {formatAverageChange(group.average_change_percent)}</small></span></button>)}
         </div>
       </aside>
       <div className="custom-group-editor">
@@ -208,4 +209,9 @@ export function CustomGroupManager({ onClose, embedded = false }: { onClose: () 
   return embedded ? panel : <div className="modal-backdrop" role="presentation" onMouseDown={event => {
     if (event.target === event.currentTarget) onClose()
   }}>{panel}</div>
+}
+
+function formatAverageChange(value?: number | null): string {
+  if (value === null || value === undefined) return '--'
+  return `${value > 0 ? '+' : ''}${value.toFixed(2)}%`
 }

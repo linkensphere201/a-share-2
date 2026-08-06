@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { ArrowDown, ArrowUp, ArrowUpDown, Columns3, Maximize2, Minimize2, Pencil, X } from 'lucide-react'
 import { defaultListColumns, type Instrument, type InstrumentListWindowState, type ListColumnKey } from './workspace'
 import { logWarning } from './eventLogger'
+import { instrumentSecondaryLabel } from './InstrumentBrowser'
 
 type MarketSnapshot = {
   symbol: string
@@ -215,7 +216,7 @@ export function InstrumentListWindow({
                 disabled={item.available === false}
                 onClick={() => onSelect(item)}
               >
-                <span><strong>{item.name}</strong><small>{item.symbol}</small></span>
+                <span><strong>{item.name}</strong><small>{instrumentSecondaryLabel(item)}</small></span>
               </button>}
               {visibleColumns.includes('close') && <span className="list-price">{formatPrice(snapshot?.close)}</span>}
               {visibleColumns.includes('change_percent') && <span className={changeClass(snapshot?.change_percent)}>{formatChange(snapshot?.change_percent)}</span>}

@@ -16,6 +16,8 @@ describe('DailyNote', () => {
     const user = userEvent.setup()
     const view = render(<DailyNote/>)
 
+    expect(screen.getByRole('button', { name: '展开每日便签' })).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: '展开每日便签' }))
     expect(screen.queryByRole('textbox', { name: '每日便签内容' })).toBeNull()
     await user.click(screen.getByRole('button', { name: '编辑每日便签' }))
     await user.type(screen.getByRole('textbox', { name: '每日便签内容' }), '# 复盘{enter}- 核心板块')
@@ -27,6 +29,7 @@ describe('DailyNote', () => {
 
     view.unmount()
     render(<DailyNote/>)
+    await user.click(screen.getByRole('button', { name: '展开每日便签' }))
     expect(screen.getByRole('heading', { name: '复盘' })).toBeTruthy()
   })
 
@@ -34,6 +37,7 @@ describe('DailyNote', () => {
     const user = userEvent.setup()
     render(<DailyNote/>)
 
+    await user.click(screen.getByRole('button', { name: '展开每日便签' }))
     await user.click(screen.getByRole('button', { name: '编辑每日便签' }))
     await user.type(screen.getByRole('textbox', { name: '每日便签内容' }), '未保存')
     await user.click(screen.getByRole('button', { name: '取消' }))
