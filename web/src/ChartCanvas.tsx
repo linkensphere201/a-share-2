@@ -11,7 +11,7 @@ import {
   type TrendLineDash,
   type TrendLineDrawing,
 } from './drawingStore'
-import { barsInRenderPeriod, chooseAnchor, translateTrendLineAnchors, type LineGeometry } from './trendLines'
+import { barsInRenderPeriod, chooseAnchor, replaceTrendLineAnchor, translateTrendLineAnchors, type LineGeometry } from './trendLines'
 import type { ThemeDefinition } from './themeStore'
 import {
   projectMarketAnnotations,
@@ -106,6 +106,16 @@ type TrendLineMoveDrag = {
   moved: boolean
 }
 
+type TrendLineAnchorDrag = {
+  pointerId: number
+  drawing: TrendLineDrawing
+  anchorIndex: 0 | 1
+  startX: number
+  startY: number
+  latest: TrendLineDrawing
+  moved: boolean
+}
+
 
 type ChartCanvasProps = {
   symbol: string
@@ -183,6 +193,7 @@ export function ChartCanvas({
   const selectionDragRef = useRef<{ pointerId: number; startX: number; startY: number } | undefined>(undefined)
   const drawingDragRef = useRef<DrawingDrag | undefined>(undefined)
   const lineMoveDragRef = useRef<TrendLineMoveDrag | undefined>(undefined)
+  const lineAnchorDragRef = useRef<TrendLineAnchorDrag | undefined>(undefined)
   const bucketRef = useRef(1)
   const applyBucketRef = useRef<(bucket: number, preserve?: ViewportSnapshot) => void>(() => undefined)
   const recalculateLodRef = useRef<() => void>(() => undefined)
@@ -208,6 +219,7 @@ export function ChartCanvas({
   const [selectedDrawingId, setSelectedDrawingId] = useState<string>()
   const [drawingManagerOpen, setDrawingManagerOpen] = useState(false)
   const [movingDrawingId, setMovingDrawingId] = useState<string>()
+  const [editingAnchor, setEditingAnchor] = useState<{ drawingId: string; anchorIndex: 0 | 1 }>()
   const [toolbarCollapsed, setToolbarCollapsed] = useState(false)
   const [overlayRevision, setOverlayRevision] = useState(0)
   const liveFailureCountRef = useRef(0)
@@ -236,7 +248,9 @@ export function ChartCanvas({
     setDrawingDraft(undefined)
     drawingDragRef.current = undefined
     lineMoveDragRef.current = undefined
+    lineAnchorDragRef.current = undefined
     setMovingDrawingId(undefined)
+    setEditingAnchor(undefined)
     setDrawingTool('browse')
     setDrawingManagerOpen(false)
     return subscribeSymbolDrawings(symbol, reload)
@@ -1050,6 +1064,89 @@ export function ChartCanvas({
     }
   }
 
+  const previewTrendLineAnchorMove = (event: ReactPointerEvent<SVGCircleElement>): TrendLineAnchorDrag | undefined => {
+    const drag = lineAnchorDragRef.current
+    const chart = chartRef.current
+    const host = hostRef.current
+    if (!drag || drag.pointerId !== event.pointerId || !chart || !host) return undefined
+    const rawPoint = chartPoint(event, host)
+    const paneHeight = chart.panes()[0]?.getHeight() ?? host.clientHeight
+    const point = {
+      x: clamp(rawPoint.x, 0, host.clientWidth),
+      y: clamp(rawPoint.y, 0, paneHeight),
+    }
+    const anchor = resolveDrawingAnchor(point.x, point.y)
+    if (!anchor) return drag
+    drag.latest = {
+      ...drag.drawing,
+      anchors: replaceTrendLineAnchor(drag.drawing.anchors, drag.anchorIndex, anchor),
+    }
+    drag.moved ||= Math.hypot(point.x - drag.startX, point.y - drag.startY) >= 3
+    setDrawings(current => current.map(item => item.id === drag.drawing.id ? drag.latest : item))
+    return drag
+  }
+
+  const handleTrendLineAnchorMoveStart = (
+    event: ReactPointerEvent<SVGCircleElement>,
+    drawing: TrendLineDrawing,
+    anchorIndex: 0 | 1,
+  ) => {
+    if (event.button !== 0 || drawingTool !== 'browse' || !chartRef.current || !candleRef.current) return
+    const point = chartPoint(event, hostRef.current)
+    event.preventDefault()
+    event.stopPropagation()
+    event.currentTarget.setPointerCapture(event.pointerId)
+    lineAnchorDragRef.current = {
+      pointerId: event.pointerId,
+      drawing,
+      anchorIndex,
+      startX: point.x,
+      startY: point.y,
+      latest: drawing,
+      moved: false,
+    }
+    setSelectedDrawingId(drawing.id)
+    setEditingAnchor({ drawingId: drawing.id, anchorIndex })
+  }
+
+  const handleTrendLineAnchorMove = (event: ReactPointerEvent<SVGCircleElement>) => {
+    if (lineAnchorDragRef.current?.pointerId !== event.pointerId) return
+    event.preventDefault()
+    event.stopPropagation()
+    previewTrendLineAnchorMove(event)
+  }
+
+  const finishTrendLineAnchorMove = (event: ReactPointerEvent<SVGCircleElement>, cancelled = false) => {
+    const drag = lineAnchorDragRef.current
+    if (!drag || drag.pointerId !== event.pointerId) return
+    event.preventDefault()
+    event.stopPropagation()
+    if (!cancelled) previewTrendLineAnchorMove(event)
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+    lineAnchorDragRef.current = undefined
+    setEditingAnchor(undefined)
+    if (cancelled || !drag.moved) {
+      setDrawings(current => current.map(item => item.id === drag.drawing.id ? drag.drawing : item))
+      return
+    }
+    try {
+      saveTrendLine({ ...drag.latest, updatedAt: new Date().toISOString() })
+      logInfo('drawing', '趋势线端点已更新', {
+        symbol,
+        drawingId: drag.drawing.id,
+        anchorIndex: drag.anchorIndex,
+      })
+    } catch (error) {
+      setDrawings(current => current.map(item => item.id === drag.drawing.id ? drag.drawing : item))
+      logWarning('drawing', '趋势线端点保存失败', {
+        symbol,
+        drawingId: drag.drawing.id,
+        anchorIndex: drag.anchorIndex,
+        error,
+      })
+    }
+  }
+
   const updateDrawing = (id: string, update: (drawing: TrendLineDrawing) => TrendLineDrawing) => {
     const drawing = drawings.find(item => item.id === id)
     if (!drawing) return
@@ -1220,11 +1317,16 @@ export function ChartCanvas({
         draft={projectedDraft}
         selectedId={selectedDrawingId}
         movingId={movingDrawingId}
+        editingAnchor={editingAnchor}
         onSelect={setSelectedDrawingId}
         onMoveStart={handleTrendLineMoveStart}
         onMove={handleTrendLineMove}
         onMoveEnd={event => finishTrendLineMove(event)}
         onMoveCancel={event => finishTrendLineMove(event, true)}
+        onAnchorMoveStart={handleTrendLineAnchorMoveStart}
+        onAnchorMove={handleTrendLineAnchorMove}
+        onAnchorMoveEnd={event => finishTrendLineAnchorMove(event)}
+        onAnchorMoveCancel={event => finishTrendLineAnchorMove(event, true)}
       />
       {drawingTool === 'trend-line' && (
         <div
@@ -1347,21 +1449,31 @@ function TrendLineOverlay({
   draft,
   selectedId,
   movingId,
+  editingAnchor,
   onSelect,
   onMoveStart,
   onMove,
   onMoveEnd,
   onMoveCancel,
+  onAnchorMoveStart,
+  onAnchorMove,
+  onAnchorMoveEnd,
+  onAnchorMoveCancel,
 }: {
   lines: ProjectedTrendLine[]
   draft?: LineGeometry
   selectedId?: string
   movingId?: string
+  editingAnchor?: { drawingId: string; anchorIndex: 0 | 1 }
   onSelect: (id: string) => void
   onMoveStart: (event: ReactPointerEvent<SVGLineElement>, drawing: TrendLineDrawing) => void
   onMove: (event: ReactPointerEvent<SVGLineElement>) => void
   onMoveEnd: (event: ReactPointerEvent<SVGLineElement>) => void
   onMoveCancel: (event: ReactPointerEvent<SVGLineElement>) => void
+  onAnchorMoveStart: (event: ReactPointerEvent<SVGCircleElement>, drawing: TrendLineDrawing, anchorIndex: 0 | 1) => void
+  onAnchorMove: (event: ReactPointerEvent<SVGCircleElement>) => void
+  onAnchorMoveEnd: (event: ReactPointerEvent<SVGCircleElement>) => void
+  onAnchorMoveCancel: (event: ReactPointerEvent<SVGCircleElement>) => void
 }) {
   return (
     <div className="chart-trend-lines">
@@ -1371,6 +1483,7 @@ function TrendLineOverlay({
             'trend-line',
             line.drawing.id === selectedId ? 'selected' : '',
             line.drawing.id === movingId ? 'moving' : '',
+            line.drawing.id === editingAnchor?.drawingId ? 'editing-anchor' : '',
           ].filter(Boolean).join(' ')}>
             <line
               className="trend-line-hit"
@@ -1399,10 +1512,33 @@ function TrendLineOverlay({
               strokeDasharray={trendLineDashPattern(line.drawing.style.dash)}
               strokeLinecap={line.drawing.style.dash === 'dotted' ? 'round' : 'butt'}
             />
-            {line.drawing.id === selectedId && <>
-              <circle cx={line.anchors.x1} cy={line.anchors.y1} r="3.5"/>
-              <circle cx={line.anchors.x2} cy={line.anchors.y2} r="3.5"/>
-            </>}
+            {line.drawing.id === selectedId && ([0, 1] as const).map(anchorIndex => {
+              const cx = anchorIndex === 0 ? line.anchors.x1 : line.anchors.x2
+              const cy = anchorIndex === 0 ? line.anchors.y1 : line.anchors.y2
+              return <g key={anchorIndex}>
+                <circle
+                  className="trend-line-anchor-hit"
+                  data-anchor-index={anchorIndex}
+                  cx={cx}
+                  cy={cy}
+                  r="10"
+                  aria-label={`拖动趋势线${anchorIndex === 0 ? '起点' : '终点'}`}
+                  onPointerDown={event => onAnchorMoveStart(event, line.drawing, anchorIndex)}
+                  onPointerMove={onAnchorMove}
+                  onPointerUp={onAnchorMoveEnd}
+                  onPointerCancel={onAnchorMoveCancel}
+                />
+                <circle
+                  className={[
+                    'trend-line-anchor-handle',
+                    editingAnchor?.drawingId === line.drawing.id && editingAnchor.anchorIndex === anchorIndex ? 'active' : '',
+                  ].filter(Boolean).join(' ')}
+                  cx={cx}
+                  cy={cy}
+                  r="4"
+                />
+              </g>
+            })}
           </g>
         ))}
         {draft && (

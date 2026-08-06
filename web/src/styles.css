@@ -594,7 +594,12 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .trend-line-stroke { fill: none; vector-effect: non-scaling-stroke; pointer-events: none; }
 .trend-line-hit { stroke: transparent; stroke-width: 12; pointer-events: stroke; cursor: grab; touch-action: none; }
 .trend-line.moving .trend-line-hit { cursor: grabbing; }
-.trend-line circle { fill: #0d1014; stroke: #f0b85a; stroke-width: 1.5; vector-effect: non-scaling-stroke; pointer-events: none; }
+.trend-line circle { vector-effect: non-scaling-stroke; }
+.trend-line-anchor-hit { fill: transparent; stroke: none; pointer-events: all; cursor: grab; touch-action: none; }
+.trend-line.editing-anchor .trend-line-anchor-hit { cursor: grabbing; }
+.trend-line-anchor-handle { fill: #0d1014; stroke: #f0b85a; stroke-width: 1.5; pointer-events: none; transition: r 100ms ease, stroke-width 100ms ease; }
+.trend-line-anchor-handle.active { stroke-width: 2; }
+.trend-line.draft circle { fill: #0d1014; stroke: #f0b85a; stroke-width: 1.5; pointer-events: none; }
 .trend-line.selected .trend-line-stroke { filter: drop-shadow(0 0 2px #f0b85acc); }
 .trend-line.draft .trend-line-stroke { stroke: #f0b85a; stroke-width: 1.5; stroke-dasharray: 5 3; }
 .chart-pane-header {

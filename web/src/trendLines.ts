@@ -86,6 +86,16 @@ export function translateTrendLineAnchors(
   })) as [TrendLineAnchor, TrendLineAnchor]
 }
 
+export function replaceTrendLineAnchor(
+  anchors: [TrendLineAnchor, TrendLineAnchor],
+  anchorIndex: 0 | 1,
+  anchor: TrendLineAnchor,
+): [TrendLineAnchor, TrendLineAnchor] {
+  return anchorIndex === 0
+    ? [{ ...anchor }, { ...anchors[1] }]
+    : [{ ...anchors[0] }, { ...anchor }]
+}
+
 export function extendLineToBounds(line: LineGeometry, width: number, height: number): LineGeometry {
   const dx = line.x2 - line.x1
   const dy = line.y2 - line.y1
