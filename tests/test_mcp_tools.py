@@ -1,5 +1,6 @@
 import logging
 import socket
+from urllib.error import HTTPError
 
 import pytest
 
@@ -30,6 +31,27 @@ def test_local_api_rejects_non_loopback_and_credentials():
         LocalStockHarnessApi("https://example.com")
     with pytest.raises(ValueError):
         LocalStockHarnessApi("http://user:secret@127.0.0.1:8001")
+
+
+def test_symbols_reject_url_control_characters_and_preserve_custom_group_ids():
+    api = FakeApi({
+        "/api/instruments/CUSTOM:aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/members": {
+            "items": []
+        }
+    })
+    tools = StockHarnessMcpTools(api)
+
+    result = tools.list_instrument_members(
+        "custom:AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"
+    )
+
+    assert result["ok"] is True
+    assert api.calls[0][0] == (
+        "/api/instruments/CUSTOM:aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/members"
+    )
+    for value in ("000001.SZ?token=secret", "000001.SZ#fragment", "000001%2FSZ"):
+        with pytest.raises(ValueError, match="invalid symbol"):
+            tools.get_instrument(value)
 
 
 def test_custom_group_is_bounded_and_preserves_roles_tags_and_notes():
@@ -133,6 +155,70 @@ def test_timeout_has_distinct_error_code(monkeypatch):
 
     assert result["ok"] is False
     assert result["error"]["code"] == "request_timeout"
+
+
+@pytest.mark.parametrize(
+    ("status", "expected_code"),
+    ((404, "not_found"), (500, "api_error")),
+)
+def test_http_errors_are_bounded_and_do_not_return_response_body(
+    monkeypatch, status, expected_code
+):
+    def failed(request, **_kwargs):
+        raise HTTPError(
+            request.full_url,
+            status,
+            "provider token=must-not-leak",
+            hdrs=None,
+            fp=None,
+        )
+
+    monkeypatch.setattr("stock_harness.mcp_tools.urlopen", failed)
+    result = StockHarnessMcpTools(
+        LocalStockHarnessApi("http://127.0.0.1:8765")
+    ).get_instrument("000001.SZ")
+
+    assert result["ok"] is False
+    assert result["error"] == {
+        "code": expected_code,
+        "message": f"StockHarness API returned HTTP {status}",
+        "status": status,
+    }
+    assert "token" not in str(result)
+
+
+def test_stale_provisional_bar_remains_explicit_and_does_not_replace_final_state():
+    api = FakeApi({
+        "/api/instruments/000001.SZ/daily-bars": {
+            "items": [
+                {
+                    "trade_date": "2026-08-05",
+                    "close": 10,
+                    "bar_state": "final",
+                    "source": "tushare",
+                    "stale": False,
+                },
+                {
+                    "trade_date": "2026-08-06",
+                    "close": 11,
+                    "bar_state": "intraday",
+                    "source": "akshare_intraday",
+                    "stale": True,
+                },
+            ]
+        }
+    })
+
+    result = StockHarnessMcpTools(api).get_daily_bars("000001.SZ")
+
+    assert result["ok"] is True
+    assert result["data"]["freshness"] == {
+        "observed_at": result["data"]["freshness"]["observed_at"],
+        "latest_trade_date": "2026-08-06",
+        "latest_state": "intraday",
+        "provisional_stale": True,
+    }
+    assert result["data"]["items"][-2]["bar_state"] == "final"
 
 
 def test_operational_warnings_are_rate_limited_per_operation(caplog):

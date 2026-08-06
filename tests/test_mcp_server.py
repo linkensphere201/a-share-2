@@ -61,6 +61,23 @@ def test_mcp_protocol_lists_only_read_tools_and_calls_health():
     anyio.run(exercise)
 
 
+def test_mcp_protocol_rejects_malformed_arguments_before_api_access():
+    class NoAccessApi:
+        def get(self, path, params=None):
+            raise AssertionError(f"API must not be called: {path}")
+
+    async def exercise():
+        server = build_server(StockHarnessMcpTools(NoAccessApi()))
+        async with Client(server, raise_exceptions=False) as client:
+            result = await client.call_tool(
+                "get_daily_bars",
+                {"symbol": "000001.SZ", "max_bars": 8001},
+            )
+            assert result.is_error is True
+
+    anyio.run(exercise)
+
+
 def test_mcp_call_cancellation_releases_protocol_task_without_waiting_for_http_timeout():
     async def exercise():
         api = SlowHealthApi()

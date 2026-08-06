@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, date, datetime, timedelta
 import json
 import logging
+import re
 import socket
 import threading
 import time
@@ -24,6 +25,11 @@ MAX_DAILY_BARS = 8_000
 LOGGER = logging.getLogger(__name__)
 _WARNING_LOCK = threading.Lock()
 _WARNING_TIMES: dict[str, float] = {}
+_MARKET_SYMBOL_PATTERN = re.compile(r"[A-Z0-9]+(?:\.[A-Z0-9]+)?\Z")
+_CUSTOM_SYMBOL_PATTERN = re.compile(
+    r"CUSTOM:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\Z",
+    re.IGNORECASE,
+)
 
 
 class StockHarnessApiError(RuntimeError):
@@ -327,8 +333,12 @@ def _bounded(value: int, minimum: int, maximum: int, name: str) -> int:
 
 
 def _symbol(value: str) -> str:
-    normalized = value.strip().upper()
-    if not normalized or len(normalized) > 200 or "/" in normalized or "\\" in normalized:
+    stripped = value.strip()
+    custom_match = _CUSTOM_SYMBOL_PATTERN.fullmatch(stripped)
+    if custom_match:
+        return f"CUSTOM:{custom_match.group(1).lower()}"
+    normalized = stripped.upper()
+    if not normalized or len(normalized) > 200 or not _MARKET_SYMBOL_PATTERN.fullmatch(normalized):
         raise ValueError("invalid symbol")
     return normalized
 
