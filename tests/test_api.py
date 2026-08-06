@@ -271,6 +271,62 @@ class _FakeIntradayService:
         }
 
 
+def test_workspace_context_is_memory_only_and_enriched_with_latest_chart_state():
+    store, _ = _client()
+    service = _FakeIntradayService()
+    client = TestClient(create_app(store, intraday_service=service))
+    payload = {
+        "schema_version": "1.0",
+        "published_at": "2026-08-06T12:00:00+08:00",
+        "active_group_id": "group-primary",
+        "active_group_name": "Default",
+        "focused_window_id": "chart-1",
+        "referenced_symbols": ["BK1128.DC"],
+        "windows": [{
+            "id": "chart-1", "type": "chart", "title": "Chart 1",
+            "mode": "attached", "focused": True, "maximized": False,
+            "instrument": {"symbol": "BK1128.DC", "name": "CPO", "kind": "sector"},
+            "chart": {
+                "range": "3Y", "coordinate_mode": "log",
+                "visible_start": "2025-01-01", "visible_end": "2026-08-04",
+                "volume_visible": True, "indicator": "macd",
+            },
+        }],
+        "attachments": [],
+        "drawings_by_symbol": {"BK1128.DC": [{
+            "id": "line-1", "kind": "trend-line", "symbol": "BK1128.DC",
+            "anchors": [
+                {"date": "2026-07-01", "price": 10, "snap": "low"},
+                {"date": "2026-08-01", "price": 12, "snap": "high"},
+            ],
+            "coordinate_mode": "normal",
+            "style": {"color": "#f0b85a", "width": 2, "dash": "dashed"},
+            "visible": True,
+            "created_at": "2026-08-01T00:00:00Z",
+            "updated_at": "2026-08-01T00:00:00Z",
+        }]},
+    }
+
+    with client:
+        missing = client.get("/api/workspace-context")
+        accepted = client.post("/api/workspace-context", json=payload)
+        context = client.get("/api/workspace-context")
+    fresh_client = TestClient(create_app(store, intraday_service=service))
+    with fresh_client:
+        after_restart = fresh_client.get("/api/workspace-context")
+    store.close()
+
+    assert missing.status_code == 404
+    assert accepted.status_code == 202
+    assert context.status_code == 200
+    body = context.json()
+    assert body["windows"][0]["chart"]["coordinate_mode"] == "log"
+    assert body["windows"][0]["latest_data_state"]["effective"]["bar_state"] == "intraday"
+    assert body["windows"][0]["latest_data_state"]["latest_final"]["trade_date"] == "2026-07-31"
+    assert body["drawings_by_symbol"]["BK1128.DC"][0]["anchors"][0]["snap"] == "low"
+    assert after_restart.status_code == 404
+
+
 def test_intraday_subscription_expands_custom_groups_and_merges_provisional_bar():
     store, _ = _client()
     group = store.create_custom_group(

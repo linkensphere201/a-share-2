@@ -40,6 +40,7 @@ def test_mcp_protocol_lists_only_read_tools_and_calls_health():
             names = {tool.name for tool in listed.tools}
             assert names == {
                 "stock_harness_health",
+                "get_active_workspace",
                 "search_instruments",
                 "get_instrument",
                 "list_custom_groups",

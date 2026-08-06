@@ -115,6 +115,7 @@ startup_timeout_sec = 10
 tool_timeout_sec = 15
 enabled_tools = [
   "stock_harness_health",
+  "get_active_workspace",
   "search_instruments",
   "get_instrument",
   "list_custom_groups",
@@ -134,6 +135,9 @@ STOCK_HARNESS_MCP_LOG_LEVEL = "WARNING"
 All tool responses use schema version `1.0`, carry a request ID, and explicitly retain
 market source plus `final` or `intraday` bar state. The largest history response is
 8,000 daily bars, sufficient for approximately 30 years of A-share trading days.
+`get_active_workspace` reads the latest in-memory snapshot published by the open frontend,
+including the active group, window relationships, resolved symbols, chart ranges and modes,
+latest data state, and symbol-owned trend-line anchors. The snapshot is not written to SQLite.
 Closing the Codex stdio session terminates the MCP process. Cancelled tool calls release
 their protocol task immediately while any abandoned local HTTP read remains bounded by
 `STOCK_HARNESS_MCP_TIMEOUT_SECONDS`; timeout responses use `request_timeout`.

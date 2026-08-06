@@ -21,6 +21,7 @@ from stock_harness.intraday import IntradayQuoteService
 from stock_harness.models import InstrumentKind
 from stock_harness.runtime_logging import EVENT_BUFFER, record_frontend_event
 from stock_harness.sqlite_store import SQLiteMarketDataStore
+from stock_harness.workspace_context import WorkspaceContextInput, WorkspaceContextService
 
 
 LOGGER = logging.getLogger(__name__)
@@ -68,6 +69,7 @@ def create_app(
     intraday_service: IntradayQuoteService | None = None,
 ) -> FastAPI:
     owned_store = store is None
+    workspace_context = WorkspaceContextService(intraday_service)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -113,6 +115,17 @@ def create_app(
     @app.get("/api/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.post("/api/workspace-context", status_code=status.HTTP_202_ACCEPTED)
+    def publish_workspace_context(payload: WorkspaceContextInput) -> dict[str, object]:
+        return workspace_context.publish(payload)
+
+    @app.get("/api/workspace-context")
+    def active_workspace_context(request: Request) -> dict[str, object]:
+        snapshot = workspace_context.get(_store(request))
+        if snapshot is None:
+            raise HTTPException(status_code=404, detail="workspace context has not been published")
+        return snapshot
 
     @app.get("/api/update-status")
     def auto_update_status() -> dict[str, object]:

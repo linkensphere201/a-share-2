@@ -7,10 +7,12 @@ import { IntradaySubscriptionCoordinator, sendIntradaySubscription } from './int
 import { logInfo, logWarning } from './eventLogger'
 import { LayoutManager } from './LayoutManager'
 import { RuntimeEventBar } from './RuntimeEventBar'
+import { subscribeDrawingStore } from './drawingStore'
 import { applyTheme, loadTheme, persistTheme, themes, type ThemeDefinition } from './themeStore'
 import { removeLayoutWindow, updateSplitRatio } from './layoutTree'
 import { WindowGroup } from './WindowGroup'
 import { removeWindowAttachments } from './windowAttachments'
+import { buildWorkspaceContext, publishWorkspaceContext } from './workspaceContext'
 import {
   chartRanges,
   deriveReferencedSymbols,
@@ -32,6 +34,7 @@ export function StockWorkspace() {
   const [layoutManagerOpen, setLayoutManagerOpen] = useState(false)
   const [instrumentEditor, setInstrumentEditor] = useState<{ windowId?: string; tab: 'instruments' | 'groups' }>()
   const [resolvedWindowSymbols, setResolvedWindowSymbols] = useState<Record<string, string[]>>({})
+  const [drawingRevision, setDrawingRevision] = useState(0)
   const activeGroup = workspace.groups.find(group => group.id === workspace.activeGroupId) ?? workspace.groups[0]
   const focusedWindow = activeGroup.windows.find(item => item.id === activeGroup.focusedWindowId) ?? activeGroup.windows[0]
   const activeChart = resolveActiveChart(activeGroup, focusedWindow)
@@ -41,6 +44,10 @@ export function StockWorkspace() {
   )
   const referencedSymbolsKey = referencedSymbols.join('|')
   const subscriptionCoordinatorRef = useRef<IntradaySubscriptionCoordinator | undefined>(undefined)
+  const workspaceContext = useMemo(
+    () => buildWorkspaceContext(activeGroup, resolvedWindowSymbols),
+    [activeGroup, resolvedWindowSymbols, drawingRevision],
+  )
 
   useEffect(() => {
     const coordinator = new IntradaySubscriptionCoordinator(
@@ -71,6 +78,23 @@ export function StockWorkspace() {
 
   useEffect(() => saveWorkspace(workspace), [workspace])
   useEffect(() => applyTheme(theme), [theme])
+
+  useEffect(() => subscribeDrawingStore(() => setDrawingRevision(value => value + 1)), [])
+
+  useEffect(() => {
+    const controller = new AbortController()
+    const handle = window.setTimeout(() => {
+      publishWorkspaceContext(workspaceContext, controller.signal).catch(error => {
+        if ((error as Error).name !== 'AbortError') {
+          logWarning('workspace-context', '活动工作区上下文发布失败', { error })
+        }
+      })
+    }, 150)
+    return () => {
+      window.clearTimeout(handle)
+      controller.abort()
+    }
+  }, [workspaceContext])
 
   useEffect(() => {
     subscriptionCoordinatorRef.current?.update({ groupId: activeGroup.id, symbols: referencedSymbols })

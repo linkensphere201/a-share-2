@@ -7,6 +7,7 @@ startup_timeout_sec = 10
 tool_timeout_sec = 15
 enabled_tools = [
   "stock_harness_health",
+  "get_active_workspace",
   "search_instruments",
   "get_instrument",
   "list_custom_groups",

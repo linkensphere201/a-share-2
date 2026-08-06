@@ -51,6 +51,21 @@ def test_custom_group_is_bounded_and_preserves_roles_tags_and_notes():
     assert data["members"][0]["role"] == "bellwether"
 
 
+def test_active_workspace_context_is_returned_without_mutation():
+    payload = {
+        "schema_version": "1.0",
+        "active_group_id": "group-primary",
+        "windows": [{"id": "chart-1", "type": "chart"}],
+    }
+    api = FakeApi({"/api/workspace-context": payload})
+
+    result = StockHarnessMcpTools(api).get_active_workspace()
+
+    assert result["ok"] is True
+    assert result["data"] == payload
+    assert api.calls == [("/api/workspace-context", [])]
+
+
 def test_daily_bars_report_requested_effective_ranges_and_recent_truncation():
     api = FakeApi({
         "/api/instruments/000001.SZ/daily-bars": {

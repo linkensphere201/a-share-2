@@ -104,6 +104,11 @@ class StockHarnessMcpTools:
     def health(self) -> dict[str, object]:
         return self._execute("health", lambda: self.api.get("/api/health"))
 
+    def get_active_workspace(self) -> dict[str, object]:
+        return self._execute(
+            "get_active_workspace", lambda: self.api.get("/api/workspace-context")
+        )
+
     def search_instruments(
         self,
         query: str = "",

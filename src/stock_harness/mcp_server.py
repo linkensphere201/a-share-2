@@ -43,6 +43,11 @@ def build_server(tools: StockHarnessMcpTools | None = None) -> MCPServer:
         """Check whether the running local StockHarness APP API is available."""
         return await invoke(service.health)
 
+    @server.tool(title="Get active StockHarness workspace", annotations=READ_ONLY)
+    async def get_active_workspace() -> dict[str, object]:
+        """Get the active window group, chart views, links, symbols, and trend-line anchors."""
+        return await invoke(service.get_active_workspace)
+
     @server.tool(title="Search StockHarness instruments", annotations=READ_ONLY)
     async def search_instruments(
         query: Annotated[str, Field(max_length=100)] = "",

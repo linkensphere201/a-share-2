@@ -82,6 +82,18 @@ export function subscribeSymbolDrawings(symbol: string, listener: () => void): (
   }
 }
 
+export function subscribeDrawingStore(listener: () => void): () => void {
+  const onStorageChange = (event: StorageEvent) => {
+    if (event.key === drawingStorageKey) listener()
+  }
+  window.addEventListener(drawingChangeEvent, listener)
+  window.addEventListener('storage', onStorageChange)
+  return () => {
+    window.removeEventListener(drawingChangeEvent, listener)
+    window.removeEventListener('storage', onStorageChange)
+  }
+}
+
 export function createTrendLine(
   symbol: string,
   anchors: [TrendLineAnchor, TrendLineAnchor],
