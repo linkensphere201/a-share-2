@@ -453,6 +453,35 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .custom-member-row > div { display: flex; gap: 2px; }
 .custom-member-row button { width: 25px; height: 25px; display: grid; place-items: center; border: 0; background: transparent; color: #788493; }
 .custom-member-row button:hover:not(:disabled) { background: #252d37; color: #fff; }
+.custom-index-modal { width: min(1120px, 94vw); height: min(760px, 90vh); min-width: 760px; min-height: 520px; display: grid; grid-template-columns: 220px minmax(0, 1fr); grid-template-rows: 42px minmax(0, 1fr); overflow: hidden; border: 1px solid #3a4350; border-radius: 6px; background: #11161c; box-shadow: 0 18px 60px #000b; }
+.custom-index-modal > header { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; padding: 0 10px 0 14px; border-bottom: 1px solid #303743; background: #171c22; }
+.custom-index-modal > header > div { display: flex; align-items: center; gap: 8px; color: #e5e9ef; font-size: 12px; }
+.custom-index-modal > aside { min-height: 0; display: grid; grid-template-rows: 34px minmax(0, 1fr); gap: 8px; padding: 10px; border-right: 1px solid #303743; }
+.custom-index-list { min-height: 0; overflow: auto; display: grid; align-content: start; gap: 3px; }
+.custom-index-list > button { min-width: 0; min-height: 45px; display: flex; align-items: center; justify-content: space-between; gap: 8px; border: 1px solid transparent; border-radius: 4px; padding: 6px 8px; background: transparent; color: #aeb7c3; text-align: left; }
+.custom-index-list > button.active { border-color: #4b84c6; background: #192432; color: #f0f3f7; }
+.custom-index-list > button > span { min-width: 0; display: grid; gap: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+.custom-index-list small { color: #657180; font-size: 9px; }
+.index-status { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: #7b8490; }
+.index-status.ready { background: #58b47d; }
+.index-status.building { background: #5e9fd4; }
+.index-status.error { background: #d56f75; }
+.custom-index-editor { min-width: 0; min-height: 0; display: grid; grid-template-rows: auto minmax(180px, .8fr) minmax(145px, 1fr) auto auto; }
+.custom-index-placeholder { grid-row: 1 / -1; display: grid; place-items: center; color: #657180; font-size: 11px; }
+.custom-index-fields { display: grid; grid-template-columns: minmax(150px, 1fr) 132px 90px 110px; gap: 8px; align-items: end; padding: 10px 12px; border-bottom: 1px solid #272d36; }
+.custom-index-fields label { min-width: 0; display: grid; gap: 4px; color: #788493; font-size: 9px; }
+.custom-index-fields input, .custom-index-fields select, .custom-index-member-row input { width: 100%; min-width: 0; height: 28px; border: 1px solid #303743; border-radius: 3px; padding: 0 7px; background: #191e25; color: #e6e9ee; font-size: 10px; }
+.custom-index-fields .index-description { grid-column: 1 / 4; }
+.custom-index-actions { display: flex; justify-content: flex-end; gap: 5px; }
+.custom-index-member-table { min-height: 0; overflow: auto; padding: 0 12px 8px; }
+.custom-index-member-header, .custom-index-member-row { min-width: 560px; display: grid; grid-template-columns: minmax(160px, 1fr) 120px 100px 30px; gap: 8px; align-items: center; }
+.custom-index-member-header { height: 26px; color: #657180; font-size: 9px; }
+.custom-index-member-row { min-height: 40px; border-top: 1px solid #242b34; color: #d7dde5; font-size: 10px; }
+.custom-index-member-row > span:first-child { min-width: 0; display: grid; gap: 2px; }
+.custom-index-member-row small { color: #657180; font-size: 9px; }
+.custom-index-member-row button { width: 26px; height: 26px; display: grid; place-items: center; border: 0; border-radius: 3px; background: transparent; color: #788493; }
+.custom-index-member-row button:hover { background: #252d37; color: #fff; }
+.custom-index-footnote { min-height: 28px; display: flex; align-items: center; gap: 14px; padding: 0 12px; border-top: 1px solid #272d36; color: #657180; font-size: 9px; }
 .form-error { padding: 7px 12px; border-top: 1px solid #5d3034; color: #e58b90; font-size: 10px; }
 .list-window-empty { padding: 16px 8px; color: #657180; text-align: center; font-size: 11px; }
 .custom-group-map-interaction-shield { position: fixed; z-index: 26; inset: 0; background: transparent; }
@@ -924,14 +953,14 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 body, .workstation, .layout-manager, .layout-preview, .window-group, .list-window-body,
 .instrument-editor-results { color: var(--theme-text); background: var(--theme-base); }
 .toolbar, .market-strip, .statusbar, .instrument-window-header, .symbol-rail, .chat-panel,
-.group-sidebar, .layout-inspector, .instrument-editor-modal, .custom-group-modal,
+.group-sidebar, .layout-inspector, .instrument-editor-modal, .custom-group-modal, .custom-index-modal,
 .instrument-browser, .trend-line-manager, .chart-range-menu, .runtime-event-panel {
   color: var(--theme-text);
   background: var(--theme-surface);
   border-color: var(--theme-border);
 }
 .layout-manager-header, .layout-editor-toolbar, .instrument-editor-modal > header,
-.instrument-editor-tabs, .instrument-editor-modal > footer, .custom-group-modal > header,
+.instrument-editor-tabs, .instrument-editor-modal > footer, .custom-group-modal > header, .custom-index-modal > header,
 .runtime-event-panel > header, .chart-drawing-toolbar, .chart-measurement-readout {
   color: var(--theme-text);
   background: var(--theme-surface-alt);
@@ -941,7 +970,8 @@ body, .workstation, .layout-manager, .layout-preview, .window-group, .list-windo
 .new-group-form input, .new-group-form select, .layout-editor-toolbar input,
 .window-inspector input, .window-inspector select, .segmented-control,
 .add-window-grid button, .coordinate-tabs, .indicator-tabs,
-.instrument-editor-search > label, .custom-group-fields input,
+.instrument-editor-search > label, .custom-group-fields input, .custom-index-fields input,
+.custom-index-fields select, .custom-index-member-row input,
 .custom-member-row input, .custom-member-row select, .custom-member-search > label, .chat-input input {
   color: var(--theme-text);
   background: var(--theme-raised);

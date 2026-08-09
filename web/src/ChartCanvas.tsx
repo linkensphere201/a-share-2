@@ -119,6 +119,7 @@ type TrendLineAnchorDrag = {
 
 type ChartCanvasProps = {
   symbol: string
+  lineOnly?: boolean
   theme: ThemeDefinition
   range: ChartRange
   priceMode: PriceMode
@@ -163,6 +164,7 @@ export const compactCrosshairMarkerOptions = {
 
 export function ChartCanvas({
   symbol,
+  lineOnly = false,
   theme,
   range,
   priceMode,
@@ -177,6 +179,7 @@ export function ChartCanvas({
   const hostRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const candleRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
+  const closeLineRef = useRef<ISeriesApi<'Line'> | null>(null)
   const volumeRef = useRef<ISeriesApi<'Histogram'> | null>(null)
   const volumePaneRef = useRef<IPaneApi<Time> | null>(null)
   const ma5Ref = useRef<ISeriesApi<'Line'> | null>(null)
@@ -287,7 +290,13 @@ export function ChartCanvas({
       rightPriceScale: { borderColor: theme.colors.border },
       timeScale: { borderColor: theme.colors.border },
     })
+    closeLineRef.current?.applyOptions({ color: theme.colors.accent })
   }, [theme])
+
+  useEffect(() => {
+    candleRef.current?.applyOptions({ visible: !lineOnly })
+    closeLineRef.current?.applyOptions({ visible: lineOnly })
+  }, [lineOnly])
 
   useEffect(() => {
     if (!hostRef.current) return
@@ -334,6 +343,14 @@ export function ChartCanvas({
       wickUpColor: rising,
       wickDownColor: falling,
       priceLineColor: '#8e99a8',
+    })
+    const closeLine = chart.addSeries(LineSeries, {
+      color: initialTheme.colors.accent,
+      lineWidth: 2,
+      priceLineVisible: true,
+      lastValueVisible: true,
+      visible: lineOnly,
+      ...compactCrosshairMarkerOptions,
     })
     const ma5 = chart.addSeries(LineSeries, { color: '#e5b85c', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, ...compactCrosshairMarkerOptions })
     const ma20 = chart.addSeries(LineSeries, { color: '#57a7d9', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, ...compactCrosshairMarkerOptions })
@@ -436,6 +453,7 @@ export function ChartCanvas({
 
     chartRef.current = chart
     candleRef.current = candles
+    closeLineRef.current = closeLine
     ma5Ref.current = ma5
     ma20Ref.current = ma20
     ma60Ref.current = ma60
@@ -447,12 +465,13 @@ export function ChartCanvas({
       chart.timeScale().unsubscribeVisibleLogicalRangeChange(recalculateLod)
       chart.remove()
       chartRef.current = null
+      closeLineRef.current = null
     }
   }, [])
 
   useEffect(() => {
     const chart = chartRef.current
-    if (!chart || !volumeVisible) {
+    if (!chart || !volumeVisible || lineOnly) {
       if (chart) setPaneStretchFactors(chart)
       return
     }
@@ -482,11 +501,11 @@ export function ChartCanvas({
       setPaneStretchFactors(chart)
       setOverlayRevision(value => value + 1)
     }
-  }, [volumeVisible])
+  }, [lineOnly, volumeVisible])
 
   useEffect(() => {
     const chart = chartRef.current
-    if (!chart || indicator !== 'macd') {
+    if (!chart || indicator !== 'macd' || lineOnly) {
       if (chart) setPaneStretchFactors(chart)
       return
     }
@@ -545,7 +564,7 @@ export function ChartCanvas({
       setPaneStretchFactors(chart)
       setOverlayRevision(value => value + 1)
     }
-  }, [indicator])
+  }, [indicator, lineOnly])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -742,6 +761,10 @@ export function ChartCanvas({
       const times = new Set(renderedBars.map(item => item.trade_date))
       suppressLodRef.current = true
       candleRef.current?.setData(candles)
+      closeLineRef.current?.setData(renderedBars.map(item => ({
+        time: item.trade_date,
+        value: item.close,
+      } satisfies LineData<Time>)))
       volumeRef.current?.setData(volumes)
       ma5Ref.current?.setData(averages.ma5.filter(item => times.has(String(item.time))))
       ma20Ref.current?.setData(averages.ma20.filter(item => times.has(String(item.time))))

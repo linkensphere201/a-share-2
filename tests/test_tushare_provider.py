@@ -37,6 +37,13 @@ class _Client:
         Row = namedtuple("Row", "ts_code trade_date open high low close vol")
         return _Frame([Row("600519.SH", kwargs["trade_date"], 10.0, 12.0, 9.0, 11.0, 123.0)])
 
+    def adj_factor(self, **_kwargs):
+        Row = namedtuple("Row", "ts_code trade_date adj_factor")
+        return _Frame([
+            Row("600519.SH", "20260731", 1.25),
+            Row("600519.SH", "20260730", 1.0),
+        ])
+
 
 class _JsonClient:
     def stock_basic(self, **kwargs):
@@ -200,6 +207,18 @@ class TushareDailyProviderTests(unittest.TestCase):
 
         self.assertEqual(bar.trade_date, date(2026, 7, 31))
         self.assertEqual(bar.volume, 12_300)
+
+    def test_fetches_sorted_adjustment_factors_without_pandas(self) -> None:
+        provider = TushareDailyProvider(_settings(), client=_Client())
+
+        factors = provider.fetch_adjustment_factors(
+            "600519.SH", date(2026, 7, 1), date(2026, 7, 31)
+        )
+
+        self.assertEqual(
+            [(item.trade_date, item.factor) for item in factors],
+            [(date(2026, 7, 30), 1.0), (date(2026, 7, 31), 1.25)],
+        )
 
     def test_accepts_lightweight_json_rows_without_dataframes(self) -> None:
         provider = TushareDailyProvider(_settings(), client=_JsonClient())

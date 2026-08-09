@@ -139,6 +139,8 @@ class IncrementalUpdater:
                 provider, store, self.settings, open_dates
             )
             errors.extend(list_result.errors)
+            if changed > 0:
+                self._refresh_custom_indices(provider, store, completed_end, errors)
             store.checkpoint("PASSIVE")
         return UpdateResult(
             len(trading_dates), checked, written, changed,
@@ -220,6 +222,53 @@ class IncrementalUpdater:
                 LOGGER.exception("auto_update_catalog_failed scope=%s", name)
                 errors.append(f"{name} catalog: {exc}")
         return datasets
+
+    @staticmethod
+    def _refresh_custom_indices(provider, store, completed_end, errors) -> None:
+        summaries = store.list_custom_indices()
+        if not summaries:
+            return
+        factor_starts: dict[str, date] = {}
+        details = []
+        for summary in summaries:
+            detail = store.get_custom_index(str(summary["id"]))
+            if detail is None:
+                continue
+            details.append(detail)
+            last_date = detail["last_trade_date"]
+            start_date = (
+                last_date + timedelta(days=1)
+                if last_date is not None
+                else detail["base_date"]
+            )
+            if start_date > completed_end:
+                continue
+            for member in detail["members"]:
+                symbol = str(member["symbol"])
+                factor_starts[symbol] = min(
+                    factor_starts.get(symbol, start_date), start_date
+                )
+        for symbol, start_date in factor_starts.items():
+            try:
+                factors = provider.fetch_adjustment_factors(
+                    symbol, start_date, completed_end
+                )
+                store.upsert_adjustment_factors(provider.code, factors)
+            except Exception as exc:
+                LOGGER.exception(
+                    "custom_index_factor_update_failed symbol=%s start=%s end=%s",
+                    symbol, start_date, completed_end,
+                )
+                errors.append(f"custom index factor {symbol}: {exc}")
+        for detail in details:
+            try:
+                store.rebuild_custom_index(str(detail["id"]), mode="incremental")
+            except Exception as exc:
+                LOGGER.exception(
+                    "custom_index_incremental_update_failed index_id=%s",
+                    detail["id"],
+                )
+                errors.append(f"custom index {detail['name']}: {exc}")
 
 
 class AutoUpdateService:

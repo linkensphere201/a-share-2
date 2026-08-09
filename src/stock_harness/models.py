@@ -12,6 +12,7 @@ class InstrumentKind(StrEnum):
     ETF = "etf"
     INDEX = "index"
     SECTOR = "sector"
+    CUSTOM_INDEX = "custom-index"
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,6 +148,40 @@ class ProvisionalDailyBar:
     source: str
     provider_time: datetime
     received_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class AdjustmentFactor:
+    symbol: str
+    trade_date: date
+    factor: float
+
+    def validate(self) -> None:
+        if not self.symbol:
+            raise ValueError("adjustment factor symbol is required")
+        if self.factor <= 0:
+            raise ValueError("adjustment factor must be positive")
+
+
+@dataclass(frozen=True, slots=True)
+class CustomIndexMember:
+    symbol: str
+    raw_weight: float
+    normalized_weight: float
+
+
+@dataclass(frozen=True, slots=True)
+class CustomIndexBar:
+    trade_date: date
+    open: float
+    high: float
+    low: float
+    close: float
+    daily_return: float
+    eligible_count: int
+    total_count: int
+    quality_status: str
+    input_hash: bytes
 
 
 @dataclass(frozen=True, slots=True)

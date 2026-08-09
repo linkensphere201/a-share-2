@@ -2,12 +2,13 @@ import { useEffect, useRef, useState } from 'react'
 import { Plus, Search } from 'lucide-react'
 import type { Instrument } from './workspace'
 
-type BrowseClass = 'all' | 'custom-group' | 'stock' | 'etf' | 'index' | 'concept' | 'industry' | 'sector'
+type BrowseClass = 'all' | 'custom-group' | 'stock' | 'etf' | 'index' | 'custom-index' | 'concept' | 'industry' | 'sector'
 
 type InstrumentBrowserProps = {
   selectedSymbols: Set<string>
   onSelect: (instrument: Instrument) => void
   excludeCustomGroups?: boolean
+  stockOnly?: boolean
   searchLabel: string
   placeholder: string
 }
@@ -19,6 +20,7 @@ const browseClasses: { value: BrowseClass; label: string }[] = [
   { value: 'industry', label: '行业板块' },
   { value: 'etf', label: 'ETF' },
   { value: 'index', label: '指数' },
+  { value: 'custom-index', label: '自定义指数' },
   { value: 'stock', label: '个股' },
   { value: 'sector', label: '其他板块' },
 ]
@@ -27,10 +29,11 @@ export function InstrumentBrowser({
   selectedSymbols,
   onSelect,
   excludeCustomGroups = false,
+  stockOnly = false,
   searchLabel,
   placeholder,
 }: InstrumentBrowserProps) {
-  const [classification, setClassification] = useState<BrowseClass>('all')
+  const [classification, setClassification] = useState<BrowseClass>(stockOnly ? 'stock' : 'all')
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<Instrument[]>([])
   const [nextOffset, setNextOffset] = useState(0)
@@ -39,13 +42,16 @@ export function InstrumentBrowser({
   const [failed, setFailed] = useState(false)
   const generationRef = useRef(0)
   const loadMoreControllerRef = useRef<AbortController | undefined>(undefined)
-  const visibleBrowseClasses = excludeCustomGroups
-    ? browseClasses.filter(item => item.value !== 'custom-group')
-    : browseClasses
+  const visibleBrowseClasses = stockOnly
+    ? browseClasses.filter(item => item.value === 'stock')
+    : excludeCustomGroups
+      ? browseClasses.filter(item => item.value !== 'custom-group')
+      : browseClasses
 
   useEffect(() => {
-    if (excludeCustomGroups && classification === 'custom-group') setClassification('all')
-  }, [classification, excludeCustomGroups])
+    if (stockOnly && classification !== 'stock') setClassification('stock')
+    else if (excludeCustomGroups && classification === 'custom-group') setClassification('all')
+  }, [classification, excludeCustomGroups, stockOnly])
 
   useEffect(() => {
     const generation = ++generationRef.current
@@ -220,6 +226,7 @@ export function instrumentClassLabel(item: Instrument): string {
   if (item.kind === 'stock') return '个股'
   if (item.kind === 'etf') return 'ETF'
   if (item.kind === 'index') return '指数'
+  if (item.kind === 'custom-index') return '自定义指数'
   if (item.category === '概念板块') return '概念板块'
   if (item.category === '行业板块') return '行业板块'
   return item.kind === 'sector' ? '其他板块' : item.kind

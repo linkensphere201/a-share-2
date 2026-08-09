@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 
 from stock_harness.api import create_app
 from stock_harness.models import (
-    BoardMembership, CatalogEntry, DailyBar, EtfHolding, Instrument,
+    AdjustmentFactor, BoardMembership, CatalogEntry, DailyBar, EtfHolding, Instrument,
     InstrumentKind, MarketSnapshot,
 )
 from stock_harness.sqlite_store import SQLiteMarketDataStore
@@ -196,6 +196,73 @@ def test_custom_group_crud_search_and_member_resolution():
     assert members.json()["items"][0]["tags"] == ["CPO"]
     assert renamed.json()["name"] == "CPO Leaders"
     assert deleted.status_code == 204
+
+
+def test_custom_index_create_materializes_and_serves_normal_daily_bars():
+    store, client = _client()
+    days = [date(2026, 7, 30), date(2026, 7, 31)]
+    store.upsert_trading_dates("tushare", days)
+    store.upsert_daily_bars("tushare", [
+        DailyBar("300308.SZ", days[0], 10, 10, 10, 10, 100),
+        DailyBar("300308.SZ", days[1], 10, 12, 9, 11, 110),
+    ])
+    store.upsert_adjustment_factors("tushare", [
+        AdjustmentFactor("300308.SZ", day, 1) for day in days
+    ])
+    payload = {
+        "name": "Optical Index", "description": "equal weighted",
+        "base_date": "2026-07-30", "base_value": 1000,
+        "weighting_method": "equal",
+        "members": [{"symbol": "300308.SZ"}],
+    }
+    with client:
+        created = client.post("/api/custom-indices", json=payload)
+        result = created.json()
+        listed = client.get("/api/custom-indices")
+        bars = client.get(f"/api/instruments/{result['symbol']}/daily-bars")
+        members = client.get(f"/api/instruments/{result['symbol']}/members")
+        updated = client.put(
+            f"/api/custom-indices/{result['id']}",
+            json={**payload, "name": "Renamed Optical Index"},
+        )
+        deleted = client.delete(f"/api/custom-indices/{result['id']}")
+    store.close()
+
+    assert created.status_code == 201
+    assert result["status"] == "ready"
+    assert result["rows"] == 2
+    assert listed.json()["items"][0]["symbol"] == result["symbol"]
+    assert [item["close"] for item in bars.json()["items"]] == [1000, 1100]
+    assert members.json()["relation"] == "custom_index_members"
+    assert members.json()["items"][0]["symbol"] == "300308.SZ"
+    assert updated.json()["name"] == "Renamed Optical Index"
+    assert updated.json()["revision_number"] == 2
+    assert deleted.status_code == 204
+
+
+def test_custom_index_definition_survives_initial_factor_failure():
+    store, _ = _client()
+    client = TestClient(create_app(
+        store,
+        custom_index_factor_loader=lambda *_args: (_ for _ in ()).throw(
+            RuntimeError("provider unavailable")
+        ),
+    ))
+    payload = {
+        "name": "Retryable Index", "description": "",
+        "base_date": "2026-07-31", "base_value": 1000,
+        "weighting_method": "equal", "members": [{"symbol": "300308.SZ"}],
+    }
+
+    with client:
+        created = client.post("/api/custom-indices", json=payload)
+        listed = client.get("/api/custom-indices")
+    store.close()
+
+    assert created.status_code == 201
+    assert created.json()["status"] == "error"
+    assert "provider unavailable" in created.json()["last_error"]
+    assert listed.json()["items"][0]["name"] == "Retryable Index"
 
 
 def test_custom_group_search_supports_pinyin_initials():

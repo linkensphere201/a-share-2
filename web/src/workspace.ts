@@ -35,6 +35,7 @@ export type ChartViewState = {
   volumeVisible: boolean
   indicator: ChartIndicator
   visibleRange?: VisibleRange
+  seriesMode?: 'line' | 'candles'
 }
 
 export type ChartWindowState = {

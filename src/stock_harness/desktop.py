@@ -24,6 +24,7 @@ from stock_harness.config import load_runtime_settings
 from stock_harness.intraday import IntradayQuoteService
 from stock_harness.runtime_logging import configure_runtime_logging
 from stock_harness.sqlite_store import SQLiteMarketDataStore
+from stock_harness.tushare_provider import TushareDailyProvider
 
 DEFAULT_DESKTOP_PORT = 8765
 LOGGER = logging.getLogger(__name__)
@@ -101,6 +102,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         if settings.intraday.enabled and not args.no_intraday and not args.smoke_test
         else None
     )
+    factor_provider: TushareDailyProvider | None = None
+
+    def load_custom_index_factors(symbols, start_date, end_date):
+        nonlocal factor_provider
+        factor_provider = factor_provider or TushareDailyProvider(settings.tushare)
+        factors = []
+        for symbol in symbols:
+            factors.extend(
+                factor_provider.fetch_adjustment_factors(symbol, start_date, end_date)
+            )
+        return factors
+
     app = create_app(
         store=store,
         provider_config=paths.provider_config,
@@ -108,6 +121,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         web_dist=paths.web_dist,
         update_status=update_service.status if update_service else None,
         intraday_service=intraday_service,
+        custom_index_factor_loader=load_custom_index_factors,
     )
     server = DesktopServer(app, args.host, port)
     try:

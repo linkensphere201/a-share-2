@@ -59,6 +59,7 @@ export function ChartWindow({
       <div className="instrument-window-body" onPointerDown={onFocus}>
         <ChartCanvas
           symbol={instrument.symbol}
+          lineOnly={instrument.kind === 'custom-index' && chart.seriesMode !== 'candles'}
           theme={theme}
           range={chart.range}
           priceMode={chart.priceMode}

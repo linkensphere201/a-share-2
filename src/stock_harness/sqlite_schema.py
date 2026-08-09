@@ -194,6 +194,100 @@ CREATE TABLE IF NOT EXISTS daily_bars (
 CREATE INDEX IF NOT EXISTS daily_bars_trade_date
 ON daily_bars(trade_date, instrument_id);
 
+CREATE TABLE IF NOT EXISTS stock_adjustment_factors (
+    instrument_id INTEGER NOT NULL,
+    trade_date INTEGER NOT NULL,
+    factor REAL NOT NULL CHECK (factor > 0),
+    source_id INTEGER NOT NULL,
+    updated_at_ms INTEGER NOT NULL,
+    PRIMARY KEY (instrument_id, trade_date),
+    FOREIGN KEY (instrument_id) REFERENCES instruments(instrument_id),
+    FOREIGN KEY (source_id) REFERENCES sources(source_id)
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS stock_trade_status (
+    instrument_id INTEGER NOT NULL,
+    trade_date INTEGER NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('listed', 'trading', 'suspended', 'delisted')),
+    source_id INTEGER NOT NULL,
+    updated_at_ms INTEGER NOT NULL,
+    PRIMARY KEY (instrument_id, trade_date),
+    FOREIGN KEY (instrument_id) REFERENCES instruments(instrument_id),
+    FOREIGN KEY (source_id) REFERENCES sources(source_id)
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS custom_indices (
+    index_id TEXT PRIMARY KEY,
+    instrument_id INTEGER NOT NULL UNIQUE,
+    description TEXT NOT NULL,
+    base_date INTEGER NOT NULL,
+    base_value REAL NOT NULL CHECK (base_value > 0),
+    status TEXT NOT NULL CHECK (status IN ('pending', 'building', 'ready', 'error')),
+    calculation_version TEXT NOT NULL,
+    last_error TEXT,
+    created_at_ms INTEGER NOT NULL,
+    updated_at_ms INTEGER NOT NULL,
+    FOREIGN KEY (instrument_id) REFERENCES instruments(instrument_id)
+);
+
+CREATE TABLE IF NOT EXISTS custom_index_revisions (
+    revision_id INTEGER PRIMARY KEY,
+    index_id TEXT NOT NULL,
+    revision_number INTEGER NOT NULL,
+    effective_from INTEGER NOT NULL,
+    weighting_method TEXT NOT NULL CHECK (weighting_method IN ('equal', 'manual')),
+    created_at_ms INTEGER NOT NULL,
+    UNIQUE (index_id, revision_number),
+    FOREIGN KEY (index_id) REFERENCES custom_indices(index_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS custom_index_revision_members (
+    revision_id INTEGER NOT NULL,
+    instrument_id INTEGER NOT NULL,
+    position INTEGER NOT NULL,
+    raw_weight REAL NOT NULL CHECK (raw_weight > 0),
+    normalized_weight REAL NOT NULL CHECK (normalized_weight > 0),
+    PRIMARY KEY (revision_id, instrument_id),
+    UNIQUE (revision_id, position),
+    FOREIGN KEY (revision_id) REFERENCES custom_index_revisions(revision_id) ON DELETE CASCADE,
+    FOREIGN KEY (instrument_id) REFERENCES instruments(instrument_id)
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS custom_index_daily_bars (
+    index_id TEXT NOT NULL,
+    trade_date INTEGER NOT NULL,
+    open REAL NOT NULL,
+    high REAL NOT NULL,
+    low REAL NOT NULL,
+    close REAL NOT NULL,
+    daily_return REAL NOT NULL,
+    eligible_count INTEGER NOT NULL,
+    total_count INTEGER NOT NULL,
+    quality_status TEXT NOT NULL CHECK (quality_status IN ('complete', 'inferred_suspension')),
+    input_hash BLOB NOT NULL,
+    calculation_version TEXT NOT NULL,
+    updated_at_ms INTEGER NOT NULL,
+    PRIMARY KEY (index_id, trade_date),
+    FOREIGN KEY (index_id) REFERENCES custom_indices(index_id) ON DELETE CASCADE
+) WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS custom_index_daily_bars_date
+ON custom_index_daily_bars(trade_date, index_id);
+
+CREATE TABLE IF NOT EXISTS custom_index_calculation_runs (
+    run_id INTEGER PRIMARY KEY,
+    index_id TEXT NOT NULL,
+    mode TEXT NOT NULL CHECK (mode IN ('backfill', 'incremental', 'correction')),
+    started_at_ms INTEGER NOT NULL,
+    completed_at_ms INTEGER,
+    from_date INTEGER,
+    through_date INTEGER,
+    row_count INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL CHECK (status IN ('running', 'completed', 'failed')),
+    message TEXT NOT NULL,
+    FOREIGN KEY (index_id) REFERENCES custom_indices(index_id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS intraday_daily_bars (
     symbol TEXT NOT NULL,
     trade_date INTEGER NOT NULL,

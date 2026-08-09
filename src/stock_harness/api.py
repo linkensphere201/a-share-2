@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 
 from stock_harness.config import load_runtime_settings
 from stock_harness.intraday import IntradayQuoteService
-from stock_harness.models import InstrumentKind
+from stock_harness.models import AdjustmentFactor, InstrumentKind
 from stock_harness.runtime_logging import EVENT_BUFFER, record_frontend_event
 from stock_harness.sqlite_store import SQLiteMarketDataStore
 from stock_harness.workspace_context import WorkspaceContextInput, WorkspaceContextService
@@ -45,6 +45,21 @@ class CustomGroupInput(BaseModel):
     members: list[CustomGroupMemberInput] = Field(default_factory=list, max_length=5000)
 
 
+class CustomIndexMemberInput(BaseModel):
+    symbol: str = Field(min_length=1, max_length=40)
+    weight: float | None = Field(default=None, gt=0)
+
+
+class CustomIndexInput(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    description: str = Field(default="", max_length=500)
+    base_date: date
+    base_value: float = Field(default=1000, gt=0)
+    weighting_method: Literal["equal", "manual"] = "equal"
+    effective_from: date | None = None
+    members: list[CustomIndexMemberInput] = Field(min_length=1, max_length=500)
+
+
 class IntradaySubscriptionInput(BaseModel):
     group_id: str = Field(min_length=1, max_length=200)
     symbols: list[str] = Field(default_factory=list, max_length=5000)
@@ -67,6 +82,9 @@ def create_app(
     web_dist: Path | None = None,
     update_status: Callable[[], dict[str, object]] | None = None,
     intraday_service: IntradayQuoteService | None = None,
+    custom_index_factor_loader: Callable[
+        [list[str], date, date], list[AdjustmentFactor]
+    ] | None = None,
 ) -> FastAPI:
     owned_store = store is None
     workspace_context = WorkspaceContextService(intraday_service)
@@ -200,7 +218,9 @@ def create_app(
         request: Request,
         query: str = "",
         kind: list[InstrumentKind] | None = Query(default=None),
-        classification: Literal["stock", "etf", "index", "concept", "industry", "sector"] | None = None,
+        classification: Literal[
+            "stock", "etf", "index", "custom-index", "concept", "industry", "sector"
+        ] | None = None,
         source_system: str | None = None,
         family: str | None = None,
         category: str | None = None,
@@ -290,6 +310,94 @@ def create_app(
         if not _store(request).delete_custom_group(group_id):
             raise HTTPException(status_code=404, detail="custom group not found")
         LOGGER.info("custom_group_deleted group_id=%s", group_id)
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    @app.get("/api/custom-indices")
+    def custom_indices(request: Request, query: str = "") -> dict[str, object]:
+        return {"items": _store(request).list_custom_indices(query)}
+
+    @app.get("/api/custom-indices/{index_id}")
+    def custom_index(request: Request, index_id: str) -> dict[str, object]:
+        result = _store(request).get_custom_index(index_id)
+        if result is None:
+            raise HTTPException(status_code=404, detail="custom index not found")
+        return result
+
+    @app.post("/api/custom-indices", status_code=status.HTTP_201_CREATED)
+    def create_custom_index(request: Request, payload: CustomIndexInput) -> dict[str, object]:
+        store = _store(request)
+        try:
+            created = store.create_custom_index(
+                str(uuid4()), payload.name, payload.description, payload.base_date,
+                payload.base_value, payload.weighting_method,
+                [item.model_dump() for item in payload.members],
+            )
+            try:
+                result = _materialize_custom_index(
+                    store, str(created["id"]), custom_index_factor_loader
+                )
+            except (RuntimeError, ValueError) as exc:
+                LOGGER.warning(
+                    "custom_index_initial_materialization_failed index_id=%s error=%s",
+                    created["id"], exc,
+                )
+                result = store.get_custom_index(str(created["id"])) or created
+            LOGGER.info(
+                "custom_index_created index_id=%s members=%s rows=%s",
+                result["id"], len(payload.members), result["rows"],
+            )
+            return result
+        except sqlite3.IntegrityError as exc:
+            raise HTTPException(status_code=409, detail="custom index name already exists") from exc
+        except (RuntimeError, ValueError) as exc:
+            LOGGER.warning("custom_index_create_failed error=%s", exc)
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/api/custom-indices/{index_id}/rebuild")
+    def rebuild_custom_index(request: Request, index_id: str) -> dict[str, object]:
+        try:
+            result = _materialize_custom_index(
+                _store(request), index_id, custom_index_factor_loader
+            )
+            LOGGER.info("custom_index_rebuilt index_id=%s rows=%s", index_id, result["rows"])
+            return result
+        except (RuntimeError, ValueError) as exc:
+            LOGGER.warning("custom_index_rebuild_failed index_id=%s error=%s", index_id, exc)
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.put("/api/custom-indices/{index_id}")
+    def update_custom_index(
+        request: Request, index_id: str, payload: CustomIndexInput
+    ) -> dict[str, object]:
+        store = _store(request)
+        try:
+            updated = store.update_custom_index(
+                index_id, payload.name, payload.description, payload.base_date,
+                payload.base_value, payload.weighting_method,
+                [item.model_dump() for item in payload.members],
+                payload.effective_from or date.today(),
+            )
+            if updated is None:
+                raise HTTPException(status_code=404, detail="custom index not found")
+            result = _materialize_custom_index(
+                store, str(updated["id"]), custom_index_factor_loader
+            )
+            LOGGER.info(
+                "custom_index_updated index_id=%s revision=%s rows=%s",
+                index_id, result["revision_number"], result["rows"],
+            )
+            return result
+        except sqlite3.IntegrityError as exc:
+            raise HTTPException(status_code=409, detail="custom index revision conflicts") from exc
+        except (RuntimeError, ValueError) as exc:
+            LOGGER.warning("custom_index_update_failed index_id=%s error=%s", index_id, exc)
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.delete("/api/custom-indices/{index_id}", status_code=status.HTTP_204_NO_CONTENT)
+    def delete_custom_index(request: Request, index_id: str) -> Response:
+        if not _store(request).delete_custom_index(index_id):
+            raise HTTPException(status_code=404, detail="custom index not found")
+        LOGGER.info("custom_index_deleted index_id=%s", index_id)
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @app.get("/api/instruments/{symbol}")
@@ -389,6 +497,17 @@ def create_app(
             source = "local_custom_group"
             total = len(all_items)
             return _enrich_members(store, normalized, relation, as_of_date, source, total, items)
+        if normalized.startswith("CINDEX:"):
+            custom_index = store.get_custom_index(normalized)
+            if custom_index is None:
+                raise HTTPException(status_code=404, detail="custom index not found")
+            all_items = custom_index["members"]
+            items = all_items[offset : offset + limit]
+            return _enrich_members(
+                store, normalized, "custom_index_members",
+                custom_index["effective_from"], "local_custom_index",
+                len(all_items), items,
+            )
         instrument = store.get_instrument_summary(normalized)
         if instrument is None:
             raise HTTPException(status_code=404, detail="instrument not found")
@@ -441,6 +560,25 @@ def create_app(
         app.mount("/", StaticFiles(directory=web_dist, html=True), name="web")
 
     return app
+
+
+def _materialize_custom_index(
+    store: SQLiteMarketDataStore,
+    index_id: str,
+    factor_loader: Callable[[list[str], date, date], list[AdjustmentFactor]] | None,
+) -> dict[str, object]:
+    detail = store.get_custom_index(index_id)
+    if detail is None:
+        raise ValueError("custom index not found")
+    if factor_loader is not None:
+        symbols = [str(item["symbol"]) for item in detail["members"]]
+        try:
+            factors = factor_loader(symbols, detail["base_date"], date.today())
+        except Exception as exc:
+            store.mark_custom_index_error(index_id, f"adjustment factor load failed: {exc}")
+            raise
+        store.upsert_adjustment_factors("tushare", factors)
+    return store.rebuild_custom_index(index_id)
 
 
 def _store(request: Request) -> SQLiteMarketDataStore:

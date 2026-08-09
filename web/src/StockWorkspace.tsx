@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Activity, BarChart3, FolderKanban, LayoutGrid, MessageSquare, Palette, PanelRightClose, RefreshCw, Settings2 } from 'lucide-react'
+import { Activity, BarChart3, FolderKanban, Gauge, LayoutGrid, MessageSquare, Palette, PanelRightClose, RefreshCw, Settings2 } from 'lucide-react'
 import type { PriceMode, VisibleRange } from './ChartCanvas'
 import { InstrumentEditor } from './InstrumentEditor'
+import { CustomIndexManager } from './CustomIndexManager'
 import { DailyNote } from './DailyNote'
 import { IntradaySubscriptionCoordinator, sendIntradaySubscription } from './intradaySubscription'
 import { logInfo, logWarning } from './eventLogger'
@@ -32,6 +33,7 @@ export function StockWorkspace() {
   const [theme, setTheme] = useState<ThemeDefinition>(loadTheme)
   const [chatOpen, setChatOpen] = useState(false)
   const [layoutManagerOpen, setLayoutManagerOpen] = useState(false)
+  const [customIndexManagerOpen, setCustomIndexManagerOpen] = useState(false)
   const [instrumentEditor, setInstrumentEditor] = useState<{ windowId?: string; tab: 'instruments' | 'groups' }>()
   const [resolvedWindowSymbols, setResolvedWindowSymbols] = useState<Record<string, string[]>>({})
   const [drawingRevision, setDrawingRevision] = useState(0)
@@ -269,6 +271,7 @@ export function StockWorkspace() {
               </select>
             </label>
             <button className="command-button layout-entry" title="布局管理" aria-label="布局管理" onClick={() => setLayoutManagerOpen(true)}><Settings2 size={15}/>布局管理</button>
+            <button className="icon-button" title="自定义指数" aria-label="自定义指数" onClick={() => setCustomIndexManagerOpen(true)}><Gauge size={16}/></button>
             <button className="icon-button" title="标的与自选集合" aria-label="标的与自选集合" onClick={() => setInstrumentEditor({ tab: 'groups' })}><FolderKanban size={16}/></button>
             <button
               className="icon-button"
@@ -291,6 +294,14 @@ export function StockWorkspace() {
               <button className={activeChart.chart.priceMode === 'normal' ? 'active' : ''} onClick={() => setPriceMode('normal')}>普通</button>
               <button className={activeChart.chart.priceMode === 'log' ? 'active' : ''} onClick={() => setPriceMode('log')}>对数</button>
             </div>
+            {activeChart.instrument.kind === 'custom-index' && <div className="coordinate-tabs" aria-label="指数图形">
+              <button className={activeChart.chart.seriesMode !== 'candles' ? 'active' : ''} onClick={() => updateActiveChart(item => ({
+                ...item, chart: { ...item.chart, seriesMode: 'line' },
+              }))}>收盘线</button>
+              <button className={activeChart.chart.seriesMode === 'candles' ? 'active' : ''} onClick={() => updateActiveChart(item => ({
+                ...item, chart: { ...item.chart, seriesMode: 'candles' },
+              }))}>合成K线</button>
+            </div>}
             <div className="indicator-tabs" aria-label="图表分栏">
               <button
                 className={activeChart.chart.volumeVisible ? 'active' : ''}
@@ -354,6 +365,7 @@ export function StockWorkspace() {
         </aside>
       )}
       <DailyNote/>
+      {customIndexManagerOpen && <CustomIndexManager onClose={() => setCustomIndexManagerOpen(false)}/>}
       {instrumentEditor && <InstrumentEditor
         target={activeGroup.windows.find(item => item.id === instrumentEditor.windowId)}
         initialTab={instrumentEditor.tab}

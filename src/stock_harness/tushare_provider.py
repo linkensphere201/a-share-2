@@ -12,6 +12,7 @@ from urllib.request import Request, urlopen
 
 from stock_harness.config import TushareSettings, UniverseSymbol, load_provider_token
 from stock_harness.models import (
+    AdjustmentFactor,
     BoardMembership,
     CatalogEntry,
     DailyBar,
@@ -91,6 +92,36 @@ class TushareDailyProvider:
                 )
             )
         return bars
+
+    def fetch_adjustment_factors(
+        self, symbol: str, start_date: date, end_date: date
+    ) -> Sequence[AdjustmentFactor]:
+        if start_date > end_date:
+            return []
+        factors: dict[date, AdjustmentFactor] = {}
+        for window_start, window_end in _date_windows(start_date, end_date, 5_475):
+            payload = self._call(
+                "adj_factor",
+                ts_code=symbol.upper(),
+                start_date=_compact_date(window_start),
+                end_date=_compact_date(window_end),
+                fields="ts_code,trade_date,adj_factor",
+            )
+            for row in _iter_rows(payload):
+                row_symbol = str(_field(row, "ts_code")).upper()
+                if row_symbol != symbol.upper():
+                    raise ValueError(
+                        f"Tushare adj_factor returned unexpected symbol {row_symbol} for {symbol}"
+                    )
+                trade_date = _parse_compact_date(str(_field(row, "trade_date")))
+                factor = AdjustmentFactor(
+                    symbol=row_symbol,
+                    trade_date=trade_date,
+                    factor=float(_field(row, "adj_factor")),
+                )
+                factor.validate()
+                factors[trade_date] = factor
+        return [factors[key] for key in sorted(factors)]
 
     def list_etfs(self, selections: Sequence[UniverseSymbol]) -> Sequence[Instrument]:
         configured = {item.symbol for item in selections}

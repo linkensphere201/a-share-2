@@ -41,6 +41,7 @@ def _instrument_row(row: sqlite3.Row) -> dict[str, object]:
         "classification": classification,
         "classification_label": {
             "stock": "个股", "etf": "ETF", "index": "指数",
+            "custom-index": "自定义指数",
             "concept": "概念板块", "industry": "行业板块", "sector": "其他板块",
         }[classification],
         "source_label": _instrument_source_label(
@@ -53,7 +54,7 @@ def _instrument_row(row: sqlite3.Row) -> dict[str, object]:
 
 
 def _instrument_classification_clause(classification: str) -> tuple[str, list[object]]:
-    if classification in {"stock", "etf", "index"}:
+    if classification in {"stock", "etf", "index", "custom-index"}:
         return "instrument.kind = ?", [classification]
     concept = (
         "(instrument.kind = 'sector' AND ("
@@ -103,6 +104,8 @@ def _instrument_source_label(
         return "同花顺"
     if exchange == "SI":
         return "申万"
+    if classification == "custom-index":
+        return "本地"
     if classification in {"etf", "stock"}:
         return {"SH": "上交所", "SZ": "深交所", "BJ": "北交所"}.get(
             exchange, exchange
