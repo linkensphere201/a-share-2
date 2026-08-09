@@ -44,6 +44,10 @@ class _Client:
             Row("600519.SH", "20260730", 1.0),
         ])
 
+    def suspend_d(self, **_kwargs):
+        Row = namedtuple("Row", "ts_code trade_date suspend_type")
+        return _Frame([Row("600519.SH", "20260731", "S")])
+
 
 class _JsonClient:
     def stock_basic(self, **kwargs):
@@ -218,6 +222,18 @@ class TushareDailyProviderTests(unittest.TestCase):
         self.assertEqual(
             [(item.trade_date, item.factor) for item in factors],
             [(date(2026, 7, 30), 1.0), (date(2026, 7, 31), 1.25)],
+        )
+
+    def test_fetches_explicit_daily_suspension_status(self) -> None:
+        provider = TushareDailyProvider(_settings(), client=_Client())
+
+        statuses = provider.fetch_suspension_statuses(
+            "600519.SH", date(2026, 7, 1), date(2026, 7, 31)
+        )
+
+        self.assertEqual(
+            [(item.trade_date, item.status) for item in statuses],
+            [(date(2026, 7, 31), "suspended")],
         )
 
     def test_accepts_lightweight_json_rows_without_dataframes(self) -> None:

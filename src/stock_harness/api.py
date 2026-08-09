@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 
 from stock_harness.config import load_runtime_settings
 from stock_harness.intraday import IntradayQuoteService
-from stock_harness.models import AdjustmentFactor, InstrumentKind
+from stock_harness.models import AdjustmentFactor, InstrumentKind, StockTradeStatus
 from stock_harness.runtime_logging import EVENT_BUFFER, record_frontend_event
 from stock_harness.sqlite_store import SQLiteMarketDataStore
 from stock_harness.workspace_context import WorkspaceContextInput, WorkspaceContextService
@@ -84,6 +84,9 @@ def create_app(
     intraday_service: IntradayQuoteService | None = None,
     custom_index_factor_loader: Callable[
         [list[str], date, date], list[AdjustmentFactor]
+    ] | None = None,
+    custom_index_status_loader: Callable[
+        [list[str], date, date], list[StockTradeStatus]
     ] | None = None,
 ) -> FastAPI:
     owned_store = store is None
@@ -334,7 +337,8 @@ def create_app(
             )
             try:
                 result = _materialize_custom_index(
-                    store, str(created["id"]), custom_index_factor_loader
+                    store, str(created["id"]), custom_index_factor_loader,
+                    custom_index_status_loader,
                 )
             except (RuntimeError, ValueError) as exc:
                 LOGGER.warning(
@@ -357,7 +361,8 @@ def create_app(
     def rebuild_custom_index(request: Request, index_id: str) -> dict[str, object]:
         try:
             result = _materialize_custom_index(
-                _store(request), index_id, custom_index_factor_loader
+                _store(request), index_id, custom_index_factor_loader,
+                custom_index_status_loader,
             )
             LOGGER.info("custom_index_rebuilt index_id=%s rows=%s", index_id, result["rows"])
             return result
@@ -380,7 +385,8 @@ def create_app(
             if updated is None:
                 raise HTTPException(status_code=404, detail="custom index not found")
             result = _materialize_custom_index(
-                store, str(updated["id"]), custom_index_factor_loader
+                store, str(updated["id"]), custom_index_factor_loader,
+                custom_index_status_loader,
             )
             LOGGER.info(
                 "custom_index_updated index_id=%s revision=%s rows=%s",
@@ -566,18 +572,26 @@ def _materialize_custom_index(
     store: SQLiteMarketDataStore,
     index_id: str,
     factor_loader: Callable[[list[str], date, date], list[AdjustmentFactor]] | None,
+    status_loader: Callable[[list[str], date, date], list[StockTradeStatus]] | None,
 ) -> dict[str, object]:
     detail = store.get_custom_index(index_id)
     if detail is None:
         raise ValueError("custom index not found")
+    symbols = [str(item["symbol"]) for item in detail["members"]]
     if factor_loader is not None:
-        symbols = [str(item["symbol"]) for item in detail["members"]]
         try:
             factors = factor_loader(symbols, detail["base_date"], date.today())
         except Exception as exc:
             store.mark_custom_index_error(index_id, f"adjustment factor load failed: {exc}")
             raise
         store.upsert_adjustment_factors("tushare", factors)
+    if status_loader is not None:
+        try:
+            statuses = status_loader(symbols, detail["base_date"], date.today())
+        except Exception as exc:
+            store.mark_custom_index_error(index_id, f"trade status load failed: {exc}")
+            raise
+        store.upsert_stock_trade_statuses("tushare", statuses)
     return store.rebuild_custom_index(index_id)
 
 

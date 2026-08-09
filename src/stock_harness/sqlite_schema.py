@@ -288,6 +288,45 @@ CREATE TABLE IF NOT EXISTS custom_index_calculation_runs (
     FOREIGN KEY (index_id) REFERENCES custom_indices(index_id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS custom_index_dirty_dates (
+    index_id TEXT PRIMARY KEY,
+    dirty_from INTEGER NOT NULL,
+    reason TEXT NOT NULL,
+    updated_at_ms INTEGER NOT NULL,
+    FOREIGN KEY (index_id) REFERENCES custom_indices(index_id) ON DELETE CASCADE
+) WITHOUT ROWID;
+
+CREATE TRIGGER IF NOT EXISTS custom_index_dirty_after_daily_bar_update
+AFTER UPDATE OF open, high, low, close ON daily_bars
+WHEN OLD.open IS NOT NEW.open OR OLD.high IS NOT NEW.high
+  OR OLD.low IS NOT NEW.low OR OLD.close IS NOT NEW.close
+BEGIN
+    INSERT INTO custom_index_dirty_dates(index_id, dirty_from, reason, updated_at_ms)
+    SELECT DISTINCT revision.index_id, NEW.trade_date, 'constituent_bar_corrected', NEW.updated_at_ms
+    FROM custom_index_revision_members AS member
+    JOIN custom_index_revisions AS revision USING (revision_id)
+    WHERE member.instrument_id = NEW.instrument_id
+    ON CONFLICT(index_id) DO UPDATE SET
+        dirty_from = min(custom_index_dirty_dates.dirty_from, excluded.dirty_from),
+        reason = excluded.reason,
+        updated_at_ms = excluded.updated_at_ms;
+END;
+
+CREATE TRIGGER IF NOT EXISTS custom_index_dirty_after_adjustment_update
+AFTER UPDATE OF factor ON stock_adjustment_factors
+WHEN OLD.factor IS NOT NEW.factor
+BEGIN
+    INSERT INTO custom_index_dirty_dates(index_id, dirty_from, reason, updated_at_ms)
+    SELECT DISTINCT revision.index_id, NEW.trade_date, 'adjustment_factor_corrected', NEW.updated_at_ms
+    FROM custom_index_revision_members AS member
+    JOIN custom_index_revisions AS revision USING (revision_id)
+    WHERE member.instrument_id = NEW.instrument_id
+    ON CONFLICT(index_id) DO UPDATE SET
+        dirty_from = min(custom_index_dirty_dates.dirty_from, excluded.dirty_from),
+        reason = excluded.reason,
+        updated_at_ms = excluded.updated_at_ms;
+END;
+
 CREATE TABLE IF NOT EXISTS intraday_daily_bars (
     symbol TEXT NOT NULL,
     trade_date INTEGER NOT NULL,

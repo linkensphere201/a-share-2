@@ -1,4 +1,5 @@
 from datetime import date
+from decimal import Decimal
 
 import pytest
 
@@ -81,3 +82,30 @@ def test_base_bar_is_a_persistable_flat_reference_point():
 
     assert (result.open, result.high, result.low, result.close) == (1000, 1000, 1000, 1000)
     assert result.eligible_count == result.total_count == 2
+
+
+def test_weighted_close_matches_independent_decimal_reference():
+    inputs = [
+        ConstituentInput(
+            "000001.SZ", 3, _bar("000001.SZ", 10, 12, 9, 11),
+            previous_close=10, current_factor=1, previous_factor=1,
+            status="trading",
+        ),
+        ConstituentInput(
+            "600000.SH", 2, _bar("600000.SH", 20, 21, 18, 19),
+            previous_close=20, current_factor=1, previous_factor=1,
+            status="trading",
+        ),
+    ]
+
+    result = calculate_bar(date(2026, 8, 4), 1000, inputs)
+    decimal_return = (
+        Decimal(3) / Decimal(5) * (Decimal(11) / Decimal(10) - 1)
+        + Decimal(2) / Decimal(5) * (Decimal(19) / Decimal(20) - 1)
+    )
+    expected = Decimal(1000) * (1 + decimal_return)
+
+    assert result is not None
+    assert Decimal(str(result.close)).quantize(Decimal("0.000000001")) == expected.quantize(
+        Decimal("0.000000001")
+    )

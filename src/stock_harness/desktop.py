@@ -114,6 +114,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         return factors
 
+    def load_custom_index_statuses(symbols, start_date, end_date):
+        nonlocal factor_provider
+        factor_provider = factor_provider or TushareDailyProvider(settings.tushare)
+        statuses = []
+        for symbol in symbols:
+            statuses.extend(
+                factor_provider.fetch_suspension_statuses(symbol, start_date, end_date)
+            )
+        return statuses
+
     app = create_app(
         store=store,
         provider_config=paths.provider_config,
@@ -122,6 +132,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         update_status=update_service.status if update_service else None,
         intraday_service=intraday_service,
         custom_index_factor_loader=load_custom_index_factors,
+        custom_index_status_loader=load_custom_index_statuses,
     )
     server = DesktopServer(app, args.host, port)
     try:

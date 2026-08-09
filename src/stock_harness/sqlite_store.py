@@ -26,6 +26,7 @@ from stock_harness.models import (
     ProvisionalDailyBar,
     RepairJob,
     StoredDailyBar,
+    StockTradeStatus,
     SymbolSyncState,
     ValidationResult,
     WriteStats,
@@ -1366,6 +1367,46 @@ class SQLiteMarketDataStore:
             )
             return self._connection.total_changes - before
 
+    def upsert_stock_trade_statuses(
+        self, source: str, statuses: Sequence[StockTradeStatus]
+    ) -> int:
+        if not statuses:
+            return 0
+        for item in statuses:
+            item.validate()
+        symbols = {item.symbol for item in statuses}
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        with self._lock, self._transaction():
+            instrument_ids = self._instrument_ids(symbols)
+            missing = symbols - instrument_ids.keys()
+            if missing:
+                raise ValueError(
+                    "stock trade statuses reference unknown instruments: "
+                    + ", ".join(sorted(missing))
+                )
+            source_id = self._source_id(source)
+            before = self._connection.total_changes
+            self._connection.executemany(
+                """
+                INSERT INTO stock_trade_status(
+                    instrument_id, trade_date, status, source_id, updated_at_ms
+                ) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(instrument_id, trade_date) DO UPDATE SET
+                    status = excluded.status, source_id = excluded.source_id,
+                    updated_at_ms = excluded.updated_at_ms
+                WHERE stock_trade_status.status IS NOT excluded.status
+                   OR stock_trade_status.source_id IS NOT excluded.source_id
+                """,
+                (
+                    (
+                        instrument_ids[item.symbol], _date_key(item.trade_date),
+                        item.status, source_id, now_ms,
+                    )
+                    for item in statuses
+                ),
+            )
+            return self._connection.total_changes - before
+
     def create_custom_index(
         self,
         index_id: str,
@@ -1465,7 +1506,9 @@ class SQLiteMarketDataStore:
                           )),
                        (SELECT min(trade_date) FROM custom_index_daily_bars WHERE index_id = custom.index_id),
                        (SELECT max(trade_date) FROM custom_index_daily_bars WHERE index_id = custom.index_id),
-                       (SELECT count(*) FROM custom_index_daily_bars WHERE index_id = custom.index_id)
+                       (SELECT count(*) FROM custom_index_daily_bars WHERE index_id = custom.index_id),
+                       (SELECT count(*) FROM custom_index_daily_bars
+                        WHERE index_id = custom.index_id AND quality_status <> 'complete')
                 FROM custom_indices AS custom
                 JOIN instruments AS instrument USING (instrument_id)
                 WHERE (? = '%%' OR instrument.symbol LIKE ? OR instrument.name LIKE ?)
@@ -1600,7 +1643,11 @@ class SQLiteMarketDataStore:
                 (int(row[9]),),
             ).fetchall()
             coverage = self._connection.execute(
-                "SELECT min(trade_date), max(trade_date), count(*) FROM custom_index_daily_bars WHERE index_id = ?",
+                """
+                SELECT min(trade_date), max(trade_date), count(*),
+                       count(*) FILTER (WHERE quality_status <> 'complete')
+                FROM custom_index_daily_bars WHERE index_id = ?
+                """,
                 (normalized,),
             ).fetchone()
         return {
@@ -1619,6 +1666,7 @@ class SQLiteMarketDataStore:
             "first_trade_date": _date_from_key(int(coverage[0])) if coverage[0] is not None else None,
             "last_trade_date": _date_from_key(int(coverage[1])) if coverage[1] is not None else None,
             "rows": int(coverage[2]),
+            "quality_warning_days": int(coverage[3]),
         }
 
     def rebuild_custom_index(self, index_id: str, mode: str = "backfill") -> dict[str, object]:
@@ -1629,6 +1677,12 @@ class SQLiteMarketDataStore:
         if detail is None:
             raise ValueError("custom index not found")
         started_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        with self._lock:
+            dirty = self._connection.execute(
+                "SELECT dirty_from FROM custom_index_dirty_dates WHERE index_id = ?",
+                (normalized,),
+            ).fetchone()
+        calculation_mode = "correction" if dirty is not None else mode
         with self._lock, self._transaction():
             run = self._connection.execute(
                 """
@@ -1636,7 +1690,7 @@ class SQLiteMarketDataStore:
                     index_id, mode, started_at_ms, row_count, status, message
                 ) VALUES (?, ?, ?, 0, 'running', '') RETURNING run_id
                 """,
-                (normalized, mode, started_ms),
+                (normalized, calculation_mode, started_ms),
             ).fetchone()
             run_id = int(run[0])
             self._connection.execute(
@@ -1644,15 +1698,25 @@ class SQLiteMarketDataStore:
                 (started_ms, normalized),
             )
         try:
-            incremental = mode == "incremental" and detail["rows"] > 0
-            bars = (
+            incremental = calculation_mode == "incremental" and detail["rows"] > 0
+            history = (
                 self._calculate_custom_index_incremental(normalized)
                 if incremental
                 else self._calculate_custom_index_history(normalized)
             )
+            bars = (
+                [item for item in history if _date_key(item.trade_date) >= int(dirty[0])]
+                if calculation_mode == "correction" and dirty is not None
+                else history
+            )
             completed_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
             with self._lock, self._transaction():
-                if not incremental:
+                if calculation_mode == "correction" and dirty is not None:
+                    self._connection.execute(
+                        "DELETE FROM custom_index_daily_bars WHERE index_id = ? AND trade_date >= ?",
+                        (normalized, int(dirty[0])),
+                    )
+                elif not incremental:
                     self._connection.execute("DELETE FROM custom_index_daily_bars WHERE index_id = ?", (normalized,))
                 self._connection.executemany(
                     """
@@ -1699,6 +1763,10 @@ class SQLiteMarketDataStore:
                     ),
                 )
                 self._refresh_custom_index_snapshot_locked(normalized, completed_ms)
+                self._connection.execute(
+                    "DELETE FROM custom_index_dirty_dates WHERE index_id = ?",
+                    (normalized,),
+                )
             result = self.get_custom_index(normalized)
             assert result is not None
             return result
@@ -1728,6 +1796,12 @@ class SQLiteMarketDataStore:
                 (message[:1000], now_ms, normalized),
             )
 
+    def has_dirty_custom_indices(self) -> bool:
+        with self._lock:
+            return self._connection.execute(
+                "SELECT 1 FROM custom_index_dirty_dates LIMIT 1"
+            ).fetchone() is not None
+
     def delete_custom_index(self, index_id: str) -> bool:
         normalized = index_id.lower().removeprefix("cindex:")
         with self._lock, self._transaction():
@@ -1738,6 +1812,7 @@ class SQLiteMarketDataStore:
                 return False
             instrument_id = int(row[0])
             self._connection.execute("DELETE FROM custom_index_calculation_runs WHERE index_id = ?", (normalized,))
+            self._connection.execute("DELETE FROM custom_index_dirty_dates WHERE index_id = ?", (normalized,))
             self._connection.execute("DELETE FROM custom_index_daily_bars WHERE index_id = ?", (normalized,))
             revision_ids = [int(item[0]) for item in self._connection.execute(
                 "SELECT revision_id FROM custom_index_revisions WHERE index_id = ?", (normalized,)
@@ -1840,7 +1915,15 @@ class SQLiteMarketDataStore:
                     """,
                     (*all_ids, trade_key),
                 ).fetchall()
+                status_rows = self._connection.execute(
+                    f"""
+                    SELECT instrument_id, status FROM stock_trade_status
+                    WHERE instrument_id IN ({placeholders}) AND trade_date = ?
+                    """,
+                    (*all_ids, trade_key),
+                ).fetchall()
             today = {int(row[0]): row for row in day_rows}
+            day_status = {int(row[0]): str(row[1]) for row in status_rows}
             for instrument_id, row in today.items():
                 if row[8] is not None:
                     previous.setdefault(instrument_id, (float(row[6]), float(row[8])))
@@ -1867,10 +1950,12 @@ class SQLiteMarketDataStore:
                     status = "trading"
                 elif row is not None:
                     status = "missing"
+                elif day_status.get(instrument_id) == "suspended" and prior is not None:
+                    status = "suspended"
                 elif prior is None:
                     status = "not_eligible"
                 else:
-                    status = "inferred_suspension"
+                    status = "missing"
                 constituents.append(ConstituentInput(
                     symbol=str(member[1]), weight=float(member[2]),
                     current=(
@@ -1979,6 +2064,13 @@ class SQLiteMarketDataStore:
                         """,
                         (int(member[0]), trade_key),
                     ).fetchone()
+                    explicit_status = self._connection.execute(
+                        """
+                        SELECT status FROM stock_trade_status
+                        WHERE instrument_id = ? AND trade_date = ?
+                        """,
+                        (int(member[0]), trade_key),
+                    ).fetchone()
                     listed_on = int(member[3]) if member[3] is not None else None
                     delisted_on = int(member[4]) if member[4] is not None else None
                     if (
@@ -1992,8 +2084,14 @@ class SQLiteMarketDataStore:
                         status = "trading"
                     elif current is not None:
                         status = "missing"
+                    elif (
+                        explicit_status is not None
+                        and str(explicit_status[0]) == "suspended"
+                        and prior is not None
+                    ):
+                        status = "suspended"
                     elif prior is not None:
-                        status = "inferred_suspension"
+                        status = "missing"
                     else:
                         status = "not_eligible"
                     constituents.append(ConstituentInput(
@@ -2065,6 +2163,7 @@ class SQLiteMarketDataStore:
             "first_trade_date": _date_from_key(int(row[10])) if row[10] is not None else None,
             "last_trade_date": _date_from_key(int(row[11])) if row[11] is not None else None,
             "rows": int(row[12]),
+            "quality_warning_days": int(row[13]),
         }
 
     def search_instruments(

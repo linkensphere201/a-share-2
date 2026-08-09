@@ -21,6 +21,7 @@ from stock_harness.models import (
     InstrumentKind,
     MarketSnapshot,
     ProviderBarRejection,
+    StockTradeStatus,
 )
 
 
@@ -122,6 +123,35 @@ class TushareDailyProvider:
                 factor.validate()
                 factors[trade_date] = factor
         return [factors[key] for key in sorted(factors)]
+
+    def fetch_suspension_statuses(
+        self, symbol: str, start_date: date, end_date: date
+    ) -> Sequence[StockTradeStatus]:
+        if start_date > end_date:
+            return []
+        statuses: dict[date, StockTradeStatus] = {}
+        for window_start, window_end in _date_windows(start_date, end_date, 5_475):
+            payload = self._call(
+                "suspend_d",
+                ts_code=symbol.upper(),
+                start_date=_compact_date(window_start),
+                end_date=_compact_date(window_end),
+                suspend_type="S",
+                fields="ts_code,trade_date,suspend_type",
+            )
+            for row in _iter_rows(payload):
+                row_symbol = str(_field(row, "ts_code")).upper()
+                if row_symbol != symbol.upper():
+                    raise ValueError(
+                        f"Tushare suspend_d returned unexpected symbol {row_symbol} for {symbol}"
+                    )
+                if str(_field(row, "suspend_type")) != "S":
+                    continue
+                trade_date = _parse_compact_date(str(_field(row, "trade_date")))
+                statuses[trade_date] = StockTradeStatus(
+                    row_symbol, trade_date, "suspended"
+                )
+        return [statuses[key] for key in sorted(statuses)]
 
     def list_etfs(self, selections: Sequence[UniverseSymbol]) -> Sequence[Instrument]:
         configured = {item.symbol for item in selections}

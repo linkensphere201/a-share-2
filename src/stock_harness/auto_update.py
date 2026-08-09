@@ -139,7 +139,7 @@ class IncrementalUpdater:
                 provider, store, self.settings, open_dates
             )
             errors.extend(list_result.errors)
-            if changed > 0:
+            if changed > 0 or store.has_dirty_custom_indices():
                 self._refresh_custom_indices(provider, store, completed_end, errors)
             store.checkpoint("PASSIVE")
         return UpdateResult(
@@ -254,6 +254,10 @@ class IncrementalUpdater:
                     symbol, start_date, completed_end
                 )
                 store.upsert_adjustment_factors(provider.code, factors)
+                statuses = provider.fetch_suspension_statuses(
+                    symbol, start_date, completed_end
+                )
+                store.upsert_stock_trade_statuses(provider.code, statuses)
             except Exception as exc:
                 LOGGER.exception(
                     "custom_index_factor_update_failed symbol=%s start=%s end=%s",

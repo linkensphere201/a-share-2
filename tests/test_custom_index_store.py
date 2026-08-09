@@ -2,7 +2,9 @@ from datetime import date
 
 import pytest
 
-from stock_harness.models import AdjustmentFactor, DailyBar, Instrument, InstrumentKind
+from stock_harness.models import (
+    AdjustmentFactor, DailyBar, Instrument, InstrumentKind, StockTradeStatus,
+)
 from stock_harness.sqlite_store import SQLiteMarketDataStore
 
 
@@ -128,3 +130,58 @@ def test_incremental_rebuild_appends_only_new_final_dates():
             """
         ).fetchone()
         assert tuple(run) == ("incremental", 1)
+
+
+def test_incremental_rebuild_requires_explicit_suspension_evidence():
+    with _prepared_store() as store:
+        store.create_custom_index(
+            "suspension", "Suspension", "", date(2026, 8, 3), 1000, "equal",
+            [{"symbol": "000001.SZ"}, {"symbol": "600000.SH"}],
+        )
+        store.rebuild_custom_index("suspension")
+        next_day = date(2026, 8, 6)
+        store.upsert_trading_dates("tushare", [next_day])
+        store.upsert_daily_bars("tushare", [
+            DailyBar("000001.SZ", next_day, 12, 13, 11, 13, 130),
+        ])
+        store.upsert_adjustment_factors("tushare", [
+            AdjustmentFactor("000001.SZ", next_day, 1),
+        ])
+
+        with pytest.raises(ValueError, match="missing constituent evidence: 600000.SH"):
+            store.rebuild_custom_index("suspension", mode="incremental")
+
+        store.upsert_stock_trade_statuses("tushare", [
+            StockTradeStatus("600000.SH", next_day, "suspended"),
+        ])
+        rebuilt = store.rebuild_custom_index("suspension", mode="incremental")
+
+        assert rebuilt["last_trade_date"] == next_day
+
+
+def test_constituent_correction_marks_earliest_dependency_and_rebuilds_history():
+    with _prepared_store() as store:
+        store.create_custom_index(
+            "correction", "Correction", "", date(2026, 8, 3), 1000, "equal",
+            [{"symbol": "000001.SZ"}, {"symbol": "600000.SH"}],
+        )
+        store.rebuild_custom_index("correction")
+        original = store.get_daily_bars("CINDEX:CORRECTION")
+
+        store.upsert_daily_bars("tushare", [
+            DailyBar("000001.SZ", date(2026, 8, 4), 10, 13, 9, 12, 110),
+        ])
+        assert store.has_dirty_custom_indices() is True
+
+        store.rebuild_custom_index("correction", mode="incremental")
+        corrected = store.get_daily_bars("CINDEX:CORRECTION")
+        run = store._connection.execute(
+            """
+            SELECT mode, from_date, row_count FROM custom_index_calculation_runs
+            WHERE index_id = 'correction' ORDER BY run_id DESC LIMIT 1
+            """
+        ).fetchone()
+
+        assert corrected[1].close != original[1].close
+        assert tuple(run) == ("correction", 20260804, 2)
+        assert store.has_dirty_custom_indices() is False

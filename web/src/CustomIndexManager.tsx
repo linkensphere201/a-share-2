@@ -16,6 +16,7 @@ type CustomIndexSummary = {
   last_error?: string | null
   member_count: number
   rows: number
+  quality_warning_days?: number
 }
 
 type CustomIndexMember = {
@@ -39,6 +40,7 @@ type CustomIndexDraft = {
   status?: CustomIndexSummary['status']
   last_error?: string | null
   rows?: number
+  quality_warning_days?: number
   members: CustomIndexMember[]
 }
 
@@ -250,6 +252,7 @@ export function CustomIndexManager({ onClose }: { onClose: () => void }) {
             {draft.status && <span>状态 {statusLabel(draft.status)}</span>}
             {draft.revision_number && <span>版本 {draft.revision_number}</span>}
             {draft.rows !== undefined && <span>{draft.rows} 根已物化日线</span>}
+            {Boolean(draft.quality_warning_days) && <span>{draft.quality_warning_days} 个质量告警日</span>}
           </div>
           {(error || draft.last_error) && <div className="form-error">{error || draft.last_error}</div>}
         </>}

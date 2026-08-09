@@ -164,6 +164,19 @@ class AdjustmentFactor:
 
 
 @dataclass(frozen=True, slots=True)
+class StockTradeStatus:
+    symbol: str
+    trade_date: date
+    status: str
+
+    def validate(self) -> None:
+        if not self.symbol:
+            raise ValueError("stock trade status symbol is required")
+        if self.status not in {"listed", "trading", "suspended", "delisted"}:
+            raise ValueError(f"invalid stock trade status: {self.status}")
+
+
+@dataclass(frozen=True, slots=True)
 class CustomIndexMember:
     symbol: str
     raw_weight: float
