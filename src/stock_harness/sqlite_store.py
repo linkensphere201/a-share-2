@@ -1868,11 +1868,21 @@ class SQLiteMarketDataStore:
             if completed_through is None:
                 raise ValueError("custom index members have no stored history")
             calendar_rows = self._connection.execute(
-                """
-                SELECT DISTINCT trade_date FROM trading_calendar
-                WHERE trade_date >= ? AND trade_date <= ? ORDER BY trade_date
+                f"""
+                SELECT trade_date FROM (
+                    SELECT trade_date FROM trading_calendar
+                    WHERE trade_date >= ? AND trade_date <= ?
+                    UNION
+                    SELECT trade_date FROM daily_bars
+                    WHERE instrument_id IN ({placeholders})
+                      AND trade_date >= ? AND trade_date <= ?
+                )
+                ORDER BY trade_date
                 """,
-                (int(custom[0]), int(completed_through)),
+                (
+                    int(custom[0]), int(completed_through), *all_ids,
+                    int(custom[0]), int(completed_through),
+                ),
             ).fetchall()
         calendar = [int(row[0]) for row in calendar_rows]
         if not calendar:
@@ -2006,10 +2016,26 @@ class SQLiteMarketDataStore:
                 return []
             dates = self._connection.execute(
                 """
-                SELECT DISTINCT trade_date FROM trading_calendar
-                WHERE trade_date > ? AND trade_date <= ? ORDER BY trade_date
+                SELECT trade_date FROM (
+                    SELECT trade_date FROM trading_calendar
+                    WHERE trade_date > ? AND trade_date <= ?
+                    UNION
+                    SELECT DISTINCT bar.trade_date
+                    FROM daily_bars AS bar
+                    WHERE bar.instrument_id IN (
+                        SELECT DISTINCT member.instrument_id
+                        FROM custom_index_revision_members AS member
+                        JOIN custom_index_revisions AS revision USING (revision_id)
+                        WHERE revision.index_id = ?
+                    )
+                      AND bar.trade_date > ? AND bar.trade_date <= ?
+                )
+                ORDER BY trade_date
                 """,
-                (int(latest[0]), int(completed_through)),
+                (
+                    int(latest[0]), int(completed_through), index_id,
+                    int(latest[0]), int(completed_through),
+                ),
             ).fetchall()
         previous_index_close = float(latest[1])
         output = []

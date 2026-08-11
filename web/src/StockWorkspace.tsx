@@ -295,10 +295,10 @@ export function StockWorkspace() {
               <button className={activeChart.chart.priceMode === 'log' ? 'active' : ''} onClick={() => setPriceMode('log')}>对数</button>
             </div>
             {activeChart.instrument.kind === 'custom-index' && <div className="coordinate-tabs" aria-label="指数图形">
-              <button className={activeChart.chart.seriesMode !== 'candles' ? 'active' : ''} onClick={() => updateActiveChart(item => ({
+              <button className={activeChart.chart.seriesMode === 'line' ? 'active' : ''} onClick={() => updateActiveChart(item => ({
                 ...item, chart: { ...item.chart, seriesMode: 'line' },
               }))}>收盘线</button>
-              <button className={activeChart.chart.seriesMode === 'candles' ? 'active' : ''} onClick={() => updateActiveChart(item => ({
+              <button className={activeChart.chart.seriesMode !== 'line' ? 'active' : ''} onClick={() => updateActiveChart(item => ({
                 ...item, chart: { ...item.chart, seriesMode: 'candles' },
               }))}>合成K线</button>
             </div>}

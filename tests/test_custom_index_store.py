@@ -55,6 +55,33 @@ def test_materialized_history_is_read_through_the_normal_bar_path():
         assert summary["rows"] == 3
 
 
+def test_materialized_history_uses_bar_dates_when_calendar_is_only_partially_backfilled():
+    with SQLiteMarketDataStore(":memory:") as store:
+        days = [date(2026, 8, 3), date(2026, 8, 4), date(2026, 8, 5)]
+        store.upsert_instruments([
+            Instrument("000001.SZ", "Ping An Bank", InstrumentKind.STOCK, "SZ"),
+        ])
+        store.upsert_trading_dates("tushare", [days[-1]])
+        store.upsert_daily_bars("tushare", [
+            DailyBar("000001.SZ", days[0], 10, 10, 9, 10, 100),
+            DailyBar("000001.SZ", days[1], 10, 11, 10, 11, 110),
+            DailyBar("000001.SZ", days[2], 11, 12, 11, 12, 120),
+        ])
+        store.upsert_adjustment_factors("tushare", [
+            AdjustmentFactor("000001.SZ", day, 1) for day in days
+        ])
+        store.create_custom_index(
+            "partial-calendar", "Partial Calendar", "", days[0], 1000, "equal",
+            [{"symbol": "000001.SZ"}],
+        )
+
+        rebuilt = store.rebuild_custom_index("partial-calendar")
+        bars = store.get_daily_bars("CINDEX:PARTIAL-CALENDAR")
+
+        assert rebuilt["rows"] == 3
+        assert [item.trade_date for item in bars] == days
+
+
 def test_reopening_store_reads_materialized_rows_without_recalculation(tmp_path):
     path = tmp_path / "market.sqlite"
     with SQLiteMarketDataStore(path) as store:
