@@ -35,6 +35,7 @@ class UpdateResult:
 @dataclass(frozen=True, slots=True)
 class UpdateStatus:
     state: str = "idle"
+    trigger: str | None = None
     started_at: str | None = None
     completed_at: str | None = None
     next_run_at: str | None = None
@@ -63,10 +64,17 @@ class IncrementalUpdater:
             lambda: TushareDailyProvider(settings.tushare)
         )
 
-    def run_once(self, now: datetime | None = None) -> UpdateResult:
+    def run_once(
+        self, now: datetime | None = None, include_current_day: bool = False,
+    ) -> UpdateResult:
         now = now or datetime.now()
         calendar_end = now.date()
-        completed_end = calendar_end if now.time() >= time(18, 0) else calendar_end - timedelta(days=1)
+        completed_end = (
+            calendar_end
+            if now.time() >= time(18, 0)
+            or (include_current_day and now.time() >= time(15, 0))
+            else calendar_end - timedelta(days=1)
+        )
         start_date = calendar_end - timedelta(
             days=self.settings.auto_update.calendar_lookback_days
         )
@@ -280,7 +288,9 @@ class AutoUpdateService:
         self._updater = updater
         self._interval_seconds = interval_seconds
         self._stop = threading.Event()
+        self._wake = threading.Event()
         self._lock = threading.Lock()
+        self._manual_pending = False
         self._status = UpdateStatus()
         self._thread = threading.Thread(
             target=self._run, name="stock-harness-auto-update", daemon=True
@@ -300,6 +310,7 @@ class AutoUpdateService:
 
     def stop(self) -> None:
         self._stop.set()
+        self._wake.set()
         if self._thread.is_alive():
             self._thread.join(timeout=10.0)
         LOGGER.info("auto_update_service_stop")
@@ -308,17 +319,48 @@ class AutoUpdateService:
         with self._lock:
             return self._status.as_dict()
 
+    def trigger(self) -> dict[str, object]:
+        with self._lock:
+            if self._status.state == "running":
+                if self._status.trigger == "manual" or self._manual_pending:
+                    LOGGER.info("auto_update_manual_request_coalesced state=running")
+                    return {"accepted": False, "queued": self._manual_pending, **self._status.as_dict()}
+                self._manual_pending = True
+                result = {"accepted": True, "queued": True, **self._status.as_dict()}
+                LOGGER.info("auto_update_manual_request_queued_after_current")
+                self._wake.set()
+                return result
+            self._manual_pending = True
+            self._status = UpdateStatus(state="queued", trigger="manual")
+            result = {"accepted": True, **self._status.as_dict()}
+        LOGGER.info("auto_update_manual_request_queued")
+        self._wake.set()
+        return result
+
     def _run(self) -> None:
         while not self._stop.is_set():
             started = datetime.now()
-            self._set_status(UpdateStatus(state="running", started_at=started.isoformat()))
+            with self._lock:
+                trigger = "manual" if self._manual_pending else "scheduled"
+                self._manual_pending = False
+                self._status = UpdateStatus(
+                    state="running", trigger=trigger, started_at=started.isoformat()
+                )
             try:
-                LOGGER.info("auto_update_run_start started_at=%s", started.isoformat())
-                result = self._updater.run_once(started)
+                LOGGER.info(
+                    "auto_update_run_start trigger=%s started_at=%s",
+                    trigger, started.isoformat(),
+                )
+                result = self._updater.run_once(
+                    started, include_current_day=trigger == "manual"
+                )
                 completed = datetime.now()
                 next_run = completed + timedelta(seconds=self._interval_seconds)
+                with self._lock:
+                    manual_queued = self._manual_pending
                 self._set_status(UpdateStatus(
-                    state="warning" if result.errors else "idle",
+                    state="queued" if manual_queued else ("warning" if result.errors else "idle"),
+                    trigger="manual" if manual_queued else trigger,
                     started_at=started.isoformat(),
                     completed_at=completed.isoformat(),
                     next_run_at=next_run.isoformat(),
@@ -333,7 +375,8 @@ class AutoUpdateService:
                     error="; ".join(result.errors[:5]) if result.errors else None,
                 ))
                 LOGGER.info(
-                    "auto_update_run_complete state=%s snapshots_written=%s rows_changed=%s errors=%s",
+                    "auto_update_run_complete trigger=%s state=%s snapshots_written=%s rows_changed=%s errors=%s",
+                    trigger,
                     "warning" if result.errors else "idle",
                     result.snapshots_written,
                     result.rows_changed,
@@ -349,12 +392,20 @@ class AutoUpdateService:
                 completed = datetime.now()
                 self._set_status(UpdateStatus(
                     state="error",
+                    trigger=trigger,
                     started_at=started.isoformat(),
                     completed_at=completed.isoformat(),
                     next_run_at=(completed + timedelta(seconds=self._interval_seconds)).isoformat(),
                     error=str(exc),
                 ))
-            if self._stop.wait(self._interval_seconds):
+            if self._stop.is_set():
+                break
+            self._wake.clear()
+            with self._lock:
+                manual_queued = self._manual_pending
+            if not manual_queued:
+                self._wake.wait(self._interval_seconds)
+            if self._stop.is_set():
                 break
 
     def _set_status(self, status: UpdateStatus) -> None:

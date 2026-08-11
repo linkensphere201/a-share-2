@@ -130,6 +130,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         storage_config=paths.storage_config,
         web_dist=paths.web_dist,
         update_status=update_service.status if update_service else None,
+        update_trigger=update_service.trigger if update_service else None,
         intraday_service=intraday_service,
         custom_index_factor_loader=load_custom_index_factors,
         custom_index_status_loader=load_custom_index_statuses,

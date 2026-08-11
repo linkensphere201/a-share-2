@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from pathlib import Path
+from threading import Event
+import time
 
-from stock_harness.auto_update import IncrementalUpdater
+from stock_harness.auto_update import AutoUpdateService, IncrementalUpdater, UpdateResult
 from stock_harness.config import load_runtime_settings
 from stock_harness.models import (
     CatalogEntry, DailyBar, EtfHolding, Instrument, InstrumentKind, MarketSnapshot,
@@ -149,6 +151,90 @@ def test_incremental_update_persists_calendar_and_skips_completed_snapshots(tmp_
         assert store.list_trading_dates(
             "tushare", date(2026, 7, 1), date(2026, 8, 3)
         ) == [date(2026, 7, 31), date(2026, 8, 3)]
+
+
+def test_manual_after_close_update_includes_current_trading_day(tmp_path: Path):
+    settings = _settings(tmp_path)
+    scheduled_provider = FakeProvider()
+    scheduled = IncrementalUpdater(settings, lambda: scheduled_provider).run_once(
+        datetime(2026, 8, 3, 16, 0)
+    )
+
+    manual_path = tmp_path / "manual"
+    manual_path.mkdir()
+    manual_settings = _settings(manual_path)
+    manual_provider = FakeProvider()
+    manual = IncrementalUpdater(manual_settings, lambda: manual_provider).run_once(
+        datetime(2026, 8, 3, 16, 0), include_current_day=True
+    )
+
+    assert scheduled.snapshots_checked == 6
+    assert manual.snapshots_checked == 12
+    assert manual.snapshots_written == 12
+
+
+def test_auto_update_service_accepts_a_nonblocking_manual_trigger():
+    class Updater:
+        def __init__(self):
+            self.calls: list[bool] = []
+
+        def run_once(self, _now, include_current_day=False):
+            self.calls.append(include_current_day)
+            return UpdateResult(0, 0, 0, 0, 0, 0, 0, 0, ())
+
+    updater = Updater()
+    service = AutoUpdateService(updater, 3600)
+    service.start()
+    try:
+        deadline = time.time() + 2
+        while len(updater.calls) < 1 and time.time() < deadline:
+            time.sleep(0.01)
+        while service.status()["state"] == "running" and time.time() < deadline:
+            time.sleep(0.01)
+
+        requested = service.trigger()
+        while len(updater.calls) < 2 and time.time() < deadline:
+            time.sleep(0.01)
+
+        assert requested["accepted"] is True
+        assert updater.calls == [False, True]
+    finally:
+        service.stop()
+
+
+def test_manual_trigger_queues_behind_an_active_scheduled_update():
+    first_started = Event()
+    release_first = Event()
+    manual_started = Event()
+
+    class Updater:
+        def __init__(self):
+            self.calls: list[bool] = []
+
+        def run_once(self, _now, include_current_day=False):
+            self.calls.append(include_current_day)
+            if len(self.calls) == 1:
+                first_started.set()
+                release_first.wait(2)
+            else:
+                manual_started.set()
+            return UpdateResult(0, 0, 0, 0, 0, 0, 0, 0, ())
+
+    updater = Updater()
+    service = AutoUpdateService(updater, 3600)
+    service.start()
+    try:
+        assert first_started.wait(2)
+        requested = service.trigger()
+        release_first.set()
+
+        assert requested["accepted"] is True
+        assert requested["queued"] is True
+        assert manual_started.wait(2)
+        assert updater.calls == [False, True]
+    finally:
+        release_first.set()
+        service.stop()
 
 
 def test_incremental_update_ignores_out_of_scope_rejections_and_resolves_incident(

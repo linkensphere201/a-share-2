@@ -18,6 +18,7 @@ import {
   movingAverage,
   mergeProvisionalBar,
   millisecondsUntilMarketSession,
+  shouldUseFinalDailyRefresh,
   visibleExtrema,
   visibleUnfilledPriceGaps,
   type DailyBar,
@@ -124,6 +125,14 @@ describe('provisional daily bars', () => {
     expect(millisecondsUntilMarketSession(new Date(2026, 7, 4, 10, 0))).toBe(0)
     expect(millisecondsUntilMarketSession(new Date(2026, 7, 4, 12, 0))).toBeGreaterThan(0)
     expect(millisecondsUntilMarketSession(new Date(2026, 7, 4, 15, 1))).toBeGreaterThan(0)
+  })
+
+  it('routes before-open, after-close, and weekend refreshes to final daily updates', () => {
+    expect(shouldUseFinalDailyRefresh(new Date(2026, 7, 4, 8, 30))).toBe(true)
+    expect(shouldUseFinalDailyRefresh(new Date(2026, 7, 4, 10, 0))).toBe(false)
+    expect(shouldUseFinalDailyRefresh(new Date(2026, 7, 4, 12, 0))).toBe(false)
+    expect(shouldUseFinalDailyRefresh(new Date(2026, 7, 4, 15, 1))).toBe(true)
+    expect(shouldUseFinalDailyRefresh(new Date(2026, 7, 8, 10, 0))).toBe(true)
   })
 })
 

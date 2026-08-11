@@ -116,6 +116,13 @@ export function millisecondsUntilMarketSession(now: Date): number {
   return millisecondsUntilNextMarketDay(now)
 }
 
+export function shouldUseFinalDailyRefresh(now: Date): boolean {
+  const day = now.getDay()
+  if (day === 0 || day === 6) return true
+  const minutes = now.getHours() * 60 + now.getMinutes()
+  return minutes < 9 * 60 + 30 || minutes > 15 * 60
+}
+
 export function millisecondsUntilNextMarketDay(now: Date): number {
   const target = new Date(now)
   target.setDate(target.getDate() + 1)

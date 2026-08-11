@@ -826,6 +826,8 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .runtime-event-summary > b { min-width: 16px; padding: 1px 4px; border-radius: 3px; background: #303743; color: #c6ccd5; font-size: 9px; }
 .runtime-events.warning .runtime-event-summary { color: #d2ab68; }
 .runtime-events.error .runtime-event-summary, .runtime-events.critical .runtime-event-summary { color: #db7f88; }
+.runtime-events.updating .runtime-event-summary { color: #7db4e6; }
+.runtime-update-spinner { animation: chart-refresh-spin .8s linear infinite; }
 .runtime-event-panel {
   position: absolute;
   z-index: 20;

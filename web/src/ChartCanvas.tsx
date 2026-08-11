@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
-import { AlertTriangle, Check, ChevronLeft, ChevronRight, Eye, EyeOff, MousePointer2, MoveHorizontal, MoveVertical, PencilLine, Percent, RefreshCw, Settings2, Trash2, X, ZoomIn } from 'lucide-react'
+import { AlertTriangle, Check, ChevronLeft, ChevronRight, Eye, EyeOff, MousePointer2, Move, MoveHorizontal, MoveVertical, PencilLine, Percent, RefreshCw, Settings2, Trash2, X, ZoomIn } from 'lucide-react'
 import { logInfo, logWarning } from './eventLogger'
 import {
   createTrendLine,
@@ -40,6 +40,7 @@ import {
   movingAverage,
   previousCloseByDate,
   remapLogicalRange,
+  shouldUseFinalDailyRefresh,
   snapLogicalRangeToDataEdge,
   subtractMonths,
   subtractYears,
@@ -216,7 +217,7 @@ export function ChartCanvas({
   const [selectionBox, setSelectionBox] = useState<SelectionBox>()
   const [rangeSelection, setRangeSelection] = useState<RangeSelection>()
   const [measurement, setMeasurement] = useState<RangeMeasurement>()
-  const [drawingTool, setDrawingTool] = useState<'browse' | 'trend-line'>('browse')
+  const [drawingTool, setDrawingTool] = useState<'browse' | 'trend-line' | 'move'>('browse')
   const [drawings, setDrawings] = useState<TrendLineDrawing[]>(() => loadSymbolDrawings(symbol))
   const [drawingDraft, setDrawingDraft] = useState<[TrendLineAnchor, TrendLineAnchor]>()
   const [selectedDrawingId, setSelectedDrawingId] = useState<string>()
@@ -619,6 +620,69 @@ export function ChartCanvas({
     window.clearTimeout(manualRefreshFeedbackTimerRef.current)
     setManualRefreshFeedback(undefined)
     setManualRefreshing(true)
+    if (shouldUseFinalDailyRefresh(new Date())) {
+      fetch('/api/update/refresh', { method: 'POST', signal: controller.signal })
+        .then(response => {
+          if (!response.ok) throw new Error(`HTTP ${response.status}`)
+          return response.json() as Promise<{
+            accepted: boolean
+            state: string
+            queued?: boolean
+          }>
+        })
+        .then(async request => {
+          logInfo('daily-update', '盘后正式日线刷新任务已开始', {
+            symbol,
+            accepted: request.accepted,
+            state: request.state,
+            queued: request.queued,
+          })
+          const status = await waitForFinalDailyUpdate(controller.signal)
+          const response = await fetch(
+            `/api/instruments/${encodeURIComponent(symbol)}/daily-bars`,
+            { signal: controller.signal },
+          )
+          if (!response.ok) throw new Error(`HTTP ${response.status}`)
+          const body = await response.json() as { items: DailyBar[] }
+          replaceBars(body.items, true)
+          const finalItems = body.items.filter(item => item.bar_state !== 'intraday')
+          coverageCallbackRef.current?.(
+            finalItems.length,
+            finalItems.at(0)?.trade_date,
+            finalItems.at(-1)?.trade_date,
+          )
+          if (status.state === 'warning' || status.state === 'error') {
+            showManualRefreshFeedback('warning')
+            logWarning('daily-update', '盘后正式日线刷新完成但存在异常', {
+              symbol,
+              state: status.state,
+              error: status.error,
+            })
+          } else {
+            showManualRefreshFeedback('success')
+            logInfo('daily-update', '盘后正式日线刷新完成', {
+              symbol,
+              rowsChanged: status.rows_changed,
+            })
+          }
+        })
+        .catch(error => {
+          if ((error as Error).name !== 'AbortError') {
+            showManualRefreshFeedback('warning')
+            logWarning('daily-update', '盘后正式日线刷新失败，保留现有图表', {
+              symbol,
+              error,
+            })
+          }
+        })
+        .finally(() => {
+          if (manualRefreshControllerRef.current === controller) {
+            manualRefreshControllerRef.current = undefined
+            setManualRefreshing(false)
+          }
+        })
+      return
+    }
     fetch('/api/intraday/refresh', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1034,7 +1098,10 @@ export function ChartCanvas({
   const handleTrendLineMoveStart = (event: ReactPointerEvent<SVGLineElement>, drawing: TrendLineDrawing) => {
     const chart = chartRef.current
     const candles = candleRef.current
-    if (event.button !== 0 || drawingTool !== 'browse' || !chart || !candles) return
+    if (
+      event.button !== 0 || drawingTool !== 'move'
+      || drawing.id !== selectedDrawingId || !chart || !candles
+    ) return
     const point = chartPoint(event, hostRef.current)
     const paneHeight = chart.panes()[0]?.getHeight() ?? hostRef.current?.clientHeight ?? 0
     if (point.y > paneHeight) return
@@ -1276,13 +1343,13 @@ export function ChartCanvas({
         <button
           className={manualRefreshing ? 'refreshing' : manualRefreshFeedback ?? ''}
           title={manualRefreshing
-            ? '正在刷新当前标的盘中日K'
+            ? '正在刷新当前标的当日数据'
             : manualRefreshFeedback === 'success'
-              ? '盘中日K刷新完成'
+              ? '当日数据刷新完成'
               : manualRefreshFeedback === 'warning'
-                ? '未获得新盘中日K，已保留现有数据'
-                : '刷新当前标的盘中日K'}
-          aria-label="刷新当前标的盘中日K"
+                ? '未获得新当日数据，已保留现有数据'
+                : '刷新当日标的'}
+          aria-label="刷新当日标的"
           disabled={manualRefreshing}
           onClick={refreshIntradayNow}
         >{manualRefreshing
@@ -1309,6 +1376,14 @@ export function ChartCanvas({
             setSelectedDrawingId(undefined)
           }}
         ><PencilLine size={13}/></button>
+        <button
+          className={drawingTool === 'move' ? 'active' : ''}
+          title="平移选中的趋势线并保持角度"
+          aria-label="平移选中的趋势线并保持角度"
+          aria-pressed={drawingTool === 'move'}
+          disabled={!selectedDrawingId}
+          onClick={() => setDrawingTool(value => value === 'move' ? 'browse' : 'move')}
+        ><Move size={13}/></button>
         <button
           title="将选中趋势线设为水平"
           aria-label="将选中趋势线设为水平"
@@ -1422,6 +1497,24 @@ function PaneHeader({ kind, top, onHide }: { kind: 'volume' | 'macd'; top: numbe
       <button title={`隐藏${label}栏`} aria-label={`隐藏${label}栏`} onClick={onHide}><EyeOff size={11}/></button>
     </div>
   )
+}
+
+type FinalDailyUpdateStatus = {
+  state: string
+  rows_changed?: number
+  error?: string | null
+}
+
+async function waitForFinalDailyUpdate(signal: AbortSignal): Promise<FinalDailyUpdateStatus> {
+  for (let attempt = 0; attempt < 180; attempt += 1) {
+    const response = await fetch('/api/update-status', { signal })
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    const status = await response.json() as FinalDailyUpdateStatus
+    if (status.state !== 'queued' && status.state !== 'running') return status
+    await new Promise(resolve => window.setTimeout(resolve, 1_000))
+    if (signal.aborted) throw new DOMException('Aborted', 'AbortError')
+  }
+  throw new Error('盘后正式日线刷新超时')
 }
 
 function TrendLineManager({

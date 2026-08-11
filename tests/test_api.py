@@ -428,6 +428,25 @@ def test_intraday_manual_refresh_targets_requested_chart_symbol():
     assert response.json()["items"][0]["source"] == "test_live"
 
 
+def test_manual_final_daily_update_endpoint_queues_background_refresh():
+    store = SQLiteMarketDataStore(":memory:")
+    calls = []
+    client = TestClient(create_app(
+        store,
+        update_status=lambda: {"state": "idle"},
+        update_trigger=lambda: calls.append("triggered") or {
+            "accepted": True, "state": "queued", "trigger": "manual",
+        },
+    ))
+    try:
+        response = client.post("/api/update/refresh")
+        assert response.status_code == 202
+        assert response.json()["state"] == "queued"
+        assert calls == ["triggered"]
+    finally:
+        store.close()
+
+
 def test_final_daily_bar_suppresses_same_day_provisional_bar_for_all_endpoints():
     store, _ = _client()
     store.upsert_daily_bars(

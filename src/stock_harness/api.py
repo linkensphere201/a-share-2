@@ -81,6 +81,7 @@ def create_app(
     storage_config: Path = Path("config/storage.local.yaml"),
     web_dist: Path | None = None,
     update_status: Callable[[], dict[str, object]] | None = None,
+    update_trigger: Callable[[], dict[str, object]] | None = None,
     intraday_service: IntradayQuoteService | None = None,
     custom_index_factor_loader: Callable[
         [list[str], date, date], list[AdjustmentFactor]
@@ -153,6 +154,17 @@ def create_app(
         if update_status is None:
             return {"state": "disabled"}
         return update_status()
+
+    @app.post("/api/update/refresh", status_code=status.HTTP_202_ACCEPTED)
+    def trigger_auto_update() -> dict[str, object]:
+        if update_trigger is None:
+            raise HTTPException(status_code=503, detail="auto update is disabled")
+        result = update_trigger()
+        LOGGER.info(
+            "manual_final_daily_update_requested accepted=%s state=%s",
+            result.get("accepted"), result.get("state"),
+        )
+        return result
 
     @app.get("/api/runtime-events")
     def runtime_events(
