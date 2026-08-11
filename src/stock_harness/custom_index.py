@@ -11,7 +11,7 @@ from typing import Literal, Sequence
 from stock_harness.models import CustomIndexBar, DailyBar
 
 
-CALCULATION_VERSION = "daily-envelope-v1"
+CALCULATION_VERSION = "daily-envelope-v2"
 WeightingMethod = Literal["equal", "manual"]
 
 
@@ -54,17 +54,19 @@ def normalize_members(
     )
 
 
-def base_bar(trade_date: date, base_value: float, total_count: int) -> CustomIndexBar:
+def base_bar(
+    trade_date: date, base_value: float, total_count: int, volume: int = 0,
+) -> CustomIndexBar:
     if not isfinite(base_value) or base_value <= 0:
         raise ValueError("custom index base value must be positive")
     if total_count <= 0:
         raise ValueError("custom index requires at least one member")
     digest = blake2b(
-        f"base|{trade_date.isoformat()}|{base_value:.12g}|{total_count}".encode("ascii"),
+        f"base|{trade_date.isoformat()}|{base_value:.12g}|{total_count}|{volume}".encode("ascii"),
         digest_size=16,
     ).digest()
     return CustomIndexBar(
-        trade_date, base_value, base_value, base_value, base_value,
+        trade_date, base_value, base_value, base_value, base_value, volume,
         0.0, total_count, total_count, "complete", digest,
     )
 
@@ -86,6 +88,7 @@ def calculate_bar(
         return None
 
     open_return = high_return = low_return = close_return = 0.0
+    volume = 0
     inferred = False
     digest = blake2b(digest_size=16)
     for item in sorted(effective, key=lambda value: value.symbol):
@@ -112,6 +115,7 @@ def calculate_bar(
                     item.current.low, item.current.close,
                 )
             )
+            volume += item.current.volume
         open_return += weight * returns[0]
         high_return += weight * returns[1]
         low_return += weight * returns[2]
@@ -120,7 +124,8 @@ def calculate_bar(
             (
                 f"{item.symbol}|{weight:.17g}|{item.status}|"
                 f"{returns[0]:.17g}|{returns[1]:.17g}|"
-                f"{returns[2]:.17g}|{returns[3]:.17g}\n"
+                f"{returns[2]:.17g}|{returns[3]:.17g}|"
+                f"{item.current.volume if item.current is not None else 0}\n"
             ).encode("ascii")
         )
 
@@ -140,6 +145,7 @@ def calculate_bar(
         high=index_high,
         low=index_low,
         close=index_close,
+        volume=volume,
         daily_return=close_return,
         eligible_count=len(effective),
         total_count=len(constituents),

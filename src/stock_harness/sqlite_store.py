@@ -112,6 +112,7 @@ class SQLiteMarketDataStore:
         self._configure()
         with self._writer_lock:
             self._connection.executescript(_SCHEMA)
+        self._ensure_custom_index_volume()
         self._ensure_custom_group_member_roles()
         self._ensure_market_snapshot_metrics()
         self._backfill_pinyin_aliases()
@@ -475,6 +476,19 @@ class SQLiteMarketDataStore:
                     )
                 WHERE close IS NULL OR volume IS NULL
                 """
+            )
+
+    def _ensure_custom_index_volume(self) -> None:
+        columns = {
+            str(row[1])
+            for row in self._connection.execute("PRAGMA table_info(custom_index_daily_bars)")
+        }
+        if "volume" in columns:
+            return
+        with self._lock, self._transaction():
+            self._connection.execute(
+                "ALTER TABLE custom_index_daily_bars "
+                "ADD COLUMN volume INTEGER NOT NULL DEFAULT 0"
             )
 
     def _ensure_custom_group_member_roles(self) -> None:
@@ -1018,7 +1032,7 @@ class SQLiteMarketDataStore:
                 parameters.append(_date_key(end_date))
             query = f"""
                 SELECT instrument.symbol, bar.trade_date, bar.open, bar.high,
-                       bar.low, bar.close, bar.updated_at_ms
+                       bar.low, bar.close, bar.volume, bar.updated_at_ms
                 FROM custom_index_daily_bars AS bar
                 JOIN custom_indices AS custom USING (index_id)
                 JOIN instruments AS instrument USING (instrument_id)
@@ -1031,8 +1045,8 @@ class SQLiteMarketDataStore:
                 StoredDailyBar(
                     symbol=str(row[0]), trade_date=_date_from_key(int(row[1])),
                     open=float(row[2]), high=float(row[3]), low=float(row[4]),
-                    close=float(row[5]), volume=0, source="local_custom_index",
-                    updated_at_ms=int(row[6]),
+                    close=float(row[5]), volume=int(row[6]), source="local_custom_index",
+                    updated_at_ms=int(row[7]),
                 )
                 for row in rows
             ]
@@ -1721,13 +1735,14 @@ class SQLiteMarketDataStore:
                 self._connection.executemany(
                     """
                     INSERT INTO custom_index_daily_bars(
-                        index_id, trade_date, open, high, low, close, daily_return,
+                        index_id, trade_date, open, high, low, close, volume, daily_return,
                         eligible_count, total_count, quality_status, input_hash,
                         calculation_version, updated_at_ms
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(index_id, trade_date) DO UPDATE SET
                         open = excluded.open, high = excluded.high, low = excluded.low,
-                        close = excluded.close, daily_return = excluded.daily_return,
+                        close = excluded.close, volume = excluded.volume,
+                        daily_return = excluded.daily_return,
                         eligible_count = excluded.eligible_count,
                         total_count = excluded.total_count,
                         quality_status = excluded.quality_status,
@@ -1738,7 +1753,7 @@ class SQLiteMarketDataStore:
                     (
                         (
                             normalized, _date_key(item.trade_date), item.open, item.high,
-                            item.low, item.close, item.daily_return, item.eligible_count,
+                            item.low, item.close, item.volume, item.daily_return, item.eligible_count,
                             item.total_count, item.quality_status, item.input_hash,
                             CALCULATION_VERSION, completed_ms,
                         )
@@ -1938,7 +1953,15 @@ class SQLiteMarketDataStore:
                 if row[8] is not None:
                     previous.setdefault(instrument_id, (float(row[6]), float(row[8])))
             if not base_written:
-                item = base_bar(_date_from_key(trade_key), previous_index_close, len(current_members))
+                current_ids = {int(member[0]) for member in current_members}
+                day_volume = sum(
+                    int(row[7]) for instrument_id, row in today.items()
+                    if instrument_id in current_ids
+                )
+                item = base_bar(
+                    _date_from_key(trade_key), previous_index_close,
+                    len(current_members), day_volume,
+                )
                 output.append(item)
                 base_written = True
                 for instrument_id, row in today.items():

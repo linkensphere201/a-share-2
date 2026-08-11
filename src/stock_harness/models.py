@@ -190,6 +190,7 @@ class CustomIndexBar:
     high: float
     low: float
     close: float
+    volume: int
     daily_return: float
     eligible_count: int
     total_count: int

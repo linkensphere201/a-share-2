@@ -260,6 +260,7 @@ CREATE TABLE IF NOT EXISTS custom_index_daily_bars (
     high REAL NOT NULL,
     low REAL NOT NULL,
     close REAL NOT NULL,
+    volume INTEGER NOT NULL DEFAULT 0,
     daily_return REAL NOT NULL,
     eligible_count INTEGER NOT NULL,
     total_count INTEGER NOT NULL,
@@ -303,6 +304,21 @@ WHEN OLD.open IS NOT NEW.open OR OLD.high IS NOT NEW.high
 BEGIN
     INSERT INTO custom_index_dirty_dates(index_id, dirty_from, reason, updated_at_ms)
     SELECT DISTINCT revision.index_id, NEW.trade_date, 'constituent_bar_corrected', NEW.updated_at_ms
+    FROM custom_index_revision_members AS member
+    JOIN custom_index_revisions AS revision USING (revision_id)
+    WHERE member.instrument_id = NEW.instrument_id
+    ON CONFLICT(index_id) DO UPDATE SET
+        dirty_from = min(custom_index_dirty_dates.dirty_from, excluded.dirty_from),
+        reason = excluded.reason,
+        updated_at_ms = excluded.updated_at_ms;
+END;
+
+CREATE TRIGGER IF NOT EXISTS custom_index_dirty_after_daily_bar_volume_update
+AFTER UPDATE OF volume ON daily_bars
+WHEN OLD.volume IS NOT NEW.volume
+BEGIN
+    INSERT INTO custom_index_dirty_dates(index_id, dirty_from, reason, updated_at_ms)
+    SELECT DISTINCT revision.index_id, NEW.trade_date, 'constituent_volume_corrected', NEW.updated_at_ms
     FROM custom_index_revision_members AS member
     JOIN custom_index_revisions AS revision USING (revision_id)
     WHERE member.instrument_id = NEW.instrument_id

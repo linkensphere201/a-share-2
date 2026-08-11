@@ -37,6 +37,7 @@ def test_single_member_matches_its_adjusted_return_path():
     assert result is not None
     assert (result.open, result.high, result.low, result.close) == (1000, 1200, 900, 1100)
     assert result.daily_return == pytest.approx(0.1)
+    assert result.volume == 100
     assert result.quality_status == "complete"
 
 
@@ -58,6 +59,7 @@ def test_weighted_envelope_is_order_invariant_and_handles_adjustment_changes():
     assert left == right
     assert left is not None
     assert left.close == pytest.approx(1087.5)
+    assert left.volume == 200
     assert left.low <= min(left.open, left.close) <= max(left.open, left.close) <= left.high
 
 
@@ -70,6 +72,7 @@ def test_suspension_is_zero_return_but_unexplained_missing_data_fails():
 
     assert suspended is not None
     assert suspended.close == 1000
+    assert suspended.volume == 0
     assert suspended.quality_status == "inferred_suspension"
     with pytest.raises(ValueError, match="missing constituent evidence"):
         calculate_bar(date(2026, 8, 4), 1000, [
@@ -81,6 +84,7 @@ def test_base_bar_is_a_persistable_flat_reference_point():
     result = base_bar(date(2026, 1, 1), 1000, 2)
 
     assert (result.open, result.high, result.low, result.close) == (1000, 1000, 1000, 1000)
+    assert result.volume == 0
     assert result.eligible_count == result.total_count == 2
 
 

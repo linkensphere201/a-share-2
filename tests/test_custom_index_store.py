@@ -49,7 +49,7 @@ def test_materialized_history_is_read_through_the_normal_bar_path():
         assert bars[0].close == 1000
         assert bars[1].close == pytest.approx(1075)
         assert bars[1].source == "local_custom_index"
-        assert bars[1].volume == 0
+        assert [item.volume for item in bars] == [300, 320, 340]
         assert summary is not None
         assert summary["classification"] == "custom-index"
         assert summary["rows"] == 3
