@@ -4,6 +4,7 @@ import {
   ChevronRight,
   Eye,
   EyeOff,
+  FileSearch,
   RefreshCw,
   RotateCcw,
   Settings2,
@@ -18,11 +19,14 @@ import {
   type TrendTradingSystemSettings,
 } from './tradingSystems'
 import type { GeneratedBreakoutState } from './ChartCanvas'
+import type { TrendAnalysisRun } from './trendAnalysisClient'
+import { readTrendEvidence } from './trendEvidence'
 
 type TradingSystemControlsProps = {
   instrumentKind: string
   state: TradingSystemWindowState
   breakoutState?: GeneratedBreakoutState
+  analysisRun?: TrendAnalysisRun | null
   onChange: (state: TradingSystemWindowState) => void
   onRecalculate: (state: TradingSystemWindowState) => void
 }
@@ -31,17 +35,20 @@ export function TradingSystemControls({
   instrumentKind,
   state,
   breakoutState,
+  analysisRun,
   onChange,
   onRecalculate,
 }: TradingSystemControlsProps) {
   const descriptor = tradingSystemRegistry.get('trend')!
   const supported = descriptor.supportedInstrumentKinds.includes(instrumentKind)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [evidenceOpen, setEvidenceOpen] = useState(false)
   const [draftSettings, setDraftSettings] = useState<TrendTradingSystemSettings>(() => (
     normalizeTrendTradingSystemSettings(state.settings)
   ))
   const [draftLayers, setDraftLayers] = useState<Record<string, boolean>>(() => ({ ...state.layers }))
   const eventLabel = breakoutState ? trendEventLabel(breakoutState) : undefined
+  const evidence = readTrendEvidence(analysisRun, breakoutState)
 
   const openSettings = () => {
     setDraftSettings(normalizeTrendTradingSystemSettings(state.settings))
@@ -98,10 +105,21 @@ export function TradingSystemControls({
           {breakoutState && <span
             className="trend-recalculate-event-dot"
             data-testid="trend-recalculate-event"
+            data-evidence-trigger="true"
             title={`${breakoutState.preview ? '盘中预览 · ' : ''}${eventLabel}`}
-            aria-hidden="true"
+            onClick={event => {
+              event.stopPropagation()
+              setEvidenceOpen(true)
+            }}
           />}
         </button>
+        <button
+          title="查看趋势证据"
+          aria-label="查看趋势证据"
+          disabled={!evidence}
+          className={evidenceOpen ? 'active' : ''}
+          onClick={() => setEvidenceOpen(true)}
+        ><FileSearch size={13}/></button>
         <button
           className={settingsOpen ? 'active' : ''}
           title="趋势交易体系设置"
@@ -167,6 +185,36 @@ export function TradingSystemControls({
           </footer>
         </div>
       )}
+      {evidenceOpen && evidence && (
+        <div className="trend-evidence-panel" role="dialog" aria-label="趋势分析证据">
+          <header>
+            <span>趋势证据</span>
+            <button title="关闭趋势证据" aria-label="关闭趋势证据" onClick={() => setEvidenceOpen(false)}><X size={13}/></button>
+          </header>
+          <div className="trend-evidence-body">
+            <dl>
+              <dt>结果</dt><dd>{evidence.source === 'preview' ? '盘中预览' : '正式'} · {evidence.asOfDate} · {evidence.timeframe}</dd>
+              <dt>状态</dt><dd>{breakoutState ? trendEventLabel(breakoutState) : '暂无结构事件'}{evidence.stale ? ' · 已过期' : ''}</dd>
+              {evidence.patternName && <><dt>主形态</dt><dd>{evidence.patternName}{evidence.score !== undefined ? ` · ${(evidence.score * 100).toFixed(0)}分` : ''}</dd></>}
+              {evidence.boundaryPrice !== undefined && <><dt>边界</dt><dd>{evidence.boundaryPrice.toFixed(2)}</dd></>}
+              {evidence.invalidationPrice !== undefined && <><dt>失效位</dt><dd>{evidence.invalidationPrice.toFixed(2)}</dd></>}
+              {evidence.context && <><dt>环境</dt><dd>{contextLabel(evidence.context.alignment)} · {(evidence.context.score * 100).toFixed(0)}分 · {evidence.context.availableCount}项</dd></>}
+            </dl>
+            {evidence.scoreComponents.length > 0 && <section>
+              <span>置信分解</span>
+              <div>{evidence.scoreComponents.map(item => <i key={item.label}>{item.label} {(item.value * 100).toFixed(0)}</i>)}</div>
+            </section>}
+            {evidence.observation.length > 0 && <section>
+              <span>量价观测</span>
+              <div>{evidence.observation.map(item => <i key={item.label}>{item.label} {item.value}</i>)}</div>
+            </section>}
+            {evidence.warnings.length > 0 && <section className="warnings">
+              <span>警告</span>
+              {evidence.warnings.slice(0, 5).map(item => <p key={item}>{item}</p>)}
+            </section>}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -182,6 +230,12 @@ function trendEventLabel(value: GeneratedBreakoutState): string {
     retesting: '回踩中', continuing: '延续', failed: '失败',
     invalidated: '失效', stale: '已过期',
   })[value.state]
+}
+
+function contextLabel(value: string): string {
+  if (value === 'supportive') return '顺风'
+  if (value === 'adverse') return '逆风'
+  return '混合'
 }
 
 function toggleTimeframe(

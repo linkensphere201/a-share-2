@@ -10,6 +10,7 @@ import {
   type TradingSystemWindowState,
 } from './tradingSystems'
 import type { GeneratedBreakoutState } from './ChartCanvas'
+import type { TrendAnalysisRun } from './trendAnalysisClient'
 
 afterEach(cleanup)
 
@@ -17,14 +18,16 @@ function Harness({
   initial = createTradingSystemWindowStates().trend,
   onRecalculate = vi.fn(),
   breakoutState,
+  analysisRun,
 }: {
   initial?: TradingSystemWindowState
   onRecalculate?: (state: TradingSystemWindowState) => void
   breakoutState?: GeneratedBreakoutState
+  analysisRun?: TrendAnalysisRun
 }) {
   const [state, setState] = useState(initial)
   return <>
-    <TradingSystemControls instrumentKind="stock" state={state} breakoutState={breakoutState} onChange={setState} onRecalculate={onRecalculate}/>
+    <TradingSystemControls instrumentKind="stock" state={state} breakoutState={breakoutState} analysisRun={analysisRun} onChange={setState} onRecalculate={onRecalculate}/>
     <output data-testid="state">{JSON.stringify(state)}</output>
   </>
 }
@@ -87,7 +90,15 @@ describe('TradingSystemControls', () => {
 
   it('shows the latest structural event directly on the recalculate control', () => {
     const initial = { ...createTradingSystemWindowStates().trend, enabled: true }
-    render(<Harness initial={initial} breakoutState={{
+    const analysisRun: TrendAnalysisRun = {
+      run_id: 'run', as_of_date: '2026-08-18', completion_state: 'partial',
+      source_observed_at_ms: 123, stale: false, stale_reasons: [], warnings: [],
+      items: [{ item_id: 'pattern', item_type: 'pattern', payload: {
+        primary: true, display_name: '双底', timeframe: 'daily', score: 0.8,
+        score_components: { symmetry: 0.9 },
+      } }],
+    }
+    render(<Harness initial={initial} analysisRun={analysisRun} breakoutState={{
       state: 'failed', direction: 'up', boundaryPrice: 12,
       invalidationPrice: 11.5, preview: true,
       eventKind: 'false-breakout-risk',
@@ -98,5 +109,9 @@ describe('TradingSystemControls', () => {
     expect(button?.getAttribute('data-event-label')).toBe('假突破风险')
     expect(button?.getAttribute('title')).toBe('更新测算 · 盘中预览 · 假突破风险')
     expect(button?.classList.contains('failed')).toBe(true)
+
+    fireEvent.click(dot)
+    expect(screen.getByRole('dialog', { name: '趋势分析证据' }).textContent)
+      .toContain('双底')
   })
 })

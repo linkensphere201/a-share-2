@@ -5,6 +5,7 @@ import { TradingSystemControls } from './TradingSystemControls'
 import type { ChartWindowState } from './workspace'
 import type { TradingSystemWindowStates } from './tradingSystems'
 import type { ThemeDefinition } from './themeStore'
+import type { TrendAnalysisRun } from './trendAnalysisClient'
 
 type InstrumentWindowProps = {
   windowState: ChartWindowState
@@ -43,7 +44,11 @@ export function ChartWindow({
 }: InstrumentWindowProps) {
   const { chart, instrument } = windowState
   const [breakoutState, setBreakoutState] = useState<GeneratedBreakoutState>()
-  useEffect(() => setBreakoutState(undefined), [instrument.symbol])
+  const [trendAnalysis, setTrendAnalysis] = useState<TrendAnalysisRun | null>(null)
+  useEffect(() => {
+    setBreakoutState(undefined)
+    setTrendAnalysis(null)
+  }, [instrument.symbol])
   return (
     <section className={focused ? 'instrument-window focused' : 'instrument-window'}>
       <header className="instrument-window-header">
@@ -70,6 +75,7 @@ export function ChartWindow({
           instrumentKind={instrument.kind}
           state={chart.tradingSystems.trend}
           breakoutState={breakoutState}
+          analysisRun={trendAnalysis}
           onChange={trend => onTradingSystemsChange({ ...chart.tradingSystems, trend })}
           onRecalculate={() => onTradingSystemRecalculate('trend')}
         />
@@ -95,6 +101,7 @@ export function ChartWindow({
           patternsVisible={chart.tradingSystems.trend.layers.patterns !== false}
           breakoutStateVisible={chart.tradingSystems.trend.layers['breakout-state'] !== false}
           onBreakoutStateChange={setBreakoutState}
+          onTrendAnalysisChange={setTrendAnalysis}
         />
       </div>
     </section>

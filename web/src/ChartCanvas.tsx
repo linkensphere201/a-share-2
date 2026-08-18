@@ -141,6 +141,7 @@ type ChartCanvasProps = {
   patternsVisible?: boolean
   breakoutStateVisible?: boolean
   onBreakoutStateChange?: (value: GeneratedBreakoutState | undefined) => void
+  onTrendAnalysisChange?: (value: TrendAnalysisRun | null) => void
 }
 
 const rising = '#ef5350'
@@ -195,6 +196,7 @@ export function ChartCanvas({
   patternsVisible = true,
   breakoutStateVisible = true,
   onBreakoutStateChange,
+  onTrendAnalysisChange,
 }: ChartCanvasProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -1359,6 +1361,9 @@ export function ChartCanvas({
     generatedBreakoutState?.boundaryPrice,
     onBreakoutStateChange,
   ])
+  useEffect(() => {
+    onTrendAnalysisChange?.(trendAnalysis)
+  }, [trendAnalysis?.run_id, trendAnalysis?.stale, onTrendAnalysisChange])
 
   return (
     <div
