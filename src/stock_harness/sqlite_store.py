@@ -44,7 +44,9 @@ from stock_harness.analysis_results import (
     AnalysisRunRecord,
     AnalysisRunSpec,
     AnalysisRunStatus,
+    ClaimedAnalysisTarget,
     GeneratedAnalysisItem,
+    GeneratedAnalysisTarget,
     validate_items,
 )
 from stock_harness.search_terms import matches_name_or_pinyin, pinyin_search_aliases
@@ -1643,6 +1645,163 @@ class SQLiteMarketDataStore:
             run_id, AnalysisRunStatus.RUNNING, attempt, supersedes_run_id
         )
 
+    def upsert_generated_analysis_target(
+        self, target: GeneratedAnalysisTarget
+    ) -> int:
+        target.validate()
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        symbol = target.symbol.strip().upper()
+        with self._lock, self._transaction():
+            instrument_ids = self._instrument_ids({symbol})
+            if symbol not in instrument_ids:
+                raise ValueError(f"analysis target references unknown instrument: {symbol}")
+            target_id = int(self._connection.execute(
+                """
+                INSERT INTO generated_analysis_targets(
+                    instrument_id, system_id, timeframe, algorithm_version,
+                    config_version, enabled, updated_at_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(instrument_id, system_id, timeframe) DO UPDATE SET
+                    algorithm_version = excluded.algorithm_version,
+                    config_version = excluded.config_version,
+                    enabled = excluded.enabled,
+                    updated_at_ms = excluded.updated_at_ms
+                RETURNING target_id
+                """,
+                (
+                    instrument_ids[symbol], target.system_id.strip(),
+                    target.timeframe.strip(), target.algorithm_version.strip(),
+                    target.config_version.strip(), int(target.enabled), now_ms,
+                ),
+            ).fetchone()[0])
+            if not target.enabled:
+                self._connection.execute(
+                    "DELETE FROM generated_analysis_dirty_targets WHERE target_id = ?",
+                    (target_id,),
+                )
+        return target_id
+
+    def queue_generated_analysis_target(
+        self,
+        symbol: str,
+        system_id: str,
+        timeframe: str,
+        dirty_from: date,
+        dirty_through: date,
+        reason: str,
+    ) -> bool:
+        if dirty_from > dirty_through:
+            raise ValueError("analysis dirty range is invalid")
+        if not reason.strip():
+            raise ValueError("analysis dirty reason is required")
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        with self._lock, self._transaction():
+            target = self._connection.execute(
+                """
+                SELECT target.target_id
+                FROM generated_analysis_targets AS target
+                JOIN instruments AS instrument USING (instrument_id)
+                WHERE instrument.symbol = ? COLLATE NOCASE
+                  AND target.system_id = ? AND target.timeframe = ?
+                  AND target.enabled = 1
+                """,
+                (symbol.upper(), system_id, timeframe),
+            ).fetchone()
+            if target is None:
+                return False
+            self._connection.execute(
+                """
+                INSERT INTO generated_analysis_dirty_targets(
+                    target_id, dirty_from, dirty_through, reason,
+                    generation, queued_at_ms
+                ) VALUES (?, ?, ?, ?, 1, ?)
+                ON CONFLICT(target_id) DO UPDATE SET
+                    dirty_from = min(dirty_from, excluded.dirty_from),
+                    dirty_through = max(dirty_through, excluded.dirty_through),
+                    reason = excluded.reason, generation = generation + 1,
+                    queued_at_ms = excluded.queued_at_ms,
+                    claimed_at_ms = NULL, lease_until_ms = NULL
+                """,
+                (
+                    int(target[0]), _date_key(dirty_from), _date_key(dirty_through),
+                    reason.strip(), now_ms,
+                ),
+            )
+        return True
+
+    def claim_generated_analysis_targets(
+        self, *, limit: int = 10, lease_ms: int = 60_000
+    ) -> list[ClaimedAnalysisTarget]:
+        if not 1 <= limit <= 100 or lease_ms <= 0:
+            raise ValueError("invalid analysis claim limit or lease")
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        lease_until_ms = now_ms + lease_ms
+        with self._lock, self._transaction():
+            rows = self._connection.execute(
+                """
+                SELECT dirty.target_id, instrument.symbol, target.system_id,
+                       target.timeframe, target.algorithm_version,
+                       target.config_version, dirty.dirty_from,
+                       dirty.dirty_through, dirty.reason, dirty.generation
+                FROM generated_analysis_dirty_targets AS dirty
+                JOIN generated_analysis_targets AS target USING (target_id)
+                JOIN instruments AS instrument USING (instrument_id)
+                WHERE target.enabled = 1
+                  AND (dirty.lease_until_ms IS NULL OR dirty.lease_until_ms <= ?)
+                ORDER BY dirty.queued_at_ms, dirty.target_id LIMIT ?
+                """,
+                (now_ms, limit),
+            ).fetchall()
+            self._connection.executemany(
+                """
+                UPDATE generated_analysis_dirty_targets
+                SET claimed_at_ms = ?, lease_until_ms = ?, last_error = NULL
+                WHERE target_id = ? AND generation = ?
+                """,
+                ((now_ms, lease_until_ms, int(row[0]), int(row[9])) for row in rows),
+            )
+        return [
+            ClaimedAnalysisTarget(
+                target_id=int(row[0]), symbol=str(row[1]), system_id=str(row[2]),
+                timeframe=str(row[3]), algorithm_version=str(row[4]),
+                config_version=str(row[5]), dirty_from=_date_from_key(int(row[6])),
+                dirty_through=_date_from_key(int(row[7])), reason=str(row[8]),
+                generation=int(row[9]),
+            )
+            for row in rows
+        ]
+
+    def complete_generated_analysis_target(
+        self, target_id: int, generation: int
+    ) -> bool:
+        with self._lock, self._transaction():
+            before = self._connection.total_changes
+            self._connection.execute(
+                """
+                DELETE FROM generated_analysis_dirty_targets
+                WHERE target_id = ? AND generation = ?
+                """,
+                (target_id, generation),
+            )
+            return self._connection.total_changes > before
+
+    def fail_generated_analysis_target(
+        self, target_id: int, generation: int, error: str
+    ) -> bool:
+        if not error.strip():
+            raise ValueError("analysis target failure is required")
+        with self._lock, self._transaction():
+            before = self._connection.total_changes
+            self._connection.execute(
+                """
+                UPDATE generated_analysis_dirty_targets
+                SET claimed_at_ms = NULL, lease_until_ms = NULL, last_error = ?
+                WHERE target_id = ? AND generation = ?
+                """,
+                (error.strip(), target_id, generation),
+            )
+            return self._connection.total_changes > before
+
     def complete_generated_analysis_run(
         self,
         run_id: str,
@@ -1770,6 +1929,41 @@ class SQLiteMarketDataStore:
                 """,
                 (str(row[0]),),
             ).fetchall()
+            lifecycle = self._connection.execute(
+                """
+                SELECT dirty.target_id IS NOT NULL,
+                       target.algorithm_version, target.config_version,
+                       EXISTS (
+                           SELECT 1 FROM generated_analysis_runs AS newer
+                           WHERE newer.instrument_id = target.instrument_id
+                             AND newer.system_id = target.system_id
+                             AND newer.timeframe = target.timeframe
+                             AND newer.namespace = ?
+                             AND newer.status IN ('running', 'failed')
+                             AND (
+                                 newer.as_of_date > ?
+                                 OR (newer.as_of_date = ? AND newer.created_at_ms >= ?)
+                             )
+                       )
+                FROM generated_analysis_targets AS target
+                LEFT JOIN generated_analysis_dirty_targets AS dirty USING (target_id)
+                JOIN instruments AS instrument USING (instrument_id)
+                WHERE instrument.symbol = ? COLLATE NOCASE
+                  AND target.system_id = ? AND target.timeframe = ?
+                """,
+                (
+                    namespace.value, int(row[2]), int(row[2]), int(row[17]), symbol.upper(),
+                    system_id, timeframe,
+                ),
+            ).fetchone()
+        stale_reasons: list[str] = []
+        if lifecycle is not None:
+            if bool(lifecycle[0]):
+                stale_reasons.append("canonical-input-dirty")
+            if str(lifecycle[1]) != str(row[6]) or str(lifecycle[2]) != str(row[7]):
+                stale_reasons.append("algorithm-or-config-upgraded")
+            if bool(lifecycle[3]):
+                stale_reasons.append("newer-run-incomplete-or-failed")
         return {
             "run_id": str(row[0]), "status": str(row[1]),
             "as_of_date": _date_from_key(int(row[2])),
@@ -1782,6 +1976,7 @@ class SQLiteMarketDataStore:
             "source_observed_at_ms": row[13], "expires_at_ms": row[14],
             "supersedes_run_id": row[15], "created_at_ms": int(row[16]),
             "completed_at_ms": int(row[17]),
+            "stale": bool(stale_reasons), "stale_reasons": stale_reasons,
             "items": [
                 {
                     "item_id": str(item[0]), "item_type": str(item[1]),

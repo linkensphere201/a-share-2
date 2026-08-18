@@ -400,6 +400,97 @@ CREATE TABLE IF NOT EXISTS generated_analysis_items (
 CREATE INDEX IF NOT EXISTS generated_analysis_items_type
 ON generated_analysis_items(run_id, item_type, sequence);
 
+CREATE TABLE IF NOT EXISTS generated_analysis_targets (
+    target_id INTEGER PRIMARY KEY,
+    instrument_id INTEGER NOT NULL,
+    system_id TEXT NOT NULL,
+    timeframe TEXT NOT NULL,
+    algorithm_version TEXT NOT NULL,
+    config_version TEXT NOT NULL,
+    enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+    updated_at_ms INTEGER NOT NULL,
+    UNIQUE (instrument_id, system_id, timeframe),
+    FOREIGN KEY (instrument_id) REFERENCES instruments(instrument_id)
+);
+
+CREATE TABLE IF NOT EXISTS generated_analysis_dirty_targets (
+    target_id INTEGER PRIMARY KEY,
+    dirty_from INTEGER NOT NULL,
+    dirty_through INTEGER NOT NULL,
+    reason TEXT NOT NULL,
+    generation INTEGER NOT NULL,
+    queued_at_ms INTEGER NOT NULL,
+    claimed_at_ms INTEGER,
+    lease_until_ms INTEGER,
+    last_error TEXT,
+    FOREIGN KEY (target_id) REFERENCES generated_analysis_targets(target_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS generated_analysis_dirty_claim
+ON generated_analysis_dirty_targets(lease_until_ms, queued_at_ms, target_id);
+
+CREATE TRIGGER IF NOT EXISTS daily_bar_queues_generated_analysis
+AFTER INSERT ON daily_bars
+BEGIN
+    INSERT INTO generated_analysis_dirty_targets(
+        target_id, dirty_from, dirty_through, reason, generation, queued_at_ms
+    )
+    SELECT target_id, NEW.trade_date, NEW.trade_date, 'canonical_bar_changed', 1,
+           NEW.updated_at_ms
+    FROM generated_analysis_targets
+    WHERE instrument_id = NEW.instrument_id AND enabled = 1
+    ON CONFLICT(target_id) DO UPDATE SET
+        dirty_from = min(dirty_from, excluded.dirty_from),
+        dirty_through = max(dirty_through, excluded.dirty_through),
+        reason = excluded.reason,
+        generation = generation + 1,
+        queued_at_ms = excluded.queued_at_ms,
+        claimed_at_ms = NULL,
+        lease_until_ms = NULL;
+END;
+
+CREATE TRIGGER IF NOT EXISTS daily_bar_correction_queues_generated_analysis
+AFTER UPDATE OF open, high, low, close, volume, source_id ON daily_bars
+BEGIN
+    INSERT INTO generated_analysis_dirty_targets(
+        target_id, dirty_from, dirty_through, reason, generation, queued_at_ms
+    )
+    SELECT target_id, NEW.trade_date, NEW.trade_date, 'canonical_bar_corrected', 1,
+           NEW.updated_at_ms
+    FROM generated_analysis_targets
+    WHERE instrument_id = NEW.instrument_id AND enabled = 1
+    ON CONFLICT(target_id) DO UPDATE SET
+        dirty_from = min(dirty_from, excluded.dirty_from),
+        dirty_through = max(dirty_through, excluded.dirty_through),
+        reason = excluded.reason,
+        generation = generation + 1,
+        queued_at_ms = excluded.queued_at_ms,
+        claimed_at_ms = NULL,
+        lease_until_ms = NULL;
+END;
+
+CREATE TRIGGER IF NOT EXISTS custom_index_bar_queues_generated_analysis
+AFTER INSERT ON custom_index_daily_bars
+BEGIN
+    INSERT INTO generated_analysis_dirty_targets(
+        target_id, dirty_from, dirty_through, reason, generation, queued_at_ms
+    )
+    SELECT target.target_id, NEW.trade_date, NEW.trade_date,
+           'custom_index_bar_changed', 1, NEW.updated_at_ms
+    FROM custom_indices AS custom
+    JOIN generated_analysis_targets AS target
+      ON target.instrument_id = custom.instrument_id
+    WHERE custom.index_id = NEW.index_id AND target.enabled = 1
+    ON CONFLICT(target_id) DO UPDATE SET
+        dirty_from = min(dirty_from, excluded.dirty_from),
+        dirty_through = max(dirty_through, excluded.dirty_through),
+        reason = excluded.reason,
+        generation = generation + 1,
+        queued_at_ms = excluded.queued_at_ms,
+        claimed_at_ms = NULL,
+        lease_until_ms = NULL;
+END;
+
 CREATE TABLE IF NOT EXISTS intraday_daily_bars (
     symbol TEXT NOT NULL,
     trade_date INTEGER NOT NULL,

@@ -76,6 +76,38 @@ class AnalysisRunRecord:
     reused: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class GeneratedAnalysisTarget:
+    symbol: str
+    system_id: str
+    timeframe: str
+    algorithm_version: str
+    config_version: str
+    enabled: bool = True
+
+    def validate(self) -> None:
+        values = (
+            self.symbol, self.system_id, self.timeframe,
+            self.algorithm_version, self.config_version,
+        )
+        if any(not value.strip() for value in values):
+            raise ValueError("generated analysis target fields are required")
+
+
+@dataclass(frozen=True, slots=True)
+class ClaimedAnalysisTarget:
+    target_id: int
+    symbol: str
+    system_id: str
+    timeframe: str
+    algorithm_version: str
+    config_version: str
+    dirty_from: date
+    dirty_through: date
+    reason: str
+    generation: int
+
+
 def validate_items(items: Sequence[GeneratedAnalysisItem]) -> None:
     ids = [item.item_id.strip() for item in items]
     if any(not item_id for item_id in ids):

@@ -8,9 +8,10 @@ from stock_harness.analysis_results import (
     AnalysisRunSpec,
     AnalysisRunStatus,
     GeneratedAnalysisItem,
+    GeneratedAnalysisTarget,
     GeneratedItemType,
 )
-from stock_harness.models import Instrument, InstrumentKind
+from stock_harness.models import DailyBar, Instrument, InstrumentKind
 from stock_harness.sqlite_store import SQLiteMarketDataStore
 
 
@@ -158,3 +159,91 @@ def test_invalid_child_order_rolls_back_completion(store):
     assert store.get_latest_generated_analysis_run(
         "000001.SZ", "trend", "daily"
     ) is None
+
+
+def test_only_registered_enabled_target_is_queued_and_ranges_coalesce(store):
+    target_id = store.upsert_generated_analysis_target(GeneratedAnalysisTarget(
+        "000001.SZ", "trend", "daily", "trend-1", "settings-3"
+    ))
+    store.upsert_daily_bars("tushare", [
+        DailyBar("000001.SZ", date(2026, 8, 18), 10, 12, 9, 11, 100),
+        DailyBar("000001.SZ", date(2026, 8, 19), 11, 13, 10, 12, 110),
+    ])
+
+    claimed = store.claim_generated_analysis_targets()
+
+    assert len(claimed) == 1
+    assert claimed[0].target_id == target_id
+    assert claimed[0].dirty_from == date(2026, 8, 18)
+    assert claimed[0].dirty_through == date(2026, 8, 19)
+    assert claimed[0].generation == 2
+    assert store.complete_generated_analysis_target(target_id, claimed[0].generation)
+    assert store.claim_generated_analysis_targets() == []
+
+
+def test_new_write_during_claim_cannot_be_lost_by_old_completion(store):
+    target_id = store.upsert_generated_analysis_target(GeneratedAnalysisTarget(
+        "000001.SZ", "trend", "daily", "trend-1", "settings-3"
+    ))
+    assert store.queue_generated_analysis_target(
+        "000001.SZ", "trend", "daily",
+        date(2026, 8, 18), date(2026, 8, 18), "explicit-rebuild",
+    )
+    first = store.claim_generated_analysis_targets()[0]
+    assert store.queue_generated_analysis_target(
+        "000001.SZ", "trend", "daily",
+        date(2026, 8, 19), date(2026, 8, 19), "new-final-bar",
+    )
+
+    assert not store.complete_generated_analysis_target(target_id, first.generation)
+    second = store.claim_generated_analysis_targets()[0]
+    assert second.generation == first.generation + 1
+    assert second.dirty_from == date(2026, 8, 18)
+    assert second.dirty_through == date(2026, 8, 19)
+
+
+def test_disabled_target_does_not_queue_and_clears_existing_work(store):
+    enabled = GeneratedAnalysisTarget(
+        "000001.SZ", "trend", "daily", "trend-1", "settings-3"
+    )
+    store.upsert_generated_analysis_target(enabled)
+    store.queue_generated_analysis_target(
+        "000001.SZ", "trend", "daily",
+        date(2026, 8, 18), date(2026, 8, 18), "explicit-rebuild",
+    )
+    store.upsert_generated_analysis_target(GeneratedAnalysisTarget(
+        "000001.SZ", "trend", "daily", "trend-1", "settings-3", False
+    ))
+    store.upsert_daily_bars("tushare", [
+        DailyBar("000001.SZ", date(2026, 8, 18), 10, 12, 9, 11, 100)
+    ])
+
+    assert store.claim_generated_analysis_targets() == []
+
+
+def test_latest_success_reports_dirty_upgrade_and_failed_run_as_stale(store):
+    store.upsert_generated_analysis_target(GeneratedAnalysisTarget(
+        "000001.SZ", "trend", "daily", "trend-1", "settings-3"
+    ))
+    successful = store.begin_generated_analysis_run(_spec(date(2026, 8, 17)))
+    store.complete_generated_analysis_run(successful.run_id, [], duration_ms=1)
+    store.upsert_generated_analysis_target(GeneratedAnalysisTarget(
+        "000001.SZ", "trend", "daily", "trend-2", "settings-4"
+    ))
+    store.queue_generated_analysis_target(
+        "000001.SZ", "trend", "daily",
+        date(2026, 8, 18), date(2026, 8, 18), "algorithm-upgrade",
+    )
+    failed = store.begin_generated_analysis_run(_spec())
+    store.fail_generated_analysis_run(failed.run_id, "detector crashed", duration_ms=1)
+
+    latest = store.get_latest_generated_analysis_run(
+        "000001.SZ", "trend", "daily"
+    )
+
+    assert latest is not None and latest["stale"] is True
+    assert latest["stale_reasons"] == [
+        "canonical-input-dirty",
+        "algorithm-or-config-upgraded",
+        "newer-run-incomplete-or-failed",
+    ]
