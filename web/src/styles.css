@@ -569,6 +569,12 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .chart-drawing-toolbar button:hover:not(:disabled) { background: #27303a; color: #fff; }
 .chart-drawing-toolbar button.active { background: #31465d; color: #dbeaff; }
 .chart-drawing-toolbar button:disabled { color: #46515e; }
+.chart-stage.trend-isolated .chart-drawing-toolbar,
+.chart-stage.trend-isolated .trend-line-manager,
+.chart-stage.trend-isolated .chart-drawing-input,
+.chart-stage.trend-isolated .chart-range-selection,
+.chart-stage.trend-isolated .chart-range-menu,
+.chart-stage.trend-isolated .chart-measurement-overlay { display: none; }
 .chart-drawing-toolbar button.refreshing svg { animation: chart-refresh-spin .8s linear infinite; }
 .chart-drawing-toolbar button.success { color: #62bb8c; }
 .chart-drawing-toolbar button.warning { color: #d8aa5d; }

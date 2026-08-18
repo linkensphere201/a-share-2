@@ -100,6 +100,7 @@ export function ChartWindow({
           volumeZonesVisible={chart.tradingSystems.trend.layers['volume-zones'] !== false}
           patternsVisible={chart.tradingSystems.trend.layers.patterns !== false}
           breakoutStateVisible={chart.tradingSystems.trend.layers['breakout-state'] !== false}
+          trendIsolation={chart.tradingSystems.trend.isolate}
           onBreakoutStateChange={setBreakoutState}
           onTrendAnalysisChange={setTrendAnalysis}
         />

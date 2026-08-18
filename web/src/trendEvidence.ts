@@ -4,6 +4,7 @@ import type { TrendAnalysisRun } from './trendAnalysisClient'
 export type TrendEvidenceView = {
   source: 'official' | 'preview'
   asOfDate: string
+  observedAt?: string
   timeframe: string
   stale: boolean
   state?: string
@@ -46,6 +47,9 @@ export function readTrendEvidence(
   return {
     source: run.source_observed_at_ms ? 'preview' : 'official',
     asOfDate: run.as_of_date,
+    observedAt: run.source_observed_at_ms
+      ? new Date(run.source_observed_at_ms).toISOString()
+      : undefined,
     timeframe: stringValue(primary?.payload.timeframe) ?? 'daily',
     stale: run.stale,
     state: breakoutState?.state,

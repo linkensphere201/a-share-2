@@ -140,6 +140,7 @@ type ChartCanvasProps = {
   volumeZonesVisible?: boolean
   patternsVisible?: boolean
   breakoutStateVisible?: boolean
+  trendIsolation?: boolean
   onBreakoutStateChange?: (value: GeneratedBreakoutState | undefined) => void
   onTrendAnalysisChange?: (value: TrendAnalysisRun | null) => void
 }
@@ -195,6 +196,7 @@ export function ChartCanvas({
   volumeZonesVisible = true,
   patternsVisible = true,
   breakoutStateVisible = true,
+  trendIsolation = false,
   onBreakoutStateChange,
   onTrendAnalysisChange,
 }: ChartCanvasProps) {
@@ -267,6 +269,15 @@ export function ChartCanvas({
 
   useEffect(() => { coverageCallbackRef.current = onCoverageChange }, [onCoverageChange])
   useEffect(() => { visibleRangeCallbackRef.current = onVisibleRangeChange }, [onVisibleRangeChange])
+  useEffect(() => {
+    if (!trendIsolation) return
+    setDrawingTool('browse')
+    setDrawingDraft(undefined)
+    setDrawingManagerOpen(false)
+    setRangeSelection(undefined)
+    setSelectionBox(undefined)
+    setMeasurement(undefined)
+  }, [trendIsolation])
 
   useEffect(() => {
     if (!trendAnalysisEnabled) {
@@ -1310,12 +1321,12 @@ export function ChartCanvas({
     lodBucket,
   )
   const projectedDrawings = projectTrendLines(
-    drawings,
+    trendIsolation ? [] : drawings,
     renderedBarListRef.current,
     chartRef.current,
     candleRef.current,
   )
-  const projectedDraft = drawingDraft
+  const projectedDraft = drawingDraft && !trendIsolation
     ? projectTrendLineAnchors(drawingDraft, renderedBarListRef.current, chartRef.current, candleRef.current)
     : undefined
   const volumePaneTop = projectPaneTop(chartRef.current, volumePaneRef.current)
@@ -1367,7 +1378,7 @@ export function ChartCanvas({
 
   return (
     <div
-      className={selectionDragRef.current ? 'chart-stage selecting' : 'chart-stage'}
+      className={`${selectionDragRef.current ? 'chart-stage selecting' : 'chart-stage'}${trendIsolation ? ' trend-isolated' : ''}`}
       onPointerDown={handleSelectionStart}
       onPointerDownCapture={event => {
         if (event.button === 0) timeAxisPointerActiveRef.current = true
@@ -1534,10 +1545,10 @@ export function ChartCanvas({
           }}><X size={13}/></button>
         </div>
       )}
-      {measurement && measurementGeometry && (
+      {!trendIsolation && measurement && measurementGeometry && (
         <MeasurementOverlay measurement={measurement} geometry={measurementGeometry}/>
       )}
-      {marketAnnotations && <MarketAnnotationOverlay geometry={marketAnnotations}/>}
+      {!trendIsolation && marketAnnotations && <MarketAnnotationOverlay geometry={marketAnnotations}/>}
       {state === 'loading' && <div className="chart-state">加载日线数据</div>}
       {state === 'error' && <div className="chart-state error">日线数据加载失败</div>}
       {state === 'ready' && bars.length === 0 && <div className="chart-state">暂无日线数据</div>}

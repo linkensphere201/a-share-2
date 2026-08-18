@@ -29,6 +29,7 @@ it('builds auditable pattern, price-volume, context, and warning evidence', () =
 
   expect(result).toMatchObject({
     source: 'preview', patternName: '双底', score: 0.8,
+    observedAt: '1970-01-01T00:00:00.123Z',
     boundaryPrice: 12, invalidationPrice: 9.5,
     context: { alignment: 'supportive', score: 0.42, availableCount: 3 },
   })

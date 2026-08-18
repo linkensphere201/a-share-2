@@ -5,6 +5,7 @@ import {
   Eye,
   EyeOff,
   FileSearch,
+  Focus,
   RefreshCw,
   RotateCcw,
   Settings2,
@@ -93,6 +94,14 @@ export function TradingSystemControls({
           disabled={!supported}
           onClick={() => onChange({ ...state, enabled: !state.enabled })}
         >{state.enabled ? <Eye size={13}/> : <EyeOff size={13}/>}</button>
+        <button
+          className={state.isolate ? 'active' : ''}
+          title={state.isolate ? '退出趋势隔离' : '仅查看趋势体系'}
+          aria-label={state.isolate ? '退出趋势隔离' : '仅查看趋势体系'}
+          aria-pressed={state.isolate}
+          disabled={!state.enabled || !supported}
+          onClick={() => onChange({ ...state, isolate: !state.isolate })}
+        ><Focus size={13}/></button>
         <button
           title={eventLabel ? `\u66f4\u65b0\u6d4b\u7b97 \u00b7 ${breakoutState?.preview ? '\u76d8\u4e2d\u9884\u89c8 \u00b7 ' : ''}${eventLabel}` : '\u66f4\u65b0\u6d4b\u7b97'}
           aria-label="更新测算"
@@ -193,6 +202,7 @@ export function TradingSystemControls({
           </header>
           <div className="trend-evidence-body">
             <dl>
+              {evidence.observedAt && <><dt>观测时间</dt><dd>{evidence.observedAt}</dd></>}
               <dt>结果</dt><dd>{evidence.source === 'preview' ? '盘中预览' : '正式'} · {evidence.asOfDate} · {evidence.timeframe}</dd>
               <dt>状态</dt><dd>{breakoutState ? trendEventLabel(breakoutState) : '暂无结构事件'}{evidence.stale ? ' · 已过期' : ''}</dd>
               {evidence.patternName && <><dt>主形态</dt><dd>{evidence.patternName}{evidence.score !== undefined ? ` · ${(evidence.score * 100).toFixed(0)}分` : ''}</dd></>}

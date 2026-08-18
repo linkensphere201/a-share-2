@@ -114,4 +114,19 @@ describe('TradingSystemControls', () => {
     expect(screen.getByRole('dialog', { name: '趋势分析证据' }).textContent)
       .toContain('双底')
   })
+
+  it('toggles one-click trend isolation without changing analytical settings', async () => {
+    const user = userEvent.setup()
+    const initial = { ...createTradingSystemWindowStates().trend, enabled: true }
+    render(<Harness initial={initial}/>)
+
+    await user.click(screen.getByRole('button', { name: '仅查看趋势体系' }))
+    let state = JSON.parse(screen.getByTestId('state').textContent ?? '{}')
+    expect(state.isolate).toBe(true)
+    expect(state.settings).toEqual(initial.settings)
+
+    await user.click(screen.getByRole('button', { name: '退出趋势隔离' }))
+    state = JSON.parse(screen.getByTestId('state').textContent ?? '{}')
+    expect(state.isolate).toBe(false)
+  })
 })
