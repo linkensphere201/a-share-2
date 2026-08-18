@@ -48,8 +48,15 @@ def test_generates_horizon_qualified_patterns_and_child_evidence():
     patterns = [
         item for item in ranked if item.item_type is GeneratedItemType.PATTERN
     ]
+    tolerance_profiles = [
+        item for item in ranked
+        if item.payload.get("kind") == "pattern-tolerance-profile"
+    ]
 
     assert {item.payload["horizon"] for item in patterns} == {"short", "long"}
+    assert {item.payload["horizon"] for item in tolerance_profiles} == {
+        "short", "long",
+    }
     pattern_ids = {item.item_id for item in patterns}
     assert {
         "short-pattern-double-bottom-0",

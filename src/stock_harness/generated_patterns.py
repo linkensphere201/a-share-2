@@ -21,6 +21,10 @@ from stock_harness.consolidation_patterns import (
 )
 from stock_harness.diamond_patterns import detect_diamond_patterns
 from stock_harness.reversal_patterns import detect_reversal_patterns
+from stock_harness.pattern_tolerances import (
+    PatternToleranceProfile,
+    build_pattern_tolerance_profile,
+)
 from stock_harness.trend_lines_analysis import TrendHorizon
 from stock_harness.trend_pivots import PricePivot
 
@@ -35,11 +39,24 @@ def generate_pattern_items(
 ) -> list[GeneratedAnalysisItem]:
     if not bars:
         return []
-    items: list[GeneratedAnalysisItem] = []
-    _append_double_patterns(items, bars, pivots, horizon, timeframe, preview)
-    _append_consolidations(items, bars, pivots, horizon, timeframe, preview)
-    _append_diamonds(items, bars, pivots, horizon, timeframe, preview)
-    _append_reversals(items, bars, pivots, horizon, timeframe, preview)
+    profile = build_pattern_tolerance_profile(bars)
+    items: list[GeneratedAnalysisItem] = [GeneratedAnalysisItem(
+        item_id=f"{horizon.value}-pattern-tolerance-profile",
+        item_type=GeneratedItemType.EVIDENCE,
+        payload={
+            "kind": "pattern-tolerance-profile",
+            "horizon": horizon.value,
+            **profile.payload(),
+        },
+    )]
+    _append_double_patterns(
+        items, bars, pivots, horizon, timeframe, preview, profile
+    )
+    _append_consolidations(
+        items, bars, pivots, horizon, timeframe, preview, profile
+    )
+    _append_diamonds(items, bars, pivots, horizon, timeframe, preview, profile)
+    _append_reversals(items, bars, pivots, horizon, timeframe, preview, profile)
     return items
 
 
@@ -50,8 +67,11 @@ def _append_double_patterns(
     horizon: TrendHorizon,
     timeframe: AnalysisTimeframe,
     preview: bool,
+    profile: PatternToleranceProfile,
 ) -> None:
-    for index, pattern in enumerate(detect_double_patterns(bars, pivots)):
+    for index, pattern in enumerate(detect_double_patterns(
+        bars, pivots, profile.classic_config()
+    )):
         item_id = _item_id(horizon, pattern.pattern_type.value, index)
         items.append(GeneratedAnalysisItem(
             item_id=item_id,
@@ -132,9 +152,12 @@ def _append_consolidations(
     horizon: TrendHorizon,
     timeframe: AnalysisTimeframe,
     preview: bool,
+    profile: PatternToleranceProfile,
 ) -> None:
     index_by_date = {bar.period_end: index for index, bar in enumerate(bars)}
-    for index, pattern in enumerate(detect_consolidation_patterns(bars, pivots)):
+    for index, pattern in enumerate(detect_consolidation_patterns(
+        bars, pivots, profile.consolidation_config()
+    )):
         latest, previous = len(bars) - 1, len(bars) - 2
         start = index_by_date[pattern.start_date]
         upper_latest = _project(pattern.upper_boundary, latest - start)
@@ -179,9 +202,12 @@ def _append_diamonds(
     horizon: TrendHorizon,
     timeframe: AnalysisTimeframe,
     preview: bool,
+    profile: PatternToleranceProfile,
 ) -> None:
     index_by_date = {bar.period_end: index for index, bar in enumerate(bars)}
-    for index, pattern in enumerate(detect_diamond_patterns(bars, pivots)):
+    for index, pattern in enumerate(detect_diamond_patterns(
+        bars, pivots, profile.diamond_config()
+    )):
         latest, previous = len(bars) - 1, len(bars) - 2
         upper_start = index_by_date[pattern.upper_active.start_date]
         lower_start = index_by_date[pattern.lower_active.start_date]
@@ -230,8 +256,11 @@ def _append_reversals(
     horizon: TrendHorizon,
     timeframe: AnalysisTimeframe,
     preview: bool,
+    profile: PatternToleranceProfile,
 ) -> None:
-    for index, pattern in enumerate(detect_reversal_patterns(bars, pivots)):
+    for index, pattern in enumerate(detect_reversal_patterns(
+        bars, pivots, profile.reversal_config()
+    )):
         item_id = _item_id(horizon, pattern.pattern_type.value, index)
         items.append(GeneratedAnalysisItem(
             item_id=item_id,
