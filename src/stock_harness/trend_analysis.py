@@ -26,26 +26,19 @@ from stock_harness.analysis_results import (
     GeneratedAnalysisTarget,
     GeneratedItemType,
 )
-from stock_harness.classic_patterns import detect_double_patterns
-from stock_harness.consolidation_patterns import (
-    BoundaryLine,
-    detect_consolidation_patterns,
-)
-from stock_harness.diamond_patterns import detect_diamond_patterns
 from stock_harness.breakout_state import (
     BreakoutDirection,
     StructuralEvent,
     StructuralEventKind,
-    evaluate_breakout,
     evaluate_latest_boundary_event,
 )
+from stock_harness.generated_patterns import generate_pattern_items
 from stock_harness.key_levels import (
     detect_horizontal_levels,
     estimate_clear_space,
     estimate_daily_volume_profile,
 )
 from stock_harness.pattern_ranking import rank_pattern_candidates
-from stock_harness.reversal_patterns import detect_reversal_patterns
 from stock_harness.sqlite_store import SQLiteMarketDataStore
 from stock_harness.trend_pivots import (
     DirectionalChangeConfig,
@@ -57,7 +50,7 @@ from stock_harness.trend_lines_analysis import (
 )
 
 
-ALGORITHM_VERSION = "trend-pattern-ranking-v11"
+ALGORITHM_VERSION = "trend-short-long-patterns-v12"
 LOGGER = logging.getLogger(__name__)
 
 
@@ -349,8 +342,10 @@ def _generated_items(
     items: list[GeneratedAnalysisItem] = []
     long_bars = analysis_input.bars[-horizons.long:]
     long_pivots = ()
+    pivots_by_horizon = {}
     for horizon, bars, config in profiles:
         pivots = detect_directional_change_pivots(bars, config)
+        pivots_by_horizon[horizon] = pivots
         if horizon is TrendHorizon.LONG:
             long_pivots = pivots
         for index, pivot in enumerate(pivots):
@@ -483,326 +478,13 @@ def _generated_items(
             ),
         },
     ))
-    patterns = detect_double_patterns(long_bars, long_pivots)
-    for index, pattern in enumerate(patterns):
-        pattern_item_id = f"pattern-{pattern.pattern_type.value}-{index}"
-        items.append(GeneratedAnalysisItem(
-            item_id=pattern_item_id,
-            item_type=GeneratedItemType.PATTERN,
-            payload={
-                "pattern_type": pattern.pattern_type.value,
-                "display_name": pattern.display_name,
-                "direction": pattern.direction.value,
-                "horizon": TrendHorizon.LONG.value,
-                "timeframe": analysis_input.timeframe.value,
-                "start_date": pattern.start_date.isoformat(),
-                "end_date": pattern.end_date.isoformat(),
-                "available_date": pattern.available_date.isoformat(),
-                "pivots": [
-                    {
-                        "kind": pivot.kind,
-                        "pivot_date": pivot.pivot_date.isoformat(),
-                        "price": pivot.price,
-                        "confirmed_date": pivot.confirmed_date.isoformat(),
-                    }
-                    for pivot in pattern.pivots
-                ],
-                "boundary_geometry": {
-                    "kind": "horizontal-neckline",
-                    "price": pattern.neckline_price,
-                    "start_date": pattern.start_date.isoformat(),
-                    "end_date": analysis_input.bars[-1].period_end.isoformat(),
-                },
-                "neckline_price": pattern.neckline_price,
-                "completion_state": pattern.state.value,
-                "breakout_date": (
-                    pattern.breakout_date.isoformat()
-                    if pattern.breakout_date else None
-                ),
-                "invalidation_price": pattern.invalidation_price,
-                "invalidation_date": (
-                    pattern.invalidation_date.isoformat()
-                    if pattern.invalidation_date else None
-                ),
-                "score": pattern.score,
-                "score_components": pattern.score_components,
-                "volume_ratio": pattern.volume_ratio,
-                "primary": pattern.primary,
-            },
-        ))
-        evaluation = evaluate_breakout(
-            long_bars,
-            direction=(
-                BreakoutDirection.UP
-                if pattern.direction.value == "bullish"
-                else BreakoutDirection.DOWN
-            ),
-            boundary_price=pattern.neckline_price,
-            invalidation_price=pattern.invalidation_price,
-            available_date=pattern.available_date,
+    for horizon, bars, _config in profiles:
+        items.extend(generate_pattern_items(
+            bars, pivots_by_horizon[horizon], horizon,
+            analysis_input.timeframe,
             preview=analysis_input.provisional_date is not None,
-        )
-        for transition_index, transition in enumerate(evaluation.transitions):
-            evidence = asdict(transition.evidence)
-            evidence["trade_date"] = transition.evidence.trade_date.isoformat()
-            items.append(GeneratedAnalysisItem(
-                item_id=f"{pattern_item_id}-transition-{transition_index}",
-                item_type=GeneratedItemType.TRANSITION,
-                parent_item_id=pattern_item_id,
-                payload={
-                    "state": transition.state.value,
-                    "transition_date": transition.transition_date.isoformat(),
-                    "reason": transition.reason,
-                    "preview": evaluation.preview,
-                    "evidence": evidence,
-                },
-            ))
-        items.append(GeneratedAnalysisItem(
-            item_id=f"{pattern_item_id}-breakout-evidence",
-            item_type=GeneratedItemType.EVIDENCE,
-            parent_item_id=pattern_item_id,
-            payload={
-                "kind": "breakout-state-summary",
-                "current_state": evaluation.current_state.value,
-                "direction": evaluation.direction.value,
-                "boundary_price": evaluation.boundary_price,
-                "trigger_level": evaluation.boundary_price,
-                "confirmation_level": evaluation.boundary_price,
-                "failure_level": evaluation.boundary_price,
-                "invalidation_level": evaluation.invalidation_price,
-                "available_date": evaluation.available_date.isoformat(),
-                "trigger_date": (
-                    evaluation.trigger_date.isoformat()
-                    if evaluation.trigger_date else None
-                ),
-                "confirmation_date": (
-                    evaluation.confirmation_date.isoformat()
-                    if evaluation.confirmation_date else None
-                ),
-                "failure_date": (
-                    evaluation.failure_date.isoformat()
-                    if evaluation.failure_date else None
-                ),
-                "preview": evaluation.preview,
-                "analytical_only": True,
-            },
         ))
-    consolidations = detect_consolidation_patterns(long_bars, long_pivots)
-    long_index_by_date = {
-        bar.period_end: index for index, bar in enumerate(long_bars)
-    }
-    for index, pattern in enumerate(consolidations):
-        pattern_item_id = f"pattern-{pattern.pattern_type.value}-{index}"
-        latest_index = len(long_bars) - 1
-        previous_index = latest_index - 1
-        start_index = long_index_by_date[pattern.start_date]
-        upper_latest = pattern.upper_boundary.start_price + pattern.upper_boundary.slope_per_bar * (latest_index - start_index)
-        upper_previous = pattern.upper_boundary.start_price + pattern.upper_boundary.slope_per_bar * (previous_index - start_index)
-        lower_latest = pattern.lower_boundary.start_price + pattern.lower_boundary.slope_per_bar * (latest_index - start_index)
-        lower_previous = pattern.lower_boundary.start_price + pattern.lower_boundary.slope_per_bar * (previous_index - start_index)
-        monitor_up = long_bars[-2].close <= (upper_previous + lower_previous) / 2
-        boundary_latest = upper_latest if monitor_up else lower_latest
-        boundary_previous = upper_previous if monitor_up else lower_previous
-        items.append(GeneratedAnalysisItem(
-            item_id=pattern_item_id,
-            item_type=GeneratedItemType.PATTERN,
-            payload={
-                "pattern_type": pattern.pattern_type.value,
-                "display_name": pattern.display_name,
-                "direction": pattern.breakout_direction or "neutral",
-                "horizon": TrendHorizon.LONG.value,
-                "timeframe": analysis_input.timeframe.value,
-                "start_date": pattern.start_date.isoformat(),
-                "end_date": pattern.end_date.isoformat(),
-                "available_date": pattern.available_date.isoformat(),
-                "pivots": [
-                    {
-                        "kind": pivot.kind.value,
-                        "pivot_date": pivot.pivot_date.isoformat(),
-                        "price": pivot.price,
-                        "confirmed_date": pivot.confirmed_date.isoformat(),
-                    }
-                    for pivot in pattern.pivots
-                ],
-                "boundary_geometry": {
-                    "kind": "two-lines",
-                    "upper": _boundary_payload(pattern.upper_boundary),
-                    "lower": _boundary_payload(pattern.lower_boundary),
-                },
-                "neckline_price": boundary_latest,
-                "completion_state": pattern.completion_state,
-                "breakout_date": (
-                    pattern.breakout_date.isoformat()
-                    if pattern.breakout_date else None
-                ),
-                "invalidation_price": (
-                    lower_latest if monitor_up else upper_latest
-                ),
-                "invalidation_date": (
-                    pattern.invalidation_date.isoformat()
-                    if pattern.invalidation_date else None
-                ),
-                "score": pattern.score,
-                "score_components": pattern.score_components,
-                "volume_ratio": pattern.volume_ratio,
-                "primary": pattern.primary,
-            },
-        ))
-        event = evaluate_latest_boundary_event(
-            long_bars,
-            direction=(BreakoutDirection.UP if monitor_up else BreakoutDirection.DOWN),
-            boundary_price=boundary_latest,
-            previous_boundary_price=boundary_previous,
-            preview=analysis_input.provisional_date is not None,
-        )
-        if event is not None:
-            items.extend(_structural_event_items(pattern_item_id, event))
-    diamonds = detect_diamond_patterns(long_bars, long_pivots)
-    for index, pattern in enumerate(diamonds):
-        pattern_item_id = f"pattern-{pattern.pattern_type.value}-{index}"
-        latest_index = len(long_bars) - 1
-        previous_index = latest_index - 1
-        upper_start_index = long_index_by_date[pattern.upper_active.start_date]
-        lower_start_index = long_index_by_date[pattern.lower_active.start_date]
-        upper_latest = pattern.upper_active.start_price + pattern.upper_active.slope_per_bar * (latest_index - upper_start_index)
-        upper_previous = pattern.upper_active.start_price + pattern.upper_active.slope_per_bar * (previous_index - upper_start_index)
-        lower_latest = pattern.lower_active.start_price + pattern.lower_active.slope_per_bar * (latest_index - lower_start_index)
-        lower_previous = pattern.lower_active.start_price + pattern.lower_active.slope_per_bar * (previous_index - lower_start_index)
-        monitor_up = long_bars[-2].close <= (upper_previous + lower_previous) / 2
-        boundary_latest = upper_latest if monitor_up else lower_latest
-        boundary_previous = upper_previous if monitor_up else lower_previous
-        items.append(GeneratedAnalysisItem(
-            item_id=pattern_item_id,
-            item_type=GeneratedItemType.PATTERN,
-            payload={
-                "pattern_type": pattern.pattern_type.value,
-                "display_name": pattern.display_name,
-                "direction": pattern.breakout_direction or "neutral",
-                "horizon": TrendHorizon.LONG.value,
-                "timeframe": analysis_input.timeframe.value,
-                "start_date": pattern.start_date.isoformat(),
-                "end_date": pattern.end_date.isoformat(),
-                "available_date": pattern.available_date.isoformat(),
-                "pivots": [
-                    {
-                        "kind": pivot.kind.value,
-                        "pivot_date": pivot.pivot_date.isoformat(),
-                        "price": pivot.price,
-                        "confirmed_date": pivot.confirmed_date.isoformat(),
-                    }
-                    for pivot in pattern.pivots
-                ],
-                "boundary_geometry": {
-                    "kind": "broadening-then-contracting",
-                    "segments": [
-                        _boundary_payload(value)
-                        for value in pattern.boundary_segments
-                    ],
-                },
-                "neckline_price": boundary_latest,
-                "completion_state": pattern.completion_state,
-                "breakout_date": (
-                    pattern.breakout_date.isoformat()
-                    if pattern.breakout_date else None
-                ),
-                "invalidation_price": lower_latest if monitor_up else upper_latest,
-                "invalidation_date": (
-                    pattern.invalidation_date.isoformat()
-                    if pattern.invalidation_date else None
-                ),
-                "score": pattern.score,
-                "score_components": pattern.score_components,
-                "context_change_percent": pattern.context_change_percent,
-                "volume_ratio": pattern.volume_ratio,
-                "primary": pattern.primary,
-            },
-        ))
-        event = evaluate_latest_boundary_event(
-            long_bars,
-            direction=(BreakoutDirection.UP if monitor_up else BreakoutDirection.DOWN),
-            boundary_price=boundary_latest,
-            previous_boundary_price=boundary_previous,
-            preview=analysis_input.provisional_date is not None,
-        )
-        if event is not None:
-            items.extend(_structural_event_items(pattern_item_id, event))
-    reversals = detect_reversal_patterns(long_bars, long_pivots)
-    for index, pattern in enumerate(reversals):
-        pattern_item_id = f"pattern-{pattern.pattern_type.value}-{index}"
-        items.append(GeneratedAnalysisItem(
-            item_id=pattern_item_id,
-            item_type=GeneratedItemType.PATTERN,
-            payload={
-                "pattern_type": pattern.pattern_type.value,
-                "display_name": pattern.display_name,
-                "direction": pattern.direction,
-                "horizon": TrendHorizon.LONG.value,
-                "timeframe": analysis_input.timeframe.value,
-                "start_date": pattern.start_date.isoformat(),
-                "end_date": pattern.end_date.isoformat(),
-                "available_date": pattern.available_date.isoformat(),
-                "pivots": [
-                    {
-                        "kind": pivot.kind.value,
-                        "pivot_date": pivot.pivot_date.isoformat(),
-                        "price": pivot.price,
-                        "confirmed_date": pivot.confirmed_date.isoformat(),
-                    }
-                    for pivot in pattern.pivots
-                ],
-                "boundary_geometry": {
-                    "kind": "segments",
-                    "segments": [
-                        _boundary_payload(value)
-                        for value in pattern.boundary_segments
-                    ],
-                },
-                "neckline_price": pattern.neckline_price,
-                "neckline_slope_per_bar": pattern.neckline_slope_per_bar,
-                "completion_state": pattern.state,
-                "breakout_date": (
-                    pattern.breakout_date.isoformat()
-                    if pattern.breakout_date else None
-                ),
-                "invalidation_price": pattern.invalidation_price,
-                "invalidation_date": (
-                    pattern.invalidation_date.isoformat()
-                    if pattern.invalidation_date else None
-                ),
-                "score": pattern.score,
-                "score_components": pattern.score_components,
-                "volume_ratio": pattern.volume_ratio,
-                "primary": pattern.primary,
-            },
-        ))
-        if len(long_bars) >= 2:
-            event = evaluate_latest_boundary_event(
-                long_bars,
-                direction=(
-                    BreakoutDirection.UP
-                    if pattern.direction == "bullish"
-                    else BreakoutDirection.DOWN
-                ),
-                boundary_price=pattern.neckline_price,
-                previous_boundary_price=(
-                    pattern.neckline_price - pattern.neckline_slope_per_bar
-                ),
-                preview=analysis_input.provisional_date is not None,
-            )
-            if event is not None:
-                items.extend(_structural_event_items(pattern_item_id, event))
     return rank_pattern_candidates(items)
-
-
-def _boundary_payload(value: BoundaryLine) -> dict[str, object]:
-    return {
-        "start_date": value.start_date.isoformat(),
-        "start_price": value.start_price,
-        "end_date": value.end_date.isoformat(),
-        "end_price": value.end_price,
-        "slope_per_bar": value.slope_per_bar,
-    }
-
 
 def _structural_event_items(
     parent_item_id: str,
