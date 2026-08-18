@@ -1,5 +1,6 @@
+import { useEffect, useState } from 'react'
 import { Maximize2, Minimize2, Pencil, X } from 'lucide-react'
-import { ChartCanvas, type ChartIndicator, type VisibleRange } from './ChartCanvas'
+import { ChartCanvas, type ChartIndicator, type GeneratedBreakoutState, type VisibleRange } from './ChartCanvas'
 import { TradingSystemControls } from './TradingSystemControls'
 import type { ChartWindowState } from './workspace'
 import type { TradingSystemWindowStates } from './tradingSystems'
@@ -41,6 +42,8 @@ export function ChartWindow({
   onTradingSystemRecalculate,
 }: InstrumentWindowProps) {
   const { chart, instrument } = windowState
+  const [breakoutState, setBreakoutState] = useState<GeneratedBreakoutState>()
+  useEffect(() => setBreakoutState(undefined), [instrument.symbol])
   return (
     <section className={focused ? 'instrument-window focused' : 'instrument-window'}>
       <header className="instrument-window-header">
@@ -66,6 +69,7 @@ export function ChartWindow({
         <TradingSystemControls
           instrumentKind={instrument.kind}
           state={chart.tradingSystems.trend}
+          breakoutState={breakoutState}
           onChange={trend => onTradingSystemsChange({ ...chart.tradingSystems, trend })}
           onRecalculate={() => onTradingSystemRecalculate('trend')}
         />
@@ -90,6 +94,7 @@ export function ChartWindow({
           volumeZonesVisible={chart.tradingSystems.trend.layers['volume-zones'] !== false}
           patternsVisible={chart.tradingSystems.trend.layers.patterns !== false}
           breakoutStateVisible={chart.tradingSystems.trend.layers['breakout-state'] !== false}
+          onBreakoutStateChange={setBreakoutState}
         />
       </div>
     </section>

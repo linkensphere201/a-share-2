@@ -140,6 +140,7 @@ type ChartCanvasProps = {
   volumeZonesVisible?: boolean
   patternsVisible?: boolean
   breakoutStateVisible?: boolean
+  onBreakoutStateChange?: (value: GeneratedBreakoutState | undefined) => void
 }
 
 const rising = '#ef5350'
@@ -193,6 +194,7 @@ export function ChartCanvas({
   volumeZonesVisible = true,
   patternsVisible = true,
   breakoutStateVisible = true,
+  onBreakoutStateChange,
 }: ChartCanvasProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -1401,6 +1403,15 @@ export function ChartCanvas({
   const generatedBreakoutState = readGeneratedBreakoutState(
     trendAnalysis, breakoutStateVisible,
   )
+  useEffect(() => {
+    onBreakoutStateChange?.(generatedBreakoutState)
+  }, [
+    generatedBreakoutState?.state,
+    generatedBreakoutState?.eventKind,
+    generatedBreakoutState?.preview,
+    generatedBreakoutState?.boundaryPrice,
+    onBreakoutStateChange,
+  ])
 
   return (
     <div
@@ -1831,7 +1842,7 @@ type GeneratedPatternGeometry = {
   score: number
 }
 
-type GeneratedBreakoutState = {
+export type GeneratedBreakoutState = {
   state: 'forming' | 'ready' | 'triggered' | 'confirmed' | 'retesting' | 'continuing' | 'failed' | 'invalidated' | 'stale'
   direction: 'up' | 'down'
   boundaryPrice: number

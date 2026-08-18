@@ -589,6 +589,11 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .trading-system-control-actions { display: flex; align-items: center; gap: 1px; max-width: 190px; overflow: hidden; transition: max-width 160ms ease, opacity 120ms ease; }
 .trading-system-controls.collapsed .trading-system-control-actions { max-width: 0; opacity: 0; pointer-events: none; }
 .trading-system-controls button { width: 22px; height: 22px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 2px; background: transparent; color: var(--theme-muted); }
+.trading-system-controls button.trend-recalculate-event { position: relative; }
+.trend-recalculate-event-dot { position: absolute; top: 3px; right: 3px; width: 4px; height: 4px; border-radius: 50%; background: #b9a46c; box-shadow: 0 0 0 1px color-mix(in srgb, var(--theme-surface) 80%, transparent); }
+.trend-recalculate-event.confirmed .trend-recalculate-event-dot, .trend-recalculate-event.continuing .trend-recalculate-event-dot { background: #62bb8c; }
+.trend-recalculate-event.triggered .trend-recalculate-event-dot, .trend-recalculate-event.retesting .trend-recalculate-event-dot { background: #d8aa5d; }
+.trend-recalculate-event.failed .trend-recalculate-event-dot, .trend-recalculate-event.invalidated .trend-recalculate-event-dot, .trend-recalculate-event.stale .trend-recalculate-event-dot { background: #d27373; }
 .trading-system-controls button:hover:not(:disabled) { color: var(--theme-text-strong); background: var(--theme-hover); }
 .trading-system-controls button.active { color: var(--theme-text-strong); background: var(--theme-accent-soft); }
 .trading-system-controls button:disabled { opacity: .38; }

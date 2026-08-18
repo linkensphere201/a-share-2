@@ -17,10 +17,12 @@ import {
   type TradingSystemWindowState,
   type TrendTradingSystemSettings,
 } from './tradingSystems'
+import type { GeneratedBreakoutState } from './ChartCanvas'
 
 type TradingSystemControlsProps = {
   instrumentKind: string
   state: TradingSystemWindowState
+  breakoutState?: GeneratedBreakoutState
   onChange: (state: TradingSystemWindowState) => void
   onRecalculate: (state: TradingSystemWindowState) => void
 }
@@ -28,6 +30,7 @@ type TradingSystemControlsProps = {
 export function TradingSystemControls({
   instrumentKind,
   state,
+  breakoutState,
   onChange,
   onRecalculate,
 }: TradingSystemControlsProps) {
@@ -38,6 +41,7 @@ export function TradingSystemControls({
     normalizeTrendTradingSystemSettings(state.settings)
   ))
   const [draftLayers, setDraftLayers] = useState<Record<string, boolean>>(() => ({ ...state.layers }))
+  const eventLabel = breakoutState ? trendEventLabel(breakoutState) : undefined
 
   const openSettings = () => {
     setDraftSettings(normalizeTrendTradingSystemSettings(state.settings))
@@ -83,11 +87,21 @@ export function TradingSystemControls({
           onClick={() => onChange({ ...state, enabled: !state.enabled })}
         >{state.enabled ? <Eye size={13}/> : <EyeOff size={13}/>}</button>
         <button
-          title="更新测算"
+          title={eventLabel ? `\u66f4\u65b0\u6d4b\u7b97 \u00b7 ${breakoutState?.preview ? '\u76d8\u4e2d\u9884\u89c8 \u00b7 ' : ''}${eventLabel}` : '\u66f4\u65b0\u6d4b\u7b97'}
           aria-label="更新测算"
+          className={breakoutState ? `trend-recalculate-event ${breakoutState.state}` : ''}
+          data-event-label={eventLabel}
           disabled={!state.enabled || !supported}
           onClick={() => onRecalculate(state)}
-        ><RefreshCw size={13}/></button>
+        >
+          <RefreshCw size={13}/>
+          {breakoutState && <span
+            className="trend-recalculate-event-dot"
+            data-testid="trend-recalculate-event"
+            title={`${breakoutState.preview ? '盘中预览 · ' : ''}${eventLabel}`}
+            aria-hidden="true"
+          />}
+        </button>
         <button
           className={settingsOpen ? 'active' : ''}
           title="趋势交易体系设置"
@@ -155,6 +169,19 @@ export function TradingSystemControls({
       )}
     </div>
   )
+}
+
+function trendEventLabel(value: GeneratedBreakoutState): string {
+  if (value.eventKind === 'upward-breakout') return '向上突破'
+  if (value.eventKind === 'downward-breakdown') return '向下破位'
+  if (value.eventKind === 'retest') return '回踩确认'
+  if (value.eventKind === 'false-breakout-risk') return '假突破风险'
+  if (value.eventKind === 'no-structural-change') return '无结构变化'
+  return ({
+    forming: '形成中', ready: '准备', triggered: '已触发', confirmed: '已确认',
+    retesting: '回踩中', continuing: '延续', failed: '失败',
+    invalidated: '失效', stale: '已过期',
+  })[value.state]
 }
 
 function toggleTimeframe(

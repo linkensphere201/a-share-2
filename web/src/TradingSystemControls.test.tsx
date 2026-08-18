@@ -9,19 +9,22 @@ import {
   createTradingSystemWindowStates,
   type TradingSystemWindowState,
 } from './tradingSystems'
+import type { GeneratedBreakoutState } from './ChartCanvas'
 
 afterEach(cleanup)
 
 function Harness({
   initial = createTradingSystemWindowStates().trend,
   onRecalculate = vi.fn(),
+  breakoutState,
 }: {
   initial?: TradingSystemWindowState
   onRecalculate?: (state: TradingSystemWindowState) => void
+  breakoutState?: GeneratedBreakoutState
 }) {
   const [state, setState] = useState(initial)
   return <>
-    <TradingSystemControls instrumentKind="stock" state={state} onChange={setState} onRecalculate={onRecalculate}/>
+    <TradingSystemControls instrumentKind="stock" state={state} breakoutState={breakoutState} onChange={setState} onRecalculate={onRecalculate}/>
     <output data-testid="state">{JSON.stringify(state)}</output>
   </>
 }
@@ -80,5 +83,20 @@ describe('TradingSystemControls', () => {
     const state = JSON.parse(screen.getByTestId('state').textContent ?? '{}')
     expect(state.analysisStatus).toBe('stale')
     expect(onRecalculate).toHaveBeenCalledWith(expect.objectContaining({ analysisStatus: 'stale' }))
+  })
+
+  it('shows the latest structural event directly on the recalculate control', () => {
+    const initial = { ...createTradingSystemWindowStates().trend, enabled: true }
+    render(<Harness initial={initial} breakoutState={{
+      state: 'failed', direction: 'up', boundaryPrice: 12,
+      invalidationPrice: 11.5, preview: true,
+      eventKind: 'false-breakout-risk',
+    }}/>)
+
+    const dot = screen.getByTestId('trend-recalculate-event')
+    const button = dot.closest('button')
+    expect(button?.getAttribute('data-event-label')).toBe('假突破风险')
+    expect(button?.getAttribute('title')).toBe('更新测算 · 盘中预览 · 假突破风险')
+    expect(button?.classList.contains('failed')).toBe(true)
   })
 })
