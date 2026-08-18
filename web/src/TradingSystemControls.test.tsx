@@ -129,4 +129,21 @@ describe('TradingSystemControls', () => {
     state = JSON.parse(screen.getByTestId('state').textContent ?? '{}')
     expect(state.isolate).toBe(false)
   })
+
+  it('collapses to its single expansion control without losing window state', async () => {
+    const user = userEvent.setup()
+    const initial = {
+      ...createTradingSystemWindowStates().trend,
+      enabled: true,
+      isolate: true,
+    }
+    const { container } = render(<Harness initial={initial}/>)
+
+    await user.click(screen.getByRole('button', { name: '收起趋势交易体系' }))
+
+    expect(container.querySelector('.trading-system-controls')?.classList.contains('collapsed')).toBe(true)
+    expect(screen.getByRole('button', { name: '展开趋势交易体系' }).getAttribute('aria-expanded')).toBe('false')
+    const state = JSON.parse(screen.getByTestId('state').textContent ?? '{}')
+    expect(state).toMatchObject({ expanded: false, enabled: true, isolate: true })
+  })
 })

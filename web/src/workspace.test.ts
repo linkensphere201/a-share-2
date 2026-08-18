@@ -189,6 +189,16 @@ describe('window group operations', () => {
 
   it('duplicates a group with remapped windows, layout, and attachments', () => {
     const source = createWindowGroup('源布局', 'comparison', idFactory())
+    const sourceChart = source.windows.find(item => item.type === 'chart')!
+    if (sourceChart.type !== 'chart') throw new Error('missing source chart')
+    sourceChart.chart.tradingSystems.trend = {
+      ...sourceChart.chart.tradingSystems.trend,
+      enabled: true,
+      expanded: false,
+      isolate: true,
+      layers: { ...sourceChart.chart.tradingSystems.trend.layers, patterns: false },
+      settings: { ...sourceChart.chart.tradingSystems.trend.settings, shortHorizonBars: 80 },
+    }
     const copied = duplicateWindowGroup(source, '源布局 副本', idFactory())
 
     expect(copied.name).toBe('源布局 副本')
@@ -196,6 +206,12 @@ describe('window group operations', () => {
     expect(copied.attachments[0].sourceWindowId).toBe(copied.windows[0].id)
     expect(copied.attachments[0].targetWindowId).toBe(copied.windows[1].id)
     expect(JSON.stringify(copied.layout)).not.toContain(source.windows[0].id)
+    const copiedChart = copied.windows.find(item => item.type === 'chart')!
+    if (copiedChart.type !== 'chart') throw new Error('missing copied chart')
+    expect(copiedChart.chart.tradingSystems).toEqual(sourceChart.chart.tradingSystems)
+    expect(copiedChart.chart.tradingSystems).not.toBe(sourceChart.chart.tradingSystems)
+    copiedChart.chart.tradingSystems.trend.layers.patterns = true
+    expect(sourceChart.chart.tradingSystems.trend.layers.patterns).toBe(false)
   })
 })
 
