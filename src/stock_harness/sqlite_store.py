@@ -126,6 +126,7 @@ class SQLiteMarketDataStore:
         self._ensure_custom_index_volume()
         self._ensure_custom_group_member_roles()
         self._ensure_market_snapshot_metrics()
+        self._ensure_generated_analysis_target_settings()
         self._backfill_pinyin_aliases()
 
     def __enter__(self) -> SQLiteMarketDataStore:
@@ -515,6 +516,21 @@ class SQLiteMarketDataStore:
             self._connection.execute(
                 "ALTER TABLE custom_instrument_group_members "
                 "ADD COLUMN role TEXT NOT NULL DEFAULT ''"
+            )
+
+    def _ensure_generated_analysis_target_settings(self) -> None:
+        columns = {
+            str(row[1])
+            for row in self._connection.execute(
+                "PRAGMA table_info(generated_analysis_targets)"
+            )
+        }
+        if "settings_json" in columns:
+            return
+        with self._lock, self._transaction():
+            self._connection.execute(
+                "ALTER TABLE generated_analysis_targets "
+                "ADD COLUMN settings_json TEXT NOT NULL DEFAULT '{}'"
             )
 
     def replace_etf_holdings(
@@ -1224,6 +1240,20 @@ class SQLiteMarketDataStore:
         ]
 
     def get_latest_daily_bar_date(self, symbol: str) -> date | None:
+        kind = self.get_instrument_kind(symbol)
+        if kind is InstrumentKind.CUSTOM_INDEX:
+            with self._lock:
+                row = self._connection.execute(
+                    """
+                    SELECT max(bar.trade_date)
+                    FROM custom_index_daily_bars AS bar
+                    JOIN custom_indices AS custom USING (index_id)
+                    JOIN instruments AS instrument USING (instrument_id)
+                    WHERE instrument.symbol = ? COLLATE NOCASE
+                    """,
+                    (symbol.upper(),),
+                ).fetchone()
+            return _date_from_key(int(row[0])) if row and row[0] is not None else None
         with self._lock:
             row = self._connection.execute(
                 """
@@ -1659,11 +1689,12 @@ class SQLiteMarketDataStore:
                 """
                 INSERT INTO generated_analysis_targets(
                     instrument_id, system_id, timeframe, algorithm_version,
-                    config_version, enabled, updated_at_ms
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    config_version, settings_json, enabled, updated_at_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(instrument_id, system_id, timeframe) DO UPDATE SET
                     algorithm_version = excluded.algorithm_version,
                     config_version = excluded.config_version,
+                    settings_json = excluded.settings_json,
                     enabled = excluded.enabled,
                     updated_at_ms = excluded.updated_at_ms
                 RETURNING target_id
@@ -1671,7 +1702,9 @@ class SQLiteMarketDataStore:
                 (
                     instrument_ids[symbol], target.system_id.strip(),
                     target.timeframe.strip(), target.algorithm_version.strip(),
-                    target.config_version.strip(), int(target.enabled), now_ms,
+                    target.config_version.strip(),
+                    json.dumps(target.settings, sort_keys=True, separators=(",", ":")),
+                    int(target.enabled), now_ms,
                 ),
             ).fetchone()[0])
             if not target.enabled:
@@ -1741,7 +1774,7 @@ class SQLiteMarketDataStore:
                 """
                 SELECT dirty.target_id, instrument.symbol, target.system_id,
                        target.timeframe, target.algorithm_version,
-                       target.config_version, dirty.dirty_from,
+                       target.config_version, target.settings_json, dirty.dirty_from,
                        dirty.dirty_through, dirty.reason, dirty.generation
                 FROM generated_analysis_dirty_targets AS dirty
                 JOIN generated_analysis_targets AS target USING (target_id)
@@ -1758,15 +1791,16 @@ class SQLiteMarketDataStore:
                 SET claimed_at_ms = ?, lease_until_ms = ?, last_error = NULL
                 WHERE target_id = ? AND generation = ?
                 """,
-                ((now_ms, lease_until_ms, int(row[0]), int(row[9])) for row in rows),
+                ((now_ms, lease_until_ms, int(row[0]), int(row[10])) for row in rows),
             )
         return [
             ClaimedAnalysisTarget(
                 target_id=int(row[0]), symbol=str(row[1]), system_id=str(row[2]),
                 timeframe=str(row[3]), algorithm_version=str(row[4]),
-                config_version=str(row[5]), dirty_from=_date_from_key(int(row[6])),
-                dirty_through=_date_from_key(int(row[7])), reason=str(row[8]),
-                generation=int(row[9]),
+                config_version=str(row[5]), settings=json.loads(str(row[6])),
+                dirty_from=_date_from_key(int(row[7])),
+                dirty_through=_date_from_key(int(row[8])), reason=str(row[9]),
+                generation=int(row[10]),
             )
             for row in rows
         ]
@@ -1782,7 +1816,7 @@ class SQLiteMarketDataStore:
                 """
                 SELECT dirty.target_id, instrument.symbol, target.system_id,
                        target.timeframe, target.algorithm_version,
-                       target.config_version, dirty.dirty_from,
+                       target.config_version, target.settings_json, dirty.dirty_from,
                        dirty.dirty_through, dirty.reason, dirty.generation
                 FROM generated_analysis_dirty_targets AS dirty
                 JOIN generated_analysis_targets AS target USING (target_id)
@@ -1800,14 +1834,15 @@ class SQLiteMarketDataStore:
                 SET claimed_at_ms = ?, lease_until_ms = ?, last_error = NULL
                 WHERE target_id = ? AND generation = ?
                 """,
-                (now_ms, now_ms + lease_ms, target_id, int(row[9])),
+                (now_ms, now_ms + lease_ms, target_id, int(row[10])),
             )
         return ClaimedAnalysisTarget(
             target_id=int(row[0]), symbol=str(row[1]), system_id=str(row[2]),
             timeframe=str(row[3]), algorithm_version=str(row[4]),
-            config_version=str(row[5]), dirty_from=_date_from_key(int(row[6])),
-            dirty_through=_date_from_key(int(row[7])), reason=str(row[8]),
-            generation=int(row[9]),
+            config_version=str(row[5]), settings=json.loads(str(row[6])),
+            dirty_from=_date_from_key(int(row[7])),
+            dirty_through=_date_from_key(int(row[8])), reason=str(row[9]),
+            generation=int(row[10]),
         )
 
     def complete_generated_analysis_target(
@@ -2037,6 +2072,44 @@ class SQLiteMarketDataStore:
                 for item in items
             ],
         }
+
+    def prune_generated_analysis_runs(
+        self,
+        now_ms: int,
+        *,
+        preview_retention_ms: int = 7 * 24 * 60 * 60 * 1000,
+        failed_retention_ms: int = 30 * 24 * 60 * 60 * 1000,
+    ) -> int:
+        if min(now_ms, preview_retention_ms, failed_retention_ms) < 0:
+            raise ValueError("analysis retention values must be non-negative")
+        with self._lock, self._transaction():
+            rows = self._connection.execute(
+                """
+                SELECT run_id FROM generated_analysis_runs
+                WHERE (
+                    namespace = 'preview' AND expires_at_ms IS NOT NULL
+                    AND expires_at_ms <= ?
+                ) OR (
+                    status = 'failed' AND completed_at_ms IS NOT NULL
+                    AND completed_at_ms <= ?
+                )
+                """,
+                (now_ms - preview_retention_ms, now_ms - failed_retention_ms),
+            ).fetchall()
+            run_ids = [str(row[0]) for row in rows]
+            if not run_ids:
+                return 0
+            placeholders = ",".join("?" for _ in run_ids)
+            self._connection.execute(
+                f"UPDATE generated_analysis_runs SET supersedes_run_id = NULL "
+                f"WHERE supersedes_run_id IN ({placeholders})",
+                run_ids,
+            )
+            self._connection.execute(
+                f"DELETE FROM generated_analysis_runs WHERE run_id IN ({placeholders})",
+                run_ids,
+            )
+        return len(run_ids)
 
     def create_custom_index(
         self,

@@ -407,6 +407,7 @@ CREATE TABLE IF NOT EXISTS generated_analysis_targets (
     timeframe TEXT NOT NULL,
     algorithm_version TEXT NOT NULL,
     config_version TEXT NOT NULL,
+    settings_json TEXT NOT NULL DEFAULT '{}',
     enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
     updated_at_ms INTEGER NOT NULL,
     UNIQUE (instrument_id, system_id, timeframe),

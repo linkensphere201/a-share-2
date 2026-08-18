@@ -25,6 +25,7 @@ from stock_harness.intraday import IntradayQuoteService
 from stock_harness.runtime_logging import configure_runtime_logging
 from stock_harness.sqlite_store import SQLiteMarketDataStore
 from stock_harness.tushare_provider import TushareDailyProvider
+from stock_harness.trend_analysis import TrendAnalysisWorker
 
 DEFAULT_DESKTOP_PORT = 8765
 LOGGER = logging.getLogger(__name__)
@@ -103,6 +104,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         else None
     )
     factor_provider: TushareDailyProvider | None = None
+    analysis_worker = TrendAnalysisWorker(store) if not args.smoke_test else None
 
     def load_custom_index_factors(symbols, start_date, end_date):
         nonlocal factor_provider
@@ -142,6 +144,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             update_service.start()
         if intraday_service is not None:
             intraday_service.start()
+        if analysis_worker is not None:
+            analysis_worker.start()
         LOGGER.info("desktop_ready url=%s frontend_url=%s", url, frontend_url)
         if args.smoke_test:
             with urllib.request.urlopen(url, timeout=5.0) as response:
@@ -152,6 +156,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         open_desktop_window(webview, frontend_url, args.debug, paths.webview_storage)
     finally:
+        if analysis_worker is not None:
+            analysis_worker.stop()
         if intraday_service is not None:
             intraday_service.stop()
         if update_service is not None:

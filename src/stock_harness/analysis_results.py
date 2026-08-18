@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from enum import StrEnum
 from typing import Any, Mapping, Sequence
@@ -84,6 +84,7 @@ class GeneratedAnalysisTarget:
     algorithm_version: str
     config_version: str
     enabled: bool = True
+    settings: Mapping[str, Any] = field(default_factory=dict)
 
     def validate(self) -> None:
         values = (
@@ -102,6 +103,7 @@ class ClaimedAnalysisTarget:
     timeframe: str
     algorithm_version: str
     config_version: str
+    settings: Mapping[str, Any]
     dirty_from: date
     dirty_through: date
     reason: str

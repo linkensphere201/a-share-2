@@ -3,7 +3,7 @@ from datetime import date, timedelta
 from stock_harness.analysis_inputs import AnalysisHorizons, AnalysisTimeframe
 from stock_harness.models import AdjustmentFactor, DailyBar, Instrument, InstrumentKind
 from stock_harness.sqlite_store import SQLiteMarketDataStore
-from stock_harness.trend_analysis import TrendAnalysisService
+from stock_harness.trend_analysis import TrendAnalysisService, TrendAnalysisWorker
 
 
 def _store() -> tuple[SQLiteMarketDataStore, list[date]]:
@@ -88,3 +88,35 @@ def test_failed_explicit_recalculate_leaves_retryable_target_without_result():
             "000001.SZ", "trend", "daily"
         ) is None
         assert len(store.claim_generated_analysis_targets()) == 1
+
+
+def test_worker_recalculates_only_previously_registered_dirty_target():
+    store, days = _store()
+    service = TrendAnalysisService(store)
+    try:
+        first = service.recalculate(
+            "000001.SZ", [AnalysisTimeframe.DAILY], AnalysisHorizons(3, 6, 10),
+            config_version="settings-1", include_preview=False,
+            as_of_date=days[-1],
+        )[0]
+        next_day = days[-1] + timedelta(days=1)
+        store.upsert_adjustment_factors("tushare", [
+            AdjustmentFactor("000001.SZ", next_day, 1)
+        ])
+        store.upsert_trading_dates("tushare", [next_day])
+        store.upsert_daily_bars("tushare", [
+            DailyBar("000001.SZ", next_day, 11, 12, 10.5, 11.5, 120)
+        ])
+
+        processed = TrendAnalysisWorker(store).run_once()
+        latest = store.get_latest_generated_analysis_run(
+            "000001.SZ", "trend", "daily"
+        )
+
+        assert processed == 1
+        assert latest is not None and latest["run_id"] != first["run_id"]
+        assert latest["as_of_date"] == next_day
+        assert latest["supersedes_run_id"] == first["run_id"]
+        assert store.claim_generated_analysis_targets() == []
+    finally:
+        store.close()

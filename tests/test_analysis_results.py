@@ -164,6 +164,26 @@ def test_official_completion_expires_same_date_preview(store):
     assert retained_preview["expires_at_ms"] <= int(time.time() * 1000)
 
 
+def test_retention_prunes_old_preview_and_failure_but_keeps_official_success(store):
+    preview = store.begin_generated_analysis_run(
+        _spec(namespace=AnalysisNamespace.PREVIEW)
+    )
+    store.complete_generated_analysis_run(preview.run_id, [], duration_ms=1)
+    failed = store.begin_generated_analysis_run(_spec(digest=b"failed"))
+    store.fail_generated_analysis_run(failed.run_id, "failed", duration_ms=1)
+    official = store.begin_generated_analysis_run(_spec(digest=b"official"))
+    store.complete_generated_analysis_run(official.run_id, [], duration_ms=1)
+
+    removed = store.prune_generated_analysis_runs(
+        int(time.time() * 1000) + 31 * 24 * 60 * 60 * 1000
+    )
+
+    assert removed == 2
+    assert store.get_latest_generated_analysis_run(
+        "000001.SZ", "trend", "daily"
+    )["run_id"] == official.run_id
+
+
 def test_invalid_child_order_rolls_back_completion(store):
     started = store.begin_generated_analysis_run(_spec())
     items = [

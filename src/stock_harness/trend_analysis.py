@@ -6,6 +6,8 @@ from dataclasses import asdict
 from datetime import date, timedelta
 import hashlib
 import json
+import logging
+import threading
 import time
 from typing import Sequence
 
@@ -19,6 +21,7 @@ from stock_harness.analysis_inputs import (
 from stock_harness.analysis_results import (
     AnalysisNamespace,
     AnalysisRunSpec,
+    ClaimedAnalysisTarget,
     GeneratedAnalysisItem,
     GeneratedAnalysisTarget,
     GeneratedItemType,
@@ -31,6 +34,7 @@ from stock_harness.trend_pivots import (
 
 
 ALGORITHM_VERSION = "directional-change-pivots-v1"
+LOGGER = logging.getLogger(__name__)
 
 
 class TrendAnalysisService:
@@ -73,6 +77,15 @@ class TrendAnalysisService:
             GeneratedAnalysisTarget(
                 normalized, "trend", timeframe.value,
                 ALGORITHM_VERSION, config_version,
+                settings={
+                    "short_horizon_bars": horizons.short,
+                    "medium_horizon_bars": horizons.medium,
+                    "long_horizon_bars": horizons.long,
+                    "include_preview": include_preview,
+                    "atr_period": pivot_config.atr_period,
+                    "atr_multiplier": pivot_config.atr_multiplier,
+                    "minimum_reversal_percent": pivot_config.minimum_reversal_percent,
+                },
             )
         )
         self._store.queue_generated_analysis_target(
@@ -82,6 +95,46 @@ class TrendAnalysisService:
         claim = self._store.claim_generated_analysis_target(target_id)
         if claim is None:
             raise RuntimeError("analysis target is already being calculated")
+        return self._execute_claim(
+            claim, horizons, cutoff, include_preview, pivot_config
+        )
+
+    def process_claim(self, claim: ClaimedAnalysisTarget) -> dict[str, object]:
+        settings = claim.settings
+        horizons = AnalysisHorizons(
+            int(settings.get("short_horizon_bars", 60)),
+            int(settings.get("medium_horizon_bars", 120)),
+            int(settings.get("long_horizon_bars", 250)),
+        )
+        pivot_config = DirectionalChangeConfig(
+            atr_period=int(settings.get("atr_period", 14)),
+            atr_multiplier=float(settings.get("atr_multiplier", 2.0)),
+            minimum_reversal_percent=float(
+                settings.get("minimum_reversal_percent", 0.03)
+            ),
+        )
+        latest = self._store.get_latest_daily_bar_date(claim.symbol)
+        if latest is None:
+            latest = claim.dirty_through
+        return self._execute_claim(
+            claim,
+            horizons,
+            latest,
+            bool(settings.get("include_preview", False)),
+            pivot_config,
+        )
+
+    def _execute_claim(
+        self,
+        claim: ClaimedAnalysisTarget,
+        horizons: AnalysisHorizons,
+        cutoff: date,
+        include_preview: bool,
+        pivot_config: DirectionalChangeConfig,
+    ) -> dict[str, object]:
+        normalized = claim.symbol
+        timeframe = AnalysisTimeframe(claim.timeframe)
+        target_id = claim.target_id
         started = time.perf_counter()
         run_id: str | None = None
         try:
@@ -105,8 +158,8 @@ class TrendAnalysisService:
                 input_start_date=analysis_input.bars[0].period_start,
                 input_end_date=analysis_input.bars[-1].period_end,
                 input_digest=_input_digest(analysis_input),
-                algorithm_version=ALGORITHM_VERSION,
-                config_version=config_version,
+                algorithm_version=claim.algorithm_version,
+                config_version=claim.config_version,
                 completion_state=(
                     "complete" if analysis_input.bars[-1].period_complete else "partial"
                 ),
@@ -171,6 +224,72 @@ class TrendAnalysisService:
                 target_id, claim.generation, str(error)
             )
             raise
+
+
+class TrendAnalysisWorker:
+    def __init__(
+        self,
+        store: SQLiteMarketDataStore,
+        *,
+        poll_interval_seconds: float = 2.0,
+        batch_size: int = 5,
+    ) -> None:
+        self._store = store
+        self._service = TrendAnalysisService(store)
+        self._poll_interval_seconds = poll_interval_seconds
+        self._batch_size = batch_size
+        self._stop = threading.Event()
+        self._wake = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        if self._thread is not None and self._thread.is_alive():
+            return
+        self._stop.clear()
+        self._thread = threading.Thread(
+            target=self._run, name="stock-harness-trend-analysis", daemon=True
+        )
+        self._thread.start()
+        LOGGER.info("trend_analysis_worker_started batch_size=%s", self._batch_size)
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._wake.set()
+        if self._thread is not None:
+            self._thread.join(timeout=10)
+        LOGGER.info("trend_analysis_worker_stopped")
+
+    def wake(self) -> None:
+        self._wake.set()
+
+    def run_once(self) -> int:
+        pruned = self._store.prune_generated_analysis_runs(
+            int(time.time() * 1000)
+        )
+        if pruned:
+            LOGGER.info("trend_analysis_retention_pruned runs=%s", pruned)
+        claims = self._store.claim_generated_analysis_targets(limit=self._batch_size)
+        for claim in claims:
+            try:
+                self._service.process_claim(claim)
+                LOGGER.info(
+                    "trend_analysis_worker_completed symbol=%s timeframe=%s generation=%s",
+                    claim.symbol, claim.timeframe, claim.generation,
+                )
+            except Exception:
+                LOGGER.exception(
+                    "trend_analysis_worker_failed symbol=%s timeframe=%s generation=%s",
+                    claim.symbol, claim.timeframe, claim.generation,
+                )
+        return len(claims)
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            processed = self.run_once()
+            if processed >= self._batch_size:
+                continue
+            self._wake.wait(self._poll_interval_seconds)
+            self._wake.clear()
 
 
 def _input_digest(value: AnalysisInput) -> bytes:
