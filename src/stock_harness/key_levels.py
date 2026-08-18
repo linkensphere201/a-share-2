@@ -20,6 +20,8 @@ class KeyLevelConfig:
     volume_decay_half_life_bars: int = 120
     dense_bin_quantile: float = 0.75
     max_volume_zones: int = 6
+    breakout_buffer_percent: float = 0.005
+    retest_lookahead_bars: int = 20
 
     def validate(self) -> None:
         if not 0.002 <= self.cluster_tolerance_percent <= 0.1:
@@ -34,6 +36,10 @@ class KeyLevelConfig:
             raise ValueError("volume decay half-life must be at least 10 bars")
         if not 0.5 <= self.dense_bin_quantile <= 0.95:
             raise ValueError("dense-bin quantile must be between 0.5 and 0.95")
+        if not 0.001 <= self.breakout_buffer_percent <= 0.05:
+            raise ValueError("level breakout buffer must be between 0.1% and 5%")
+        if not 1 <= self.retest_lookahead_bars <= 120:
+            raise ValueError("level retest lookahead must be between 1 and 120 bars")
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,7 +55,7 @@ class HorizontalLevel:
     score_components: dict[str, float]
     role_reversal: bool
     volume_confluence: float
-    method: str = "confirmed-pivot-gap-cluster-v1"
+    method: str = "confirmed-pivot-gap-breakout-retest-cluster-v2"
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,7 +142,13 @@ def detect_horizontal_levels(
     latest = ordered[-1].period_end
     total_span = max(1, (latest - ordered[0].period_end).days)
     levels: list[HorizontalLevel] = []
-    for cluster in clusters:
+    for original_cluster in clusters:
+        center = sum(item.price for item in original_cluster) / len(original_cluster)
+        tolerance = abs(center) * config.cluster_tolerance_percent
+        cluster = [
+            *original_cluster,
+            *_structural_observations(ordered, center, tolerance, config),
+        ]
         distinct_dates = sorted({item.observed_date for item in cluster})
         if len(distinct_dates) < config.minimum_observations:
             continue
@@ -145,7 +157,14 @@ def detect_horizontal_levels(
         touch_score = min(1.0, len(distinct_dates) / 5)
         source_score = min(1.0, len({item.source for item in cluster}) / 3)
         source_set = {item.source for item in cluster}
-        role_reversal = "pivot-high" in source_set and "pivot-low" in source_set
+        role_reversal = (
+            "pivot-high" in source_set and "pivot-low" in source_set
+        ) or (
+            "breakout-up" in source_set and "retest-support" in source_set
+        ) or (
+            "breakdown-down" in source_set
+            and "retest-resistance" in source_set
+        )
         volume_confluence = max((
             min(1.0, zone.estimated_share / 0.2)
             for zone in volume_zones
@@ -180,6 +199,59 @@ def detect_horizontal_levels(
         ))
     levels.sort(key=lambda item: item.score, reverse=True)
     return tuple(levels[:config.max_levels])
+
+
+def _structural_observations(
+    bars: Sequence[AnalysisBar],
+    center: float,
+    tolerance: float,
+    config: KeyLevelConfig,
+) -> list[_Observation]:
+    if len(bars) < 2:
+        return []
+    upper_trigger = center * (1 + config.breakout_buffer_percent)
+    lower_trigger = center * (1 - config.breakout_buffer_percent)
+    pending_direction: str | None = None
+    pending_index: int | None = None
+    observations: list[_Observation] = []
+    for index, (previous, current) in enumerate(zip(bars, bars[1:]), start=1):
+        if previous.close <= lower_trigger and current.close >= upper_trigger:
+            observations.append(_Observation(
+                center, current.period_end, "breakout-up",
+                _distance_evidence(current.close, center, tolerance),
+            ))
+            pending_direction, pending_index = "up", index
+            continue
+        if previous.close >= upper_trigger and current.close <= lower_trigger:
+            observations.append(_Observation(
+                center, current.period_end, "breakdown-down",
+                _distance_evidence(current.close, center, tolerance),
+            ))
+            pending_direction, pending_index = "down", index
+            continue
+        if pending_direction is None or pending_index is None:
+            continue
+        if index - pending_index > config.retest_lookahead_bars:
+            pending_direction, pending_index = None, None
+            continue
+        touches = current.low <= center + tolerance and current.high >= center - tolerance
+        holds = (
+            current.close >= center if pending_direction == "up"
+            else current.close <= center
+        )
+        if touches and holds:
+            observations.append(_Observation(
+                center,
+                current.period_end,
+                "retest-support" if pending_direction == "up" else "retest-resistance",
+                1.0,
+            ))
+            pending_direction, pending_index = None, None
+    return observations
+
+
+def _distance_evidence(close: float, center: float, tolerance: float) -> float:
+    return min(1.0, abs(close - center) / max(tolerance, abs(center) * 0.001))
 
 
 def estimate_daily_volume_profile(

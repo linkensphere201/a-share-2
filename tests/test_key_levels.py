@@ -110,3 +110,49 @@ def test_level_marks_support_resistance_role_reversal():
 
     assert levels[0].role_reversal is True
     assert levels[0].score_components["role_reversal"] == 1
+
+
+def test_confirmed_breakout_and_retest_feed_back_into_level_evidence():
+    start = date(2026, 2, 1)
+    closes = [9.7, 9.8, 10.2, 10.05, 10.3]
+    bars = [
+        AnalysisBar(
+            start + timedelta(days=index), start + timedelta(days=index),
+            close, close + 0.12, close - 0.12, close, 100,
+            ("test",), False, True, index,
+        )
+        for index, close in enumerate(closes)
+    ]
+    pivot = PricePivot(
+        PivotKind.HIGH, start, 10.0, start + timedelta(days=1), 0.5, False
+    )
+
+    levels = detect_horizontal_levels(bars, [pivot])
+
+    assert len(levels) == 1
+    assert "breakout-up" in levels[0].sources
+    assert "retest-support" in levels[0].sources
+    assert levels[0].role_reversal is True
+    assert start + timedelta(days=2) in levels[0].evidence_dates
+    assert start + timedelta(days=3) in levels[0].evidence_dates
+
+
+def test_cross_without_a_later_hold_does_not_fabricate_retest_source():
+    start = date(2026, 3, 1)
+    closes = [9.7, 10.2, 10.4]
+    bars = [
+        AnalysisBar(
+            start + timedelta(days=index), start + timedelta(days=index),
+            close, close + 0.05, close - 0.05, close, 100,
+            ("test",), False, True, index,
+        )
+        for index, close in enumerate(closes)
+    ]
+    pivot = PricePivot(
+        PivotKind.HIGH, start, 10.0, start + timedelta(days=1), 0.5, False
+    )
+
+    level = detect_horizontal_levels(bars, [pivot])[0]
+
+    assert "breakout-up" in level.sources
+    assert "retest-support" not in level.sources

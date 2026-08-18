@@ -50,7 +50,7 @@ from stock_harness.trend_lines_analysis import (
 )
 
 
-ALGORITHM_VERSION = "trend-volatility-patterns-v13"
+ALGORITHM_VERSION = "trend-level-feedback-v14"
 LOGGER = logging.getLogger(__name__)
 
 
