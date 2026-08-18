@@ -1,0 +1,91 @@
+{
+  "schema_version": "1.0",
+  "dataset_version": "2026-08-18.1",
+  "cases": [
+    {
+      "case_id": "ashare-corporate-action-300308-20240606",
+      "symbol": "300308.SZ",
+      "name": "中际旭创",
+      "timeframe": "daily",
+      "horizon": "long",
+      "interval_start": "2024-03-01",
+      "interval_end": "2024-07-31",
+      "as_of_date": "2024-07-31",
+      "classification": "robustness",
+      "review_status": "proposed",
+      "tags": ["corporate-action", "gap", "breakdown"],
+      "expected": {
+        "invariants": [
+          "Use causal forward-adjusted prices through the cutoff.",
+          "Do not classify the 2024-06-06 raw ex-right discontinuity alone as a breakdown."
+        ],
+        "observations": {
+          "factor_previous": 4.703,
+          "factor_current": 6.5631,
+          "factor_change_percent": 39.55
+        }
+      },
+      "rationale": "Corporate-action robustness candidate. Geometry must be reviewed on the adjusted series before this case becomes scoreable.",
+      "sources": [
+        {"provider": "tushare", "dataset": "daily+adj_factor", "checked_on": "2026-08-18"}
+      ]
+    },
+    {
+      "case_id": "ashare-suspension-000792-20210810",
+      "symbol": "000792.SZ",
+      "name": "盐湖股份",
+      "timeframe": "daily",
+      "horizon": "long",
+      "interval_start": "2020-01-01",
+      "interval_end": "2021-10-29",
+      "as_of_date": "2021-10-29",
+      "classification": "robustness",
+      "review_status": "proposed",
+      "tags": ["suspension", "gap", "breakout"],
+      "expected": {
+        "invariants": [
+          "Do not synthesize daily bars inside the suspension interval.",
+          "Keep the first post-resumption bar dated 2021-08-10 and expose the discontinuity as uncertainty."
+        ],
+        "observations": {
+          "last_pre_suspension_bar": "2020-04-29",
+          "first_post_suspension_bar": "2021-08-10",
+          "calendar_gap_days": 468
+        }
+      },
+      "rationale": "Long-suspension robustness candidate. Human review must distinguish resumption repricing from a normal continuous-series breakout.",
+      "sources": [
+        {"provider": "tushare", "dataset": "daily", "checked_on": "2026-08-18"}
+      ]
+    },
+    {
+      "case_id": "ashare-gap-600519-20231101",
+      "symbol": "600519.SH",
+      "name": "贵州茅台",
+      "timeframe": "daily",
+      "horizon": "short",
+      "interval_start": "2023-08-01",
+      "interval_end": "2023-12-29",
+      "as_of_date": "2023-12-29",
+      "classification": "ambiguous",
+      "review_status": "proposed",
+      "tags": ["gap", "key-level", "breakout"],
+      "expected": {
+        "invariants": [
+          "Retain the genuine 2023-11-01 upward gap as price evidence rather than smoothing it away.",
+          "Do not promote the gap alone to a confirmed trend breakout without boundary and follow-through evidence."
+        ],
+        "observations": {
+          "previous_close": 1684.58,
+          "gap_open": 1850.0,
+          "open_gap_percent": 9.82,
+          "gap_day_volume": 9314308
+        }
+      },
+      "rationale": "Genuine event-gap candidate with large volume. Human reviewers must label nearby levels and whether any breakout interpretation is acceptable.",
+      "sources": [
+        {"provider": "tushare", "dataset": "daily", "checked_on": "2026-08-18"}
+      ]
+    }
+  ]
+}
