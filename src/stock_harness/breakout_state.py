@@ -27,6 +27,14 @@ class BreakoutState(StrEnum):
     STALE = "stale"
 
 
+class StructuralEventKind(StrEnum):
+    UPWARD_BREAKOUT = "upward-breakout"
+    DOWNWARD_BREAKDOWN = "downward-breakdown"
+    RETEST = "retest"
+    FALSE_BREAKOUT_RISK = "false-breakout-risk"
+    NO_CHANGE = "no-structural-change"
+
+
 @dataclass(frozen=True, slots=True)
 class BreakoutConfig:
     trigger_buffer_percent: float = 0.005
@@ -71,6 +79,75 @@ class BreakoutEvaluation:
     failure_date: date | None
     transitions: tuple[BreakoutTransition, ...]
     preview: bool
+
+
+@dataclass(frozen=True, slots=True)
+class StructuralEvent:
+    kind: StructuralEventKind
+    event_date: date
+    direction: BreakoutDirection
+    boundary_price: float
+    previous_boundary_price: float
+    preview: bool
+    reason: str
+    evidence: BreakoutEvidence
+
+
+def evaluate_latest_boundary_event(
+    bars: Sequence[AnalysisBar],
+    *,
+    direction: BreakoutDirection,
+    boundary_price: float,
+    previous_boundary_price: float | None = None,
+    preview: bool,
+    buffer_percent: float = 0.005,
+    retest_tolerance_percent: float = 0.012,
+) -> StructuralEvent | None:
+    ordered = sorted(bars, key=lambda item: item.period_end)
+    if len(ordered) < 2:
+        return None
+    previous = ordered[-2]
+    current = ordered[-1]
+    prior_boundary = previous_boundary_price if previous_boundary_price is not None else boundary_price
+    previous_distance = previous.close / prior_boundary - 1
+    evidence = _evidence(ordered, len(ordered) - 1, direction, boundary_price)
+    current_distance = evidence.distance_percent
+    previous_outside = (
+        previous_distance >= buffer_percent
+        if direction is BreakoutDirection.UP else previous_distance <= -buffer_percent
+    )
+    current_outside = (
+        current_distance >= buffer_percent
+        if direction is BreakoutDirection.UP else current_distance <= -buffer_percent
+    )
+    if current_outside and not previous_outside:
+        kind = (
+            StructuralEventKind.UPWARD_BREAKOUT
+            if direction is BreakoutDirection.UP
+            else StructuralEventKind.DOWNWARD_BREAKDOWN
+        )
+        reason = "latest close crossed the current structural boundary"
+    elif previous_outside and not current_outside:
+        kind = StructuralEventKind.FALSE_BREAKOUT_RISK
+        reason = "latest close returned inside after the prior bar was outside"
+    else:
+        touched = (
+            current.low <= boundary_price * (1 + retest_tolerance_percent)
+            and current.close >= boundary_price
+            if direction is BreakoutDirection.UP
+            else current.high >= boundary_price * (1 - retest_tolerance_percent)
+            and current.close <= boundary_price
+        )
+        if previous_outside and current_outside and touched:
+            kind = StructuralEventKind.RETEST
+            reason = "latest bar retested the boundary and closed on the breakout side"
+        else:
+            kind = StructuralEventKind.NO_CHANGE
+            reason = "latest bar did not change the structural boundary state"
+    return StructuralEvent(
+        kind, current.period_end, direction, boundary_price, prior_boundary,
+        preview, reason, evidence,
+    )
 
 
 def evaluate_breakout(

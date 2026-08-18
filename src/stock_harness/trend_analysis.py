@@ -29,7 +29,10 @@ from stock_harness.analysis_results import (
 from stock_harness.classic_patterns import detect_double_patterns
 from stock_harness.breakout_state import (
     BreakoutDirection,
+    StructuralEvent,
+    StructuralEventKind,
     evaluate_breakout,
+    evaluate_latest_boundary_event,
 )
 from stock_harness.key_levels import (
     detect_horizontal_levels,
@@ -47,7 +50,7 @@ from stock_harness.trend_lines_analysis import (
 )
 
 
-ALGORITHM_VERSION = "trend-breakout-state-v5"
+ALGORITHM_VERSION = "trend-structural-events-v6"
 LOGGER = logging.getLogger(__name__)
 
 
@@ -362,8 +365,9 @@ def _generated_items(
             ))
         lines = generate_trend_line_candidates(bars, pivots, horizon)
         for index, line in enumerate(lines):
+            line_item_id = f"{horizon.value}-{line.kind.value}-line-{index}"
             items.append(GeneratedAnalysisItem(
-                item_id=f"{horizon.value}-{line.kind.value}-line-{index}",
+                item_id=line_item_id,
                 item_type=GeneratedItemType.LINE,
                 payload={
                     "kind": line.kind.value,
@@ -386,13 +390,26 @@ def _generated_items(
                     "invalidation_reason": line.invalidation_reason,
                 },
             ))
+            event = evaluate_latest_boundary_event(
+                bars,
+                direction=(
+                    BreakoutDirection.DOWN
+                    if line.kind.value == "support" else BreakoutDirection.UP
+                ),
+                boundary_price=line.projected_price,
+                previous_boundary_price=line.projected_price - line.slope_per_bar,
+                preview=analysis_input.provisional_date is not None,
+            )
+            if event is not None:
+                items.extend(_structural_event_items(line_item_id, event))
     profile = estimate_daily_volume_profile(long_bars)
     levels = detect_horizontal_levels(
         long_bars, long_pivots, volume_zones=profile.zones
     )
     for index, level in enumerate(levels):
+        level_item_id = f"key-level-{index}"
         items.append(GeneratedAnalysisItem(
-            item_id=f"key-level-{index}",
+            item_id=level_item_id,
             item_type=GeneratedItemType.ZONE,
             payload={
                 "kind": "key-level",
@@ -411,6 +428,18 @@ def _generated_items(
                 "uncertainty": "volatility-normalized historical price cluster",
             },
         ))
+        if index < 3 and len(long_bars) >= 2:
+            monitor_up = long_bars[-2].close <= level.center
+            event = evaluate_latest_boundary_event(
+                long_bars,
+                direction=(
+                    BreakoutDirection.UP if monitor_up else BreakoutDirection.DOWN
+                ),
+                boundary_price=level.upper if monitor_up else level.lower,
+                preview=analysis_input.provisional_date is not None,
+            )
+            if event is not None:
+                items.extend(_structural_event_items(level_item_id, event))
     for index, zone in enumerate(profile.zones):
         items.append(GeneratedAnalysisItem(
             item_id=f"volume-zone-{index}",
@@ -551,6 +580,62 @@ def _generated_items(
             },
         ))
     return items
+
+
+def _structural_event_items(
+    parent_item_id: str,
+    event: StructuralEvent,
+) -> list[GeneratedAnalysisItem]:
+    state = {
+        StructuralEventKind.UPWARD_BREAKOUT: "triggered",
+        StructuralEventKind.DOWNWARD_BREAKDOWN: "triggered",
+        StructuralEventKind.RETEST: "retesting",
+        StructuralEventKind.FALSE_BREAKOUT_RISK: "failed",
+        StructuralEventKind.NO_CHANGE: "ready",
+    }[event.kind]
+    evidence = asdict(event.evidence)
+    evidence["trade_date"] = event.evidence.trade_date.isoformat()
+    payload = {
+        "event_kind": event.kind.value,
+        "current_state": state,
+        "direction": event.direction.value,
+        "event_date": event.event_date.isoformat(),
+        "boundary_price": event.boundary_price,
+        "previous_boundary_price": event.previous_boundary_price,
+        "preview": event.preview,
+        "reason": event.reason,
+        "evidence": evidence,
+    }
+    return [
+        GeneratedAnalysisItem(
+            item_id=f"{parent_item_id}-latest-event-transition",
+            item_type=GeneratedItemType.TRANSITION,
+            parent_item_id=parent_item_id,
+            payload=payload,
+        ),
+        GeneratedAnalysisItem(
+            item_id=f"{parent_item_id}-latest-event-evidence",
+            item_type=GeneratedItemType.EVIDENCE,
+            parent_item_id=parent_item_id,
+            payload={
+                "kind": "latest-structural-event-summary",
+                **payload,
+                "invalidation_level": event.boundary_price,
+                "trigger_date": (
+                    event.event_date.isoformat()
+                    if event.kind in {
+                        StructuralEventKind.UPWARD_BREAKOUT,
+                        StructuralEventKind.DOWNWARD_BREAKDOWN,
+                    } else None
+                ),
+                "failure_date": (
+                    event.event_date.isoformat()
+                    if event.kind is StructuralEventKind.FALSE_BREAKOUT_RISK
+                    else None
+                ),
+            },
+        ),
+    ]
 
 
 def _datetime_ms(value) -> int:

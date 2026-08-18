@@ -114,4 +114,24 @@ describe('generated analysis overlay projection', () => {
     })
     expect(readGeneratedBreakoutState(run, false)).toBeUndefined()
   })
+
+  it('prioritizes a latest non-neutral line or level event over an older pattern state', () => {
+    const withLatestEvent: TrendAnalysisRun = {
+      ...run,
+      items: [...run.items, {
+        item_id: 'line-event', item_type: 'evidence', parent_item_id: 'line-short',
+        payload: {
+          kind: 'latest-structural-event-summary', current_state: 'failed',
+          event_kind: 'false-breakout-risk',
+          direction: 'down', boundary_price: 10.2, invalidation_level: 10.2,
+          failure_date: '2026-08-18', preview: true,
+        },
+      }],
+    }
+
+    expect(readGeneratedBreakoutState(withLatestEvent, true)).toEqual(expect.objectContaining({
+      state: 'failed', direction: 'down', failureDate: '2026-08-18', preview: true,
+      eventKind: 'false-breakout-risk',
+    }))
+  })
 })

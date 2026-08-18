@@ -51,7 +51,7 @@ def test_explicit_recalculate_registers_and_persists_only_requested_timeframes()
             if item["item_id"] == "key-level-volume-profile-evidence"
         )
         assert "not exact position cost" in evidence["payload"]["uncertainty"]
-        assert results[0]["algorithm_version"] == "trend-breakout-state-v5"
+        assert results[0]["algorithm_version"] == "trend-structural-events-v6"
         pattern_items = [
             item for item in results[0]["items"] if item["item_type"] == "pattern"
         ]
@@ -59,6 +59,11 @@ def test_explicit_recalculate_registers_and_persists_only_requested_timeframes()
         assert any(
             item["item_type"] == "evidence"
             and item["payload"].get("kind") == "breakout-state-summary"
+            for item in results[0]["items"]
+        )
+        assert any(
+            item["item_type"] == "evidence"
+            and item["payload"].get("kind") == "latest-structural-event-summary"
             for item in results[0]["items"]
         )
         assert store.get_latest_generated_analysis_run(

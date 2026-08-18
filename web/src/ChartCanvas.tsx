@@ -1839,6 +1839,7 @@ type GeneratedBreakoutState = {
   confirmationDate?: string
   failureDate?: string
   preview: boolean
+  eventKind?: 'upward-breakout' | 'downward-breakdown' | 'retest' | 'false-breakout-risk' | 'no-structural-change'
 }
 
 export function projectGeneratedPivots(
@@ -2015,13 +2016,20 @@ export function readGeneratedBreakoutState(
   const primaryIds = new Set(run.items.filter(item => (
     item.item_type === 'pattern' && item.payload.primary === true
   )).map(item => item.item_id))
-  const candidates = run.items.filter(item => (
+  const patternCandidates = run.items.filter(item => (
     item.item_type === 'evidence'
     && item.payload.kind === 'breakout-state-summary'
   ))
-  const item = candidates.find(value => (
+  const structuralCandidates = run.items.filter(item => (
+    item.item_type === 'evidence'
+    && item.payload.kind === 'latest-structural-event-summary'
+  ))
+  const item = structuralCandidates.find(value => value.payload.current_state !== 'ready')
+    ?? patternCandidates.find(value => (
     typeof value.parent_item_id === 'string' && primaryIds.has(value.parent_item_id)
-  )) ?? candidates[0]
+    ))
+    ?? structuralCandidates[0]
+    ?? patternCandidates[0]
   if (!item) return undefined
   const state = item.payload.current_state
   const direction = item.payload.direction
@@ -2043,6 +2051,13 @@ export function readGeneratedBreakoutState(
     confirmationDate: typeof item.payload.confirmation_date === 'string' ? item.payload.confirmation_date : undefined,
     failureDate: typeof item.payload.failure_date === 'string' ? item.payload.failure_date : undefined,
     preview: item.payload.preview === true,
+    ...(item.payload.event_kind === 'upward-breakout'
+      || item.payload.event_kind === 'downward-breakdown'
+      || item.payload.event_kind === 'retest'
+      || item.payload.event_kind === 'false-breakout-risk'
+      || item.payload.event_kind === 'no-structural-change'
+      ? { eventKind: item.payload.event_kind }
+      : {}),
   }
 }
 
@@ -2137,7 +2152,7 @@ function GeneratedAnalysisOverlay({
           <span
             className={`breakout-state ${breakoutState.state}`}
             title={`边界 ${formatPrice(breakoutState.boundaryPrice)} · 失效位 ${formatPrice(breakoutState.invalidationPrice)} · 触发 ${breakoutState.triggerDate ?? '-'} · 确认 ${breakoutState.confirmationDate ?? '-'} · 失败 ${breakoutState.failureDate ?? '-'}`}
-          >{breakoutState.preview ? '盘中预览 ' : ''}{breakoutStateLabel(breakoutState.state)}</span>
+          >{breakoutState.preview ? '盘中预览 ' : ''}{breakoutStateLabel(breakoutState)}</span>
         )}
         {run.stale && <span>已过期</span>}
       </div>
@@ -2145,12 +2160,17 @@ function GeneratedAnalysisOverlay({
   )
 }
 
-function breakoutStateLabel(state: GeneratedBreakoutState['state']): string {
+function breakoutStateLabel(value: GeneratedBreakoutState): string {
+  if (value.eventKind === 'upward-breakout') return '向上突破'
+  if (value.eventKind === 'downward-breakdown') return '向下破位'
+  if (value.eventKind === 'retest') return '回踩'
+  if (value.eventKind === 'false-breakout-risk') return '假突破风险'
+  if (value.eventKind === 'no-structural-change') return '无结构变化'
   return ({
     forming: '形成中', ready: '准备', triggered: '已触发', confirmed: '已确认',
     retesting: '回踩', continuing: '延续', failed: '失败',
     invalidated: '失效', stale: '陈旧',
-  })[state]
+  })[value.state]
 }
 
 function trendLineDashPattern(dash: TrendLineDash): string | undefined {

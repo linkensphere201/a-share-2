@@ -4,7 +4,9 @@ from stock_harness.analysis_inputs import AnalysisBar
 from stock_harness.breakout_state import (
     BreakoutDirection,
     BreakoutState,
+    StructuralEventKind,
     evaluate_breakout,
+    evaluate_latest_boundary_event,
 )
 
 
@@ -106,3 +108,24 @@ def test_trigger_at_first_input_bar_can_time_out_without_follow_through():
 
     assert result.current_state is BreakoutState.FAILED
     assert result.transitions[-1].reason == "trigger had no timely follow-through"
+
+
+def test_latest_dynamic_boundary_events_do_not_backfill_history():
+    breakout = evaluate_latest_boundary_event(
+        _bars([(9.9, 10.0, 9.8, 9.95, 100), (10.0, 10.3, 9.95, 10.2, 140)]),
+        direction=BreakoutDirection.UP,
+        boundary_price=10.1,
+        previous_boundary_price=10.0,
+        preview=True,
+    )
+    failed = evaluate_latest_boundary_event(
+        _bars([(10.1, 10.3, 10.0, 10.2, 120), (10.0, 10.1, 9.8, 9.9, 100)]),
+        direction=BreakoutDirection.UP,
+        boundary_price=10,
+        preview=False,
+    )
+
+    assert breakout is not None and breakout.kind is StructuralEventKind.UPWARD_BREAKOUT
+    assert breakout.event_date == date(2026, 1, 2)
+    assert breakout.preview is True
+    assert failed is not None and failed.kind is StructuralEventKind.FALSE_BREAKOUT_RISK
