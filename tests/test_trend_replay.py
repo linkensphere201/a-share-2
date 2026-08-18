@@ -83,6 +83,48 @@ def test_future_suffix_mutation_cannot_change_any_historical_production_output()
         mutated_store.close()
 
 
+def test_replay_records_structural_revisions_before_each_next_bar_is_revealed():
+    store, days = _replay_store()
+    try:
+        snapshots = replay_trend_analysis(
+            TrendAnalysisService(store), "000001.SZ", days[17:34],
+            horizons=HORIZONS,
+        )
+        events_by_date = {
+            snapshot.as_of_date: set(snapshot.structural_events)
+            for snapshot in snapshots
+        }
+
+        assert "retest" in events_by_date[days[17]]
+        assert "false-breakout-risk" in events_by_date[days[18]]
+        assert "upward-breakout" in events_by_date[days[22]]
+        assert "retest" in events_by_date[days[25]]
+        assert "downward-breakdown" in events_by_date[days[30]]
+        assert "retest" in events_by_date[days[33]]
+    finally:
+        store.close()
+
+
+def test_incremental_replay_matches_a_fresh_full_run_at_the_same_cutoff():
+    incremental_store, days = _replay_store()
+    full_store, _ = _replay_store()
+    try:
+        incremental = replay_trend_analysis(
+            TrendAnalysisService(incremental_store), "000001.SZ",
+            [days[17], days[22], days[27], days[32]], horizons=HORIZONS,
+        )
+        full = replay_trend_analysis(
+            TrendAnalysisService(full_store), "000001.SZ", [days[32]],
+            horizons=HORIZONS,
+        )
+
+        assert compare_replays(incremental[-1:], full) == ()
+        assert incremental[-1].items == full[0].items
+    finally:
+        incremental_store.close()
+        full_store.close()
+
+
 def test_replay_rejects_empty_or_non_chronological_cutoffs():
     store, days = _replay_store()
     try:
