@@ -162,6 +162,34 @@ describe('generated analysis overlay projection', () => {
       .toHaveLength(4)
   })
 
+  it('projects a one-pivot V formation through its two boundary segments', () => {
+    const vPattern: TrendAnalysisRun = {
+      ...run,
+      items: [{
+        item_id: 'v-bottom', item_type: 'pattern', payload: {
+          display_name: 'V形底', completion_state: 'confirmed', neckline_price: 12,
+          pivots: [{ pivot_date: '2026-08-10', price: 9 }],
+          boundary_geometry: { segments: [
+            {
+              start_date: '2026-08-01', start_price: 12,
+              end_date: '2026-08-10', end_price: 9,
+            },
+            {
+              start_date: '2026-08-10', start_price: 9,
+              end_date: '2026-08-18', end_price: 12,
+            },
+          ] },
+        },
+      }],
+    }
+
+    const projected = projectGeneratedPatterns(vPattern, chart, series, true)
+
+    expect(projected).toHaveLength(1)
+    expect(projected[0].boundaries).toHaveLength(2)
+    expect(projected[0].displayName).toBe('V形底')
+  })
+
   it('reads the primary pattern breakout summary without mixing layer visibility', () => {
     expect(readGeneratedBreakoutState(run, true)).toEqual({
       state: 'triggered', direction: 'up', boundaryPrice: 12,

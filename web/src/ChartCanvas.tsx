@@ -1990,7 +1990,7 @@ export function projectGeneratedPatterns(
       const y = priceSeries.priceToCoordinate(pivot.price)
       return x === null || y === null ? [] : [{ x, y }]
     })
-    if (projected.length !== pivots.length || projected.length < 3) return []
+    if (projected.length !== pivots.length || projected.length < 1) return []
     const necklineY = priceSeries.priceToCoordinate(necklinePrice)
     if (necklineY === null) return []
     const first = projected[0]
@@ -2018,6 +2018,7 @@ export function projectGeneratedPatterns(
         ))
       }
     }
+    if (projected.length < 3 && boundaries.length === 0) return []
     return [{
       id: item.item_id,
       displayName,
