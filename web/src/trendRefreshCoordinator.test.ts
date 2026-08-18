@@ -58,3 +58,27 @@ it('does not hide an analysis failure behind a successful refresh', async () => 
     },
   )).rejects.toBe(analysisError)
 })
+
+
+it('does not report a publication callback failure as a provider refresh failure', async () => {
+  const publicationError = new Error('bar publication failed')
+  const onRefreshError = vi.fn()
+  const recalculate = vi.fn()
+
+  await expect(refreshThenRecalculateTrend(
+    '000001.SZ', trendTradingSystemDefaults, 0,
+    {
+      onRefresh: () => { throw publicationError },
+      onRefreshError,
+    },
+    {
+      refresh: vi.fn().mockResolvedValue({
+        mode: 'canonical', items: [], warning: false, status: 'ready',
+      }),
+      recalculate,
+    },
+  )).rejects.toBe(publicationError)
+
+  expect(onRefreshError).not.toHaveBeenCalled()
+  expect(recalculate).not.toHaveBeenCalled()
+})

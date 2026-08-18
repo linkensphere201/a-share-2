@@ -18,6 +18,9 @@ _TAGS = {
     "pivot", "trend-line", "key-level", "pattern", "breakout", "breakdown",
     "retest", "false-breakout", "corporate-action", "suspension", "gap",
 }
+_SCOREABLE_EXPECTED_FIELDS = {
+    "pivots", "trend_lines", "key_levels", "patterns", "events", "forbidden",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,11 +99,26 @@ def _parse_case(raw: object) -> TrendReviewCase:
     if not start <= end <= as_of:
         raise ValueError(f"invalid review interval for {case_id}")
     tags = raw.get("tags")
-    if not isinstance(tags, list) or not tags or any(tag not in _TAGS for tag in tags):
+    if (
+        not isinstance(tags, list)
+        or not tags
+        or any(not isinstance(tag, str) or tag not in _TAGS for tag in tags)
+    ):
         raise ValueError(f"invalid review tags for {case_id}")
     expected = raw.get("expected")
     if not isinstance(expected, dict) or not any(expected.values()):
         raise ValueError(f"review case {case_id} requires expected evidence")
+    if (
+        review_status == "confirmed"
+        and not any(
+            isinstance(expected.get(field), (list, dict))
+            and bool(expected.get(field))
+            for field in _SCOREABLE_EXPECTED_FIELDS
+        )
+    ):
+        raise ValueError(
+            f"confirmed review case {case_id} requires scoreable expected labels"
+        )
     sources = raw.get("sources")
     if not isinstance(sources, list) or not sources:
         raise ValueError(f"review case {case_id} requires provenance")
@@ -108,15 +126,16 @@ def _parse_case(raw: object) -> TrendReviewCase:
     for source in sources:
         if not isinstance(source, dict):
             raise ValueError(f"invalid review source for {case_id}")
+        checked_on = _required_date(source, "checked_on")
         parsed_sources.append({
             "provider": _required_text(source, "provider"),
             "dataset": _required_text(source, "dataset"),
-            "checked_on": _required_text(source, "checked_on"),
+            "checked_on": checked_on.isoformat(),
         })
     return TrendReviewCase(
         case_id, symbol, _required_text(raw, "name"), timeframe, horizon,
         start, end, as_of, classification, review_status,
-        tuple(dict.fromkeys(str(tag) for tag in tags)), expected,
+        tuple(dict.fromkeys(tags)), expected,
         _required_text(raw, "rationale"), tuple(parsed_sources),
     )
 

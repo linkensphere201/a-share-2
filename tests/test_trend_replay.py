@@ -14,6 +14,8 @@ from stock_harness.models import (
 from stock_harness.sqlite_store import SQLiteMarketDataStore
 from stock_harness.trend_analysis import TrendAnalysisService
 from stock_harness.trend_replay import (
+    ReplayItem,
+    TrendReplaySnapshot,
     compare_replays,
     replay_trend_analysis,
     summarize_replay,
@@ -328,6 +330,10 @@ def test_replay_rejects_empty_or_non_chronological_cutoffs():
             replay_trend_analysis(
                 service, "000001.SZ", [days[20], days[19]], horizons=HORIZONS
             )
+        with pytest.raises(ValueError, match="strictly chronological"):
+            replay_trend_analysis(
+                service, "000001.SZ", [days[20], days[20]], horizons=HORIZONS
+            )
     finally:
         store.close()
 
@@ -342,3 +348,97 @@ def test_replay_comparison_rejects_different_cutoff_sets():
             compare_replays(first, second)
     finally:
         store.close()
+
+
+def test_candidate_stability_uses_semantic_geometry_instead_of_rank_ids():
+    first_line = _replay_item(
+        "short-support-line-0", "line",
+        horizon="short", kind="support",
+        first_pivot_date="2026-06-01", second_pivot_date="2026-06-05",
+    )
+    reranked_same_line = _replay_item(
+        "short-support-line-3", "line",
+        horizon="short", kind="support",
+        first_pivot_date="2026-06-01", second_pivot_date="2026-06-05",
+    )
+    reused_rank_for_different_line = _replay_item(
+        "short-support-line-3", "line",
+        horizon="short", kind="support",
+        first_pivot_date="2026-06-03", second_pivot_date="2026-06-09",
+    )
+
+    stable = summarize_replay([
+        _metric_snapshot(date(2026, 6, 10), first_line),
+        _metric_snapshot(date(2026, 6, 11), reranked_same_line),
+    ])
+    revised = summarize_replay([
+        _metric_snapshot(date(2026, 6, 10), reranked_same_line),
+        _metric_snapshot(date(2026, 6, 11), reused_rank_for_different_line),
+    ])
+
+    assert stable.candidate_stability_mean == 1
+    assert revised.candidate_stability_mean == 0
+
+
+def test_alert_turnover_includes_the_event_parent_structure():
+    first_line = _replay_item(
+        "short-support-line-0", "line",
+        horizon="short", kind="support",
+        first_pivot_date="2026-06-01", second_pivot_date="2026-06-05",
+    )
+    second_line = _replay_item(
+        "short-support-line-0", "line",
+        horizon="short", kind="support",
+        first_pivot_date="2026-06-03", second_pivot_date="2026-06-09",
+    )
+    first_event = _replay_item(
+        "event-0", "transition", parent_item_id=first_line.item_id,
+        event_kind="upward-breakout", direction="up",
+    )
+    second_event = _replay_item(
+        "event-0", "transition", parent_item_id=second_line.item_id,
+        event_kind="upward-breakout", direction="up",
+    )
+
+    metrics = summarize_replay([
+        _metric_snapshot(date(2026, 6, 10), first_line, first_event),
+        _metric_snapshot(date(2026, 6, 11), second_line, second_event),
+    ])
+
+    assert metrics.alert_turnover_rate == 1
+
+
+def _replay_item(
+    item_id: str,
+    item_type: str,
+    *,
+    parent_item_id: str | None = None,
+    **payload: object,
+) -> ReplayItem:
+    return ReplayItem(
+        item_id, item_type, parent_item_id,
+        json.dumps(payload, sort_keys=True, separators=(",", ":")),
+    )
+
+
+def _metric_snapshot(
+    as_of_date: date,
+    *items: ReplayItem,
+) -> TrendReplaySnapshot:
+    events = tuple(
+        payload["event_kind"]
+        for item in items
+        if item.item_type == "transition"
+        for payload in [json.loads(item.payload_json)]
+    )
+    return TrendReplaySnapshot(
+        as_of_date,
+        AnalysisTimeframe.DAILY,
+        "input",
+        "output",
+        "complete",
+        (),
+        events,
+        "[]",
+        items,
+    )

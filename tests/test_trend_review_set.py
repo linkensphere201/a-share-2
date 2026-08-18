@@ -36,3 +36,34 @@ def test_rejects_duplicate_ids_and_invalid_date_ranges(tmp_path: Path):
     invalid_range.write_text(json.dumps(raw), encoding="utf-8")
     with pytest.raises(ValueError, match="invalid review interval"):
         load_trend_review_set(invalid_range)
+
+
+@pytest.mark.parametrize(("mutation", "message"), [
+    (lambda case: case["tags"].append({"invalid": True}), "invalid review tags"),
+    (
+        lambda case: case["sources"][0].update({"checked_on": "not-a-date"}),
+        "invalid trend review date checked_on",
+    ),
+])
+def test_rejects_malformed_tags_and_provenance_dates(
+    tmp_path: Path,
+    mutation,
+    message: str,
+):
+    raw = json.loads(DATASET.read_text(encoding="utf-8"))
+    mutation(raw["cases"][0])
+    path = tmp_path / "malformed.json"
+    path.write_text(json.dumps(raw), encoding="utf-8")
+
+    with pytest.raises(ValueError, match=message):
+        load_trend_review_set(path)
+
+
+def test_confirmed_case_requires_machine_scoreable_expected_labels(tmp_path: Path):
+    raw = json.loads(DATASET.read_text(encoding="utf-8"))
+    raw["cases"][0]["review_status"] = "confirmed"
+    path = tmp_path / "unscoreable-confirmed.json"
+    path.write_text(json.dumps(raw), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="requires scoreable expected labels"):
+        load_trend_review_set(path)

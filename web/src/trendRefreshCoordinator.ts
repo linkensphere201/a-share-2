@@ -37,11 +37,11 @@ export async function refreshThenRecalculateTrend(
   let refreshError: unknown
   try {
     refresh = await dependencies.refresh(symbol)
-    callbacks.onRefresh?.(refresh)
   } catch (error) {
     refreshError = error
     callbacks.onRefreshError?.(error)
   }
+  if (refresh) callbacks.onRefresh?.(refresh)
   const analysis = await dependencies.recalculate(
     symbol, settings, settingsRevision,
   )

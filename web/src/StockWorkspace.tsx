@@ -17,6 +17,7 @@ import { buildWorkspaceContext, publishWorkspaceContext } from './workspaceConte
 import type { TradingSystemWindowStates } from './tradingSystems'
 import { normalizeTrendTradingSystemSettings } from './tradingSystems'
 import { refreshThenRecalculateTrend } from './trendRefreshCoordinator'
+import { beginTrendRequest, isCurrentTrendRequest } from './trendRequestGuard'
 import {
   chartRanges,
   deriveReferencedSymbols,
@@ -49,6 +50,8 @@ export function StockWorkspace() {
   )
   const referencedSymbolsKey = referencedSymbols.join('|')
   const subscriptionCoordinatorRef = useRef<IntradaySubscriptionCoordinator | undefined>(undefined)
+  const activeGroupRef = useRef(activeGroup)
+  const trendRequestGenerationsRef = useRef(new Map<string, number>())
   const workspaceContext = useMemo(
     () => buildWorkspaceContext(activeGroup, resolvedWindowSymbols),
     [activeGroup, resolvedWindowSymbols, drawingRevision],
@@ -83,6 +86,7 @@ export function StockWorkspace() {
 
   useEffect(() => saveWorkspace(workspace), [workspace])
   useEffect(() => applyTheme(theme), [theme])
+  useEffect(() => { activeGroupRef.current = activeGroup }, [activeGroup])
 
   useEffect(() => subscribeDrawingStore(() => setDrawingRevision(value => value + 1)), [])
 
@@ -232,6 +236,24 @@ export function StockWorkspace() {
       symbol: item.instrument.symbol,
     })
     if (systemId !== 'trend') return
+    const requestToken = beginTrendRequest(trendRequestGenerationsRef.current, {
+      groupId: activeGroup.id,
+      windowId: id,
+      symbol: item.instrument.symbol,
+    })
+    const requestIsCurrent = () => {
+      const group = activeGroupRef.current
+      const activeWindow = group.windows.find(window => window.id === id)
+      return isCurrentTrendRequest(
+        trendRequestGenerationsRef.current,
+        requestToken,
+        activeWindow?.type === 'chart' ? {
+          groupId: group.id,
+          windowId: id,
+          symbol: activeWindow.instrument.symbol,
+        } : undefined,
+      )
+    }
     const system = item.chart.tradingSystems.trend
     void refreshThenRecalculateTrend(
       item.instrument.symbol,
@@ -239,6 +261,7 @@ export function StockWorkspace() {
       system.settingsRevision,
       {
         onRefresh: result => {
+          if (!requestIsCurrent()) return
           window.dispatchEvent(new CustomEvent('stock-harness:latest-daily-refreshed', {
             detail: { symbol: item.instrument.symbol, ...result },
           }))
@@ -255,6 +278,7 @@ export function StockWorkspace() {
           }
         },
         onRefreshError: error => {
+          if (!requestIsCurrent()) return
           logWarning('trading-system', '更新测算的数据刷新失败，将使用最后可用数据继续分析', {
             windowId: id, symbol: item.instrument.symbol,
             error: error instanceof Error ? error.message : String(error),
@@ -262,7 +286,9 @@ export function StockWorkspace() {
         },
       },
     ).then(() => {
-      updateWindow(id, window => window.type === 'chart' ? {
+      if (!requestIsCurrent()) return
+      updateWindow(id, window => window.type === 'chart'
+        && window.instrument.symbol === requestToken.symbol ? {
         ...window,
         chart: {
           ...window.chart,
@@ -279,7 +305,9 @@ export function StockWorkspace() {
         detail: { windowId: id, symbol: item.instrument.symbol },
       }))
     }).catch(error => {
-      updateWindow(id, window => window.type === 'chart' ? {
+      if (!requestIsCurrent()) return
+      updateWindow(id, window => window.type === 'chart'
+        && window.instrument.symbol === requestToken.symbol ? {
         ...window,
         chart: {
           ...window.chart,
@@ -294,7 +322,7 @@ export function StockWorkspace() {
         error: error instanceof Error ? error.message : String(error),
       })
     })
-  }, [activeGroup.windows, updateWindow])
+  }, [activeGroup, updateWindow])
 
   const updateActiveChart = (update: (chart: ChartWindowState) => ChartWindowState) => {
     if (!activeChart) return

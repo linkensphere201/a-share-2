@@ -67,10 +67,10 @@ def replay_trend_analysis(
     config_version: str = "historical-replay-v1",
 ) -> tuple[TrendReplaySnapshot, ...]:
     """Run the production coordinator at each cutoff before revealing the next bar."""
-    ordered = tuple(dict.fromkeys(cutoffs))
+    ordered = tuple(cutoffs)
     if not ordered:
         raise ValueError("historical replay requires at least one cutoff")
-    if tuple(sorted(ordered)) != ordered:
+    if any(left >= right for left, right in zip(ordered, ordered[1:])):
         raise ValueError("historical replay cutoffs must be strictly chronological")
     snapshots: list[TrendReplaySnapshot] = []
     for cutoff in ordered:
@@ -110,21 +110,34 @@ def summarize_replay(
         raise ValueError("replay metrics require at least one snapshot")
     anchors: dict[tuple[object, ...], int] = {}
     patterns: dict[tuple[object, ...], int] = {}
-    candidate_sets: list[set[tuple[str, str]]] = []
-    alert_sets: list[set[str]] = []
+    candidate_sets: list[set[tuple[object, ...]]] = []
+    alert_sets: list[set[tuple[object, ...]]] = []
     event_counts: Counter[str] = Counter()
     for snapshot in snapshots:
-        candidates: set[tuple[str, str]] = set()
-        alerts = {
-            event for event in snapshot.structural_events
-            if event != "no-structural-change"
-        }
+        candidates: set[tuple[object, ...]] = set()
+        parent_candidates: dict[str, tuple[object, ...]] = {}
+        decoded_items = [
+            (item, json.loads(item.payload_json)) for item in snapshot.items
+        ]
+        for item, payload in decoded_items:
+            identity = _candidate_identity(item.item_type, payload)
+            if identity is not None:
+                candidates.add(identity)
+                parent_candidates[item.item_id] = identity
+        alerts: set[tuple[object, ...]] = set()
         event_counts.update(snapshot.structural_events)
-        alert_sets.append(alerts)
-        for item in snapshot.items:
-            payload = json.loads(item.payload_json)
-            if item.item_type in {"line", "zone", "pattern"}:
-                candidates.add((item.item_type, item.item_id))
+        for item, payload in decoded_items:
+            if item.item_type == "transition":
+                event_kind = payload.get("event_kind")
+                if event_kind != "no-structural-change":
+                    alerts.add((
+                        event_kind,
+                        parent_candidates.get(
+                            item.parent_item_id or "",
+                            ("unresolved-parent", item.parent_item_id),
+                        ),
+                        payload.get("direction"),
+                    ))
             if item.item_type == "anchor" and payload.get("tentative") is False:
                 pivot_date = _parse_date(payload.get("pivot_date"))
                 confirmed_date = _parse_date(payload.get("confirmed_date"))
@@ -144,6 +157,7 @@ def summarize_replay(
                     )
                     patterns[key] = max(0, (available_date - end_date).days)
         candidate_sets.append(candidates)
+        alert_sets.append(alerts)
     stability = [
         _jaccard(left, right)
         for left, right in zip(candidate_sets, candidate_sets[1:])
@@ -272,7 +286,41 @@ def _parse_date(value: object) -> date | None:
         return None
 
 
-def _jaccard(left: set[tuple[str, str]], right: set[tuple[str, str]]) -> float:
+def _candidate_identity(
+    item_type: str,
+    payload: Mapping[str, object],
+) -> tuple[object, ...] | None:
+    if item_type == "line":
+        return (
+            "line", payload.get("horizon"), payload.get("kind"),
+            payload.get("first_pivot_date"), payload.get("second_pivot_date"),
+        )
+    if item_type == "pattern":
+        return (
+            "pattern", payload.get("horizon"), payload.get("pattern_type"),
+            payload.get("start_date"), payload.get("end_date"),
+        )
+    if item_type == "zone":
+        evidence_dates = payload.get("evidence_dates")
+        evidence_identity = (
+            tuple(evidence_dates) if isinstance(evidence_dates, list) else ()
+        )
+        return (
+            "zone", payload.get("kind"), evidence_identity,
+            _rounded_number(payload.get("lower")),
+            _rounded_number(payload.get("upper")),
+        )
+    return None
+
+
+def _rounded_number(value: object) -> float | None:
+    return round(float(value), 6) if isinstance(value, (int, float)) else None
+
+
+def _jaccard(
+    left: set[tuple[object, ...]],
+    right: set[tuple[object, ...]],
+) -> float:
     union = left | right
     return len(left & right) / len(union) if union else 1.0
 
