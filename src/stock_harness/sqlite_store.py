@@ -1084,6 +1084,134 @@ class SQLiteMarketDataStore:
             for row in rows
         ]
 
+    def get_instrument_kind(self, symbol: str) -> InstrumentKind | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT kind FROM instruments WHERE symbol = ? COLLATE NOCASE",
+                (symbol.upper(),),
+            ).fetchone()
+        return InstrumentKind(str(row[0])) if row is not None else None
+
+    def get_instrument_lifecycle(
+        self, symbol: str
+    ) -> tuple[date | None, date | None]:
+        with self._lock:
+            row = self._connection.execute(
+                """
+                SELECT instrument.active, min(catalog.listed_on), max(catalog.delisted_on)
+                FROM instruments AS instrument
+                LEFT JOIN instrument_catalog_entries AS catalog USING (instrument_id)
+                WHERE instrument.symbol = ? COLLATE NOCASE
+                GROUP BY instrument.instrument_id
+                """,
+                (symbol.upper(),),
+            ).fetchone()
+        if row is None:
+            return None, None
+        listed_on = _date_from_key(int(row[1])) if row[1] is not None else None
+        delisted_on = (
+            _date_from_key(int(row[2]))
+            if not bool(row[0]) and row[2] is not None
+            else None
+        )
+        return listed_on, delisted_on
+
+    def get_recent_daily_bars(
+        self, symbol: str, end_date: date, limit: int
+    ) -> list[StoredDailyBar]:
+        if limit <= 0:
+            raise ValueError("daily bar limit must be positive")
+        normalized = symbol.upper()
+        kind = self.get_instrument_kind(normalized)
+        if kind is InstrumentKind.CUSTOM_INDEX:
+            query = """
+                SELECT instrument.symbol, bar.trade_date, bar.open, bar.high,
+                       bar.low, bar.close, bar.volume, bar.updated_at_ms
+                FROM custom_index_daily_bars AS bar
+                JOIN custom_indices AS custom USING (index_id)
+                JOIN instruments AS instrument USING (instrument_id)
+                WHERE instrument.symbol = ? COLLATE NOCASE AND bar.trade_date <= ?
+                ORDER BY bar.trade_date DESC LIMIT ?
+            """
+            with self._lock:
+                rows = self._connection.execute(
+                    query, (normalized, _date_key(end_date), limit)
+                ).fetchall()
+            result = [
+                StoredDailyBar(
+                    symbol=str(row[0]), trade_date=_date_from_key(int(row[1])),
+                    open=float(row[2]), high=float(row[3]), low=float(row[4]),
+                    close=float(row[5]), volume=int(row[6]),
+                    source="local_custom_index", updated_at_ms=int(row[7]),
+                )
+                for row in rows
+            ]
+        else:
+            query = """
+                SELECT instrument.symbol, bar.trade_date, bar.open, bar.high,
+                       bar.low, bar.close, bar.volume, source.code, bar.updated_at_ms
+                FROM daily_bars AS bar
+                JOIN instruments AS instrument USING (instrument_id)
+                JOIN sources AS source USING (source_id)
+                WHERE instrument.symbol = ? COLLATE NOCASE AND bar.trade_date <= ?
+                ORDER BY bar.trade_date DESC LIMIT ?
+            """
+            with self._lock:
+                rows = self._connection.execute(
+                    query, (normalized, _date_key(end_date), limit)
+                ).fetchall()
+            result = [
+                StoredDailyBar(
+                    symbol=str(row[0]), trade_date=_date_from_key(int(row[1])),
+                    open=float(row[2]), high=float(row[3]), low=float(row[4]),
+                    close=float(row[5]), volume=int(row[6]), source=str(row[7]),
+                    updated_at_ms=int(row[8]),
+                )
+                for row in rows
+            ]
+        result.reverse()
+        return result
+
+    def get_adjustment_factors(
+        self, symbol: str, start_date: date, end_date: date
+    ) -> list[AdjustmentFactor]:
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT instrument.symbol, factor.trade_date, factor.factor
+                FROM stock_adjustment_factors AS factor
+                JOIN instruments AS instrument USING (instrument_id)
+                WHERE instrument.symbol = ? COLLATE NOCASE
+                  AND factor.trade_date BETWEEN ? AND ?
+                ORDER BY factor.trade_date
+                """,
+                (symbol.upper(), _date_key(start_date), _date_key(end_date)),
+            ).fetchall()
+        return [
+            AdjustmentFactor(str(row[0]), _date_from_key(int(row[1])), float(row[2]))
+            for row in rows
+        ]
+
+    def get_stock_trade_statuses(
+        self, symbol: str, start_date: date, end_date: date
+    ) -> list[StockTradeStatus]:
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT instrument.symbol, trade.trade_date, trade.status
+                FROM stock_trade_status AS trade
+                JOIN instruments AS instrument USING (instrument_id)
+                WHERE instrument.symbol = ? COLLATE NOCASE
+                  AND trade.trade_date BETWEEN ? AND ?
+                ORDER BY trade.trade_date
+                """,
+                (symbol.upper(), _date_key(start_date), _date_key(end_date)),
+            ).fetchall()
+        return [
+            StockTradeStatus(str(row[0]), _date_from_key(int(row[1])), str(row[2]))
+            for row in rows
+        ]
+
     def get_latest_daily_bar_date(self, symbol: str) -> date | None:
         with self._lock:
             row = self._connection.execute(
