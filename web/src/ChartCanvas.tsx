@@ -14,6 +14,7 @@ import {
 import { barsInRenderPeriod, chooseAnchor, extendLineToBounds, orientTrendLineAnchors, replaceTrendLineAnchor, translateTrendLineAnchors, type LineGeometry, type TrendLineOrientation } from './trendLines'
 import type { ThemeDefinition } from './themeStore'
 import { loadTrendAnalysis, type TrendAnalysisRun } from './trendAnalysisClient'
+import { refreshLatestDailyBar } from './latestDailyRefreshClient'
 import {
   projectMarketAnnotations,
   projectMeasurement,
@@ -41,7 +42,6 @@ import {
   movingAverage,
   previousCloseByDate,
   remapLogicalRange,
-  shouldUseFinalDailyRefresh,
   snapLogicalRangeToDataEdge,
   subtractMonths,
   subtractYears,
@@ -660,6 +660,31 @@ export function ChartCanvas({
     window.clearTimeout(manualRefreshFeedbackTimerRef.current)
   }, [symbol])
 
+  useEffect(() => {
+    const onRefreshed = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        symbol?: string
+        mode?: 'provisional' | 'canonical' | 'final'
+        items?: DailyBar[]
+      }>).detail
+      if (detail?.symbol?.toUpperCase() !== symbol.toUpperCase() || !detail.items) return
+      if (detail.mode === 'provisional') {
+        const live = detail.items[0]
+        if (live) replaceBars(mergeProvisionalBar(barsRef.current, live), true)
+        return
+      }
+      replaceBars(detail.items, true)
+      const finalItems = detail.items.filter(item => item.bar_state !== 'intraday')
+      coverageCallbackRef.current?.(
+        finalItems.length,
+        finalItems.at(0)?.trade_date,
+        finalItems.at(-1)?.trade_date,
+      )
+    }
+    window.addEventListener('stock-harness:latest-daily-refreshed', onRefreshed)
+    return () => window.removeEventListener('stock-harness:latest-daily-refreshed', onRefreshed)
+  }, [symbol, replaceBars])
+
   const showManualRefreshFeedback = useCallback((value: 'success' | 'warning') => {
     window.clearTimeout(manualRefreshFeedbackTimerRef.current)
     setManualRefreshFeedback(value)
@@ -676,108 +701,30 @@ export function ChartCanvas({
     window.clearTimeout(manualRefreshFeedbackTimerRef.current)
     setManualRefreshFeedback(undefined)
     setManualRefreshing(true)
-    if (shouldUseFinalDailyRefresh(new Date())) {
-      fetch('/api/update/refresh', { method: 'POST', signal: controller.signal })
-        .then(response => {
-          if (!response.ok) throw new Error(`HTTP ${response.status}`)
-          return response.json() as Promise<{
-            accepted: boolean
-            state: string
-            queued?: boolean
-          }>
-        })
-        .then(async request => {
-          logInfo('daily-update', '盘后正式日线刷新任务已开始', {
-            symbol,
-            accepted: request.accepted,
-            state: request.state,
-            queued: request.queued,
-          })
-          const status = await waitForFinalDailyUpdate(controller.signal)
-          const response = await fetch(
-            `/api/instruments/${encodeURIComponent(symbol)}/daily-bars`,
-            { signal: controller.signal },
-          )
-          if (!response.ok) throw new Error(`HTTP ${response.status}`)
-          const body = await response.json() as { items: DailyBar[] }
-          replaceBars(body.items, true)
-          const finalItems = body.items.filter(item => item.bar_state !== 'intraday')
+    refreshLatestDailyBar(symbol, new Date(), controller.signal)
+      .then(result => {
+        if (result.mode === 'provisional') {
+          const live = result.items[0]
+          if (live) replaceBars(mergeProvisionalBar(barsRef.current, live), true)
+        } else {
+          replaceBars(result.items, true)
+          const finalItems = result.items.filter(item => item.bar_state !== 'intraday')
           coverageCallbackRef.current?.(
             finalItems.length,
             finalItems.at(0)?.trade_date,
             finalItems.at(-1)?.trade_date,
           )
-          if (status.state === 'warning' || status.state === 'error') {
-            showManualRefreshFeedback('warning')
-            logWarning('daily-update', '盘后正式日线刷新完成但存在异常', {
-              symbol,
-              state: status.state,
-              error: status.error,
-            })
-          } else {
-            showManualRefreshFeedback('success')
-            logInfo('daily-update', '盘后正式日线刷新完成', {
-              symbol,
-              rowsChanged: status.rows_changed,
-            })
-          }
-        })
-        .catch(error => {
-          if ((error as Error).name !== 'AbortError') {
-            showManualRefreshFeedback('warning')
-            logWarning('daily-update', '盘后正式日线刷新失败，保留现有图表', {
-              symbol,
-              error,
-            })
-          }
-        })
-        .finally(() => {
-          if (manualRefreshControllerRef.current === controller) {
-            manualRefreshControllerRef.current = undefined
-            setManualRefreshing(false)
-          }
-        })
-      return
-    }
-    fetch('/api/intraday/refresh', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ symbols: [symbol] }),
-      signal: controller.signal,
-    })
-      .then(response => {
-        if (!response.ok) throw new Error(`HTTP ${response.status}`)
-        return response.json() as Promise<{
-          items: DailyBar[]
-          canonical_symbols?: string[]
-          status: { state: string; last_error?: string }
-        }>
-      })
-      .then(body => {
-        const live = body.items[0]
-        if (live) replaceBars(mergeProvisionalBar(barsRef.current, live), true)
-        if (body.canonical_symbols?.includes(symbol)) {
-          showManualRefreshFeedback('success')
-          logInfo('intraday', '正式日K已覆盖当日，继续使用主行情库', {
-            symbol,
-            state: body.status.state,
-          })
-          return
         }
-        if (body.status.state !== 'ready' || !live) {
-          showManualRefreshFeedback('warning')
-          logInfo('intraday', '手动刷新未获得新盘中日K，保留现有图表', {
-            symbol,
-            state: body.status.state,
-            error: body.status.last_error,
-          })
-          return
+        showManualRefreshFeedback(result.warning ? 'warning' : 'success')
+        const details = {
+          symbol, mode: result.mode, state: result.status,
+          rowsChanged: result.rowsChanged, error: result.error,
         }
-        showManualRefreshFeedback('success')
-        logInfo('intraday', '手动刷新盘中临时日K完成', {
-          symbol,
-          state: body.status.state,
-        })
+        if (result.warning) {
+          logWarning('daily-refresh', '最新日线刷新完成但存在警告，保留可用图表数据', details)
+        } else {
+          logInfo('daily-refresh', '最新日线刷新完成', details)
+        }
       })
       .catch(error => {
         if ((error as Error).name !== 'AbortError') {
@@ -785,7 +732,7 @@ export function ChartCanvas({
           const now = Date.now()
           if (now - manualRefreshWarningAtRef.current >= 60_000) {
             manualRefreshWarningAtRef.current = now
-            logWarning('intraday', '手动刷新盘中临时日K失败，保留现有图表', { symbol, error })
+            logWarning('daily-refresh', '最新日线刷新失败，保留现有图表', { symbol, error })
           }
         }
       })
@@ -1605,24 +1552,6 @@ function PaneHeader({ kind, top, onHide }: { kind: 'volume' | 'macd'; top: numbe
       <button title={`隐藏${label}栏`} aria-label={`隐藏${label}栏`} onClick={onHide}><EyeOff size={11}/></button>
     </div>
   )
-}
-
-type FinalDailyUpdateStatus = {
-  state: string
-  rows_changed?: number
-  error?: string | null
-}
-
-async function waitForFinalDailyUpdate(signal: AbortSignal): Promise<FinalDailyUpdateStatus> {
-  for (let attempt = 0; attempt < 180; attempt += 1) {
-    const response = await fetch('/api/update-status', { signal })
-    if (!response.ok) throw new Error(`HTTP ${response.status}`)
-    const status = await response.json() as FinalDailyUpdateStatus
-    if (status.state !== 'queued' && status.state !== 'running') return status
-    await new Promise(resolve => window.setTimeout(resolve, 1_000))
-    if (signal.aborted) throw new DOMException('Aborted', 'AbortError')
-  }
-  throw new Error('盘后正式日线刷新超时')
 }
 
 function TrendLineManager({
