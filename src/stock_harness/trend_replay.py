@@ -43,6 +43,20 @@ class ReplayMismatch:
     actual_digest: str
 
 
+@dataclass(frozen=True, slots=True)
+class TrendReplayMetrics:
+    snapshot_count: int
+    unique_anchor_count: int
+    anchor_confirmation_lag_mean_days: float | None
+    anchor_confirmation_lag_max_days: int | None
+    unique_pattern_count: int
+    pattern_availability_lag_mean_days: float | None
+    pattern_availability_lag_max_days: int | None
+    candidate_stability_mean: float
+    alert_turnover_rate: float
+    event_counts: tuple[tuple[str, int], ...]
+
+
 def replay_trend_analysis(
     service: TrendAnalysisService,
     symbol: str,
@@ -85,6 +99,74 @@ def compare_replays(
         ReplayMismatch(key[0], key[1], expected_by_key[key].output_digest, actual_by_key[key].output_digest)
         for key in sorted(expected_by_key, key=lambda value: (value[0], value[1].value))
         if expected_by_key[key].output_digest != actual_by_key[key].output_digest
+    )
+
+
+def summarize_replay(
+    snapshots: Sequence[TrendReplaySnapshot],
+) -> TrendReplayMetrics:
+    """Measure recognition lag and revision stability without using future returns."""
+    if not snapshots:
+        raise ValueError("replay metrics require at least one snapshot")
+    anchors: dict[tuple[object, ...], int] = {}
+    patterns: dict[tuple[object, ...], int] = {}
+    candidate_sets: list[set[tuple[str, str]]] = []
+    alert_sets: list[set[str]] = []
+    event_counts: Counter[str] = Counter()
+    for snapshot in snapshots:
+        candidates: set[tuple[str, str]] = set()
+        alerts = {
+            event for event in snapshot.structural_events
+            if event != "no-structural-change"
+        }
+        event_counts.update(snapshot.structural_events)
+        alert_sets.append(alerts)
+        for item in snapshot.items:
+            payload = json.loads(item.payload_json)
+            if item.item_type in {"line", "zone", "pattern"}:
+                candidates.add((item.item_type, item.item_id))
+            if item.item_type == "anchor" and payload.get("tentative") is False:
+                pivot_date = _parse_date(payload.get("pivot_date"))
+                confirmed_date = _parse_date(payload.get("confirmed_date"))
+                if pivot_date is not None and confirmed_date is not None:
+                    key = (
+                        payload.get("horizon"), payload.get("kind"),
+                        pivot_date, confirmed_date,
+                    )
+                    anchors[key] = (confirmed_date - pivot_date).days
+            if item.item_type == "pattern":
+                end_date = _parse_date(payload.get("end_date"))
+                available_date = _parse_date(payload.get("available_date"))
+                if end_date is not None and available_date is not None:
+                    key = (
+                        payload.get("horizon"), payload.get("pattern_type"),
+                        payload.get("start_date"), end_date, available_date,
+                    )
+                    patterns[key] = max(0, (available_date - end_date).days)
+        candidate_sets.append(candidates)
+    stability = [
+        _jaccard(left, right)
+        for left, right in zip(candidate_sets, candidate_sets[1:])
+    ]
+    alert_turns = sum(
+        left != right for left, right in zip(alert_sets, alert_sets[1:])
+    )
+    transition_count = max(0, len(snapshots) - 1)
+    return TrendReplayMetrics(
+        snapshot_count=len(snapshots),
+        unique_anchor_count=len(anchors),
+        anchor_confirmation_lag_mean_days=_mean_or_none(anchors.values()),
+        anchor_confirmation_lag_max_days=max(anchors.values(), default=None),
+        unique_pattern_count=len(patterns),
+        pattern_availability_lag_mean_days=_mean_or_none(patterns.values()),
+        pattern_availability_lag_max_days=max(patterns.values(), default=None),
+        candidate_stability_mean=(
+            sum(stability) / len(stability) if stability else 1.0
+        ),
+        alert_turnover_rate=(
+            alert_turns / transition_count if transition_count else 0.0
+        ),
+        event_counts=tuple(sorted(event_counts.items())),
     )
 
 
@@ -179,3 +261,22 @@ def _canonical_json(value: object) -> str:
     return json.dumps(
         value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
     )
+
+
+def _parse_date(value: object) -> date | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _jaccard(left: set[tuple[str, str]], right: set[tuple[str, str]]) -> float:
+    union = left | right
+    return len(left & right) / len(union) if union else 1.0
+
+
+def _mean_or_none(values) -> float | None:
+    collected = tuple(values)
+    return sum(collected) / len(collected) if collected else None

@@ -7,7 +7,11 @@ from stock_harness.analysis_inputs import AnalysisHorizons
 from stock_harness.models import AdjustmentFactor, DailyBar, Instrument, InstrumentKind
 from stock_harness.sqlite_store import SQLiteMarketDataStore
 from stock_harness.trend_analysis import TrendAnalysisService
-from stock_harness.trend_replay import compare_replays, replay_trend_analysis
+from stock_harness.trend_replay import (
+    compare_replays,
+    replay_trend_analysis,
+    summarize_replay,
+)
 
 
 HORIZONS = AnalysisHorizons(6, 12, 24)
@@ -162,6 +166,35 @@ def test_replay_retains_a_confirmed_pattern_when_the_next_bar_invalidates_it():
         assert invalidated["primary"] is False
     finally:
         store.close()
+
+
+def test_replay_metrics_separate_recognition_lag_from_event_turnover():
+    store, days = _replay_store()
+    try:
+        snapshots = replay_trend_analysis(
+            TrendAnalysisService(store), "000001.SZ", days[17:34],
+            horizons=HORIZONS,
+        )
+        metrics = summarize_replay(snapshots)
+
+        assert metrics.snapshot_count == 17
+        assert metrics.unique_anchor_count > 0
+        assert metrics.anchor_confirmation_lag_mean_days is not None
+        assert metrics.anchor_confirmation_lag_mean_days > 0
+        assert metrics.anchor_confirmation_lag_max_days is not None
+        assert metrics.unique_pattern_count > 0
+        assert metrics.pattern_availability_lag_mean_days is not None
+        assert 0 <= metrics.candidate_stability_mean <= 1
+        assert 0 < metrics.alert_turnover_rate <= 1
+        assert dict(metrics.event_counts)["upward-breakout"] >= 1
+        assert dict(metrics.event_counts)["downward-breakdown"] >= 1
+    finally:
+        store.close()
+
+
+def test_replay_metrics_require_a_snapshot():
+    with pytest.raises(ValueError, match="at least one snapshot"):
+        summarize_replay([])
 
 
 def test_replay_rejects_empty_or_non_chronological_cutoffs():
