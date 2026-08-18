@@ -343,6 +343,63 @@ BEGIN
         updated_at_ms = excluded.updated_at_ms;
 END;
 
+CREATE TABLE IF NOT EXISTS generated_analysis_runs (
+    run_id TEXT PRIMARY KEY,
+    system_id TEXT NOT NULL,
+    instrument_id INTEGER NOT NULL,
+    timeframe TEXT NOT NULL,
+    namespace TEXT NOT NULL CHECK (namespace IN ('official', 'preview')),
+    as_of_date INTEGER NOT NULL,
+    input_start_date INTEGER NOT NULL,
+    input_end_date INTEGER NOT NULL,
+    input_digest BLOB NOT NULL,
+    algorithm_version TEXT NOT NULL,
+    config_version TEXT NOT NULL,
+    completion_state TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('running', 'succeeded', 'failed')),
+    attempt INTEGER NOT NULL CHECK (attempt > 0),
+    duration_ms REAL,
+    warnings_json TEXT NOT NULL DEFAULT '[]',
+    failure_details TEXT,
+    source_observed_at_ms INTEGER,
+    expires_at_ms INTEGER,
+    supersedes_run_id TEXT,
+    created_at_ms INTEGER NOT NULL,
+    completed_at_ms INTEGER,
+    FOREIGN KEY (instrument_id) REFERENCES instruments(instrument_id),
+    FOREIGN KEY (supersedes_run_id) REFERENCES generated_analysis_runs(run_id)
+);
+
+CREATE INDEX IF NOT EXISTS generated_analysis_run_latest
+ON generated_analysis_runs(
+    instrument_id, system_id, timeframe, namespace, as_of_date DESC, created_at_ms DESC
+);
+
+CREATE INDEX IF NOT EXISTS generated_analysis_run_identity
+ON generated_analysis_runs(
+    instrument_id, system_id, timeframe, namespace, as_of_date,
+    input_digest, algorithm_version, config_version, status
+);
+
+CREATE TABLE IF NOT EXISTS generated_analysis_items (
+    run_id TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    item_type TEXT NOT NULL CHECK (
+        item_type IN ('anchor', 'line', 'zone', 'pattern', 'transition', 'evidence')
+    ),
+    parent_item_id TEXT,
+    sequence INTEGER NOT NULL,
+    payload_json TEXT NOT NULL,
+    PRIMARY KEY (run_id, item_id),
+    UNIQUE (run_id, sequence),
+    FOREIGN KEY (run_id) REFERENCES generated_analysis_runs(run_id) ON DELETE CASCADE,
+    FOREIGN KEY (run_id, parent_item_id)
+        REFERENCES generated_analysis_items(run_id, item_id)
+) WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS generated_analysis_items_type
+ON generated_analysis_items(run_id, item_type, sequence);
+
 CREATE TABLE IF NOT EXISTS intraday_daily_bars (
     symbol TEXT NOT NULL,
     trade_date INTEGER NOT NULL,

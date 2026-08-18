@@ -6,6 +6,7 @@ import sqlite3
 import threading
 import time
 import json
+from uuid import uuid4
 from contextlib import AbstractContextManager
 from collections.abc import Sequence
 from datetime import date, datetime, timezone
@@ -37,6 +38,14 @@ from stock_harness.custom_index import (
     base_bar,
     calculate_bar,
     normalize_members,
+)
+from stock_harness.analysis_results import (
+    AnalysisNamespace,
+    AnalysisRunRecord,
+    AnalysisRunSpec,
+    AnalysisRunStatus,
+    GeneratedAnalysisItem,
+    validate_items,
 )
 from stock_harness.search_terms import matches_name_or_pinyin, pinyin_search_aliases
 from stock_harness.sqlite_mapping import (
@@ -1548,6 +1557,239 @@ class SQLiteMarketDataStore:
                 ),
             )
             return self._connection.total_changes - before
+
+    def begin_generated_analysis_run(
+        self, spec: AnalysisRunSpec
+    ) -> AnalysisRunRecord:
+        spec.validate()
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        normalized_symbol = spec.symbol.strip().upper()
+        with self._lock, self._transaction():
+            instrument_ids = self._instrument_ids({normalized_symbol})
+            if normalized_symbol not in instrument_ids:
+                raise ValueError(f"analysis references unknown instrument: {normalized_symbol}")
+            instrument_id = instrument_ids[normalized_symbol]
+            identity = (
+                instrument_id,
+                spec.system_id.strip(),
+                spec.timeframe.strip(),
+                spec.namespace.value,
+                _date_key(spec.as_of_date),
+                spec.input_digest,
+                spec.algorithm_version.strip(),
+                spec.config_version.strip(),
+            )
+            existing = self._connection.execute(
+                """
+                SELECT run_id, attempt, supersedes_run_id
+                FROM generated_analysis_runs
+                WHERE instrument_id = ? AND system_id = ? AND timeframe = ?
+                  AND namespace = ? AND as_of_date = ? AND input_digest = ?
+                  AND algorithm_version = ? AND config_version = ?
+                  AND status = 'succeeded'
+                ORDER BY completed_at_ms DESC LIMIT 1
+                """,
+                identity,
+            ).fetchone()
+            if existing is not None:
+                return AnalysisRunRecord(
+                    run_id=str(existing[0]),
+                    status=AnalysisRunStatus.SUCCEEDED,
+                    attempt=int(existing[1]),
+                    supersedes_run_id=str(existing[2]) if existing[2] else None,
+                    reused=True,
+                )
+            attempt = int(self._connection.execute(
+                """
+                SELECT coalesce(max(attempt), 0) + 1
+                FROM generated_analysis_runs
+                WHERE instrument_id = ? AND system_id = ? AND timeframe = ?
+                  AND namespace = ? AND as_of_date = ? AND input_digest = ?
+                  AND algorithm_version = ? AND config_version = ?
+                """,
+                identity,
+            ).fetchone()[0])
+            superseded = self._connection.execute(
+                """
+                SELECT run_id FROM generated_analysis_runs
+                WHERE instrument_id = ? AND system_id = ? AND timeframe = ?
+                  AND namespace = ? AND status = 'succeeded'
+                ORDER BY as_of_date DESC, completed_at_ms DESC LIMIT 1
+                """,
+                identity[:4],
+            ).fetchone()
+            run_id = uuid4().hex
+            supersedes_run_id = str(superseded[0]) if superseded else None
+            self._connection.execute(
+                """
+                INSERT INTO generated_analysis_runs(
+                    run_id, system_id, instrument_id, timeframe, namespace,
+                    as_of_date, input_start_date, input_end_date, input_digest,
+                    algorithm_version, config_version, completion_state, status,
+                    attempt, source_observed_at_ms, expires_at_ms,
+                    supersedes_run_id, created_at_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_id, identity[1], instrument_id, identity[2], identity[3],
+                    identity[4], _date_key(spec.input_start_date),
+                    _date_key(spec.input_end_date), spec.input_digest, identity[6],
+                    identity[7], spec.completion_state, attempt,
+                    spec.source_observed_at_ms, spec.expires_at_ms,
+                    supersedes_run_id, now_ms,
+                ),
+            )
+        return AnalysisRunRecord(
+            run_id, AnalysisRunStatus.RUNNING, attempt, supersedes_run_id
+        )
+
+    def complete_generated_analysis_run(
+        self,
+        run_id: str,
+        items: Sequence[GeneratedAnalysisItem],
+        *,
+        duration_ms: float,
+        warnings: Sequence[dict[str, object]] = (),
+    ) -> AnalysisRunRecord:
+        if duration_ms < 0:
+            raise ValueError("analysis duration must be non-negative")
+        validate_items(items)
+        serialized_items = [
+            json.dumps(item.payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            for item in items
+        ]
+        warnings_json = json.dumps(
+            list(warnings), ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        )
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        with self._lock, self._transaction():
+            row = self._connection.execute(
+                """
+                SELECT status, attempt, supersedes_run_id
+                FROM generated_analysis_runs WHERE run_id = ?
+                """,
+                (run_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"unknown analysis run: {run_id}")
+            if str(row[0]) != AnalysisRunStatus.RUNNING.value:
+                raise ValueError("only a running analysis can be completed")
+            self._connection.executemany(
+                """
+                INSERT INTO generated_analysis_items(
+                    run_id, item_id, item_type, parent_item_id, sequence, payload_json
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    (
+                        run_id, item.item_id, item.item_type.value,
+                        item.parent_item_id, sequence, serialized_items[sequence],
+                    )
+                    for sequence, item in enumerate(items)
+                ),
+            )
+            self._connection.execute(
+                """
+                UPDATE generated_analysis_runs
+                SET status = 'succeeded', duration_ms = ?, warnings_json = ?,
+                    completed_at_ms = ?, failure_details = NULL
+                WHERE run_id = ?
+                """,
+                (duration_ms, warnings_json, now_ms, run_id),
+            )
+        return AnalysisRunRecord(
+            run_id, AnalysisRunStatus.SUCCEEDED, int(row[1]),
+            str(row[2]) if row[2] else None,
+        )
+
+    def fail_generated_analysis_run(
+        self, run_id: str, failure_details: str, *, duration_ms: float
+    ) -> AnalysisRunRecord:
+        if not failure_details.strip():
+            raise ValueError("analysis failure details are required")
+        if duration_ms < 0:
+            raise ValueError("analysis duration must be non-negative")
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        with self._lock, self._transaction():
+            row = self._connection.execute(
+                """
+                SELECT status, attempt, supersedes_run_id
+                FROM generated_analysis_runs WHERE run_id = ?
+                """,
+                (run_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"unknown analysis run: {run_id}")
+            if str(row[0]) != AnalysisRunStatus.RUNNING.value:
+                raise ValueError("only a running analysis can fail")
+            self._connection.execute(
+                """
+                UPDATE generated_analysis_runs
+                SET status = 'failed', duration_ms = ?, failure_details = ?,
+                    completed_at_ms = ? WHERE run_id = ?
+                """,
+                (duration_ms, failure_details.strip(), now_ms, run_id),
+            )
+        return AnalysisRunRecord(
+            run_id, AnalysisRunStatus.FAILED, int(row[1]),
+            str(row[2]) if row[2] else None,
+        )
+
+    def get_latest_generated_analysis_run(
+        self,
+        symbol: str,
+        system_id: str,
+        timeframe: str,
+        namespace: AnalysisNamespace = AnalysisNamespace.OFFICIAL,
+    ) -> dict[str, object] | None:
+        with self._lock:
+            row = self._connection.execute(
+                """
+                SELECT run.run_id, run.status, run.as_of_date,
+                       run.input_start_date, run.input_end_date, run.input_digest,
+                       run.algorithm_version, run.config_version,
+                       run.completion_state, run.attempt, run.duration_ms,
+                       run.warnings_json, run.failure_details,
+                       run.source_observed_at_ms, run.expires_at_ms,
+                       run.supersedes_run_id, run.created_at_ms, run.completed_at_ms
+                FROM generated_analysis_runs AS run
+                JOIN instruments AS instrument USING (instrument_id)
+                WHERE instrument.symbol = ? COLLATE NOCASE
+                  AND run.system_id = ? AND run.timeframe = ?
+                  AND run.namespace = ? AND run.status = 'succeeded'
+                ORDER BY run.as_of_date DESC, run.completed_at_ms DESC LIMIT 1
+                """,
+                (symbol.upper(), system_id, timeframe, namespace.value),
+            ).fetchone()
+            if row is None:
+                return None
+            items = self._connection.execute(
+                """
+                SELECT item_id, item_type, parent_item_id, payload_json
+                FROM generated_analysis_items WHERE run_id = ? ORDER BY sequence
+                """,
+                (str(row[0]),),
+            ).fetchall()
+        return {
+            "run_id": str(row[0]), "status": str(row[1]),
+            "as_of_date": _date_from_key(int(row[2])),
+            "input_start_date": _date_from_key(int(row[3])),
+            "input_end_date": _date_from_key(int(row[4])),
+            "input_digest": bytes(row[5]), "algorithm_version": str(row[6]),
+            "config_version": str(row[7]), "completion_state": str(row[8]),
+            "attempt": int(row[9]), "duration_ms": float(row[10]),
+            "warnings": json.loads(str(row[11])), "failure_details": row[12],
+            "source_observed_at_ms": row[13], "expires_at_ms": row[14],
+            "supersedes_run_id": row[15], "created_at_ms": int(row[16]),
+            "completed_at_ms": int(row[17]),
+            "items": [
+                {
+                    "item_id": str(item[0]), "item_type": str(item[1]),
+                    "parent_item_id": item[2], "payload": json.loads(str(item[3])),
+                }
+                for item in items
+            ],
+        }
 
     def create_custom_index(
         self,
