@@ -16,8 +16,7 @@ import { removeWindowAttachments } from './windowAttachments'
 import { buildWorkspaceContext, publishWorkspaceContext } from './workspaceContext'
 import type { TradingSystemWindowStates } from './tradingSystems'
 import { normalizeTrendTradingSystemSettings } from './tradingSystems'
-import { recalculateTrendAnalysis } from './trendAnalysisClient'
-import { refreshLatestDailyBar } from './latestDailyRefreshClient'
+import { refreshThenRecalculateTrend } from './trendRefreshCoordinator'
 import {
   chartRanges,
   deriveReferencedSymbols,
@@ -234,32 +233,35 @@ export function StockWorkspace() {
     })
     if (systemId !== 'trend') return
     const system = item.chart.tradingSystems.trend
-    const refresh = refreshLatestDailyBar(item.instrument.symbol).then(result => {
-      window.dispatchEvent(new CustomEvent('stock-harness:latest-daily-refreshed', {
-        detail: { symbol: item.instrument.symbol, ...result },
-      }))
-      if (result.warning) {
-        logWarning('trading-system', '更新测算的数据刷新完成但存在警告，将使用最后可用数据', {
-          windowId: id, symbol: item.instrument.symbol,
-          mode: result.mode, state: result.status, error: result.error,
-        })
-      } else {
-        logInfo('trading-system', '更新测算的数据刷新完成', {
-          windowId: id, symbol: item.instrument.symbol,
-          mode: result.mode, state: result.status,
-        })
-      }
-    }).catch(error => {
-      logWarning('trading-system', '更新测算的数据刷新失败，将使用最后可用数据继续分析', {
-        windowId: id, symbol: item.instrument.symbol,
-        error: error instanceof Error ? error.message : String(error),
-      })
-    })
-    void refresh.then(() => recalculateTrendAnalysis(
+    void refreshThenRecalculateTrend(
       item.instrument.symbol,
       normalizeTrendTradingSystemSettings(system.settings),
       system.settingsRevision,
-    )).then(() => {
+      {
+        onRefresh: result => {
+          window.dispatchEvent(new CustomEvent('stock-harness:latest-daily-refreshed', {
+            detail: { symbol: item.instrument.symbol, ...result },
+          }))
+          if (result.warning) {
+            logWarning('trading-system', '更新测算的数据刷新完成但存在警告，将使用最后可用数据', {
+              windowId: id, symbol: item.instrument.symbol,
+              mode: result.mode, state: result.status, error: result.error,
+            })
+          } else {
+            logInfo('trading-system', '更新测算的数据刷新完成', {
+              windowId: id, symbol: item.instrument.symbol,
+              mode: result.mode, state: result.status,
+            })
+          }
+        },
+        onRefreshError: error => {
+          logWarning('trading-system', '更新测算的数据刷新失败，将使用最后可用数据继续分析', {
+            windowId: id, symbol: item.instrument.symbol,
+            error: error instanceof Error ? error.message : String(error),
+          })
+        },
+      },
+    ).then(() => {
       updateWindow(id, window => window.type === 'chart' ? {
         ...window,
         chart: {

@@ -1,10 +1,16 @@
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 import json
 
 import pytest
 
-from stock_harness.analysis_inputs import AnalysisHorizons
-from stock_harness.models import AdjustmentFactor, DailyBar, Instrument, InstrumentKind
+from stock_harness.analysis_inputs import AnalysisHorizons, AnalysisTimeframe
+from stock_harness.models import (
+    AdjustmentFactor,
+    DailyBar,
+    Instrument,
+    InstrumentKind,
+    ProvisionalDailyBar,
+)
 from stock_harness.sqlite_store import SQLiteMarketDataStore
 from stock_harness.trend_analysis import TrendAnalysisService
 from stock_harness.trend_replay import (
@@ -17,7 +23,11 @@ from stock_harness.trend_replay import (
 HORIZONS = AnalysisHorizons(6, 12, 24)
 
 
-def _replay_store(*, mutate_after: date | None = None) -> tuple[SQLiteMarketDataStore, list[date]]:
+def _replay_store(
+    *,
+    mutate_after: date | None = None,
+    canonical_bar_count: int | None = None,
+) -> tuple[SQLiteMarketDataStore, list[date]]:
     store = SQLiteMarketDataStore(":memory:")
     store.upsert_instruments([
         Instrument("000001.SZ", "Ping An Bank", InstrumentKind.STOCK, "SZ")
@@ -40,11 +50,13 @@ def _replay_store(*, mutate_after: date | None = None) -> tuple[SQLiteMarketData
         )
         for index, (day, close) in enumerate(zip(days, closes))
     ]
-    store.upsert_daily_bars("tushare", bars)
+    selected_bars = bars[:canonical_bar_count]
+    selected_days = days[:canonical_bar_count]
+    store.upsert_daily_bars("tushare", selected_bars)
     store.upsert_adjustment_factors("tushare", [
-        AdjustmentFactor("000001.SZ", day, 1) for day in days
+        AdjustmentFactor("000001.SZ", day, 1) for day in selected_days
     ])
-    store.upsert_trading_dates("tushare", days)
+    store.upsert_trading_dates("tushare", selected_days)
     return store, days
 
 
@@ -195,6 +207,69 @@ def test_replay_metrics_separate_recognition_lag_from_event_turnover():
 def test_replay_metrics_require_a_snapshot():
     with pytest.raises(ValueError, match="at least one snapshot"):
         summarize_replay([])
+
+
+@pytest.mark.parametrize(("bar_index", "expected_event"), [
+    (22, "upward-breakout"),
+    (30, "downward-breakdown"),
+])
+def test_provisional_structural_event_becomes_official_after_canonical_takeover(
+    bar_index: int,
+    expected_event: str,
+):
+    store, days = _replay_store(canonical_bar_count=bar_index)
+    trade_date = days[bar_index]
+    close = 10 + (
+        bar_index % 8 if (bar_index // 8) % 2 == 0 else 7 - bar_index % 8
+    ) * 0.35
+    observed = datetime(2026, 8, 18, 6, 30, tzinfo=timezone.utc)
+    provisional = ProvisionalDailyBar(
+        "000001.SZ", trade_date, close - 0.1, close + 0.25, close - 0.3,
+        close, 100 + bar_index * 5, 10_000, close, 0,
+        "eastmoney_selected", observed, observed,
+    )
+    store.upsert_provisional_daily_bars([provisional])
+    try:
+        service = TrendAnalysisService(store)
+        preview = service.recalculate(
+            "000001.SZ", [AnalysisTimeframe.DAILY], HORIZONS,
+            config_version="preview-takeover", include_preview=True,
+            as_of_date=trade_date,
+        )[0]
+        preview_events = [
+            item["payload"] for item in preview["items"]
+            if item["item_type"] == "transition"
+            and item["payload"].get("event_kind") == expected_event
+        ]
+        assert preview["source_observed_at_ms"] == int(observed.timestamp() * 1000)
+        assert preview_events and all(item["preview"] is True for item in preview_events)
+
+        store.upsert_trading_dates("tushare", [trade_date])
+        store.upsert_adjustment_factors("tushare", [
+            AdjustmentFactor("000001.SZ", trade_date, 1)
+        ])
+        store.upsert_daily_bars("tushare", [
+            DailyBar(
+                "000001.SZ", trade_date, close - 0.1, close + 0.25,
+                close - 0.3, close, 100 + bar_index * 5,
+            )
+        ])
+        official = service.recalculate(
+            "000001.SZ", [AnalysisTimeframe.DAILY], HORIZONS,
+            config_version="preview-takeover", include_preview=True,
+            as_of_date=trade_date,
+        )[0]
+        official_events = [
+            item["payload"] for item in official["items"]
+            if item["item_type"] == "transition"
+            and item["payload"].get("event_kind") == expected_event
+        ]
+
+        assert official["source_observed_at_ms"] is None
+        assert official_events and all(item["preview"] is False for item in official_events)
+        assert official["run_id"] != preview["run_id"]
+    finally:
+        store.close()
 
 
 def test_replay_rejects_empty_or_non_chronological_cutoffs():
