@@ -12,6 +12,7 @@ import {
   previousWorkspaceStorageKey,
   workspaceStorageKey,
 } from './workspace'
+import { createTradingSystemWindowStates } from './tradingSystems'
 
 afterEach(() => window.localStorage.clear())
 
@@ -141,7 +142,7 @@ describe('workspace persistence', () => {
       title: '表3',
       mode: 'detached',
       instrument: instrument('510300.SH'),
-      chart: { range: '1Y', priceMode: 'normal', volumeVisible: true, indicator: 'macd' },
+      chart: { range: '1Y', priceMode: 'normal', volumeVisible: true, indicator: 'macd', tradingSystems: createTradingSystemWindowStates() },
     })
     window.localStorage.setItem(workspaceStorageKey, JSON.stringify(state))
 

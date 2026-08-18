@@ -29,6 +29,7 @@ import {
   type WorkspaceState,
   type WorkspaceWindowState,
 } from './workspace'
+import { createTradingSystemWindowStates } from './tradingSystems'
 
 type LayoutManagerProps = {
   workspace: WorkspaceState
@@ -126,7 +127,7 @@ export function LayoutManager({ workspace, onChange, onClose }: LayoutManagerPro
     const instrument = resolveInstrument(group.windows)
     const title = nextWindowTitle(group.windows)
     const added: WorkspaceWindowState = type === 'chart'
-      ? { id, type: 'chart', title, mode, instrument, chart: { range: '3Y', priceMode: 'normal', volumeVisible: true, indicator: 'macd' } }
+      ? { id, type: 'chart', title, mode, instrument, chart: { range: '3Y', priceMode: 'normal', volumeVisible: true, indicator: 'macd', tradingSystems: createTradingSystemWindowStates() } }
       : { id, type: 'instrument-list', title, mode, content: { mode: 'manual', instruments: [] }, visibleColumns: [...defaultListColumns] }
     updateGroup(current => ({
       ...current,

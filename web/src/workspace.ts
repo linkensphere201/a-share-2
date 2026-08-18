@@ -10,6 +10,11 @@ import {
   validateWindowAttachments,
   type WindowAttachment,
 } from './windowAttachments'
+import {
+  createTradingSystemWindowStates,
+  normalizeTradingSystemWindowStates,
+  type TradingSystemWindowStates,
+} from './tradingSystems'
 
 export type Instrument = {
   symbol: string
@@ -36,6 +41,7 @@ export type ChartViewState = {
   indicator: ChartIndicator
   visibleRange?: VisibleRange
   seriesMode?: 'line' | 'candles'
+  tradingSystems: TradingSystemWindowStates
 }
 
 export type ChartWindowState = {
@@ -129,7 +135,7 @@ export function createWindowGroup(
     title: nextTitle(),
     mode,
     instrument: { ...fallbackInstrument },
-    chart: { range: '3Y', priceMode: 'normal', volumeVisible: true, indicator: 'macd' },
+    chart: { range: '3Y', priceMode: 'normal', volumeVisible: true, indicator: 'macd', tradingSystems: createTradingSystemWindowStates() },
   })
   const list = (): InstrumentListWindowState => ({
     id: createId('list'),
@@ -202,7 +208,7 @@ export function createDefaultWorkspace(): WorkspaceState {
     title: '表2',
     mode: 'attached',
     instrument: fallbackInstrument,
-    chart: { range: '3Y', priceMode: 'normal', volumeVisible: true, indicator: 'macd' },
+    chart: { range: '3Y', priceMode: 'normal', volumeVisible: true, indicator: 'macd', tradingSystems: createTradingSystemWindowStates() },
   }
   const group = createGroup('group-primary', '默认窗口组', [listWindow, chartWindow], chartWindow.id, [{
     id: 'attachment-primary',
@@ -373,6 +379,8 @@ function normalizeChartWindow(value: unknown): ChartWindowState | undefined {
       volumeVisible: value.chart.volumeVisible !== false,
       indicator: value.chart.indicator === 'none' ? 'none' : 'macd',
       visibleRange: normalizeVisibleRange(value.chart.visibleRange),
+      seriesMode: value.chart.seriesMode === 'line' ? 'line' : value.chart.seriesMode === 'candles' ? 'candles' : undefined,
+      tradingSystems: normalizeTradingSystemWindowStates(value.chart.tradingSystems),
     },
   }
 }
@@ -433,7 +441,14 @@ function migrateLegacyWindow(value: unknown): ChartWindowState | undefined {
     title: legacy.instrument.name,
     mode: 'detached',
     instrument: legacy.instrument,
-    chart: { range: legacy.range, priceMode: legacy.priceMode, volumeVisible: true, indicator: 'macd', visibleRange: normalizeVisibleRange(legacy.visibleRange) },
+    chart: {
+      range: legacy.range,
+      priceMode: legacy.priceMode,
+      volumeVisible: true,
+      indicator: 'macd',
+      visibleRange: normalizeVisibleRange(legacy.visibleRange),
+      tradingSystems: createTradingSystemWindowStates(),
+    },
   }
 }
 
