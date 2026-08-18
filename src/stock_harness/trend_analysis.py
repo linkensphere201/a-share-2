@@ -31,6 +31,7 @@ from stock_harness.consolidation_patterns import (
     BoundaryLine,
     detect_consolidation_patterns,
 )
+from stock_harness.diamond_patterns import detect_diamond_patterns
 from stock_harness.breakout_state import (
     BreakoutDirection,
     StructuralEvent,
@@ -54,7 +55,7 @@ from stock_harness.trend_lines_analysis import (
 )
 
 
-ALGORITHM_VERSION = "trend-consolidation-patterns-v8"
+ALGORITHM_VERSION = "trend-diamond-patterns-v9"
 LOGGER = logging.getLogger(__name__)
 
 
@@ -639,6 +640,74 @@ def _generated_items(
                 ),
                 "score": pattern.score,
                 "score_components": pattern.score_components,
+                "volume_ratio": pattern.volume_ratio,
+                "primary": pattern.primary,
+            },
+        ))
+        event = evaluate_latest_boundary_event(
+            long_bars,
+            direction=(BreakoutDirection.UP if monitor_up else BreakoutDirection.DOWN),
+            boundary_price=boundary_latest,
+            previous_boundary_price=boundary_previous,
+            preview=analysis_input.provisional_date is not None,
+        )
+        if event is not None:
+            items.extend(_structural_event_items(pattern_item_id, event))
+    diamonds = detect_diamond_patterns(long_bars, long_pivots)
+    for index, pattern in enumerate(diamonds):
+        pattern_item_id = f"pattern-{pattern.pattern_type.value}-{index}"
+        latest_index = len(long_bars) - 1
+        previous_index = latest_index - 1
+        upper_start_index = long_index_by_date[pattern.upper_active.start_date]
+        lower_start_index = long_index_by_date[pattern.lower_active.start_date]
+        upper_latest = pattern.upper_active.start_price + pattern.upper_active.slope_per_bar * (latest_index - upper_start_index)
+        upper_previous = pattern.upper_active.start_price + pattern.upper_active.slope_per_bar * (previous_index - upper_start_index)
+        lower_latest = pattern.lower_active.start_price + pattern.lower_active.slope_per_bar * (latest_index - lower_start_index)
+        lower_previous = pattern.lower_active.start_price + pattern.lower_active.slope_per_bar * (previous_index - lower_start_index)
+        monitor_up = long_bars[-2].close <= (upper_previous + lower_previous) / 2
+        boundary_latest = upper_latest if monitor_up else lower_latest
+        boundary_previous = upper_previous if monitor_up else lower_previous
+        items.append(GeneratedAnalysisItem(
+            item_id=pattern_item_id,
+            item_type=GeneratedItemType.PATTERN,
+            payload={
+                "pattern_type": pattern.pattern_type.value,
+                "display_name": pattern.display_name,
+                "direction": pattern.breakout_direction or "neutral",
+                "timeframe": analysis_input.timeframe.value,
+                "start_date": pattern.start_date.isoformat(),
+                "end_date": pattern.end_date.isoformat(),
+                "available_date": pattern.available_date.isoformat(),
+                "pivots": [
+                    {
+                        "kind": pivot.kind.value,
+                        "pivot_date": pivot.pivot_date.isoformat(),
+                        "price": pivot.price,
+                        "confirmed_date": pivot.confirmed_date.isoformat(),
+                    }
+                    for pivot in pattern.pivots
+                ],
+                "boundary_geometry": {
+                    "kind": "broadening-then-contracting",
+                    "segments": [
+                        _boundary_payload(value)
+                        for value in pattern.boundary_segments
+                    ],
+                },
+                "neckline_price": boundary_latest,
+                "completion_state": pattern.completion_state,
+                "breakout_date": (
+                    pattern.breakout_date.isoformat()
+                    if pattern.breakout_date else None
+                ),
+                "invalidation_price": lower_latest if monitor_up else upper_latest,
+                "invalidation_date": (
+                    pattern.invalidation_date.isoformat()
+                    if pattern.invalidation_date else None
+                ),
+                "score": pattern.score,
+                "score_components": pattern.score_components,
+                "context_change_percent": pattern.context_change_percent,
                 "volume_ratio": pattern.volume_ratio,
                 "primary": pattern.primary,
             },

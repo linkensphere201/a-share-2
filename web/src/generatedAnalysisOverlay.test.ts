@@ -138,6 +138,30 @@ describe('generated analysis overlay projection', () => {
     expect(pattern.boundaries[0].x2).toBe(200)
   })
 
+  it('projects all four broadening and contracting diamond segments', () => {
+    const segment = {
+      start_date: '2026-08-01', start_price: 10,
+      end_date: '2026-08-10', end_price: 12,
+    }
+    const diamond: TrendAnalysisRun = {
+      ...run,
+      items: [{
+        item_id: 'diamond', item_type: 'pattern', payload: {
+          display_name: '菱形', completion_state: 'forming', neckline_price: 11,
+          pivots: [
+            { pivot_date: '2026-08-01', price: 10 },
+            { pivot_date: '2026-08-10', price: 12 },
+            { pivot_date: '2026-08-01', price: 10.5 },
+          ],
+          boundary_geometry: { segments: [segment, segment, segment, segment] },
+        },
+      }],
+    }
+
+    expect(projectGeneratedPatterns(diamond, chart, series, true)[0].boundaries)
+      .toHaveLength(4)
+  })
+
   it('reads the primary pattern breakout summary without mixing layer visibility', () => {
     expect(readGeneratedBreakoutState(run, true)).toEqual({
       state: 'triggered', direction: 'up', boundaryPrice: 12,

@@ -1999,8 +1999,9 @@ export function projectGeneratedPatterns(
     const boundaries: LineGeometry[] = []
     if (boundaryGeometry && typeof boundaryGeometry === 'object') {
       const geometry = boundaryGeometry as Record<string, unknown>
-      for (const key of ['upper', 'lower']) {
-        const value = geometry[key]
+      const boundaryValues = [geometry.upper, geometry.lower]
+      if (Array.isArray(geometry.segments)) boundaryValues.push(...geometry.segments)
+      for (const value of boundaryValues) {
         if (!value || typeof value !== 'object') continue
         const boundary = value as Record<string, unknown>
         if (typeof boundary.start_date !== 'string' || typeof boundary.end_date !== 'string'
