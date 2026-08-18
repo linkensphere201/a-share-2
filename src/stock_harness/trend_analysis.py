@@ -54,7 +54,7 @@ from stock_harness.trend_lines_analysis import (
 )
 
 
-ALGORITHM_VERSION = "trend-consolidation-patterns-v7"
+ALGORITHM_VERSION = "trend-consolidation-patterns-v8"
 LOGGER = logging.getLogger(__name__)
 
 

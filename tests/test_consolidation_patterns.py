@@ -88,3 +88,23 @@ def test_does_not_force_parallel_directional_swings_into_a_named_pattern():
     ]
 
     assert detect_consolidation_patterns(bars, pivots, CONFIG) == ()
+
+
+def test_flag_requires_prior_impulse_before_parallel_countertrend_channel():
+    bars = _bars([
+        8, 8.2, 8.5, 9, 10, 11, 12,
+        11.8, 11.5, 11.7, 11.3, 11.5, 11.1, 11.3,
+    ])
+    pivots = [
+        _pivot(PivotKind.HIGH, 6, 12.2), _pivot(PivotKind.LOW, 8, 11.3),
+        _pivot(PivotKind.HIGH, 9, 11.9), _pivot(PivotKind.LOW, 10, 11.1),
+        _pivot(PivotKind.HIGH, 11, 11.7), _pivot(PivotKind.LOW, 12, 10.9),
+    ]
+    config = ConsolidationConfig(minimum_duration_bars=5)
+
+    patterns = detect_consolidation_patterns(bars, pivots, config)
+
+    assert any(item.pattern_type is ConsolidationType.BULL_FLAG for item in patterns)
+    flag = next(item for item in patterns if item.pattern_type is ConsolidationType.BULL_FLAG)
+    assert flag.display_name == "多头旗形"
+    assert flag.score_components["prior_impulse"] > 0

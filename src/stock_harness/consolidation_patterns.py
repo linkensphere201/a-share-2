@@ -17,6 +17,8 @@ class ConsolidationType(StrEnum):
     ASCENDING_TRIANGLE = "ascending-triangle"
     DESCENDING_TRIANGLE = "descending-triangle"
     SYMMETRICAL_TRIANGLE = "symmetrical-triangle"
+    BULL_FLAG = "bull-flag"
+    BEAR_FLAG = "bear-flag"
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,6 +31,8 @@ class ConsolidationConfig:
     maximum_boundary_residual_percent: float = 0.035
     maximum_triangle_end_width_ratio: float = 0.8
     breakout_buffer_percent: float = 0.005
+    minimum_flag_impulse_percent: float = 0.08
+    maximum_flag_parallel_change_gap: float = 0.03
     max_candidates: int = 6
 
 
@@ -128,6 +132,10 @@ def _fit_window(
     upper_flat = abs(upper_change) <= config.flat_change_percent
     lower_flat = abs(lower_change) <= config.flat_change_percent
     contracting = end_width / start_width <= config.maximum_triangle_end_width_ratio
+    prior_index = max(0, start_index - duration)
+    prior_close = bars[prior_index].close
+    impulse = bars[start_index].close / prior_close - 1 if prior_close else 0.0
+    parallel = abs(upper_change - lower_change) <= config.maximum_flag_parallel_change_gap
     if upper_flat and lower_flat and abs(end_width / start_width - 1) <= 0.3:
         pattern_type = ConsolidationType.RECTANGLE
     elif upper_flat and lower_change >= config.directional_change_percent and contracting:
@@ -140,6 +148,18 @@ def _fit_window(
         and contracting
     ):
         pattern_type = ConsolidationType.SYMMETRICAL_TRIANGLE
+    elif (
+        impulse >= config.minimum_flag_impulse_percent
+        and parallel
+        and max(upper_change, lower_change) <= config.flat_change_percent
+    ):
+        pattern_type = ConsolidationType.BULL_FLAG
+    elif (
+        impulse <= -config.minimum_flag_impulse_percent
+        and parallel
+        and min(upper_change, lower_change) >= -config.flat_change_percent
+    ):
+        pattern_type = ConsolidationType.BEAR_FLAG
     else:
         return None
     available_date = max(item.confirmed_date for item in pivots)
@@ -171,9 +191,15 @@ def _fit_window(
     state = "invalidated" if invalidation_date else "confirmed" if breakout_date else "forming"
     residual_score = 1 - min(1.0, max(upper_residual, lower_residual) / scale / config.maximum_boundary_residual_percent)
     contraction_score = min(1.0, max(0.0, 1 - end_width / start_width) / 0.6)
+    impulse_score = min(1.0, abs(impulse) / (config.minimum_flag_impulse_percent * 2))
     duration_score = min(1.0, duration / 60)
     pivot_score = min(1.0, len(pivots) / config.maximum_pivots)
-    score = 0.35 * residual_score + 0.30 * contraction_score + 0.20 * duration_score + 0.15 * pivot_score
+    shape_score = (
+        impulse_score
+        if pattern_type in {ConsolidationType.BULL_FLAG, ConsolidationType.BEAR_FLAG}
+        else contraction_score
+    )
+    score = 0.35 * residual_score + 0.30 * shape_score + 0.20 * duration_score + 0.15 * pivot_score
     volume_ratio = _volume_ratio(bars, trigger_index) if trigger_index is not None else None
     return ConsolidationPattern(
         pattern_type=pattern_type,
@@ -182,6 +208,8 @@ def _fit_window(
             ConsolidationType.ASCENDING_TRIANGLE: "上升三角形",
             ConsolidationType.DESCENDING_TRIANGLE: "下降三角形",
             ConsolidationType.SYMMETRICAL_TRIANGLE: "对称三角形",
+            ConsolidationType.BULL_FLAG: "多头旗形",
+            ConsolidationType.BEAR_FLAG: "空头旗形",
         }[pattern_type],
         start_date=pivots[0].pivot_date,
         end_date=pivots[-1].pivot_date,
@@ -201,6 +229,7 @@ def _fit_window(
         score_components={
             "boundary_fit": round(residual_score, 6),
             "contraction": round(contraction_score, 6),
+            "prior_impulse": round(impulse_score, 6),
             "duration": round(duration_score, 6),
             "pivot_count": round(pivot_score, 6),
         },
