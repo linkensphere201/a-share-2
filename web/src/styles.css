@@ -712,6 +712,10 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .trend-analysis-evidence { position: absolute; right: 6px; bottom: 22px; display: flex; max-width: calc(100% - 12px); gap: 6px; padding: 3px 5px; border: 1px solid #33414d; border-radius: 3px; background: #10171edb; color: #8e9ba7; font-size: 8px; white-space: nowrap; }
 .trend-analysis-evidence.preview { border-color: #806c3f; color: #d7bc7b; }
 .trend-analysis-evidence.stale { border-color: #814848; color: #d08a8a; }
+.trend-analysis-evidence .breakout-state { color: #c7b47c; }
+.trend-analysis-evidence .breakout-state.confirmed, .trend-analysis-evidence .breakout-state.continuing { color: #78bd94; }
+.trend-analysis-evidence .breakout-state.triggered, .trend-analysis-evidence .breakout-state.retesting { color: #e0b761; }
+.trend-analysis-evidence .breakout-state.failed, .trend-analysis-evidence .breakout-state.invalidated { color: #d47f7f; }
 .chart-pane-header {
   position: absolute;
   z-index: 6;

@@ -139,6 +139,7 @@ type ChartCanvasProps = {
   keyLevelsVisible?: boolean
   volumeZonesVisible?: boolean
   patternsVisible?: boolean
+  breakoutStateVisible?: boolean
 }
 
 const rising = '#ef5350'
@@ -191,6 +192,7 @@ export function ChartCanvas({
   keyLevelsVisible = true,
   volumeZonesVisible = true,
   patternsVisible = true,
+  breakoutStateVisible = true,
 }: ChartCanvasProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -1396,6 +1398,9 @@ export function ChartCanvas({
     candleRef.current ?? closeLineRef.current,
     patternsVisible,
   )
+  const generatedBreakoutState = readGeneratedBreakoutState(
+    trendAnalysis, breakoutStateVisible,
+  )
 
   return (
     <div
@@ -1533,6 +1538,7 @@ export function ChartCanvas({
           lines={generatedTrendLines}
           zones={generatedZones}
           patterns={generatedPatterns}
+          breakoutState={generatedBreakoutState}
           run={trendAnalysis}
           preview={trendAnalysisPreview}
         />
@@ -1824,6 +1830,17 @@ type GeneratedPatternGeometry = {
   score: number
 }
 
+type GeneratedBreakoutState = {
+  state: 'forming' | 'ready' | 'triggered' | 'confirmed' | 'retesting' | 'continuing' | 'failed' | 'invalidated' | 'stale'
+  direction: 'up' | 'down'
+  boundaryPrice: number
+  invalidationPrice: number
+  triggerDate?: string
+  confirmationDate?: string
+  failureDate?: string
+  preview: boolean
+}
+
 export function projectGeneratedPivots(
   run: TrendAnalysisRun | null,
   chart: IChartApi | null,
@@ -1990,11 +2007,51 @@ export function projectGeneratedPatterns(
   })
 }
 
+export function readGeneratedBreakoutState(
+  run: TrendAnalysisRun | null,
+  visible: boolean,
+): GeneratedBreakoutState | undefined {
+  if (!visible || !run) return undefined
+  const primaryIds = new Set(run.items.filter(item => (
+    item.item_type === 'pattern' && item.payload.primary === true
+  )).map(item => item.item_id))
+  const candidates = run.items.filter(item => (
+    item.item_type === 'evidence'
+    && item.payload.kind === 'breakout-state-summary'
+  ))
+  const item = candidates.find(value => (
+    typeof value.parent_item_id === 'string' && primaryIds.has(value.parent_item_id)
+  )) ?? candidates[0]
+  if (!item) return undefined
+  const state = item.payload.current_state
+  const direction = item.payload.direction
+  const boundaryPrice = item.payload.boundary_price
+  const invalidationPrice = item.payload.invalidation_level
+  const states = new Set([
+    'forming', 'ready', 'triggered', 'confirmed', 'retesting',
+    'continuing', 'failed', 'invalidated', 'stale',
+  ])
+  if (typeof state !== 'string' || !states.has(state)
+    || (direction !== 'up' && direction !== 'down')
+    || typeof boundaryPrice !== 'number' || typeof invalidationPrice !== 'number') return undefined
+  return {
+    state: state as GeneratedBreakoutState['state'],
+    direction,
+    boundaryPrice,
+    invalidationPrice,
+    triggerDate: typeof item.payload.trigger_date === 'string' ? item.payload.trigger_date : undefined,
+    confirmationDate: typeof item.payload.confirmation_date === 'string' ? item.payload.confirmation_date : undefined,
+    failureDate: typeof item.payload.failure_date === 'string' ? item.payload.failure_date : undefined,
+    preview: item.payload.preview === true,
+  }
+}
+
 function GeneratedAnalysisOverlay({
   pivots,
   lines,
   zones,
   patterns,
+  breakoutState,
   run,
   preview,
 }: {
@@ -2002,6 +2059,7 @@ function GeneratedAnalysisOverlay({
   lines: GeneratedTrendLineGeometry[]
   zones: GeneratedZoneGeometry[]
   patterns: GeneratedPatternGeometry[]
+  breakoutState?: GeneratedBreakoutState
   run: TrendAnalysisRun
   preview: boolean
 }) {
@@ -2075,10 +2133,24 @@ function GeneratedAnalysisOverlay({
         <span>{lines.length} 条趋势线</span>
         <span>{zones.length} 个价格区</span>
         <span>{patterns.length} 个形态</span>
+        {breakoutState && (
+          <span
+            className={`breakout-state ${breakoutState.state}`}
+            title={`边界 ${formatPrice(breakoutState.boundaryPrice)} · 失效位 ${formatPrice(breakoutState.invalidationPrice)} · 触发 ${breakoutState.triggerDate ?? '-'} · 确认 ${breakoutState.confirmationDate ?? '-'} · 失败 ${breakoutState.failureDate ?? '-'}`}
+          >{breakoutState.preview ? '盘中预览 ' : ''}{breakoutStateLabel(breakoutState.state)}</span>
+        )}
         {run.stale && <span>已过期</span>}
       </div>
     </div>
   )
+}
+
+function breakoutStateLabel(state: GeneratedBreakoutState['state']): string {
+  return ({
+    forming: '形成中', ready: '准备', triggered: '已触发', confirmed: '已确认',
+    retesting: '回踩', continuing: '延续', failed: '失败',
+    invalidated: '失效', stale: '陈旧',
+  })[state]
 }
 
 function trendLineDashPattern(dash: TrendLineDash): string | undefined {

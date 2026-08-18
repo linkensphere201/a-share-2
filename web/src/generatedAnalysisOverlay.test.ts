@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { projectGeneratedPatterns, projectGeneratedPivots, projectGeneratedTrendLines, projectGeneratedZones } from './ChartCanvas'
+import { projectGeneratedPatterns, projectGeneratedPivots, projectGeneratedTrendLines, projectGeneratedZones, readGeneratedBreakoutState } from './ChartCanvas'
 import type { TrendAnalysisRun } from './trendAnalysisClient'
 import type { IChartApi } from 'lightweight-charts'
 
@@ -39,6 +39,11 @@ const run: TrendAnalysisRun = {
         { pivot_date: '2026-08-10', price: 12 },
         { pivot_date: '2026-08-01', price: 10.2 },
       ],
+    } },
+    { item_id: 'breakout-summary', item_type: 'evidence', parent_item_id: 'double-bottom', payload: {
+      kind: 'breakout-state-summary', current_state: 'triggered', direction: 'up',
+      boundary_price: 12, invalidation_level: 9.5, trigger_date: '2026-08-18',
+      preview: true,
     } },
   ],
 }
@@ -99,5 +104,14 @@ describe('generated analysis overlay projection', () => {
     }))
     expect(patterns[0].neckline).toEqual({ x1: 20, y1: 120, x2: 200, y2: 120 })
     expect(projectGeneratedPatterns(run, chart, series, false)).toEqual([])
+  })
+
+  it('reads the primary pattern breakout summary without mixing layer visibility', () => {
+    expect(readGeneratedBreakoutState(run, true)).toEqual({
+      state: 'triggered', direction: 'up', boundaryPrice: 12,
+      invalidationPrice: 9.5, triggerDate: '2026-08-18',
+      confirmationDate: undefined, failureDate: undefined, preview: true,
+    })
+    expect(readGeneratedBreakoutState(run, false)).toBeUndefined()
   })
 })

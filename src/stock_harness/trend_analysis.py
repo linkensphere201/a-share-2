@@ -27,6 +27,10 @@ from stock_harness.analysis_results import (
     GeneratedItemType,
 )
 from stock_harness.classic_patterns import detect_double_patterns
+from stock_harness.breakout_state import (
+    BreakoutDirection,
+    evaluate_breakout,
+)
 from stock_harness.key_levels import (
     detect_horizontal_levels,
     estimate_clear_space,
@@ -43,7 +47,7 @@ from stock_harness.trend_lines_analysis import (
 )
 
 
-ALGORITHM_VERSION = "trend-structure-patterns-v4"
+ALGORITHM_VERSION = "trend-breakout-state-v5"
 LOGGER = logging.getLogger(__name__)
 
 
@@ -445,8 +449,9 @@ def _generated_items(
     ))
     patterns = detect_double_patterns(long_bars, long_pivots)
     for index, pattern in enumerate(patterns):
+        pattern_item_id = f"pattern-{pattern.pattern_type.value}-{index}"
         items.append(GeneratedAnalysisItem(
-            item_id=f"pattern-{pattern.pattern_type.value}-{index}",
+            item_id=pattern_item_id,
             item_type=GeneratedItemType.PATTERN,
             payload={
                 "pattern_type": pattern.pattern_type.value,
@@ -486,6 +491,63 @@ def _generated_items(
                 "score_components": pattern.score_components,
                 "volume_ratio": pattern.volume_ratio,
                 "primary": pattern.primary,
+            },
+        ))
+        evaluation = evaluate_breakout(
+            long_bars,
+            direction=(
+                BreakoutDirection.UP
+                if pattern.direction.value == "bullish"
+                else BreakoutDirection.DOWN
+            ),
+            boundary_price=pattern.neckline_price,
+            invalidation_price=pattern.invalidation_price,
+            available_date=pattern.available_date,
+            preview=analysis_input.provisional_date is not None,
+        )
+        for transition_index, transition in enumerate(evaluation.transitions):
+            evidence = asdict(transition.evidence)
+            evidence["trade_date"] = transition.evidence.trade_date.isoformat()
+            items.append(GeneratedAnalysisItem(
+                item_id=f"{pattern_item_id}-transition-{transition_index}",
+                item_type=GeneratedItemType.TRANSITION,
+                parent_item_id=pattern_item_id,
+                payload={
+                    "state": transition.state.value,
+                    "transition_date": transition.transition_date.isoformat(),
+                    "reason": transition.reason,
+                    "preview": evaluation.preview,
+                    "evidence": evidence,
+                },
+            ))
+        items.append(GeneratedAnalysisItem(
+            item_id=f"{pattern_item_id}-breakout-evidence",
+            item_type=GeneratedItemType.EVIDENCE,
+            parent_item_id=pattern_item_id,
+            payload={
+                "kind": "breakout-state-summary",
+                "current_state": evaluation.current_state.value,
+                "direction": evaluation.direction.value,
+                "boundary_price": evaluation.boundary_price,
+                "trigger_level": evaluation.boundary_price,
+                "confirmation_level": evaluation.boundary_price,
+                "failure_level": evaluation.boundary_price,
+                "invalidation_level": evaluation.invalidation_price,
+                "available_date": evaluation.available_date.isoformat(),
+                "trigger_date": (
+                    evaluation.trigger_date.isoformat()
+                    if evaluation.trigger_date else None
+                ),
+                "confirmation_date": (
+                    evaluation.confirmation_date.isoformat()
+                    if evaluation.confirmation_date else None
+                ),
+                "failure_date": (
+                    evaluation.failure_date.isoformat()
+                    if evaluation.failure_date else None
+                ),
+                "preview": evaluation.preview,
+                "analytical_only": True,
             },
         ))
     return items

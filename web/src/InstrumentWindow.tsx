@@ -89,6 +89,7 @@ export function ChartWindow({
           keyLevelsVisible={chart.tradingSystems.trend.layers['key-levels'] !== false}
           volumeZonesVisible={chart.tradingSystems.trend.layers['volume-zones'] !== false}
           patternsVisible={chart.tradingSystems.trend.layers.patterns !== false}
+          breakoutStateVisible={chart.tradingSystems.trend.layers['breakout-state'] !== false}
         />
       </div>
     </section>
