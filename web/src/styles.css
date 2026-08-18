@@ -691,6 +691,12 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .generated-price-zone { vector-effect: non-scaling-stroke; }
 .generated-price-zone.key-level { fill: #e0b45a20; stroke: #d6a84d80; stroke-width: .7; }
 .generated-price-zone.estimated-volume-at-price { fill: #5f9fbd16; stroke: #6ca8c344; stroke-width: .5; }
+.generated-pattern polyline, .generated-pattern line { fill: none; stroke: #c5a86b; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.generated-pattern.forming polyline, .generated-pattern.forming line { stroke-dasharray: 3 3; opacity: .72; }
+.generated-pattern.confirmed polyline, .generated-pattern.confirmed line { stroke: #e0bd6c; stroke-width: 1.25; }
+.generated-pattern.invalidated { opacity: .35; }
+.generated-pattern.alternative { opacity: .52; }
+.generated-pattern text { fill: #d7c28f; font: 8px ui-monospace, SFMono-Regular, Consolas, monospace; text-anchor: middle; paint-order: stroke; stroke: #0d1014; stroke-width: 2px; }
 .generated-trend-line { fill: none; stroke-width: 1.2; vector-effect: non-scaling-stroke; opacity: .82; }
 .generated-trend-line.support { stroke: #d5a253; }
 .generated-trend-line.resistance { stroke: #69a8d3; }

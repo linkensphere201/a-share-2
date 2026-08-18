@@ -138,6 +138,7 @@ type ChartCanvasProps = {
   longTrendLinesVisible?: boolean
   keyLevelsVisible?: boolean
   volumeZonesVisible?: boolean
+  patternsVisible?: boolean
 }
 
 const rising = '#ef5350'
@@ -189,6 +190,7 @@ export function ChartCanvas({
   longTrendLinesVisible = true,
   keyLevelsVisible = true,
   volumeZonesVisible = true,
+  patternsVisible = true,
 }: ChartCanvasProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -1388,6 +1390,12 @@ export function ChartCanvas({
     keyLevelsVisible,
     volumeZonesVisible,
   )
+  const generatedPatterns = projectGeneratedPatterns(
+    trendAnalysis,
+    chartRef.current,
+    candleRef.current ?? closeLineRef.current,
+    patternsVisible,
+  )
 
   return (
     <div
@@ -1524,6 +1532,7 @@ export function ChartCanvas({
           pivots={generatedPivots}
           lines={generatedTrendLines}
           zones={generatedZones}
+          patterns={generatedPatterns}
           run={trendAnalysis}
           preview={trendAnalysisPreview}
         />
@@ -1803,6 +1812,18 @@ type GeneratedZoneGeometry = {
   estimatedShare?: number
 }
 
+type GeneratedPatternGeometry = {
+  id: string
+  displayName: string
+  state: 'forming' | 'confirmed' | 'invalidated'
+  primary: boolean
+  points: string
+  neckline: LineGeometry
+  labelX: number
+  labelY: number
+  score: number
+}
+
 export function projectGeneratedPivots(
   run: TrendAnalysisRun | null,
   chart: IChartApi | null,
@@ -1926,16 +1947,61 @@ export function projectGeneratedZones(
   })
 }
 
+export function projectGeneratedPatterns(
+  run: TrendAnalysisRun | null,
+  chart: IChartApi | null,
+  priceSeries: { priceToCoordinate: (price: number) => number | null } | null,
+  visible: boolean,
+): GeneratedPatternGeometry[] {
+  if (!visible || !run || !chart || !priceSeries) return []
+  return run.items.flatMap(item => {
+    if (item.item_type !== 'pattern') return []
+    const displayName = item.payload.display_name
+    const state = item.payload.completion_state
+    const pivots = item.payload.pivots
+    const necklinePrice = item.payload.neckline_price
+    if (typeof displayName !== 'string'
+      || (state !== 'forming' && state !== 'confirmed' && state !== 'invalidated')
+      || !Array.isArray(pivots) || typeof necklinePrice !== 'number') return []
+    const projected = pivots.flatMap(value => {
+      if (!value || typeof value !== 'object') return []
+      const pivot = value as Record<string, unknown>
+      if (typeof pivot.pivot_date !== 'string' || typeof pivot.price !== 'number') return []
+      const x = chart.timeScale().timeToCoordinate(pivot.pivot_date as Time)
+      const y = priceSeries.priceToCoordinate(pivot.price)
+      return x === null || y === null ? [] : [{ x, y }]
+    })
+    if (projected.length !== pivots.length || projected.length < 3) return []
+    const necklineY = priceSeries.priceToCoordinate(necklinePrice)
+    if (necklineY === null) return []
+    const first = projected[0]
+    const last = projected.at(-1)!
+    return [{
+      id: item.item_id,
+      displayName,
+      state,
+      primary: item.payload.primary === true,
+      points: projected.map(point => `${point.x},${point.y}`).join(' '),
+      neckline: { x1: first.x, y1: necklineY, x2: chart.timeScale().width(), y2: necklineY },
+      labelX: Math.min(first.x, last.x) + Math.abs(last.x - first.x) / 2,
+      labelY: Math.min(...projected.map(point => point.y), necklineY) - 5,
+      score: typeof item.payload.score === 'number' ? item.payload.score : 0,
+    }]
+  })
+}
+
 function GeneratedAnalysisOverlay({
   pivots,
   lines,
   zones,
+  patterns,
   run,
   preview,
 }: {
   pivots: GeneratedPivotGeometry[]
   lines: GeneratedTrendLineGeometry[]
   zones: GeneratedZoneGeometry[]
+  patterns: GeneratedPatternGeometry[]
   run: TrendAnalysisRun
   preview: boolean
 }) {
@@ -1956,6 +2022,20 @@ function GeneratedAnalysisOverlay({
               ? `关键位 ${formatPrice(item.lower)}-${formatPrice(item.upper)} · 评分 ${item.score.toFixed(2)}`
               : `日线估算成交密集区 ${formatPrice(item.lower)}-${formatPrice(item.upper)} · 占比 ${((item.estimatedShare ?? 0) * 100).toFixed(1)}%`}</title>
           </rect>
+        ))}
+        {patterns.map(item => (
+          <g key={item.id} className={`generated-pattern ${item.state} ${item.primary ? 'primary' : 'alternative'}`}>
+            <polyline points={item.points}/>
+            <line
+              className="generated-pattern-neckline"
+              x1={item.neckline.x1}
+              y1={item.neckline.y1}
+              x2={item.neckline.x2}
+              y2={item.neckline.y2}
+            />
+            <text x={item.labelX} y={item.labelY}>{item.displayName}</text>
+            <title>{`${item.displayName} · ${item.state === 'forming' ? '形成中' : item.state === 'confirmed' ? '已确认' : '已失效'} · 评分 ${item.score.toFixed(2)}`}</title>
+          </g>
         ))}
         {lines.map(item => (
           <line
@@ -1994,6 +2074,7 @@ function GeneratedAnalysisOverlay({
         <span>{pivots.length} 个枢轴</span>
         <span>{lines.length} 条趋势线</span>
         <span>{zones.length} 个价格区</span>
+        <span>{patterns.length} 个形态</span>
         {run.stale && <span>已过期</span>}
       </div>
     </div>

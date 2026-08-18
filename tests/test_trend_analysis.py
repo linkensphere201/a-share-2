@@ -51,6 +51,7 @@ def test_explicit_recalculate_registers_and_persists_only_requested_timeframes()
             if item["item_id"] == "key-level-volume-profile-evidence"
         )
         assert "not exact position cost" in evidence["payload"]["uncertainty"]
+        assert results[0]["algorithm_version"] == "trend-structure-patterns-v4"
         assert store.get_latest_generated_analysis_run(
             "000001.SZ", "trend", "monthly"
         ) is None

@@ -26,6 +26,7 @@ from stock_harness.analysis_results import (
     GeneratedAnalysisTarget,
     GeneratedItemType,
 )
+from stock_harness.classic_patterns import detect_double_patterns
 from stock_harness.key_levels import (
     detect_horizontal_levels,
     estimate_clear_space,
@@ -42,7 +43,7 @@ from stock_harness.trend_lines_analysis import (
 )
 
 
-ALGORITHM_VERSION = "directional-change-trend-lines-v2"
+ALGORITHM_VERSION = "trend-structure-patterns-v4"
 LOGGER = logging.getLogger(__name__)
 
 
@@ -442,6 +443,51 @@ def _generated_items(
             ),
         },
     ))
+    patterns = detect_double_patterns(long_bars, long_pivots)
+    for index, pattern in enumerate(patterns):
+        items.append(GeneratedAnalysisItem(
+            item_id=f"pattern-{pattern.pattern_type.value}-{index}",
+            item_type=GeneratedItemType.PATTERN,
+            payload={
+                "pattern_type": pattern.pattern_type.value,
+                "display_name": pattern.display_name,
+                "direction": pattern.direction.value,
+                "timeframe": analysis_input.timeframe.value,
+                "start_date": pattern.start_date.isoformat(),
+                "end_date": pattern.end_date.isoformat(),
+                "available_date": pattern.available_date.isoformat(),
+                "pivots": [
+                    {
+                        "kind": pivot.kind,
+                        "pivot_date": pivot.pivot_date.isoformat(),
+                        "price": pivot.price,
+                        "confirmed_date": pivot.confirmed_date.isoformat(),
+                    }
+                    for pivot in pattern.pivots
+                ],
+                "boundary_geometry": {
+                    "kind": "horizontal-neckline",
+                    "price": pattern.neckline_price,
+                    "start_date": pattern.start_date.isoformat(),
+                    "end_date": analysis_input.bars[-1].period_end.isoformat(),
+                },
+                "neckline_price": pattern.neckline_price,
+                "completion_state": pattern.state.value,
+                "breakout_date": (
+                    pattern.breakout_date.isoformat()
+                    if pattern.breakout_date else None
+                ),
+                "invalidation_price": pattern.invalidation_price,
+                "invalidation_date": (
+                    pattern.invalidation_date.isoformat()
+                    if pattern.invalidation_date else None
+                ),
+                "score": pattern.score,
+                "score_components": pattern.score_components,
+                "volume_ratio": pattern.volume_ratio,
+                "primary": pattern.primary,
+            },
+        ))
     return items
 
 

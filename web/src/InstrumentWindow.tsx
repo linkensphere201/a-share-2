@@ -88,6 +88,7 @@ export function ChartWindow({
           longTrendLinesVisible={chart.tradingSystems.trend.layers['long-trend-lines'] !== false}
           keyLevelsVisible={chart.tradingSystems.trend.layers['key-levels'] !== false}
           volumeZonesVisible={chart.tradingSystems.trend.layers['volume-zones'] !== false}
+          patternsVisible={chart.tradingSystems.trend.layers.patterns !== false}
         />
       </div>
     </section>

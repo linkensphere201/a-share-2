@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { projectGeneratedPivots, projectGeneratedTrendLines, projectGeneratedZones } from './ChartCanvas'
+import { projectGeneratedPatterns, projectGeneratedPivots, projectGeneratedTrendLines, projectGeneratedZones } from './ChartCanvas'
 import type { TrendAnalysisRun } from './trendAnalysisClient'
 import type { IChartApi } from 'lightweight-charts'
 
@@ -30,6 +30,15 @@ const run: TrendAnalysisRun = {
     { item_id: 'volume-zone', item_type: 'zone', payload: {
       kind: 'estimated-volume-at-price', lower: 10.5, upper: 11,
       score: 0.2, estimated_share: 0.2,
+    } },
+    { item_id: 'double-bottom', item_type: 'pattern', payload: {
+      display_name: '双底', completion_state: 'forming', neckline_price: 12,
+      primary: true, score: 0.75,
+      pivots: [
+        { pivot_date: '2026-08-01', price: 10 },
+        { pivot_date: '2026-08-10', price: 12 },
+        { pivot_date: '2026-08-01', price: 10.2 },
+      ],
     } },
   ],
 }
@@ -79,5 +88,16 @@ describe('generated analysis overlay projection', () => {
     expect(zones[0]).toEqual(expect.objectContaining({ y: 99, height: 2, width: 200 }))
     expect(projectGeneratedZones(run, chart, series, host, true, false).map(item => item.id))
       .toEqual(['key-level'])
+  })
+
+  it('projects persisted pattern pivots and neckline with visibility isolation', () => {
+    const patterns = projectGeneratedPatterns(run, chart, series, true)
+
+    expect(patterns).toHaveLength(1)
+    expect(patterns[0]).toEqual(expect.objectContaining({
+      id: 'double-bottom', displayName: '双底', state: 'forming', primary: true,
+    }))
+    expect(patterns[0].neckline).toEqual({ x1: 20, y1: 120, x2: 200, y2: 120 })
+    expect(projectGeneratedPatterns(run, chart, series, false)).toEqual([])
   })
 })
