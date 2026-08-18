@@ -65,6 +65,27 @@ def test_detects_symmetrical_triangle_and_rejects_crossed_boundaries():
     assert detect_consolidation_patterns(bars[:7], crossed, CONFIG) == ()
 
 
+def test_detects_ascending_and_descending_triangles_independently():
+    ascending_bars = _bars([9, 11, 12, 11, 9.8, 11, 12.1, 11, 10.5, 11, 12])
+    ascending_pivots = [
+        _pivot(PivotKind.LOW, 0, 9), _pivot(PivotKind.HIGH, 2, 12),
+        _pivot(PivotKind.LOW, 4, 9.8), _pivot(PivotKind.HIGH, 6, 12.1),
+        _pivot(PivotKind.LOW, 8, 10.5), _pivot(PivotKind.HIGH, 10, 12),
+    ]
+    descending_bars = _bars([10, 11.5, 13, 11, 10, 11, 12.2, 11, 10.1, 11, 11.4])
+    descending_pivots = [
+        _pivot(PivotKind.LOW, 0, 10), _pivot(PivotKind.HIGH, 2, 13),
+        _pivot(PivotKind.LOW, 4, 10), _pivot(PivotKind.HIGH, 6, 12.2),
+        _pivot(PivotKind.LOW, 8, 10.1), _pivot(PivotKind.HIGH, 10, 11.4),
+    ]
+
+    ascending = detect_consolidation_patterns(ascending_bars, ascending_pivots, CONFIG)
+    descending = detect_consolidation_patterns(descending_bars, descending_pivots, CONFIG)
+
+    assert any(item.pattern_type is ConsolidationType.ASCENDING_TRIANGLE for item in ascending)
+    assert any(item.pattern_type is ConsolidationType.DESCENDING_TRIANGLE for item in descending)
+
+
 def test_uses_only_post_availability_close_for_breakout_confirmation():
     bars = _bars([10, 11, 12, 11, 10, 11, 12, 12.5])
     pivots = [
@@ -107,4 +128,24 @@ def test_flag_requires_prior_impulse_before_parallel_countertrend_channel():
     assert any(item.pattern_type is ConsolidationType.BULL_FLAG for item in patterns)
     flag = next(item for item in patterns if item.pattern_type is ConsolidationType.BULL_FLAG)
     assert flag.display_name == "多头旗形"
+    assert flag.score_components["prior_impulse"] > 0
+
+
+def test_bear_flag_requires_a_prior_decline_before_parallel_recovery():
+    bars = _bars([
+        14, 13.8, 13.5, 13, 12, 11, 10,
+        10.2, 10.5, 10.3, 10.7, 10.5, 10.9, 10.7,
+    ])
+    pivots = [
+        _pivot(PivotKind.LOW, 6, 9.8), _pivot(PivotKind.HIGH, 8, 10.7),
+        _pivot(PivotKind.LOW, 9, 10.1), _pivot(PivotKind.HIGH, 10, 10.9),
+        _pivot(PivotKind.LOW, 11, 10.3), _pivot(PivotKind.HIGH, 12, 11.1),
+    ]
+
+    patterns = detect_consolidation_patterns(
+        bars, pivots, ConsolidationConfig(minimum_duration_bars=5)
+    )
+
+    assert any(item.pattern_type is ConsolidationType.BEAR_FLAG for item in patterns)
+    flag = next(item for item in patterns if item.pattern_type is ConsolidationType.BEAR_FLAG)
     assert flag.score_components["prior_impulse"] > 0

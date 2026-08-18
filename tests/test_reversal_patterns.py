@@ -45,6 +45,20 @@ def test_detects_confirmed_v_bottom_only_after_recovery_threshold():
     assert len(pattern.boundary_segments) == 2
 
 
+def test_detects_confirmed_inverted_v_top_after_a_causal_decline():
+    bars = _bars([8, 9, 10, 11, 12, 11, 10, 8.8])
+    pivot = _pivot(PivotKind.HIGH, 4, 12.2)
+
+    pattern = next(
+        item for item in detect_reversal_patterns(bars, [pivot], CONFIG)
+        if item.pattern_type is ReversalType.V_TOP
+    )
+
+    assert pattern.display_name == "倒V形顶"
+    assert pattern.available_date == bars[-1].period_end
+    assert pattern.direction == "bearish"
+
+
 def test_rejects_one_sided_spike_without_recovery():
     bars = _bars([12, 11, 10, 9, 8, 8.2, 8.4, 8.5])
     pivot = _pivot(PivotKind.LOW, 4, 7.8)
@@ -70,6 +84,25 @@ def test_detects_head_shoulders_top_and_sloped_neckline():
     assert pattern.neckline_slope_per_bar > 0
     assert pattern.breakout_date == bars[6].period_end
     assert pattern.available_date == pivots[-1].confirmed_date
+
+
+def test_detects_head_shoulders_bottom_and_upward_neckline_break():
+    bars = _bars([14, 12, 14, 10, 13.5, 11.8, 14, 14.2])
+    pivots = [
+        _pivot(PivotKind.LOW, 1, 11.8), _pivot(PivotKind.HIGH, 2, 14.2),
+        _pivot(PivotKind.LOW, 3, 9.8), _pivot(PivotKind.HIGH, 4, 13.7),
+        _pivot(PivotKind.LOW, 5, 11.6),
+    ]
+
+    pattern = next(
+        item for item in detect_reversal_patterns(bars, pivots, CONFIG)
+        if item.pattern_type is ReversalType.HEAD_SHOULDERS_BOTTOM
+    )
+
+    assert pattern.display_name == "头肩底"
+    assert pattern.state == "confirmed"
+    assert pattern.direction == "bullish"
+    assert pattern.breakout_date == bars[6].period_end
 
 
 def test_rejects_head_shoulders_with_unequal_shoulders_or_flat_head():

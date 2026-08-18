@@ -73,3 +73,18 @@ def test_prior_uptrend_classifies_diamond_top_context():
 
     assert pattern.pattern_type is DiamondType.DIAMOND_TOP
     assert pattern.context_change_percent > 0
+
+
+def test_prior_downtrend_classifies_diamond_bottom_context():
+    bars = _bars([14, 13.5, 12, 10, 12, 9, 13, 9.5, 12.5, 10, 12, 11])
+    pivots = [
+        _pivot(PivotKind.LOW, 3, 10), _pivot(PivotKind.HIGH, 4, 12),
+        _pivot(PivotKind.LOW, 5, 9), _pivot(PivotKind.HIGH, 6, 13),
+        _pivot(PivotKind.LOW, 7, 9.5), _pivot(PivotKind.HIGH, 8, 12.5),
+        _pivot(PivotKind.LOW, 9, 10), _pivot(PivotKind.HIGH, 10, 12),
+    ]
+
+    pattern = detect_diamond_patterns(bars, pivots, CONFIG)[0]
+
+    assert pattern.pattern_type is DiamondType.DIAMOND_BOTTOM
+    assert pattern.context_change_percent < 0

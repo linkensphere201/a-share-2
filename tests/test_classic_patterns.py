@@ -70,6 +70,22 @@ def test_detects_forming_double_top_without_backdating_confirmation():
     assert pattern.breakout_date is None
 
 
+def test_confirms_double_top_only_after_a_post_availability_neckline_break():
+    bars = _bars([12, 11, 10, 9, 10, 11.8, 10, 8.5], [100] * 7 + [190])
+    pivots = [
+        _pivot(PivotKind.HIGH, 0, 12.3),
+        _pivot(PivotKind.LOW, 3, 8.7),
+        _pivot(PivotKind.HIGH, 5, 12.1),
+    ]
+
+    pattern = detect_double_patterns(bars, pivots, CONFIG)[0]
+
+    assert pattern.pattern_type is PatternType.DOUBLE_TOP
+    assert pattern.state is PatternState.CONFIRMED
+    assert pattern.breakout_date == bars[-1].period_end
+    assert pattern.volume_ratio == 1.9
+
+
 def test_marks_double_bottom_invalid_after_close_below_invalidation_level():
     bars = _bars([10, 10.5, 11, 12, 11, 10.2, 9.5])
     pivots = [
