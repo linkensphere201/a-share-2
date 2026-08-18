@@ -31,9 +31,13 @@ from stock_harness.trend_pivots import (
     DirectionalChangeConfig,
     detect_directional_change_pivots,
 )
+from stock_harness.trend_lines_analysis import (
+    TrendHorizon,
+    generate_trend_line_candidates,
+)
 
 
-ALGORITHM_VERSION = "directional-change-pivots-v1"
+ALGORITHM_VERSION = "directional-change-trend-lines-v2"
 LOGGER = logging.getLogger(__name__)
 
 
@@ -175,27 +179,9 @@ class TrendAnalysisService:
             run = self._store.begin_generated_analysis_run(spec)
             run_id = run.run_id
             if not run.reused:
-                pivots = detect_directional_change_pivots(
-                    analysis_input.bars, pivot_config
+                items = _generated_items(
+                    analysis_input, horizons, pivot_config
                 )
-                items = [
-                    GeneratedAnalysisItem(
-                        item_id=f"pivot-{index}",
-                        item_type=GeneratedItemType.ANCHOR,
-                        payload={
-                            "kind": pivot.kind.value,
-                            "pivot_date": pivot.pivot_date.isoformat(),
-                            "price": pivot.price,
-                            "confirmed_date": (
-                                pivot.confirmed_date.isoformat()
-                                if pivot.confirmed_date else None
-                            ),
-                            "threshold": pivot.threshold,
-                            "tentative": pivot.tentative,
-                        },
-                    )
-                    for index, pivot in enumerate(pivots)
-                ]
                 self._store.complete_generated_analysis_run(
                     run.run_id,
                     items,
@@ -315,6 +301,78 @@ def _input_digest(value: AnalysisInput) -> bytes:
         payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
     ).encode("utf-8")
     return hashlib.sha256(encoded).digest()
+
+
+def _generated_items(
+    analysis_input: AnalysisInput,
+    horizons: AnalysisHorizons,
+    base_config: DirectionalChangeConfig,
+) -> list[GeneratedAnalysisItem]:
+    profiles = (
+        (
+            TrendHorizon.SHORT,
+            analysis_input.bars[-horizons.short:],
+            base_config,
+        ),
+        (
+            TrendHorizon.LONG,
+            analysis_input.bars[-horizons.long:],
+            DirectionalChangeConfig(
+                atr_period=max(20, base_config.atr_period),
+                atr_multiplier=min(10, base_config.atr_multiplier * 1.5),
+                minimum_reversal_percent=min(
+                    0.25, base_config.minimum_reversal_percent * 1.75
+                ),
+            ),
+        ),
+    )
+    items: list[GeneratedAnalysisItem] = []
+    for horizon, bars, config in profiles:
+        pivots = detect_directional_change_pivots(bars, config)
+        for index, pivot in enumerate(pivots):
+            items.append(GeneratedAnalysisItem(
+                item_id=f"{horizon.value}-pivot-{index}",
+                item_type=GeneratedItemType.ANCHOR,
+                payload={
+                    "kind": pivot.kind.value,
+                    "horizon": horizon.value,
+                    "pivot_date": pivot.pivot_date.isoformat(),
+                    "price": pivot.price,
+                    "confirmed_date": (
+                        pivot.confirmed_date.isoformat()
+                        if pivot.confirmed_date else None
+                    ),
+                    "threshold": pivot.threshold,
+                    "tentative": pivot.tentative,
+                },
+            ))
+        lines = generate_trend_line_candidates(bars, pivots, horizon)
+        for index, line in enumerate(lines):
+            items.append(GeneratedAnalysisItem(
+                item_id=f"{horizon.value}-{line.kind.value}-line-{index}",
+                item_type=GeneratedItemType.LINE,
+                payload={
+                    "kind": line.kind.value,
+                    "horizon": line.horizon.value,
+                    "first_pivot_date": line.first_pivot_date.isoformat(),
+                    "first_price": line.first_price,
+                    "first_confirmed_date": line.first_confirmed_date.isoformat(),
+                    "second_pivot_date": line.second_pivot_date.isoformat(),
+                    "second_price": line.second_price,
+                    "second_confirmed_date": line.second_confirmed_date.isoformat(),
+                    "available_date": line.available_date.isoformat(),
+                    "slope_per_bar": line.slope_per_bar,
+                    "projected_price": line.projected_price,
+                    "touch_count": line.touch_count,
+                    "penetration_count": line.penetration_count,
+                    "body_cross_count": line.body_cross_count,
+                    "evaluated_bar_count": line.evaluated_bar_count,
+                    "score": line.score,
+                    "score_components": line.score_components,
+                    "invalidation_reason": line.invalidation_reason,
+                },
+            ))
+    return items
 
 
 def _datetime_ms(value) -> int:

@@ -84,6 +84,8 @@ export function ChartWindow({
           onIndicatorChange={onIndicatorChange}
           trendAnalysisEnabled={chart.tradingSystems.trend.enabled}
           showTentativePivots={Boolean(chart.tradingSystems.trend.settings.showTentativePivots)}
+          shortTrendLinesVisible={chart.tradingSystems.trend.layers['short-trend-lines'] !== false}
+          longTrendLinesVisible={chart.tradingSystems.trend.layers['long-trend-lines'] !== false}
         />
       </div>
     </section>

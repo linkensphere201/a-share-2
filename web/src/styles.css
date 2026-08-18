@@ -688,6 +688,11 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .trend-line.draft .trend-line-stroke { stroke: #f0b85a; stroke-width: 1.5; stroke-dasharray: 5 3; }
 .chart-generated-analysis { position: absolute; z-index: 4; inset: 0; overflow: hidden; pointer-events: none; }
 .chart-generated-analysis > svg { display: block; overflow: hidden; }
+.generated-trend-line { fill: none; stroke-width: 1.2; vector-effect: non-scaling-stroke; opacity: .82; }
+.generated-trend-line.support { stroke: #d5a253; }
+.generated-trend-line.resistance { stroke: #69a8d3; }
+.generated-trend-line.short { stroke-dasharray: 4 3; }
+.generated-trend-line.long { stroke-width: 1.5; opacity: .9; }
 .generated-pivot line { stroke: #8bb8d8; stroke-width: 1; vector-effect: non-scaling-stroke; }
 .generated-pivot polygon { fill: #8bb8d8; stroke: #10202c; stroke-width: 1; vector-effect: non-scaling-stroke; }
 .generated-pivot.low line { stroke: #d9a35f; }

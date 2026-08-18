@@ -39,6 +39,12 @@ def test_explicit_recalculate_registers_and_persists_only_requested_timeframes()
 
         assert [item["status"] for item in results] == ["succeeded", "succeeded"]
         assert all(item["items"] for item in results)
+        assert {
+            item["payload"]["horizon"]
+            for item in results[0]["items"]
+            if item["item_type"] == "anchor"
+        } == {"short", "long"}
+        assert any(item["item_type"] == "line" for item in results[0]["items"])
         assert store.get_latest_generated_analysis_run(
             "000001.SZ", "trend", "monthly"
         ) is None

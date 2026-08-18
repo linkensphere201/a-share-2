@@ -11,7 +11,7 @@ import {
   type TrendLineDash,
   type TrendLineDrawing,
 } from './drawingStore'
-import { barsInRenderPeriod, chooseAnchor, orientTrendLineAnchors, replaceTrendLineAnchor, translateTrendLineAnchors, type LineGeometry, type TrendLineOrientation } from './trendLines'
+import { barsInRenderPeriod, chooseAnchor, extendLineToBounds, orientTrendLineAnchors, replaceTrendLineAnchor, translateTrendLineAnchors, type LineGeometry, type TrendLineOrientation } from './trendLines'
 import type { ThemeDefinition } from './themeStore'
 import { loadTrendAnalysis, type TrendAnalysisRun } from './trendAnalysisClient'
 import {
@@ -134,6 +134,8 @@ type ChartCanvasProps = {
   onIndicatorChange?: (indicator: ChartIndicator) => void
   trendAnalysisEnabled?: boolean
   showTentativePivots?: boolean
+  shortTrendLinesVisible?: boolean
+  longTrendLinesVisible?: boolean
 }
 
 const rising = '#ef5350'
@@ -181,6 +183,8 @@ export function ChartCanvas({
   onIndicatorChange,
   trendAnalysisEnabled = false,
   showTentativePivots = true,
+  shortTrendLinesVisible = true,
+  longTrendLinesVisible = true,
 }: ChartCanvasProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -1364,6 +1368,14 @@ export function ChartCanvas({
     hostRef.current,
     showTentativePivots,
   )
+  const generatedTrendLines = projectGeneratedTrendLines(
+    trendAnalysis,
+    chartRef.current,
+    candleRef.current ?? closeLineRef.current,
+    hostRef.current,
+    shortTrendLinesVisible,
+    longTrendLinesVisible,
+  )
 
   return (
     <div
@@ -1496,8 +1508,9 @@ export function ChartCanvas({
         onAnchorMoveCancel={event => finishTrendLineAnchorMove(event, true)}
       />
       {trendAnalysisEnabled && trendAnalysis && (
-        <GeneratedPivotOverlay
+        <GeneratedAnalysisOverlay
           pivots={generatedPivots}
+          lines={generatedTrendLines}
           run={trendAnalysis}
           preview={trendAnalysisPreview}
         />
@@ -1756,6 +1769,15 @@ type GeneratedPivotGeometry = {
   confirmedDate?: string
 }
 
+type GeneratedTrendLineGeometry = {
+  id: string
+  kind: 'support' | 'resistance'
+  horizon: 'short' | 'long'
+  line: LineGeometry
+  score: number
+  touchCount: number
+}
+
 export function projectGeneratedPivots(
   run: TrendAnalysisRun | null,
   chart: IChartApi | null,
@@ -1764,7 +1786,7 @@ export function projectGeneratedPivots(
   showTentative: boolean,
 ): GeneratedPivotGeometry[] {
   if (!run || !chart || !priceSeries || !host) return []
-  return run.items.flatMap(item => {
+  const projected = run.items.flatMap(item => {
     if (item.item_type !== 'anchor') return []
     const kind = item.payload.kind
     const pivotDate = item.payload.pivot_date
@@ -1788,14 +1810,63 @@ export function projectGeneratedPivots(
         : undefined,
     }]
   })
+  const seen = new Set<string>()
+  return projected.filter(item => {
+    const key = `${item.kind}:${item.pivotDate}:${item.price}:${item.tentative}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
 }
 
-function GeneratedPivotOverlay({
+export function projectGeneratedTrendLines(
+  run: TrendAnalysisRun | null,
+  chart: IChartApi | null,
+  priceSeries: { priceToCoordinate: (price: number) => number | null } | null,
+  host: HTMLDivElement | null,
+  showShort: boolean,
+  showLong: boolean,
+): GeneratedTrendLineGeometry[] {
+  if (!run || !chart || !priceSeries || !host) return []
+  const width = chart.timeScale().width()
+  const height = chart.panes()[0]?.getHeight() ?? host.clientHeight
+  return run.items.flatMap(item => {
+    if (item.item_type !== 'line') return []
+    const kind = item.payload.kind
+    const horizon = item.payload.horizon
+    const firstDate = item.payload.first_pivot_date
+    const secondDate = item.payload.second_pivot_date
+    const firstPrice = item.payload.first_price
+    const secondPrice = item.payload.second_price
+    if ((kind !== 'support' && kind !== 'resistance')
+      || (horizon !== 'short' && horizon !== 'long')
+      || typeof firstDate !== 'string' || typeof secondDate !== 'string'
+      || typeof firstPrice !== 'number' || typeof secondPrice !== 'number') return []
+    if ((horizon === 'short' && !showShort) || (horizon === 'long' && !showLong)) return []
+    const x1 = chart.timeScale().timeToCoordinate(firstDate as Time)
+    const x2 = chart.timeScale().timeToCoordinate(secondDate as Time)
+    const y1 = priceSeries.priceToCoordinate(firstPrice)
+    const y2 = priceSeries.priceToCoordinate(secondPrice)
+    if (x1 === null || x2 === null || y1 === null || y2 === null) return []
+    return [{
+      id: item.item_id,
+      kind,
+      horizon,
+      line: extendLineToBounds({ x1, y1, x2, y2 }, width, height),
+      score: typeof item.payload.score === 'number' ? item.payload.score : 0,
+      touchCount: typeof item.payload.touch_count === 'number' ? item.payload.touch_count : 0,
+    }]
+  })
+}
+
+function GeneratedAnalysisOverlay({
   pivots,
+  lines,
   run,
   preview,
 }: {
   pivots: GeneratedPivotGeometry[]
+  lines: GeneratedTrendLineGeometry[]
   run: TrendAnalysisRun
   preview: boolean
 }) {
@@ -1803,6 +1874,18 @@ function GeneratedPivotOverlay({
   return (
     <div className="chart-generated-analysis" aria-label="自动趋势分析图层">
       <svg width="100%" height="100%" aria-hidden="true">
+        {lines.map(item => (
+          <line
+            key={item.id}
+            className={`generated-trend-line ${item.kind} ${item.horizon}`}
+            x1={item.line.x1}
+            y1={item.line.y1}
+            x2={item.line.x2}
+            y2={item.line.y2}
+          >
+            <title>{`${item.horizon === 'short' ? '短期' : '长期'}${item.kind === 'support' ? '支撑' : '压力'} · 评分 ${item.score.toFixed(2)} · 触碰 ${item.touchCount}`}</title>
+          </line>
+        ))}
         {pivots.map(pivot => {
           const markerY = pivot.kind === 'high' ? pivot.y - 7 : pivot.y + 7
           const points = pivot.kind === 'high'
@@ -1826,6 +1909,7 @@ function GeneratedPivotOverlay({
         <span>日线</span>
         <span>截至 {run.as_of_date}</span>
         <span>{pivots.length} 个枢轴</span>
+        <span>{lines.length} 条趋势线</span>
         {run.stale && <span>已过期</span>}
       </div>
     </div>
