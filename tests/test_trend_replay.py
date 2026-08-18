@@ -1,4 +1,5 @@
 from datetime import date, timedelta
+import json
 
 import pytest
 
@@ -123,6 +124,44 @@ def test_incremental_replay_matches_a_fresh_full_run_at_the_same_cutoff():
     finally:
         incremental_store.close()
         full_store.close()
+
+
+def test_replay_retains_a_confirmed_pattern_when_the_next_bar_invalidates_it():
+    store, days = _replay_store()
+    invalidation_day = days[26]
+    store.upsert_daily_bars("tushare", [
+        DailyBar(
+            "000001.SZ", invalidation_day, 9, 9.2, 8.8, 9, 500
+        )
+    ])
+    try:
+        before, after = replay_trend_analysis(
+            TrendAnalysisService(store), "000001.SZ",
+            [days[25], invalidation_day], horizons=HORIZONS,
+        )
+
+        before_patterns = [
+            json.loads(item.payload_json) for item in before.items
+            if item.item_type == "pattern"
+        ]
+        after_patterns = [
+            json.loads(item.payload_json) for item in after.items
+            if item.item_type == "pattern"
+        ]
+        assert any(
+            item["pattern_type"] == "v-bottom"
+            and item["completion_state"] == "confirmed"
+            for item in before_patterns
+        )
+        invalidated = next(
+            item for item in after_patterns
+            if item["pattern_type"] == "v-bottom"
+            and item["completion_state"] == "invalidated"
+        )
+        assert invalidated["invalidation_date"] == invalidation_day.isoformat()
+        assert invalidated["primary"] is False
+    finally:
+        store.close()
 
 
 def test_replay_rejects_empty_or_non_chronological_cutoffs():
