@@ -1825,6 +1825,7 @@ type GeneratedPatternGeometry = {
   primary: boolean
   points: string
   neckline: LineGeometry
+  boundaries: LineGeometry[]
   labelX: number
   labelY: number
   score: number
@@ -1994,6 +1995,28 @@ export function projectGeneratedPatterns(
     if (necklineY === null) return []
     const first = projected[0]
     const last = projected.at(-1)!
+    const boundaryGeometry = item.payload.boundary_geometry
+    const boundaries: LineGeometry[] = []
+    if (boundaryGeometry && typeof boundaryGeometry === 'object') {
+      const geometry = boundaryGeometry as Record<string, unknown>
+      for (const key of ['upper', 'lower']) {
+        const value = geometry[key]
+        if (!value || typeof value !== 'object') continue
+        const boundary = value as Record<string, unknown>
+        if (typeof boundary.start_date !== 'string' || typeof boundary.end_date !== 'string'
+          || typeof boundary.start_price !== 'number' || typeof boundary.end_price !== 'number') continue
+        const x1 = chart.timeScale().timeToCoordinate(boundary.start_date as Time)
+        const x2 = chart.timeScale().timeToCoordinate(boundary.end_date as Time)
+        const y1 = priceSeries.priceToCoordinate(boundary.start_price)
+        const y2 = priceSeries.priceToCoordinate(boundary.end_price)
+        if (x1 === null || x2 === null || y1 === null || y2 === null) continue
+        boundaries.push(extendLineToBounds(
+          { x1, y1, x2, y2 },
+          chart.timeScale().width(),
+          chart.panes()[0]?.getHeight() ?? Math.max(y1, y2),
+        ))
+      }
+    }
     return [{
       id: item.item_id,
       displayName,
@@ -2001,6 +2024,7 @@ export function projectGeneratedPatterns(
       primary: item.payload.primary === true,
       points: projected.map(point => `${point.x},${point.y}`).join(' '),
       neckline: { x1: first.x, y1: necklineY, x2: chart.timeScale().width(), y2: necklineY },
+      boundaries,
       labelX: Math.min(first.x, last.x) + Math.abs(last.x - first.x) / 2,
       labelY: Math.min(...projected.map(point => point.y), necklineY) - 5,
       score: typeof item.payload.score === 'number' ? item.payload.score : 0,
@@ -2098,6 +2122,16 @@ function GeneratedAnalysisOverlay({
         ))}
         {patterns.map(item => (
           <g key={item.id} className={`generated-pattern ${item.state} ${item.primary ? 'primary' : 'alternative'}`}>
+            {item.boundaries.map((boundary, index) => (
+              <line
+                key={index}
+                className="generated-pattern-boundary"
+                x1={boundary.x1}
+                y1={boundary.y1}
+                x2={boundary.x2}
+                y2={boundary.y2}
+              />
+            ))}
             <polyline points={item.points}/>
             <line
               className="generated-pattern-neckline"

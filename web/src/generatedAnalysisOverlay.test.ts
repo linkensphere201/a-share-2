@@ -101,9 +101,41 @@ describe('generated analysis overlay projection', () => {
     expect(patterns).toHaveLength(1)
     expect(patterns[0]).toEqual(expect.objectContaining({
       id: 'double-bottom', displayName: '双底', state: 'forming', primary: true,
+      boundaries: [],
     }))
     expect(patterns[0].neckline).toEqual({ x1: 20, y1: 120, x2: 200, y2: 120 })
     expect(projectGeneratedPatterns(run, chart, series, false)).toEqual([])
+  })
+
+  it('projects and extends two-line consolidation boundaries', () => {
+    const consolidation: TrendAnalysisRun = {
+      ...run,
+      items: [{
+        item_id: 'triangle', item_type: 'pattern', payload: {
+          display_name: '对称三角形', completion_state: 'forming', neckline_price: 11,
+          pivots: [
+            { pivot_date: '2026-08-01', price: 10 },
+            { pivot_date: '2026-08-10', price: 12 },
+            { pivot_date: '2026-08-01', price: 10.5 },
+          ],
+          boundary_geometry: {
+            upper: {
+              start_date: '2026-08-01', start_price: 13,
+              end_date: '2026-08-10', end_price: 12,
+            },
+            lower: {
+              start_date: '2026-08-01', start_price: 9,
+              end_date: '2026-08-10', end_price: 10,
+            },
+          },
+        },
+      }],
+    }
+
+    const pattern = projectGeneratedPatterns(consolidation, chart, series, true)[0]
+
+    expect(pattern.boundaries).toHaveLength(2)
+    expect(pattern.boundaries[0].x2).toBe(200)
   })
 
   it('reads the primary pattern breakout summary without mixing layer visibility', () => {
