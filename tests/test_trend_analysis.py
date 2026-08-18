@@ -51,11 +51,17 @@ def test_explicit_recalculate_registers_and_persists_only_requested_timeframes()
             if item["item_id"] == "key-level-volume-profile-evidence"
         )
         assert "not exact position cost" in evidence["payload"]["uncertainty"]
-        assert results[0]["algorithm_version"] == "trend-reversal-patterns-v10"
+        assert results[0]["algorithm_version"] == "trend-pattern-ranking-v11"
         pattern_items = [
             item for item in results[0]["items"] if item["item_type"] == "pattern"
         ]
         assert pattern_items
+        assert sum(
+            item["payload"]["primary"] is True for item in pattern_items
+        ) == 1
+        assert sorted(
+            item["payload"]["interpretation_rank"] for item in pattern_items
+        ) == list(range(1, len(pattern_items) + 1))
         assert any(
             item["item_type"] == "evidence"
             and item["payload"].get("kind") == "breakout-state-summary"

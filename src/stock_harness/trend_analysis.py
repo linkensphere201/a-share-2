@@ -44,6 +44,7 @@ from stock_harness.key_levels import (
     estimate_clear_space,
     estimate_daily_volume_profile,
 )
+from stock_harness.pattern_ranking import rank_pattern_candidates
 from stock_harness.reversal_patterns import detect_reversal_patterns
 from stock_harness.sqlite_store import SQLiteMarketDataStore
 from stock_harness.trend_pivots import (
@@ -56,7 +57,7 @@ from stock_harness.trend_lines_analysis import (
 )
 
 
-ALGORITHM_VERSION = "trend-reversal-patterns-v10"
+ALGORITHM_VERSION = "trend-pattern-ranking-v11"
 LOGGER = logging.getLogger(__name__)
 
 
@@ -790,7 +791,7 @@ def _generated_items(
             )
             if event is not None:
                 items.extend(_structural_event_items(pattern_item_id, event))
-    return items
+    return rank_pattern_candidates(items)
 
 
 def _boundary_payload(value: BoundaryLine) -> dict[str, object]:
