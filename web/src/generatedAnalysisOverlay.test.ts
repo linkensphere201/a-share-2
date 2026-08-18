@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { projectGeneratedPatterns, projectGeneratedPivots, projectGeneratedTrendLines, projectGeneratedZones, readGeneratedBreakoutState } from './ChartCanvas'
+import { assignGeneratedPatternLabels, projectGeneratedPatterns, projectGeneratedPivots, projectGeneratedTrendLines, projectGeneratedZones, readGeneratedBreakoutState } from './ChartCanvas'
 import type { TrendAnalysisRun } from './trendAnalysisClient'
 import type { IChartApi } from 'lightweight-charts'
 
@@ -59,6 +59,18 @@ const series = { priceToCoordinate: (price: number) => price * 10 }
 const host = { clientWidth: 200, clientHeight: 200 } as HTMLDivElement
 
 describe('generated analysis overlay projection', () => {
+  it('reduces pattern label density and prioritizes the primary result', () => {
+    const patterns = [
+      { id: 'alternative', displayName: '候选', state: 'confirmed' as const, primary: false, points: '', neckline: { x1: 0, y1: 0, x2: 0, y2: 0 }, boundaries: [], labelX: 100, labelY: 20, showLabel: false, score: 0.95 },
+      { id: 'primary', displayName: '主形态', state: 'forming' as const, primary: true, points: '', neckline: { x1: 0, y1: 0, x2: 0, y2: 0 }, boundaries: [], labelX: 110, labelY: 24, showLabel: false, score: 0.7 },
+      { id: 'separate', displayName: '远端候选', state: 'confirmed' as const, primary: false, points: '', neckline: { x1: 0, y1: 0, x2: 0, y2: 0 }, boundaries: [], labelX: 300, labelY: 60, showLabel: false, score: 0.8 },
+    ]
+
+    expect(assignGeneratedPatternLabels(patterns, 360).filter(item => item.showLabel).map(item => item.id))
+      .toEqual(['primary'])
+    expect(assignGeneratedPatternLabels(patterns, 800).filter(item => item.showLabel).map(item => item.id))
+      .toEqual(['primary', 'separate'])
+  })
   it('projects date/price anchors independently from chart zoom pixels', () => {
     const result = projectGeneratedPivots(run, chart, series, host, true)
 

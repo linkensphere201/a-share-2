@@ -1784,6 +1784,7 @@ type GeneratedPatternGeometry = {
   boundaries: LineGeometry[]
   labelX: number
   labelY: number
+  showLabel: boolean
   score: number
 }
 
@@ -1929,7 +1930,8 @@ export function projectGeneratedPatterns(
   visible: boolean,
 ): GeneratedPatternGeometry[] {
   if (!visible || !run || !chart || !priceSeries) return []
-  return run.items.flatMap(item => {
+  const chartWidth = chart.timeScale().width()
+  const projectedPatterns = run.items.flatMap(item => {
     if (item.item_type !== 'pattern') return []
     const displayName = item.payload.display_name
     const state = item.payload.completion_state
@@ -1978,16 +1980,41 @@ export function projectGeneratedPatterns(
     return [{
       id: item.item_id,
       displayName,
-      state,
+      state: state as GeneratedPatternGeometry['state'],
       primary: item.payload.primary === true,
       points: projected.map(point => `${point.x},${point.y}`).join(' '),
       neckline: { x1: first.x, y1: necklineY, x2: chart.timeScale().width(), y2: necklineY },
       boundaries,
-      labelX: Math.min(first.x, last.x) + Math.abs(last.x - first.x) / 2,
-      labelY: Math.min(...projected.map(point => point.y), necklineY) - 5,
+      labelX: Math.max(36, Math.min(chartWidth - 36, Math.min(first.x, last.x) + Math.abs(last.x - first.x) / 2)),
+      labelY: Math.max(10, Math.min(...projected.map(point => point.y), necklineY) - 5),
+      showLabel: false,
       score: typeof item.payload.score === 'number' ? item.payload.score : 0,
     }]
   })
+  return assignGeneratedPatternLabels(projectedPatterns, chartWidth)
+}
+
+export function assignGeneratedPatternLabels(
+  patterns: GeneratedPatternGeometry[],
+  chartWidth: number,
+): GeneratedPatternGeometry[] {
+  const maxLabels = chartWidth < 420 ? 1 : chartWidth < 700 ? 2 : 4
+  const accepted: GeneratedPatternGeometry[] = []
+  const ranked = [...patterns].sort((left, right) => (
+    Number(right.primary) - Number(left.primary)
+    || Number(right.state === 'confirmed') - Number(left.state === 'confirmed')
+    || right.score - left.score
+  ))
+  for (const candidate of ranked) {
+    if (accepted.length >= maxLabels) break
+    const collides = accepted.some(value => (
+      Math.abs(value.labelX - candidate.labelX) < 84
+      && Math.abs(value.labelY - candidate.labelY) < 18
+    ))
+    if (!collides) accepted.push(candidate)
+  }
+  const visibleIds = new Set(accepted.map(item => item.id))
+  return patterns.map(item => ({ ...item, showLabel: visibleIds.has(item.id) }))
 }
 
 export function readGeneratedBreakoutState(
@@ -2098,7 +2125,7 @@ function GeneratedAnalysisOverlay({
               x2={item.neckline.x2}
               y2={item.neckline.y2}
             />
-            <text x={item.labelX} y={item.labelY}>{item.displayName}</text>
+            {item.showLabel && <text x={item.labelX} y={item.labelY}>{item.displayName}</text>}
             <title>{`${item.displayName} · ${item.state === 'forming' ? '形成中' : item.state === 'confirmed' ? '已确认' : '已失效'} · 评分 ${item.score.toFixed(2)}`}</title>
           </g>
         ))}
