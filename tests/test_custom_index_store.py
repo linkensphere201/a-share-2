@@ -53,6 +53,12 @@ def test_materialized_history_is_read_through_the_normal_bar_path():
         assert summary is not None
         assert summary["classification"] == "custom-index"
         assert summary["rows"] == 3
+        contexts = store.list_symbol_analysis_contexts("000001.SZ")
+        assert len(contexts) == 1
+        assert contexts[0]["symbol"] == "CINDEX:test-index"
+        assert contexts[0]["kind"] == "custom-index"
+        assert contexts[0]["effective_from"] == date(2026, 8, 3)
+        assert contexts[0]["status"] == "ready"
 
 
 def test_materialized_history_uses_bar_dates_when_calendar_is_only_partially_backfilled():

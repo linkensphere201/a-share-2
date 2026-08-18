@@ -238,6 +238,9 @@ class SQLiteMarketDataStoreTests(unittest.TestCase):
 
         self.assertEqual(tuple(catalog), ("tushare", "eastmoney", "eastmoney_board", "concept", "BK1128.DC"))
         self.assertEqual(tuple(membership), ("300308.SZ", 1))
+        contexts = self.store.list_symbol_analysis_contexts("300308.SZ")
+        self.assertEqual(contexts[0]["symbol"], "BK1128.DC")
+        self.assertEqual(contexts[0]["kind"], "board")
 
     def test_instrument_search_matches_full_and_initial_pinyin(self) -> None:
         instrument = Instrument("600519.SH", "贵州茅台", InstrumentKind.STOCK, "SH")

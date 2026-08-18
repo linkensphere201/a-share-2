@@ -3156,6 +3156,67 @@ class SQLiteMarketDataStore:
             for row in rows
         ]
 
+    def list_symbol_analysis_contexts(
+        self, member_symbol: str, limit: int = 12
+    ) -> list[dict[str, object]]:
+        if not 1 <= limit <= 100:
+            raise ValueError("invalid analysis-context limit")
+        boards = [
+            {**item, "kind": "board"}
+            for item in self.list_symbol_boards(member_symbol, limit=limit)
+        ]
+        with self._lock:
+            custom_rows = self._connection.execute(
+                """
+                SELECT context.symbol, context.name, revision.effective_from,
+                       custom.status
+                FROM custom_index_revision_members AS member
+                JOIN instruments AS selected
+                  ON selected.instrument_id = member.instrument_id
+                JOIN custom_index_revisions AS revision
+                  ON revision.revision_id = member.revision_id
+                JOIN custom_indices AS custom
+                  ON custom.index_id = revision.index_id
+                JOIN instruments AS context
+                  ON context.instrument_id = custom.instrument_id
+                WHERE selected.symbol = ? COLLATE NOCASE
+                  AND revision.revision_number = (
+                      SELECT max(latest.revision_number)
+                      FROM custom_index_revisions AS latest
+                      WHERE latest.index_id = revision.index_id
+                  )
+                ORDER BY context.name, context.symbol
+                LIMIT ?
+                """,
+                (member_symbol, limit),
+            ).fetchall()
+        custom_indexes = [
+            {
+                "symbol": str(row[0]),
+                "name": str(row[1]),
+                "source_system": "local_custom_index",
+                "family": "custom-index",
+                "category": "custom-index",
+                "source": "local_custom_index",
+                "kind": "custom-index",
+                "effective_from": _date_from_key(int(row[2])),
+                "status": str(row[3]),
+            }
+            for row in custom_rows
+        ]
+        combined = [*boards, *custom_indexes]
+        seen: set[str] = set()
+        result: list[dict[str, object]] = []
+        for item in combined:
+            symbol = str(item["symbol"])
+            if symbol in seen:
+                continue
+            seen.add(symbol)
+            result.append(item)
+            if len(result) >= limit:
+                break
+        return result
+
     def list_instrument_coverage(
         self, kinds: set[InstrumentKind] | None = None
     ) -> list[InstrumentCoverage]:

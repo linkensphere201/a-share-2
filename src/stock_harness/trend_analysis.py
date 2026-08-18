@@ -48,9 +48,13 @@ from stock_harness.trend_lines_analysis import (
     TrendHorizon,
     generate_trend_line_candidates,
 )
+from stock_harness.trend_context import (
+    TrendContextSeries,
+    build_trend_context_evidence,
+)
 
 
-ALGORITHM_VERSION = "trend-level-feedback-v14"
+ALGORITHM_VERSION = "trend-context-evidence-v15"
 LOGGER = logging.getLogger(__name__)
 
 
@@ -164,6 +168,9 @@ class TrendAnalysisService:
             )
             if not analysis_input.bars:
                 raise ValueError(f"no analysis bars available for {normalized}")
+            context_payload = self._build_context_evidence(
+                analysis_input, cutoff, timeframe, horizons
+            )
             namespace = (
                 AnalysisNamespace.PREVIEW
                 if analysis_input.provisional_date is not None
@@ -174,7 +181,7 @@ class TrendAnalysisService:
                 namespace=namespace, as_of_date=cutoff,
                 input_start_date=analysis_input.bars[0].period_start,
                 input_end_date=analysis_input.bars[-1].period_end,
-                input_digest=_input_digest(analysis_input),
+                input_digest=_input_digest(analysis_input, context_payload),
                 algorithm_version=claim.algorithm_version,
                 config_version=claim.config_version,
                 completion_state=(
@@ -195,6 +202,11 @@ class TrendAnalysisService:
                 items = _generated_items(
                     analysis_input, horizons, pivot_config
                 )
+                items.append(GeneratedAnalysisItem(
+                    item_id="market-board-context-evidence",
+                    item_type=GeneratedItemType.EVIDENCE,
+                    payload=context_payload,
+                ))
                 self._store.complete_generated_analysis_run(
                     run.run_id,
                     items,
@@ -223,6 +235,89 @@ class TrendAnalysisService:
                 target_id, claim.generation, str(error)
             )
             raise
+
+    def _build_context_evidence(
+        self,
+        subject_input: AnalysisInput,
+        cutoff: date,
+        timeframe: AnalysisTimeframe,
+        horizons: AnalysisHorizons,
+    ) -> dict[str, object]:
+        summary = self._store.get_instrument_summary(subject_input.symbol) or {}
+        subject = TrendContextSeries(
+            subject_input.symbol,
+            str(summary.get("name", subject_input.symbol)),
+            "subject",
+            subject_input.bars,
+        )
+        unavailable: list[dict[str, str]] = []
+        market: TrendContextSeries | None = None
+        benchmark = _market_benchmark(subject_input.symbol)
+        if benchmark is not None and benchmark != subject_input.symbol:
+            market = self._load_context_series(
+                benchmark, "market", cutoff, timeframe, horizons, unavailable
+            )
+        related: list[TrendContextSeries] = []
+        try:
+            mappings = self._store.list_symbol_analysis_contexts(
+                subject_input.symbol, limit=8
+            )
+        except Exception as error:
+            mappings = []
+            unavailable.append({
+                "symbol": subject_input.symbol,
+                "reason": f"context mapping unavailable: {error}",
+            })
+        for mapping in mappings:
+            symbol = str(mapping["symbol"])
+            series = self._load_context_series(
+                symbol,
+                str(mapping.get("kind", "board")),
+                cutoff,
+                timeframe,
+                horizons,
+                unavailable,
+                name=str(mapping.get("name", symbol)),
+            )
+            if series is not None:
+                related.append(series)
+            if len(related) >= 5:
+                break
+        return build_trend_context_evidence(
+            subject, market, related, unavailable=unavailable
+        )
+
+    def _load_context_series(
+        self,
+        symbol: str,
+        kind: str,
+        cutoff: date,
+        timeframe: AnalysisTimeframe,
+        horizons: AnalysisHorizons,
+        unavailable: list[dict[str, str]],
+        *,
+        name: str | None = None,
+    ) -> TrendContextSeries | None:
+        try:
+            value = self._inputs.build(
+                symbol, cutoff, timeframe, AnalysisInputMode.FINAL, horizons
+            )
+        except Exception as error:
+            unavailable.append({"symbol": symbol, "reason": str(error)})
+            return None
+        if len(value.bars) < 2:
+            unavailable.append({
+                "symbol": symbol,
+                "reason": "fewer than two visible context bars",
+            })
+            return None
+        summary = self._store.get_instrument_summary(symbol) or {}
+        return TrendContextSeries(
+            symbol,
+            name or str(summary.get("name", symbol)),
+            kind,
+            value.bars,
+        )
 
 
 class TrendAnalysisWorker:
@@ -291,7 +386,10 @@ class TrendAnalysisWorker:
             self._wake.clear()
 
 
-def _input_digest(value: AnalysisInput) -> bytes:
+def _input_digest(
+    value: AnalysisInput,
+    context_payload: dict[str, object] | None = None,
+) -> bytes:
     payload = {
         "symbol": value.symbol,
         "timeframe": value.timeframe.value,
@@ -309,11 +407,24 @@ def _input_digest(value: AnalysisInput) -> bytes:
             }
             for bar in value.bars
         ],
+        "context": context_payload,
     }
     encoded = json.dumps(
         payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
     ).encode("utf-8")
     return hashlib.sha256(encoded).digest()
+
+
+def _market_benchmark(symbol: str) -> str | None:
+    normalized = symbol.upper()
+    code = normalized.split(".", 1)[0]
+    if normalized.endswith(".SH"):
+        return "000688.SH" if code.startswith("688") else "000001.SH"
+    if normalized.endswith(".SZ"):
+        return "399006.SZ" if code.startswith(("300", "301")) else "399001.SZ"
+    if normalized.endswith(".BJ"):
+        return "899050.BJ"
+    return None
 
 
 def _generated_items(

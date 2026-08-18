@@ -1,7 +1,13 @@
 from datetime import date, timedelta
 
 from stock_harness.analysis_inputs import AnalysisHorizons, AnalysisTimeframe
-from stock_harness.models import AdjustmentFactor, DailyBar, Instrument, InstrumentKind
+from stock_harness.models import (
+    AdjustmentFactor,
+    BoardMembership,
+    DailyBar,
+    Instrument,
+    InstrumentKind,
+)
 from stock_harness.sqlite_store import SQLiteMarketDataStore
 from stock_harness.trend_analysis import TrendAnalysisService, TrendAnalysisWorker
 
@@ -51,7 +57,7 @@ def test_explicit_recalculate_registers_and_persists_only_requested_timeframes()
             if item["item_id"] == "key-level-volume-profile-evidence"
         )
         assert "not exact position cost" in evidence["payload"]["uncertainty"]
-        assert results[0]["algorithm_version"] == "trend-level-feedback-v14"
+        assert results[0]["algorithm_version"] == "trend-context-evidence-v15"
         pattern_items = [
             item for item in results[0]["items"] if item["item_type"] == "pattern"
         ]
@@ -72,10 +78,65 @@ def test_explicit_recalculate_registers_and_persists_only_requested_timeframes()
             and item["payload"].get("kind") == "latest-structural-event-summary"
             for item in results[0]["items"]
         )
+        context = next(
+            item for item in results[0]["items"]
+            if item["item_id"] == "market-board-context-evidence"
+        )
+        assert context["payload"]["subject"]["available"] is True
+        assert context["payload"]["available_context_count"] == 0
         assert store.get_latest_generated_analysis_run(
             "000001.SZ", "trend", "monthly"
         ) is None
         assert store.claim_generated_analysis_targets() == []
+    finally:
+        store.close()
+
+
+def test_recalculate_combines_available_market_and_board_context_in_digest():
+    store, days = _store()
+    try:
+        store.upsert_instruments([
+            Instrument("399001.SZ", "Shenzhen Component", InstrumentKind.INDEX, "SZ"),
+            Instrument("BK-BANK.DC", "Bank Board", InstrumentKind.SECTOR, "DC"),
+        ])
+        store.upsert_daily_bars("tushare", [
+            DailyBar(symbol, day, close, close + 0.2, close - 0.2, close, 100)
+            for symbol, offset in (("399001.SZ", 0.0), ("BK-BANK.DC", 1.0))
+            for day, close in zip(days, [10 + offset + index * 0.1 for index in range(12)])
+        ])
+        store.replace_board_memberships(
+            "tushare", "BK-BANK.DC", days[-1],
+            [BoardMembership(
+                "BK-BANK.DC", "000001.SZ", "Ping An Bank", "tushare", days[-1]
+            )],
+        )
+        service = TrendAnalysisService(store)
+        first = service.recalculate(
+            "000001.SZ", [AnalysisTimeframe.DAILY], AnalysisHorizons(3, 6, 10),
+            config_version="settings-context", include_preview=False,
+            as_of_date=days[-1],
+        )[0]
+        context = next(
+            item["payload"] for item in first["items"]
+            if item["item_id"] == "market-board-context-evidence"
+        )
+
+        assert context["market"]["symbol"] == "399001.SZ"
+        assert context["market"]["available"] is True
+        assert context["related"][0]["symbol"] == "BK-BANK.DC"
+        assert context["available_context_count"] == 2
+
+        store.upsert_daily_bars("tushare", [
+            DailyBar("BK-BANK.DC", days[-1], 13, 13.2, 8.8, 9, 200)
+        ])
+        changed = service.recalculate(
+            "000001.SZ", [AnalysisTimeframe.DAILY], AnalysisHorizons(3, 6, 10),
+            config_version="settings-context", include_preview=False,
+            as_of_date=days[-1],
+        )[0]
+
+        assert changed["run_id"] != first["run_id"]
+        assert changed["input_digest"] != first["input_digest"]
     finally:
         store.close()
 
