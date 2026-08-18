@@ -573,6 +573,61 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .chart-drawing-toolbar button.success { color: #62bb8c; }
 .chart-drawing-toolbar button.warning { color: #d8aa5d; }
 @keyframes chart-refresh-spin { to { transform: rotate(360deg); } }
+.trading-system-controls {
+  position: absolute;
+  z-index: 11;
+  top: 26px;
+  left: 7px;
+  display: flex;
+  gap: 1px;
+  padding: 2px;
+  border: 1px solid var(--theme-border);
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--theme-surface-alt) 94%, transparent);
+  box-shadow: 0 2px 8px #0006;
+}
+.trading-system-control-actions { display: flex; align-items: center; gap: 1px; max-width: 190px; overflow: hidden; transition: max-width 160ms ease, opacity 120ms ease; }
+.trading-system-controls.collapsed .trading-system-control-actions { max-width: 0; opacity: 0; pointer-events: none; }
+.trading-system-controls button { width: 22px; height: 22px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 2px; background: transparent; color: var(--theme-muted); }
+.trading-system-controls button:hover:not(:disabled) { color: var(--theme-text-strong); background: var(--theme-hover); }
+.trading-system-controls button.active { color: var(--theme-text-strong); background: var(--theme-accent-soft); }
+.trading-system-controls button:disabled { opacity: .38; }
+.trading-system-controls .trading-system-collapse { width: 30px; grid-template-columns: 14px 8px; }
+.trading-system-status { padding: 0 4px; color: var(--theme-muted); font-size: 8px; white-space: nowrap; }
+.trading-system-status.stale { color: #d8aa5d; }
+.trading-system-settings {
+  position: absolute;
+  z-index: 12;
+  top: 30px;
+  left: 0;
+  width: min(410px, calc(100cqw - 14px));
+  max-height: min(440px, calc(100cqh - 42px));
+  display: grid;
+  grid-template-rows: 30px minmax(0, 1fr) 34px;
+  overflow: hidden;
+  border: 1px solid var(--theme-border);
+  border-radius: 4px;
+  background: var(--theme-surface);
+  color: var(--theme-text);
+  box-shadow: 0 10px 28px #000a;
+}
+.trading-system-settings > header { display: flex; align-items: center; justify-content: space-between; padding: 0 5px 0 9px; border-bottom: 1px solid var(--theme-border); }
+.trading-system-settings > header > span { display: flex; align-items: center; gap: 6px; font-size: 10px; }
+.trading-system-settings-body { min-height: 0; overflow: auto; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding: 9px; }
+.trading-system-settings fieldset { min-width: 0; display: grid; align-content: start; gap: 6px; margin: 0; padding: 7px; border: 1px solid var(--theme-border); }
+.trading-system-settings legend { padding: 0 4px; color: var(--theme-muted); font-size: 9px; }
+.trading-system-settings label { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 7px; color: var(--theme-text); font-size: 9px; }
+.trading-system-settings input[type="number"] { width: 72px; height: 24px; padding: 0 5px; border: 1px solid var(--theme-border); border-radius: 2px; background: var(--theme-raised); color: var(--theme-text-strong); font-size: 10px; }
+.trading-system-settings input[type="checkbox"] { accent-color: var(--theme-accent); }
+.trading-system-settings > footer { display: grid; grid-template-columns: 26px 1fr auto auto auto; align-items: center; gap: 4px; padding: 4px 6px; border-top: 1px solid var(--theme-border); background: var(--theme-surface-alt); }
+.trading-system-settings > footer button { width: auto; min-width: 42px; height: 25px; padding: 0 7px; border: 1px solid var(--theme-border); }
+.trading-system-settings > footer .icon-command { min-width: 25px; padding: 0; }
+.trading-system-settings > footer button.primary { color: var(--theme-text-strong); background: var(--theme-accent-soft); }
+@container (max-width: 430px) {
+  .trading-system-settings-body { grid-template-columns: 1fr; }
+  .trading-system-settings > footer { grid-template-columns: 26px 1fr auto auto; }
+  .trading-system-settings > footer button.primary { grid-column: 3 / 5; }
+}
 .trend-line-manager {
   position: absolute;
   z-index: 10;

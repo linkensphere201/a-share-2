@@ -72,6 +72,35 @@ describe('StockWorkspace', () => {
     expect(document.documentElement.dataset.themeMode).toBe('light')
   })
 
+  it('persists trend-system settings independently in the chart window', async () => {
+    vi.stubGlobal('fetch', emptyFetch())
+    const user = userEvent.setup()
+    const first = render(<App />)
+
+    await user.click(screen.getByRole('button', { name: '启用趋势交易体系' }))
+    await user.click(screen.getByRole('button', { name: '趋势交易体系设置' }))
+    fireEvent.change(screen.getByRole('spinbutton', { name: '短期交易日' }), { target: { value: '80' } })
+    await user.click(screen.getByRole('checkbox', { name: '显示关键位' }))
+    await user.click(screen.getByRole('button', { name: '保存' }))
+
+    await waitFor(() => {
+      const state = JSON.parse(window.localStorage.getItem(workspaceStorageKey) ?? '{}')
+      expect(state.groups[0].windows[1].chart.tradingSystems.trend).toMatchObject({
+        enabled: true,
+        settingsRevision: 1,
+        settings: { shortHorizonBars: 80, mediumHorizonBars: 120, longHorizonBars: 250 },
+        layers: { 'key-levels': false },
+      })
+    })
+
+    first.unmount()
+    render(<App />)
+    expect(screen.getByRole('button', { name: '停用趋势交易体系' })).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: '趋势交易体系设置' }))
+    expect(screen.getByRole('spinbutton', { name: '短期交易日' })).toHaveProperty('value', '80')
+    expect(screen.getByRole('checkbox', { name: '显示关键位' })).toHaveProperty('checked', false)
+  })
+
   it('hides volume and MACD from their pane controls and persists both states', async () => {
     vi.stubGlobal('fetch', emptyFetch())
     const user = userEvent.setup()

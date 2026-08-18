@@ -29,6 +29,8 @@ export type TradingSystemWindowState = {
   enabled: boolean
   expanded: boolean
   isolate: boolean
+  analysisStatus: 'not-run' | 'current' | 'stale'
+  settingsRevision: number
   layers: Record<string, boolean>
   settings: Record<string, boolean | number | string>
 }
@@ -53,10 +55,18 @@ export class TradingSystemRegistry {
   }
 }
 
-const trendSettings = {
+export const trendTradingSystemDefaults = {
   shortHorizonBars: 60,
+  mediumHorizonBars: 120,
   longHorizonBars: 250,
+  dailyEnabled: true,
+  weeklyEnabled: true,
+  monthlyEnabled: true,
+  provisionalPreview: true,
+  showTentativePivots: true,
 }
+
+export type TrendTradingSystemSettings = typeof trendTradingSystemDefaults
 
 export const trendTradingSystem: TradingSystemDescriptor = {
   id: 'trend',
@@ -77,14 +87,8 @@ export const trendTradingSystem: TradingSystemDescriptor = {
     { id: 'patterns', label: '形态', defaultVisible: true },
     { id: 'breakout-state', label: '突破与破位', defaultVisible: true },
   ],
-  defaultSettings: trendSettings,
-  normalizeSettings: value => {
-    const record = isRecord(value) ? value : {}
-    return {
-      shortHorizonBars: boundedInteger(record.shortHorizonBars, trendSettings.shortHorizonBars, 20, 250),
-      longHorizonBars: boundedInteger(record.longHorizonBars, trendSettings.longHorizonBars, 120, 1250),
-    }
-  },
+  defaultSettings: trendTradingSystemDefaults,
+  normalizeSettings: normalizeTrendTradingSystemSettings,
 }
 
 export const tradingSystemRegistry = new TradingSystemRegistry()
@@ -98,6 +102,8 @@ export function createTradingSystemWindowState(
     enabled: false,
     expanded: true,
     isolate: false,
+    analysisStatus: 'not-run',
+    settingsRevision: 0,
     layers: Object.fromEntries(descriptor.layers.map(layer => [layer.id, layer.defaultVisible])),
     settings: { ...descriptor.defaultSettings },
   }
@@ -127,6 +133,10 @@ export function normalizeTradingSystemWindowStates(
       enabled: typeof candidate.enabled === 'boolean' ? candidate.enabled : defaults.enabled,
       expanded: typeof candidate.expanded === 'boolean' ? candidate.expanded : defaults.expanded,
       isolate: typeof candidate.isolate === 'boolean' ? candidate.isolate : defaults.isolate,
+      analysisStatus: candidate.analysisStatus === 'current' || candidate.analysisStatus === 'stale'
+        ? candidate.analysisStatus
+        : 'not-run',
+      settingsRevision: boundedInteger(candidate.settingsRevision, 0, 0, Number.MAX_SAFE_INTEGER),
       layers: Object.fromEntries(descriptor.layers.map(layer => [
         layer.id,
         typeof candidateLayers[layer.id] === 'boolean'
@@ -136,6 +146,35 @@ export function normalizeTradingSystemWindowStates(
       settings: descriptor.normalizeSettings(candidate.settings),
     } satisfies TradingSystemWindowState]
   }))
+}
+
+export function normalizeTrendTradingSystemSettings(value: unknown): TrendTradingSystemSettings {
+  const record = isRecord(value) ? value : {}
+  const shortHorizonBars = boundedInteger(
+    record.shortHorizonBars, trendTradingSystemDefaults.shortHorizonBars, 20, 120,
+  )
+  const mediumCandidate = boundedInteger(
+    record.mediumHorizonBars, trendTradingSystemDefaults.mediumHorizonBars, 60, 500,
+  )
+  const mediumHorizonBars = Math.max(shortHorizonBars + 20, mediumCandidate)
+  const longCandidate = boundedInteger(
+    record.longHorizonBars, trendTradingSystemDefaults.longHorizonBars, 120, 1250,
+  )
+  const longHorizonBars = Math.max(mediumHorizonBars + 20, longCandidate)
+  const dailyEnabled = booleanSetting(record.dailyEnabled, trendTradingSystemDefaults.dailyEnabled)
+  const weeklyEnabled = booleanSetting(record.weeklyEnabled, trendTradingSystemDefaults.weeklyEnabled)
+  const monthlyEnabled = booleanSetting(record.monthlyEnabled, trendTradingSystemDefaults.monthlyEnabled)
+  const hasTimeframe = dailyEnabled || weeklyEnabled || monthlyEnabled
+  return {
+    shortHorizonBars,
+    mediumHorizonBars,
+    longHorizonBars,
+    dailyEnabled: hasTimeframe ? dailyEnabled : true,
+    weeklyEnabled,
+    monthlyEnabled,
+    provisionalPreview: booleanSetting(record.provisionalPreview, trendTradingSystemDefaults.provisionalPreview),
+    showTentativePivots: booleanSetting(record.showTentativePivots, trendTradingSystemDefaults.showTentativePivots),
+  }
 }
 
 export function updateTradingSystemWindowState(
@@ -154,6 +193,10 @@ function boundedInteger(value: unknown, fallback: number, minimum: number, maxim
   return typeof value === 'number' && Number.isInteger(value)
     ? Math.min(maximum, Math.max(minimum, value))
     : fallback
+}
+
+function booleanSetting(value: unknown, fallback: boolean): boolean {
+  return typeof value === 'boolean' ? value : fallback
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

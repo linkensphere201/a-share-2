@@ -54,7 +54,12 @@ describe('trading system registry', () => {
     expect(states.trend.expanded).toBe(true)
     expect(states.trend.layers['short-trend-lines']).toBe(false)
     expect(states.trend.layers).not.toHaveProperty('unknown')
-    expect(states.trend.settings).toEqual({ shortHorizonBars: 250, longHorizonBars: 800 })
+    expect(states.trend.settings).toMatchObject({
+      shortHorizonBars: 120,
+      mediumHorizonBars: 140,
+      longHorizonBars: 800,
+      dailyEnabled: true,
+    })
     expect(states['reversal-test']).toMatchObject({ enabled: false, layers: { divergence: true }, settings: { sensitivity: 7 } })
   })
 
@@ -72,5 +77,29 @@ describe('trading system registry', () => {
     expect(updated.trend.layers.patterns).toBe(false)
     expect(updated['reversal-test']).toBe(reversalBefore)
     expect(initial.trend.enabled).toBe(false)
+  })
+
+  it('keeps horizons ordered and restores one timeframe for invalid settings', () => {
+    const states = normalizeTradingSystemWindowStates({
+      trend: {
+        settings: {
+          shortHorizonBars: 120,
+          mediumHorizonBars: 60,
+          longHorizonBars: 120,
+          dailyEnabled: false,
+          weeklyEnabled: false,
+          monthlyEnabled: false,
+        },
+      },
+    })
+
+    expect(states.trend.settings).toMatchObject({
+      shortHorizonBars: 120,
+      mediumHorizonBars: 140,
+      longHorizonBars: 160,
+      dailyEnabled: true,
+      weeklyEnabled: false,
+      monthlyEnabled: false,
+    })
   })
 })

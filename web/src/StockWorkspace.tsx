@@ -14,6 +14,7 @@ import { removeLayoutWindow, updateSplitRatio } from './layoutTree'
 import { WindowGroup } from './WindowGroup'
 import { removeWindowAttachments } from './windowAttachments'
 import { buildWorkspaceContext, publishWorkspaceContext } from './workspaceContext'
+import type { TradingSystemWindowStates } from './tradingSystems'
 import {
   chartRanges,
   deriveReferencedSymbols,
@@ -211,6 +212,25 @@ export function StockWorkspace() {
       : item)
   }, [updateWindow])
 
+  const handleTradingSystems = useCallback((id: string, tradingSystems: TradingSystemWindowStates) => {
+    updateWindow(id, item => item.type === 'chart'
+      ? { ...item, chart: { ...item.chart, tradingSystems } }
+      : item)
+  }, [updateWindow])
+
+  const handleTradingSystemRecalculate = useCallback((id: string, systemId: string) => {
+    const item = activeGroup.windows.find(window => window.id === id)
+    if (item?.type !== 'chart') return
+    window.dispatchEvent(new CustomEvent('stock-harness:trading-system-recalculate', {
+      detail: { windowId: id, systemId, symbol: item.instrument.symbol },
+    }))
+    logInfo('trading-system', '交易体系测算请求已派发', {
+      windowId: id,
+      systemId,
+      symbol: item.instrument.symbol,
+    })
+  }, [activeGroup.windows])
+
   const updateActiveChart = (update: (chart: ChartWindowState) => ChartWindowState) => {
     if (!activeChart) return
     updateWindow(activeChart.id, item => item.type === 'chart' ? update(item) : item)
@@ -345,6 +365,8 @@ export function StockWorkspace() {
           onVisibleRangeChange={handleVisibleRange}
           onVolumeVisibleChange={handleVolumeVisible}
           onIndicatorChange={handleIndicator}
+          onTradingSystemsChange={handleTradingSystems}
+          onTradingSystemRecalculate={handleTradingSystemRecalculate}
           onReferencedSymbolsChange={updateReferencedSymbols}
         />
         <footer className="statusbar">

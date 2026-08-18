@@ -4,6 +4,7 @@ import { InstrumentListWindow } from './InstrumentListWindow'
 import { SplitLayout } from './SplitLayout'
 import type { Instrument, ListColumnKey, WindowGroupState } from './workspace'
 import type { ThemeDefinition } from './themeStore'
+import type { TradingSystemWindowStates } from './tradingSystems'
 
 type WindowGroupProps = {
   group: WindowGroupState
@@ -20,6 +21,8 @@ type WindowGroupProps = {
   onVisibleRangeChange: (id: string, value: VisibleRange) => void
   onVolumeVisibleChange: (id: string, visible: boolean) => void
   onIndicatorChange: (id: string, indicator: ChartIndicator) => void
+  onTradingSystemsChange: (id: string, systems: TradingSystemWindowStates) => void
+  onTradingSystemRecalculate: (id: string, systemId: string) => void
   onReferencedSymbolsChange: (id: string, symbols: string[]) => void
 }
 
@@ -38,6 +41,8 @@ export function WindowGroup({
   onVisibleRangeChange,
   onVolumeVisibleChange,
   onIndicatorChange,
+  onTradingSystemsChange,
+  onTradingSystemRecalculate,
   onReferencedSymbolsChange,
 }: WindowGroupProps) {
   const renderWindow = (windowId: string) => {
@@ -84,6 +89,8 @@ export function WindowGroup({
         onVisibleRangeChange={value => onVisibleRangeChange(item.id, value)}
         onVolumeVisibleChange={visible => onVolumeVisibleChange(item.id, visible)}
         onIndicatorChange={indicator => onIndicatorChange(item.id, indicator)}
+        onTradingSystemsChange={systems => onTradingSystemsChange(item.id, systems)}
+        onTradingSystemRecalculate={systemId => onTradingSystemRecalculate(item.id, systemId)}
       />
     )
   }

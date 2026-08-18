@@ -1,6 +1,8 @@
 import { Maximize2, Minimize2, Pencil, X } from 'lucide-react'
 import { ChartCanvas, type ChartIndicator, type VisibleRange } from './ChartCanvas'
+import { TradingSystemControls } from './TradingSystemControls'
 import type { ChartWindowState } from './workspace'
+import type { TradingSystemWindowStates } from './tradingSystems'
 import type { ThemeDefinition } from './themeStore'
 
 type InstrumentWindowProps = {
@@ -17,6 +19,8 @@ type InstrumentWindowProps = {
   onVisibleRangeChange: (value: VisibleRange) => void
   onVolumeVisibleChange: (visible: boolean) => void
   onIndicatorChange: (indicator: ChartIndicator) => void
+  onTradingSystemsChange: (systems: TradingSystemWindowStates) => void
+  onTradingSystemRecalculate: (systemId: string) => void
 }
 
 export function ChartWindow({
@@ -33,6 +37,8 @@ export function ChartWindow({
   onVisibleRangeChange,
   onVolumeVisibleChange,
   onIndicatorChange,
+  onTradingSystemsChange,
+  onTradingSystemRecalculate,
 }: InstrumentWindowProps) {
   const { chart, instrument } = windowState
   return (
@@ -57,6 +63,12 @@ export function ChartWindow({
         </div>
       </header>
       <div className="instrument-window-body" onPointerDown={onFocus}>
+        <TradingSystemControls
+          instrumentKind={instrument.kind}
+          state={chart.tradingSystems.trend}
+          onChange={trend => onTradingSystemsChange({ ...chart.tradingSystems, trend })}
+          onRecalculate={() => onTradingSystemRecalculate('trend')}
+        />
         <ChartCanvas
           symbol={instrument.symbol}
           lineOnly={instrument.kind === 'custom-index' && chart.seriesMode === 'line'}
