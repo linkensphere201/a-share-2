@@ -23,6 +23,7 @@ from stock_harness.runtime_logging import EVENT_BUFFER, record_frontend_event
 from stock_harness.sqlite_store import SQLiteMarketDataStore
 from stock_harness.workspace_context import WorkspaceContextInput, WorkspaceContextService
 from stock_harness.analysis_inputs import AnalysisHorizons, AnalysisTimeframe
+from stock_harness.analysis_results import AnalysisNamespace
 from stock_harness.trend_analysis import TrendAnalysisService
 
 
@@ -184,6 +185,38 @@ def create_app(
             payload.symbol, payload.timeframes, len(results),
         )
         return {"status": "completed", "results": results}
+
+    @app.get("/api/analysis/trend/{symbol}")
+    def latest_trend_analysis(
+        symbol: str,
+        request: Request,
+        timeframe: Literal["daily", "weekly", "monthly"] = "daily",
+    ) -> dict[str, object]:
+        selected_store = _store(request)
+        official = selected_store.get_latest_generated_analysis_run(
+            symbol, "trend", timeframe, AnalysisNamespace.OFFICIAL
+        )
+        preview = selected_store.get_latest_generated_analysis_run(
+            symbol, "trend", timeframe, AnalysisNamespace.PREVIEW
+        )
+        now_ms = int(time.time() * 1000)
+        preview_expired = bool(
+            preview is not None
+            and preview.get("expires_at_ms") is not None
+            and int(preview["expires_at_ms"]) <= now_ms
+        )
+        effective = official
+        if preview is not None and not preview_expired and (
+            official is None or preview["as_of_date"] >= official["as_of_date"]
+        ):
+            effective = preview
+        return {
+            "symbol": symbol.upper(), "timeframe": timeframe,
+            "official": _json_analysis_run(official),
+            "preview": _json_analysis_run(preview),
+            "preview_expired": preview_expired,
+            "effective": _json_analysis_run(effective),
+        }
 
     @app.post("/api/workspace-context", status_code=status.HTTP_202_ACCEPTED)
     def publish_workspace_context(payload: WorkspaceContextInput) -> dict[str, object]:
@@ -656,6 +689,18 @@ def _materialize_custom_index(
 
 def _store(request: Request) -> SQLiteMarketDataStore:
     return request.app.state.store
+
+
+def _json_analysis_run(
+    value: dict[str, object] | None,
+) -> dict[str, object] | None:
+    if value is None:
+        return None
+    result = dict(value)
+    digest = result.get("input_digest")
+    if isinstance(digest, bytes):
+        result["input_digest"] = digest.hex()
+    return result
 
 
 def _expand_subscription_symbols(

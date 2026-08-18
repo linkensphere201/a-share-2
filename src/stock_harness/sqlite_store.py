@@ -1863,7 +1863,8 @@ class SQLiteMarketDataStore:
         with self._lock, self._transaction():
             row = self._connection.execute(
                 """
-                SELECT status, attempt, supersedes_run_id
+                SELECT status, attempt, supersedes_run_id, namespace,
+                       instrument_id, system_id, timeframe, as_of_date
                 FROM generated_analysis_runs WHERE run_id = ?
                 """,
                 (run_id,),
@@ -1895,6 +1896,18 @@ class SQLiteMarketDataStore:
                 """,
                 (duration_ms, warnings_json, now_ms, run_id),
             )
+            if str(row[3]) == AnalysisNamespace.OFFICIAL.value:
+                self._connection.execute(
+                    """
+                    UPDATE generated_analysis_runs
+                    SET expires_at_ms = CASE
+                        WHEN expires_at_ms IS NULL OR expires_at_ms > ? THEN ?
+                        ELSE expires_at_ms END
+                    WHERE instrument_id = ? AND system_id = ? AND timeframe = ?
+                      AND namespace = 'preview' AND as_of_date <= ?
+                    """,
+                    (now_ms, now_ms, int(row[4]), str(row[5]), str(row[6]), int(row[7])),
+                )
         return AnalysisRunRecord(
             run_id, AnalysisRunStatus.SUCCEEDED, int(row[1]),
             str(row[2]) if row[2] else None,

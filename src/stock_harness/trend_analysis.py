@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
-from datetime import date
+from datetime import date, timedelta
 import hashlib
 import json
 import time
@@ -112,6 +112,10 @@ class TrendAnalysisService:
                 ),
                 source_observed_at_ms=(
                     _datetime_ms(analysis_input.provisional_provider_time)
+                    if analysis_input.provisional_provider_time is not None else None
+                ),
+                expires_at_ms=(
+                    _datetime_ms(analysis_input.provisional_provider_time + timedelta(hours=48))
                     if analysis_input.provisional_provider_time is not None else None
                 ),
             )

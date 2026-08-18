@@ -13,6 +13,7 @@ import {
 } from './drawingStore'
 import { barsInRenderPeriod, chooseAnchor, orientTrendLineAnchors, replaceTrendLineAnchor, translateTrendLineAnchors, type LineGeometry, type TrendLineOrientation } from './trendLines'
 import type { ThemeDefinition } from './themeStore'
+import { loadTrendAnalysis, type TrendAnalysisRun } from './trendAnalysisClient'
 import {
   projectMarketAnnotations,
   projectMeasurement,
@@ -131,6 +132,8 @@ type ChartCanvasProps = {
   onVisibleRangeChange?: (value: VisibleRange) => void
   onVolumeVisibleChange?: (visible: boolean) => void
   onIndicatorChange?: (indicator: ChartIndicator) => void
+  trendAnalysisEnabled?: boolean
+  showTentativePivots?: boolean
 }
 
 const rising = '#ef5350'
@@ -176,6 +179,8 @@ export function ChartCanvas({
   onVisibleRangeChange,
   onVolumeVisibleChange,
   onIndicatorChange,
+  trendAnalysisEnabled = false,
+  showTentativePivots = true,
 }: ChartCanvasProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -233,6 +238,8 @@ export function ChartCanvas({
   const manualRefreshWarningAtRef = useRef(0)
   const [manualRefreshing, setManualRefreshing] = useState(false)
   const [manualRefreshFeedback, setManualRefreshFeedback] = useState<'success' | 'warning'>()
+  const [trendAnalysis, setTrendAnalysis] = useState<TrendAnalysisRun | null>(null)
+  const [trendAnalysisPreview, setTrendAnalysisPreview] = useState(false)
 
   const averages = useMemo(() => ({
     ma5: movingAverage(bars, 5),
@@ -244,6 +251,41 @@ export function ChartCanvas({
 
   useEffect(() => { coverageCallbackRef.current = onCoverageChange }, [onCoverageChange])
   useEffect(() => { visibleRangeCallbackRef.current = onVisibleRangeChange }, [onVisibleRangeChange])
+
+  useEffect(() => {
+    if (!trendAnalysisEnabled) {
+      setTrendAnalysis(null)
+      setTrendAnalysisPreview(false)
+      return
+    }
+    let controller: AbortController | undefined
+    const reload = () => {
+      controller?.abort()
+      controller = new AbortController()
+      void loadTrendAnalysis(symbol, 'daily', controller.signal).then(snapshot => {
+        setTrendAnalysis(snapshot.effective)
+        setTrendAnalysisPreview(
+          snapshot.effective !== null && snapshot.effective.run_id === snapshot.preview?.run_id
+        )
+        setOverlayRevision(value => value + 1)
+      }).catch(error => {
+        if (error instanceof DOMException && error.name === 'AbortError') return
+        logWarning('trading-system', '趋势分析结果读取失败', {
+          symbol, error: error instanceof Error ? error.message : String(error),
+        })
+      })
+    }
+    const onUpdated = (event: Event) => {
+      const detail = (event as CustomEvent<{ symbol?: string }>).detail
+      if (detail?.symbol?.toUpperCase() === symbol.toUpperCase()) reload()
+    }
+    reload()
+    window.addEventListener('stock-harness:trend-analysis-updated', onUpdated)
+    return () => {
+      controller?.abort()
+      window.removeEventListener('stock-harness:trend-analysis-updated', onUpdated)
+    }
+  }, [symbol, trendAnalysisEnabled])
 
   useEffect(() => {
     const reload = () => setDrawings(loadSymbolDrawings(symbol))
@@ -1315,6 +1357,13 @@ export function ChartCanvas({
     : undefined
   const volumePaneTop = projectPaneTop(chartRef.current, volumePaneRef.current)
   const macdPaneTop = projectPaneTop(chartRef.current, macdPaneRef.current)
+  const generatedPivots = projectGeneratedPivots(
+    trendAnalysis,
+    chartRef.current,
+    candleRef.current ?? closeLineRef.current,
+    hostRef.current,
+    showTentativePivots,
+  )
 
   return (
     <div
@@ -1446,6 +1495,13 @@ export function ChartCanvas({
         onAnchorMoveEnd={event => finishTrendLineAnchorMove(event)}
         onAnchorMoveCancel={event => finishTrendLineAnchorMove(event, true)}
       />
+      {trendAnalysisEnabled && trendAnalysis && (
+        <GeneratedPivotOverlay
+          pivots={generatedPivots}
+          run={trendAnalysis}
+          preview={trendAnalysisPreview}
+        />
+      )}
       {drawingTool === 'trend-line' && (
         <div
           className="chart-drawing-input"
@@ -1685,6 +1741,93 @@ function TrendLineOverlay({
           </g>
         )}
       </svg>
+    </div>
+  )
+}
+
+type GeneratedPivotGeometry = {
+  id: string
+  kind: 'high' | 'low'
+  x: number
+  y: number
+  price: number
+  tentative: boolean
+  pivotDate: string
+  confirmedDate?: string
+}
+
+export function projectGeneratedPivots(
+  run: TrendAnalysisRun | null,
+  chart: IChartApi | null,
+  priceSeries: { priceToCoordinate: (price: number) => number | null } | null,
+  host: HTMLDivElement | null,
+  showTentative: boolean,
+): GeneratedPivotGeometry[] {
+  if (!run || !chart || !priceSeries || !host) return []
+  return run.items.flatMap(item => {
+    if (item.item_type !== 'anchor') return []
+    const kind = item.payload.kind
+    const pivotDate = item.payload.pivot_date
+    const price = item.payload.price
+    const tentative = item.payload.tentative === true
+    if ((kind !== 'high' && kind !== 'low') || typeof pivotDate !== 'string' || typeof price !== 'number') return []
+    if (tentative && !showTentative) return []
+    const x = chart.timeScale().timeToCoordinate(pivotDate as Time)
+    const y = priceSeries.priceToCoordinate(price)
+    if (x === null || y === null || x < -20 || x > host.clientWidth + 20 || y < -20 || y > host.clientHeight + 20) return []
+    return [{
+      id: item.item_id,
+      kind,
+      x,
+      y,
+      price,
+      tentative,
+      pivotDate,
+      confirmedDate: typeof item.payload.confirmed_date === 'string'
+        ? item.payload.confirmed_date
+        : undefined,
+    }]
+  })
+}
+
+function GeneratedPivotOverlay({
+  pivots,
+  run,
+  preview,
+}: {
+  pivots: GeneratedPivotGeometry[]
+  run: TrendAnalysisRun
+  preview: boolean
+}) {
+  const labeled = new Set(pivots.slice(-12).map(item => item.id))
+  return (
+    <div className="chart-generated-analysis" aria-label="自动趋势分析图层">
+      <svg width="100%" height="100%" aria-hidden="true">
+        {pivots.map(pivot => {
+          const markerY = pivot.kind === 'high' ? pivot.y - 7 : pivot.y + 7
+          const points = pivot.kind === 'high'
+            ? `${pivot.x - 4},${markerY - 4} ${pivot.x + 4},${markerY - 4} ${pivot.x},${markerY + 3}`
+            : `${pivot.x - 4},${markerY + 4} ${pivot.x + 4},${markerY + 4} ${pivot.x},${markerY - 3}`
+          return <g key={pivot.id} className={`generated-pivot ${pivot.kind} ${pivot.tentative ? 'tentative' : 'confirmed'}`}>
+            <line x1={pivot.x} y1={pivot.y} x2={pivot.x} y2={markerY}/>
+            <polygon points={points}/>
+            {labeled.has(pivot.id) && (
+              <text
+                x={pivot.x + 6}
+                y={pivot.kind === 'high' ? markerY - 5 : markerY + 9}
+              >{formatPrice(pivot.price)}</text>
+            )}
+            <title>{`${pivot.kind === 'high' ? '高点' : '低点'} ${pivot.pivotDate} · ${pivot.tentative ? '待确认' : `确认于 ${pivot.confirmedDate}`}`}</title>
+          </g>
+        })}
+      </svg>
+      <div className={`trend-analysis-evidence ${preview ? 'preview' : 'official'} ${run.stale ? 'stale' : ''}`}>
+        <span>{preview ? '盘中预览' : '正式'}</span>
+        <span>日线</span>
+        <span>截至 {run.as_of_date}</span>
+        <span>{pivots.length} 个枢轴</span>
+        {run.stale && <span>已过期</span>}
+      </div>
     </div>
   )
 }

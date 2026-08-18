@@ -82,6 +82,8 @@ export function ChartWindow({
           onVisibleRangeChange={onVisibleRangeChange}
           onVolumeVisibleChange={onVolumeVisibleChange}
           onIndicatorChange={onIndicatorChange}
+          trendAnalysisEnabled={chart.tradingSystems.trend.enabled}
+          showTentativePivots={Boolean(chart.tradingSystems.trend.settings.showTentativePivots)}
         />
       </div>
     </section>

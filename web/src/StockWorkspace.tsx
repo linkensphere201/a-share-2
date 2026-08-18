@@ -251,6 +251,9 @@ export function StockWorkspace() {
       logInfo('trading-system', '趋势交易体系测算完成', {
         windowId: id, symbol: item.instrument.symbol,
       })
+      window.dispatchEvent(new CustomEvent('stock-harness:trend-analysis-updated', {
+        detail: { windowId: id, symbol: item.instrument.symbol },
+      }))
     }).catch(error => {
       updateWindow(id, window => window.type === 'chart' ? {
         ...window,

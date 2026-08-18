@@ -1,5 +1,33 @@
 import type { TrendTradingSystemSettings } from './tradingSystems'
 
+export type GeneratedAnalysisItem = {
+  item_id: string
+  item_type: 'anchor' | 'line' | 'zone' | 'pattern' | 'transition' | 'evidence'
+  parent_item_id?: string | null
+  payload: Record<string, unknown>
+}
+
+export type TrendAnalysisRun = {
+  run_id: string
+  as_of_date: string
+  completion_state: string
+  source_observed_at_ms?: number | null
+  expires_at_ms?: number | null
+  stale: boolean
+  stale_reasons: string[]
+  warnings: Array<Record<string, unknown>>
+  items: GeneratedAnalysisItem[]
+}
+
+export type TrendAnalysisSnapshot = {
+  symbol: string
+  timeframe: string
+  official: TrendAnalysisRun | null
+  preview: TrendAnalysisRun | null
+  preview_expired: boolean
+  effective: TrendAnalysisRun | null
+}
+
 export async function recalculateTrendAnalysis(
   symbol: string,
   settings: TrendTradingSystemSettings,
@@ -42,4 +70,17 @@ export async function recalculateTrendAnalysis(
     throw new Error(detail)
   }
   return response.json()
+}
+
+export async function loadTrendAnalysis(
+  symbol: string,
+  timeframe = 'daily',
+  signal?: AbortSignal,
+): Promise<TrendAnalysisSnapshot> {
+  const response = await fetch(
+    `/api/analysis/trend/${encodeURIComponent(symbol)}?timeframe=${encodeURIComponent(timeframe)}`,
+    { signal },
+  )
+  if (!response.ok) throw new Error(`HTTP ${response.status}`)
+  return response.json() as Promise<TrendAnalysisSnapshot>
 }

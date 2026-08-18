@@ -1,5 +1,6 @@
 from dataclasses import replace
 from datetime import date
+import time
 
 import pytest
 
@@ -144,6 +145,23 @@ def test_preview_namespace_is_isolated_and_requires_observation_time(store):
     )
     with pytest.raises(ValueError, match="observation time"):
         store.begin_generated_analysis_run(invalid)
+
+
+def test_official_completion_expires_same_date_preview(store):
+    preview = store.begin_generated_analysis_run(
+        _spec(namespace=AnalysisNamespace.PREVIEW)
+    )
+    store.complete_generated_analysis_run(preview.run_id, [], duration_ms=1)
+    official = store.begin_generated_analysis_run(_spec())
+    store.complete_generated_analysis_run(official.run_id, [], duration_ms=1)
+
+    retained_preview = store.get_latest_generated_analysis_run(
+        "000001.SZ", "trend", "daily", AnalysisNamespace.PREVIEW
+    )
+
+    assert retained_preview is not None
+    assert retained_preview["expires_at_ms"] is not None
+    assert retained_preview["expires_at_ms"] <= int(time.time() * 1000)
 
 
 def test_invalid_child_order_rolls_back_completion(store):
