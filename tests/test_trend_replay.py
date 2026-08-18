@@ -1,0 +1,109 @@
+from datetime import date, timedelta
+
+import pytest
+
+from stock_harness.analysis_inputs import AnalysisHorizons
+from stock_harness.models import AdjustmentFactor, DailyBar, Instrument, InstrumentKind
+from stock_harness.sqlite_store import SQLiteMarketDataStore
+from stock_harness.trend_analysis import TrendAnalysisService
+from stock_harness.trend_replay import compare_replays, replay_trend_analysis
+
+
+HORIZONS = AnalysisHorizons(6, 12, 24)
+
+
+def _replay_store(*, mutate_after: date | None = None) -> tuple[SQLiteMarketDataStore, list[date]]:
+    store = SQLiteMarketDataStore(":memory:")
+    store.upsert_instruments([
+        Instrument("000001.SZ", "Ping An Bank", InstrumentKind.STOCK, "SZ")
+    ])
+    start = date(2026, 6, 1)
+    days = [start + timedelta(days=index) for index in range(36)]
+    closes = [
+        10 + (index % 8 if (index // 8) % 2 == 0 else 7 - index % 8) * 0.35
+        for index in range(len(days))
+    ]
+    if mutate_after is not None:
+        closes = [
+            close if day <= mutate_after else 30 + index * 1.7
+            for index, (day, close) in enumerate(zip(days, closes))
+        ]
+    bars = [
+        DailyBar(
+            "000001.SZ", day, close - 0.1, close + 0.25, close - 0.3,
+            close, 100 + index * 5,
+        )
+        for index, (day, close) in enumerate(zip(days, closes))
+    ]
+    store.upsert_daily_bars("tushare", bars)
+    store.upsert_adjustment_factors("tushare", [
+        AdjustmentFactor("000001.SZ", day, 1) for day in days
+    ])
+    store.upsert_trading_dates("tushare", days)
+    return store, days
+
+
+def test_replay_captures_complete_production_outputs_in_chronological_order():
+    store, days = _replay_store()
+    try:
+        snapshots = replay_trend_analysis(
+            TrendAnalysisService(store), "000001.SZ",
+            [days[17], days[23], days[29]], horizons=HORIZONS,
+        )
+
+        assert [item.as_of_date for item in snapshots] == [days[17], days[23], days[29]]
+        assert all(len(item.input_digest) == 64 for item in snapshots)
+        assert all(len(item.output_digest) == 64 for item in snapshots)
+        assert all(dict(item.item_counts)["anchor"] > 0 for item in snapshots)
+        assert all(item.items for item in snapshots)
+        assert len({item.output_digest for item in snapshots}) == len(snapshots)
+    finally:
+        store.close()
+
+
+def test_future_suffix_mutation_cannot_change_any_historical_production_output():
+    baseline_store, days = _replay_store()
+    cutoff = days[27]
+    mutated_store, _ = _replay_store(mutate_after=cutoff)
+    cutoffs = [days[17], days[22], cutoff]
+    try:
+        baseline = replay_trend_analysis(
+            TrendAnalysisService(baseline_store), "000001.SZ", cutoffs,
+            horizons=HORIZONS,
+        )
+        mutated = replay_trend_analysis(
+            TrendAnalysisService(mutated_store), "000001.SZ", cutoffs,
+            horizons=HORIZONS,
+        )
+
+        assert compare_replays(baseline, mutated) == ()
+        assert [item.items for item in baseline] == [item.items for item in mutated]
+    finally:
+        baseline_store.close()
+        mutated_store.close()
+
+
+def test_replay_rejects_empty_or_non_chronological_cutoffs():
+    store, days = _replay_store()
+    try:
+        service = TrendAnalysisService(store)
+        with pytest.raises(ValueError, match="at least one cutoff"):
+            replay_trend_analysis(service, "000001.SZ", [], horizons=HORIZONS)
+        with pytest.raises(ValueError, match="strictly chronological"):
+            replay_trend_analysis(
+                service, "000001.SZ", [days[20], days[19]], horizons=HORIZONS
+            )
+    finally:
+        store.close()
+
+
+def test_replay_comparison_rejects_different_cutoff_sets():
+    store, days = _replay_store()
+    try:
+        service = TrendAnalysisService(store)
+        first = replay_trend_analysis(service, "000001.SZ", [days[20]], horizons=HORIZONS)
+        second = replay_trend_analysis(service, "000001.SZ", [days[21]], horizons=HORIZONS)
+        with pytest.raises(ValueError, match="must match"):
+            compare_replays(first, second)
+    finally:
+        store.close()

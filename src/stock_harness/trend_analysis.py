@@ -54,7 +54,7 @@ from stock_harness.trend_context import (
 )
 
 
-ALGORITHM_VERSION = "trend-context-evidence-v15"
+ALGORITHM_VERSION = "trend-causal-replay-v16"
 LOGGER = logging.getLogger(__name__)
 
 
@@ -403,7 +403,10 @@ def _input_digest(
                 "open": bar.open, "high": bar.high, "low": bar.low,
                 "close": bar.close, "volume": bar.volume,
                 "sources": bar.sources, "provisional": bar.contains_provisional,
-                "complete": bar.period_complete, "observed_at_ms": bar.observed_at_ms,
+                "complete": bar.period_complete,
+                "observed_at_ms": (
+                    bar.observed_at_ms if bar.contains_provisional else None
+                ),
             }
             for bar in value.bars
         ],
