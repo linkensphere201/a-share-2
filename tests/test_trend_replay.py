@@ -272,6 +272,52 @@ def test_provisional_structural_event_becomes_official_after_canonical_takeover(
         store.close()
 
 
+def test_final_close_can_reverse_a_provisional_breakout_into_official_breakdown():
+    store, days = _replay_store(canonical_bar_count=22)
+    trade_date = days[22]
+    observed = datetime(2026, 8, 18, 6, 30, tzinfo=timezone.utc)
+    store.upsert_provisional_daily_bars([ProvisionalDailyBar(
+        "000001.SZ", trade_date, 12, 12.35, 11.8, 12.1, 210,
+        10_000, 11.75, 2.98, "eastmoney_selected", observed, observed,
+    )])
+    try:
+        service = TrendAnalysisService(store)
+        preview = service.recalculate(
+            "000001.SZ", [AnalysisTimeframe.DAILY], HORIZONS,
+            config_version="final-close-reversal", include_preview=True,
+            as_of_date=trade_date,
+        )[0]
+        assert any(
+            item["item_type"] == "transition"
+            and item["payload"].get("event_kind") == "upward-breakout"
+            and item["payload"].get("preview") is True
+            for item in preview["items"]
+        )
+
+        store.upsert_trading_dates("tushare", [trade_date])
+        store.upsert_adjustment_factors("tushare", [
+            AdjustmentFactor("000001.SZ", trade_date, 1)
+        ])
+        store.upsert_daily_bars("tushare", [
+            DailyBar("000001.SZ", trade_date, 11, 11.2, 8.8, 9, 500)
+        ])
+        official = service.recalculate(
+            "000001.SZ", [AnalysisTimeframe.DAILY], HORIZONS,
+            config_version="final-close-reversal", include_preview=True,
+            as_of_date=trade_date,
+        )[0]
+
+        assert official["source_observed_at_ms"] is None
+        assert any(
+            item["item_type"] == "transition"
+            and item["payload"].get("event_kind") == "downward-breakdown"
+            and item["payload"].get("preview") is False
+            for item in official["items"]
+        )
+    finally:
+        store.close()
+
+
 def test_replay_rejects_empty_or_non_chronological_cutoffs():
     store, days = _replay_store()
     try:
