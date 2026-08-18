@@ -26,6 +26,11 @@ from stock_harness.analysis_results import (
     GeneratedAnalysisTarget,
     GeneratedItemType,
 )
+from stock_harness.key_levels import (
+    detect_horizontal_levels,
+    estimate_clear_space,
+    estimate_daily_volume_profile,
+)
 from stock_harness.sqlite_store import SQLiteMarketDataStore
 from stock_harness.trend_pivots import (
     DirectionalChangeConfig,
@@ -327,8 +332,12 @@ def _generated_items(
         ),
     )
     items: list[GeneratedAnalysisItem] = []
+    long_bars = analysis_input.bars[-horizons.long:]
+    long_pivots = ()
     for horizon, bars, config in profiles:
         pivots = detect_directional_change_pivots(bars, config)
+        if horizon is TrendHorizon.LONG:
+            long_pivots = pivots
         for index, pivot in enumerate(pivots):
             items.append(GeneratedAnalysisItem(
                 item_id=f"{horizon.value}-pivot-{index}",
@@ -372,6 +381,67 @@ def _generated_items(
                     "invalidation_reason": line.invalidation_reason,
                 },
             ))
+    profile = estimate_daily_volume_profile(long_bars)
+    levels = detect_horizontal_levels(
+        long_bars, long_pivots, volume_zones=profile.zones
+    )
+    for index, level in enumerate(levels):
+        items.append(GeneratedAnalysisItem(
+            item_id=f"key-level-{index}",
+            item_type=GeneratedItemType.ZONE,
+            payload={
+                "kind": "key-level",
+                "lower": level.lower,
+                "upper": level.upper,
+                "center": level.center,
+                "observation_count": level.observation_count,
+                "sources": level.sources,
+                "evidence_dates": [item.isoformat() for item in level.evidence_dates],
+                "latest_date": level.latest_date.isoformat(),
+                "score": level.score,
+                "score_components": level.score_components,
+                "role_reversal": level.role_reversal,
+                "volume_confluence": level.volume_confluence,
+                "method": level.method,
+                "uncertainty": "volatility-normalized historical price cluster",
+            },
+        ))
+    for index, zone in enumerate(profile.zones):
+        items.append(GeneratedAnalysisItem(
+            item_id=f"volume-zone-{index}",
+            item_type=GeneratedItemType.ZONE,
+            payload={
+                "kind": "estimated-volume-at-price",
+                "lower": zone.lower,
+                "upper": zone.upper,
+                "center": zone.center,
+                "estimated_volume": zone.estimated_volume,
+                "estimated_share": zone.estimated_share,
+                "evidence_dates": [item.isoformat() for item in zone.evidence_dates],
+                "score": zone.score,
+                "method": zone.method,
+                "uncertainty": zone.uncertainty,
+            },
+        ))
+    items.append(GeneratedAnalysisItem(
+        item_id="key-level-volume-profile-evidence",
+        item_type=GeneratedItemType.EVIDENCE,
+        payload={
+            "kind": "key-level-volume-profile-summary",
+            "latest_close": long_bars[-1].close,
+            "clear_space": estimate_clear_space(
+                long_bars[-1].close, levels, profile.zones
+            ),
+            "volume_profile_available": bool(profile.zones),
+            "total_estimated_volume": profile.total_estimated_volume,
+            "bin_width": profile.bin_width,
+            "method": profile.method,
+            "uncertainty": (
+                "daily volume is distributed uniformly across each bar high-low range; "
+                "this is not exact position cost or main-force cost"
+            ),
+        },
+    ))
     return items
 
 

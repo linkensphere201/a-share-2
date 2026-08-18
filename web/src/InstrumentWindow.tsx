@@ -86,6 +86,8 @@ export function ChartWindow({
           showTentativePivots={Boolean(chart.tradingSystems.trend.settings.showTentativePivots)}
           shortTrendLinesVisible={chart.tradingSystems.trend.layers['short-trend-lines'] !== false}
           longTrendLinesVisible={chart.tradingSystems.trend.layers['long-trend-lines'] !== false}
+          keyLevelsVisible={chart.tradingSystems.trend.layers['key-levels'] !== false}
+          volumeZonesVisible={chart.tradingSystems.trend.layers['volume-zones'] !== false}
         />
       </div>
     </section>

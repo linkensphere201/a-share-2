@@ -688,6 +688,9 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .trend-line.draft .trend-line-stroke { stroke: #f0b85a; stroke-width: 1.5; stroke-dasharray: 5 3; }
 .chart-generated-analysis { position: absolute; z-index: 4; inset: 0; overflow: hidden; pointer-events: none; }
 .chart-generated-analysis > svg { display: block; overflow: hidden; }
+.generated-price-zone { vector-effect: non-scaling-stroke; }
+.generated-price-zone.key-level { fill: #e0b45a20; stroke: #d6a84d80; stroke-width: .7; }
+.generated-price-zone.estimated-volume-at-price { fill: #5f9fbd16; stroke: #6ca8c344; stroke-width: .5; }
 .generated-trend-line { fill: none; stroke-width: 1.2; vector-effect: non-scaling-stroke; opacity: .82; }
 .generated-trend-line.support { stroke: #d5a253; }
 .generated-trend-line.resistance { stroke: #69a8d3; }

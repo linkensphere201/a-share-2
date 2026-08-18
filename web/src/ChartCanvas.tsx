@@ -136,6 +136,8 @@ type ChartCanvasProps = {
   showTentativePivots?: boolean
   shortTrendLinesVisible?: boolean
   longTrendLinesVisible?: boolean
+  keyLevelsVisible?: boolean
+  volumeZonesVisible?: boolean
 }
 
 const rising = '#ef5350'
@@ -185,6 +187,8 @@ export function ChartCanvas({
   showTentativePivots = true,
   shortTrendLinesVisible = true,
   longTrendLinesVisible = true,
+  keyLevelsVisible = true,
+  volumeZonesVisible = true,
 }: ChartCanvasProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -1376,6 +1380,14 @@ export function ChartCanvas({
     shortTrendLinesVisible,
     longTrendLinesVisible,
   )
+  const generatedZones = projectGeneratedZones(
+    trendAnalysis,
+    chartRef.current,
+    candleRef.current ?? closeLineRef.current,
+    hostRef.current,
+    keyLevelsVisible,
+    volumeZonesVisible,
+  )
 
   return (
     <div
@@ -1511,6 +1523,7 @@ export function ChartCanvas({
         <GeneratedAnalysisOverlay
           pivots={generatedPivots}
           lines={generatedTrendLines}
+          zones={generatedZones}
           run={trendAnalysis}
           preview={trendAnalysisPreview}
         />
@@ -1778,6 +1791,18 @@ type GeneratedTrendLineGeometry = {
   touchCount: number
 }
 
+type GeneratedZoneGeometry = {
+  id: string
+  kind: 'key-level' | 'estimated-volume-at-price'
+  y: number
+  height: number
+  width: number
+  lower: number
+  upper: number
+  score: number
+  estimatedShare?: number
+}
+
 export function projectGeneratedPivots(
   run: TrendAnalysisRun | null,
   chart: IChartApi | null,
@@ -1799,7 +1824,7 @@ export function projectGeneratedPivots(
     if (x === null || y === null || x < -20 || x > host.clientWidth + 20 || y < -20 || y > host.clientHeight + 20) return []
     return [{
       id: item.item_id,
-      kind,
+      kind: kind as GeneratedPivotGeometry['kind'],
       x,
       y,
       price,
@@ -1859,14 +1884,58 @@ export function projectGeneratedTrendLines(
   })
 }
 
+export function projectGeneratedZones(
+  run: TrendAnalysisRun | null,
+  chart: IChartApi | null,
+  priceSeries: { priceToCoordinate: (price: number) => number | null } | null,
+  host: HTMLDivElement | null,
+  showKeyLevels: boolean,
+  showVolumeZones: boolean,
+): GeneratedZoneGeometry[] {
+  if (!run || !chart || !priceSeries || !host) return []
+  const width = chart.timeScale().width()
+  const paneHeight = chart.panes()[0]?.getHeight() ?? host.clientHeight
+  return run.items.flatMap(item => {
+    if (item.item_type !== 'zone') return []
+    const kind = item.payload.kind
+    const lower = item.payload.lower
+    const upper = item.payload.upper
+    if ((kind !== 'key-level' && kind !== 'estimated-volume-at-price')
+      || typeof lower !== 'number' || typeof upper !== 'number') return []
+    if ((kind === 'key-level' && !showKeyLevels)
+      || (kind === 'estimated-volume-at-price' && !showVolumeZones)) return []
+    const lowerY = priceSeries.priceToCoordinate(lower)
+    const upperY = priceSeries.priceToCoordinate(upper)
+    if (lowerY === null || upperY === null) return []
+    const top = Math.max(0, Math.min(lowerY, upperY))
+    const bottom = Math.min(paneHeight, Math.max(lowerY, upperY))
+    if (bottom < 0 || top > paneHeight) return []
+    return [{
+      id: item.item_id,
+      kind,
+      y: top,
+      height: Math.max(kind === 'key-level' ? 2 : 1, bottom - top),
+      width,
+      lower,
+      upper,
+      score: typeof item.payload.score === 'number' ? item.payload.score : 0,
+      estimatedShare: typeof item.payload.estimated_share === 'number'
+        ? item.payload.estimated_share
+        : undefined,
+    }]
+  })
+}
+
 function GeneratedAnalysisOverlay({
   pivots,
   lines,
+  zones,
   run,
   preview,
 }: {
   pivots: GeneratedPivotGeometry[]
   lines: GeneratedTrendLineGeometry[]
+  zones: GeneratedZoneGeometry[]
   run: TrendAnalysisRun
   preview: boolean
 }) {
@@ -1874,6 +1943,20 @@ function GeneratedAnalysisOverlay({
   return (
     <div className="chart-generated-analysis" aria-label="自动趋势分析图层">
       <svg width="100%" height="100%" aria-hidden="true">
+        {zones.map(item => (
+          <rect
+            key={item.id}
+            className={`generated-price-zone ${item.kind}`}
+            x={0}
+            y={item.y}
+            width={item.width}
+            height={item.height}
+          >
+            <title>{item.kind === 'key-level'
+              ? `关键位 ${formatPrice(item.lower)}-${formatPrice(item.upper)} · 评分 ${item.score.toFixed(2)}`
+              : `日线估算成交密集区 ${formatPrice(item.lower)}-${formatPrice(item.upper)} · 占比 ${((item.estimatedShare ?? 0) * 100).toFixed(1)}%`}</title>
+          </rect>
+        ))}
         {lines.map(item => (
           <line
             key={item.id}
@@ -1910,6 +1993,7 @@ function GeneratedAnalysisOverlay({
         <span>截至 {run.as_of_date}</span>
         <span>{pivots.length} 个枢轴</span>
         <span>{lines.length} 条趋势线</span>
+        <span>{zones.length} 个价格区</span>
         {run.stale && <span>已过期</span>}
       </div>
     </div>

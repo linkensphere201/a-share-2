@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { projectGeneratedPivots, projectGeneratedTrendLines } from './ChartCanvas'
+import { projectGeneratedPivots, projectGeneratedTrendLines, projectGeneratedZones } from './ChartCanvas'
 import type { TrendAnalysisRun } from './trendAnalysisClient'
 import type { IChartApi } from 'lightweight-charts'
 
@@ -23,6 +23,13 @@ const run: TrendAnalysisRun = {
       first_pivot_date: '2026-08-01', first_price: 10,
       second_pivot_date: '2026-08-10', second_price: 12,
       score: 0.8, touch_count: 3,
+    } },
+    { item_id: 'key-level', item_type: 'zone', payload: {
+      kind: 'key-level', lower: 9.9, upper: 10.1, score: 0.7,
+    } },
+    { item_id: 'volume-zone', item_type: 'zone', payload: {
+      kind: 'estimated-volume-at-price', lower: 10.5, upper: 11,
+      score: 0.2, estimated_share: 0.2,
     } },
   ],
 }
@@ -61,5 +68,16 @@ describe('generated analysis overlay projection', () => {
     }))
     expect(visible[0].line.x1).toBe(0)
     expect(projectGeneratedTrendLines(run, chart, series, host, false, true)).toEqual([])
+  })
+
+  it('projects key levels and estimated volume zones only into the price pane', () => {
+    const zones = projectGeneratedZones(run, chart, series, host, true, true)
+
+    expect(zones.map(item => item.kind)).toEqual([
+      'key-level', 'estimated-volume-at-price',
+    ])
+    expect(zones[0]).toEqual(expect.objectContaining({ y: 99, height: 2, width: 200 }))
+    expect(projectGeneratedZones(run, chart, series, host, true, false).map(item => item.id))
+      .toEqual(['key-level'])
   })
 })
