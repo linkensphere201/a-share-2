@@ -5,7 +5,7 @@ import { InstrumentEditor } from './InstrumentEditor'
 import { CustomIndexManager } from './CustomIndexManager'
 import { DailyNote } from './DailyNote'
 import { IntradaySubscriptionCoordinator, sendIntradaySubscription } from './intradaySubscription'
-import { logInfo, logWarning } from './eventLogger'
+import { logError, logInfo, logWarning } from './eventLogger'
 import { LayoutManager } from './LayoutManager'
 import { RuntimeEventBar } from './RuntimeEventBar'
 import { subscribeDrawingStore } from './drawingStore'
@@ -15,6 +15,8 @@ import { WindowGroup } from './WindowGroup'
 import { removeWindowAttachments } from './windowAttachments'
 import { buildWorkspaceContext, publishWorkspaceContext } from './workspaceContext'
 import type { TradingSystemWindowStates } from './tradingSystems'
+import { normalizeTrendTradingSystemSettings } from './tradingSystems'
+import { recalculateTrendAnalysis } from './trendAnalysisClient'
 import {
   chartRanges,
   deriveReferencedSymbols,
@@ -229,7 +231,43 @@ export function StockWorkspace() {
       systemId,
       symbol: item.instrument.symbol,
     })
-  }, [activeGroup.windows])
+    if (systemId !== 'trend') return
+    const system = item.chart.tradingSystems.trend
+    void recalculateTrendAnalysis(
+      item.instrument.symbol,
+      normalizeTrendTradingSystemSettings(system.settings),
+      system.settingsRevision,
+    ).then(() => {
+      updateWindow(id, window => window.type === 'chart' ? {
+        ...window,
+        chart: {
+          ...window.chart,
+          tradingSystems: {
+            ...window.chart.tradingSystems,
+            trend: { ...window.chart.tradingSystems.trend, analysisStatus: 'current' },
+          },
+        },
+      } : window)
+      logInfo('trading-system', '趋势交易体系测算完成', {
+        windowId: id, symbol: item.instrument.symbol,
+      })
+    }).catch(error => {
+      updateWindow(id, window => window.type === 'chart' ? {
+        ...window,
+        chart: {
+          ...window.chart,
+          tradingSystems: {
+            ...window.chart.tradingSystems,
+            trend: { ...window.chart.tradingSystems.trend, analysisStatus: 'stale' },
+          },
+        },
+      } : window)
+      logError('trading-system', '趋势交易体系测算失败', {
+        windowId: id, symbol: item.instrument.symbol,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    })
+  }, [activeGroup.windows, updateWindow])
 
   const updateActiveChart = (update: (chart: ChartWindowState) => ChartWindowState) => {
     if (!activeChart) return

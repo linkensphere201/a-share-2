@@ -482,3 +482,21 @@ def test_frontend_warning_is_available_in_runtime_event_feed():
 
     assert accepted.status_code == 202
     assert any(item["message"] == "frontend warning" for item in events.json()["items"])
+
+
+def test_trend_recalculate_endpoint_rejects_invalid_horizon_order():
+    store, client = _client()
+    with client:
+        response = client.post("/api/analysis/trend/recalculate", json={
+            "symbol": "300308.SZ",
+            "timeframes": ["daily"],
+            "short_horizon_bars": 120,
+            "medium_horizon_bars": 60,
+            "long_horizon_bars": 250,
+            "config_version": "settings-1",
+            "include_preview": False,
+        })
+    store.close()
+
+    assert response.status_code == 422
+    assert "analysis horizons" in response.json()["detail"]

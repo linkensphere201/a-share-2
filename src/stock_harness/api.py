@@ -22,6 +22,8 @@ from stock_harness.models import AdjustmentFactor, InstrumentKind, StockTradeSta
 from stock_harness.runtime_logging import EVENT_BUFFER, record_frontend_event
 from stock_harness.sqlite_store import SQLiteMarketDataStore
 from stock_harness.workspace_context import WorkspaceContextInput, WorkspaceContextService
+from stock_harness.analysis_inputs import AnalysisHorizons, AnalysisTimeframe
+from stock_harness.trend_analysis import TrendAnalysisService
 
 
 LOGGER = logging.getLogger(__name__)
@@ -73,6 +75,18 @@ class FrontendEventInput(BaseModel):
     level: Literal["WARNING", "ERROR"]
     logger: str = Field(default="app", max_length=100)
     message: str = Field(min_length=1, max_length=1000)
+
+
+class TrendAnalysisInput(BaseModel):
+    symbol: str = Field(min_length=1, max_length=40)
+    timeframes: list[Literal["daily", "weekly", "monthly"]] = Field(
+        min_length=1, max_length=3
+    )
+    short_horizon_bars: int = Field(default=60, ge=1, le=1250)
+    medium_horizon_bars: int = Field(default=120, ge=1, le=1250)
+    long_horizon_bars: int = Field(default=250, ge=1, le=1250)
+    config_version: str = Field(min_length=1, max_length=100)
+    include_preview: bool = True
 
 
 def create_app(
@@ -137,6 +151,39 @@ def create_app(
     @app.get("/api/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.post("/api/analysis/trend/recalculate")
+    def recalculate_trend_analysis(
+        payload: TrendAnalysisInput, request: Request
+    ) -> dict[str, object]:
+        horizons = AnalysisHorizons(
+            payload.short_horizon_bars,
+            payload.medium_horizon_bars,
+            payload.long_horizon_bars,
+        )
+        try:
+            results = TrendAnalysisService(_store(request)).recalculate(
+                payload.symbol,
+                [AnalysisTimeframe(item) for item in payload.timeframes],
+                horizons,
+                config_version=payload.config_version,
+                include_preview=payload.include_preview,
+            )
+        except ValueError as error:
+            LOGGER.warning(
+                "trend_analysis_rejected symbol=%s error=%s", payload.symbol, error
+            )
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        except RuntimeError as error:
+            LOGGER.warning(
+                "trend_analysis_busy symbol=%s error=%s", payload.symbol, error
+            )
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        LOGGER.info(
+            "trend_analysis_completed symbol=%s timeframes=%s runs=%s",
+            payload.symbol, payload.timeframes, len(results),
+        )
+        return {"status": "completed", "results": results}
 
     @app.post("/api/workspace-context", status_code=status.HTTP_202_ACCEPTED)
     def publish_workspace_context(payload: WorkspaceContextInput) -> dict[str, object]:

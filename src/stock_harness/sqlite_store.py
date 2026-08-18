@@ -1771,6 +1771,45 @@ class SQLiteMarketDataStore:
             for row in rows
         ]
 
+    def claim_generated_analysis_target(
+        self, target_id: int, *, lease_ms: int = 60_000
+    ) -> ClaimedAnalysisTarget | None:
+        if lease_ms <= 0:
+            raise ValueError("analysis claim lease must be positive")
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        with self._lock, self._transaction():
+            row = self._connection.execute(
+                """
+                SELECT dirty.target_id, instrument.symbol, target.system_id,
+                       target.timeframe, target.algorithm_version,
+                       target.config_version, dirty.dirty_from,
+                       dirty.dirty_through, dirty.reason, dirty.generation
+                FROM generated_analysis_dirty_targets AS dirty
+                JOIN generated_analysis_targets AS target USING (target_id)
+                JOIN instruments AS instrument USING (instrument_id)
+                WHERE dirty.target_id = ? AND target.enabled = 1
+                  AND (dirty.lease_until_ms IS NULL OR dirty.lease_until_ms <= ?)
+                """,
+                (target_id, now_ms),
+            ).fetchone()
+            if row is None:
+                return None
+            self._connection.execute(
+                """
+                UPDATE generated_analysis_dirty_targets
+                SET claimed_at_ms = ?, lease_until_ms = ?, last_error = NULL
+                WHERE target_id = ? AND generation = ?
+                """,
+                (now_ms, now_ms + lease_ms, target_id, int(row[9])),
+            )
+        return ClaimedAnalysisTarget(
+            target_id=int(row[0]), symbol=str(row[1]), system_id=str(row[2]),
+            timeframe=str(row[3]), algorithm_version=str(row[4]),
+            config_version=str(row[5]), dirty_from=_date_from_key(int(row[6])),
+            dirty_through=_date_from_key(int(row[7])), reason=str(row[8]),
+            generation=int(row[9]),
+        )
+
     def complete_generated_analysis_target(
         self, target_id: int, generation: int
     ) -> bool:
