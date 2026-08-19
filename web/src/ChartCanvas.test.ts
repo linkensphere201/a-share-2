@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   chartLayoutOptions,
   compactCrosshairMarkerOptions,
+  dailyBarsUrl,
 } from './ChartCanvas'
 import {
   aggregateBars,
@@ -28,6 +29,13 @@ import {
 describe('chart layout', () => {
   it('does not render the TradingView attribution over the chart', () => {
     expect(chartLayoutOptions.attributionLogo).toBe(false)
+  })
+
+  it('physically bounds review-mode bar requests at the causal cutoff', () => {
+    expect(dailyBarsUrl('000001.SZ', '2026-08-18')).toBe(
+      '/api/instruments/000001.SZ/daily-bars?end_date=2026-08-18',
+    )
+    expect(dailyBarsUrl('000001.SZ')).toBe('/api/instruments/000001.SZ/daily-bars')
   })
 
   it('uses compact line-series markers at crosshair intersections', () => {

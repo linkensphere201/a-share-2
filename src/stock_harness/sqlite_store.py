@@ -50,6 +50,7 @@ from stock_harness.analysis_results import (
     validate_items,
 )
 from stock_harness.search_terms import matches_name_or_pinyin, pinyin_search_aliases
+from stock_harness.trend_reviews import TrendReviewDraftSpec, TrendReviewLabel, TrendReviewStatus
 from stock_harness.sqlite_mapping import (
     _date_from_key,
     _date_key,
@@ -68,12 +69,66 @@ _CUSTOM_GROUP_ROLES = {
     "core_identity", "lagging_expansion",
 }
 
+_TREND_REVIEW_SELECT = """
+SELECT review.review_id, instrument.symbol, review.schema_version,
+       review.dataset_version, review.timeframe, review.horizon,
+       review.interval_start, review.interval_end, review.as_of_date,
+       review.input_digest, review.algorithm_version, review.config_version,
+       review.settings_json, review.classification, review.review_status, review.tags_json,
+       review.labels_json, review.expected_json, review.rationale,
+       review.sources_json, review.revision,
+       review.created_at_ms, review.updated_at_ms
+FROM trend_review_cases AS review
+JOIN instruments AS instrument USING (instrument_id)
+"""
+
 
 def _custom_group_role(value: object) -> str:
     role = str(value).strip()
     if role not in _CUSTOM_GROUP_ROLES:
         raise ValueError(f"invalid custom group member role: {role}")
     return role
+
+
+def _review_labels_json(labels: Sequence[TrendReviewLabel]) -> str:
+    return json.dumps([
+        {
+            "item_id": label.item_id,
+            "item_type": label.item_type,
+            "decision": label.decision.value,
+            "payload": label.payload,
+            "rationale": label.rationale,
+        }
+        for label in labels
+    ], ensure_ascii=False, sort_keys=True)
+
+
+def _trend_review_row(row: sqlite3.Row) -> dict[str, object]:
+    return {
+        "review_id": str(row[0]),
+        "symbol": str(row[1]),
+        "schema_version": str(row[2]),
+        "dataset_version": str(row[3]),
+        "timeframe": str(row[4]),
+        "horizon": str(row[5]),
+        "interval_start": _date_from_key(int(row[6])),
+        "interval_end": _date_from_key(int(row[7])),
+        "as_of_date": _date_from_key(int(row[8])),
+        "input_digest": bytes(row[9]),
+        "algorithm_version": str(row[10]),
+        "config_version": str(row[11]),
+        "settings": json.loads(str(row[12])),
+        "classification": str(row[13]),
+        "review_status": str(row[14]),
+        "tags": json.loads(str(row[15])),
+        "labels": json.loads(str(row[16])),
+        "expected": json.loads(str(row[17])),
+        "rationale": str(row[18]),
+        "sources": json.loads(str(row[19])),
+        "revision": int(row[20]),
+        "created_at_ms": int(row[21]),
+        "updated_at_ms": int(row[22]),
+    }
 
 
 class SQLiteMarketDataStore:
@@ -1589,6 +1644,136 @@ class SQLiteMarketDataStore:
                 ),
             )
             return self._connection.total_changes - before
+
+    def create_trend_review(self, spec: TrendReviewDraftSpec) -> dict[str, object]:
+        spec.validate()
+        review_id = str(uuid4())
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        symbol = spec.symbol.strip().upper()
+        with self._lock, self._transaction():
+            instrument_ids = self._instrument_ids({symbol})
+            if symbol not in instrument_ids:
+                raise ValueError(f"trend review references unknown instrument: {symbol}")
+            self._connection.execute(
+                """
+                INSERT INTO trend_review_cases(
+                    review_id, instrument_id, schema_version, dataset_version,
+                    timeframe, horizon, interval_start, interval_end, as_of_date,
+                    input_digest, algorithm_version, config_version, settings_json,
+                    classification, review_status, tags_json, labels_json,
+                    expected_json, rationale, sources_json, revision,
+                    created_at_ms, updated_at_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+                """,
+                (
+                    review_id, instrument_ids[symbol], "1.0", spec.dataset_version.strip(),
+                    spec.timeframe, spec.horizon, _date_key(spec.interval_start),
+                    _date_key(spec.interval_end), _date_key(spec.as_of_date),
+                    spec.input_digest, spec.algorithm_version.strip(), spec.config_version.strip(),
+                    json.dumps(spec.settings, ensure_ascii=False, sort_keys=True),
+                    spec.classification.strip(), spec.status.value,
+                    json.dumps(list(dict.fromkeys(spec.tags)), ensure_ascii=False),
+                    _review_labels_json(spec.labels),
+                    json.dumps(spec.expected, ensure_ascii=False, sort_keys=True),
+                    spec.rationale.strip(),
+                    json.dumps(list(spec.sources), ensure_ascii=False, sort_keys=True),
+                    now_ms, now_ms,
+                ),
+            )
+        created = self.get_trend_review(review_id)
+        if created is None:
+            raise RuntimeError("created trend review is not readable")
+        return created
+
+    def get_trend_review(self, review_id: str) -> dict[str, object] | None:
+        with self._lock:
+            row = self._connection.execute(
+                f"{_TREND_REVIEW_SELECT} WHERE review.review_id = ?",
+                (review_id,),
+            ).fetchone()
+        return _trend_review_row(row) if row is not None else None
+
+    def list_trend_reviews(
+        self,
+        *,
+        symbol: str | None = None,
+        status: TrendReviewStatus | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, object]]:
+        if not 1 <= limit <= 500:
+            raise ValueError("trend review limit must be between 1 and 500")
+        clauses: list[str] = []
+        params: list[object] = []
+        if symbol:
+            clauses.append("instrument.symbol = ? COLLATE NOCASE")
+            params.append(symbol.upper())
+        if status is not None:
+            clauses.append("review.review_status = ?")
+            params.append(status.value)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self._lock:
+            rows = self._connection.execute(
+                f"{_TREND_REVIEW_SELECT} {where} "
+                "ORDER BY review.updated_at_ms DESC, review.review_id LIMIT ?",
+                (*params, limit),
+            ).fetchall()
+        return [_trend_review_row(row) for row in rows]
+
+    def update_trend_review(
+        self,
+        review_id: str,
+        *,
+        expected_revision: int,
+        status: TrendReviewStatus,
+        labels: Sequence[TrendReviewLabel],
+        expected: dict[str, object],
+        rationale: str,
+    ) -> dict[str, object]:
+        ids = [label.item_id for label in labels]
+        if len(ids) != len(set(ids)):
+            raise ValueError("trend review label item IDs must be unique")
+        for label in labels:
+            label.validate()
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        with self._lock, self._transaction():
+            current = self._connection.execute(
+                "SELECT review_status, labels_json FROM trend_review_cases WHERE review_id = ?",
+                (review_id,),
+            ).fetchone()
+            if current is None:
+                raise ValueError("trend review not found")
+            if str(current[0]) == TrendReviewStatus.CONFIRMED.value:
+                raise ValueError("confirmed trend review is immutable")
+            original_labels = json.loads(str(current[1]))
+            original_types = {
+                str(item["item_id"]): str(item["item_type"])
+                for item in original_labels
+            }
+            updated_types = {label.item_id: label.item_type for label in labels}
+            if any(
+                updated_types.get(item_id) != item_type
+                for item_id, item_type in original_types.items()
+            ):
+                raise ValueError("trend review update must retain every original candidate")
+            cursor = self._connection.execute(
+                """
+                UPDATE trend_review_cases
+                SET review_status = ?, labels_json = ?, expected_json = ?,
+                    rationale = ?, revision = revision + 1, updated_at_ms = ?
+                WHERE review_id = ? AND revision = ?
+                """,
+                (
+                    status.value, _review_labels_json(labels),
+                    json.dumps(expected, ensure_ascii=False, sort_keys=True),
+                    rationale.strip(), now_ms, review_id, expected_revision,
+                ),
+            )
+            if cursor.rowcount == 0:
+                raise RuntimeError("trend review revision conflict")
+        updated = self.get_trend_review(review_id)
+        if updated is None:
+            raise RuntimeError("updated trend review is not readable")
+        return updated
 
     def begin_generated_analysis_run(
         self, spec: AnalysisRunSpec

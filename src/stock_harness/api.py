@@ -7,7 +7,7 @@ from datetime import date
 import logging
 from pathlib import Path
 import time
-from typing import Callable, Literal
+from typing import Any, Callable, Literal
 from uuid import uuid4
 import sqlite3
 
@@ -25,6 +25,14 @@ from stock_harness.workspace_context import WorkspaceContextInput, WorkspaceCont
 from stock_harness.analysis_inputs import AnalysisHorizons, AnalysisTimeframe
 from stock_harness.analysis_results import AnalysisNamespace
 from stock_harness.trend_analysis import TrendAnalysisService
+from stock_harness.trend_review_set import has_scoreable_expected_labels
+from stock_harness.trend_reviews import (
+    TrendReviewDecision,
+    TrendReviewDraftSpec,
+    TrendReviewLabel,
+    TrendReviewStatus,
+    labels_from_analysis,
+)
 
 
 LOGGER = logging.getLogger(__name__)
@@ -88,6 +96,46 @@ class TrendAnalysisInput(BaseModel):
     long_horizon_bars: int = Field(default=250, ge=1, le=1250)
     config_version: str = Field(min_length=1, max_length=100)
     include_preview: bool = True
+
+
+class TrendReviewSourceInput(BaseModel):
+    provider: str = Field(min_length=1, max_length=100)
+    dataset: str = Field(min_length=1, max_length=200)
+    checked_on: date
+
+
+class TrendReviewCreateInput(BaseModel):
+    symbol: str = Field(min_length=1, max_length=40)
+    timeframe: Literal["daily"] = "daily"
+    horizon: Literal["short", "long"] = "short"
+    interval_start: date
+    interval_end: date
+    as_of_date: date
+    dataset_version: str = Field(min_length=1, max_length=100)
+    classification: Literal["positive", "near-miss", "ambiguous", "robustness"] = "ambiguous"
+    tags: list[str] = Field(min_length=1, max_length=20)
+    rationale: str = Field(default="", max_length=2000)
+    sources: list[TrendReviewSourceInput] = Field(min_length=1, max_length=20)
+    short_horizon_bars: int = Field(default=60, ge=20, le=120)
+    medium_horizon_bars: int = Field(default=120, ge=60, le=500)
+    long_horizon_bars: int = Field(default=250, ge=120, le=1250)
+    config_version: str = Field(default="trend-review-ui-v1", min_length=1, max_length=100)
+
+
+class TrendReviewLabelInput(BaseModel):
+    item_id: str = Field(min_length=1, max_length=200)
+    item_type: str = Field(min_length=1, max_length=50)
+    decision: Literal["pending", "accepted", "rejected", "ambiguous"]
+    payload: dict[str, Any]
+    rationale: str = Field(default="", max_length=1000)
+
+
+class TrendReviewUpdateInput(BaseModel):
+    revision: int = Field(ge=1)
+    review_status: Literal["proposed", "ambiguous", "confirmed", "rejected"]
+    labels: list[TrendReviewLabelInput] = Field(max_length=5000)
+    expected: dict[str, Any] = Field(default_factory=dict)
+    rationale: str = Field(default="", max_length=2000)
 
 
 def create_app(
@@ -217,6 +265,158 @@ def create_app(
             "preview_expired": preview_expired,
             "effective": _json_analysis_run(effective),
         }
+
+    @app.post("/api/trend-reviews", status_code=status.HTTP_201_CREATED)
+    def create_trend_review(
+        payload: TrendReviewCreateInput,
+        request: Request,
+    ) -> dict[str, object]:
+        horizons = AnalysisHorizons(
+            payload.short_horizon_bars,
+            payload.medium_horizon_bars,
+            payload.long_horizon_bars,
+        )
+        try:
+            snapshot = TrendAnalysisService(_store(request)).build_review_snapshot(
+                payload.symbol,
+                AnalysisTimeframe(payload.timeframe),
+                horizons,
+                as_of_date=payload.as_of_date,
+                config_version=payload.config_version,
+            )
+            labels = labels_from_analysis(snapshot["items"], payload.horizon)
+            review = _store(request).create_trend_review(TrendReviewDraftSpec(
+                symbol=payload.symbol,
+                timeframe=payload.timeframe,
+                horizon=payload.horizon,
+                interval_start=payload.interval_start,
+                interval_end=payload.interval_end,
+                as_of_date=payload.as_of_date,
+                dataset_version=payload.dataset_version,
+                classification=payload.classification,
+                status=TrendReviewStatus.PROPOSED,
+                tags=payload.tags,
+                labels=labels,
+                expected={},
+                rationale=payload.rationale,
+                sources=[item.model_dump(mode="json") for item in payload.sources],
+                input_digest=bytes.fromhex(str(snapshot["input_digest"])),
+                algorithm_version=str(snapshot["algorithm_version"]),
+                config_version=str(snapshot["config_version"]),
+                settings={
+                    "short_horizon_bars": payload.short_horizon_bars,
+                    "medium_horizon_bars": payload.medium_horizon_bars,
+                    "long_horizon_bars": payload.long_horizon_bars,
+                },
+            ))
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        LOGGER.info(
+            "trend_review_created review_id=%s symbol=%s as_of=%s labels=%s",
+            review["review_id"], payload.symbol, payload.as_of_date, len(labels),
+        )
+        return {"review": _json_trend_review(review), "analysis": snapshot}
+
+    @app.get("/api/trend-reviews")
+    def list_trend_reviews(
+        request: Request,
+        symbol: str | None = None,
+        review_status: Literal["proposed", "ambiguous", "confirmed", "rejected"] | None = None,
+        limit: int = Query(default=100, ge=1, le=500),
+    ) -> dict[str, object]:
+        status_filter = TrendReviewStatus(review_status) if review_status else None
+        items = _store(request).list_trend_reviews(
+            symbol=symbol, status=status_filter, limit=limit
+        )
+        return {"items": [_json_trend_review(item) for item in items]}
+
+    @app.get("/api/trend-reviews/{review_id}")
+    def get_trend_review(review_id: str, request: Request) -> dict[str, object]:
+        review = _store(request).get_trend_review(review_id)
+        if review is None:
+            raise HTTPException(status_code=404, detail="trend review not found")
+        return _json_trend_review(review)
+
+    @app.post("/api/trend-reviews/{review_id}/snapshot")
+    def rebuild_trend_review_snapshot(
+        review_id: str,
+        request: Request,
+    ) -> dict[str, object]:
+        review = _store(request).get_trend_review(review_id)
+        if review is None:
+            raise HTTPException(status_code=404, detail="trend review not found")
+        settings = review["settings"]
+        if not isinstance(settings, dict):
+            raise HTTPException(status_code=409, detail="trend review settings are invalid")
+        try:
+            snapshot = TrendAnalysisService(_store(request)).build_review_snapshot(
+                str(review["symbol"]),
+                AnalysisTimeframe(str(review["timeframe"])),
+                AnalysisHorizons(
+                    int(settings["short_horizon_bars"]),
+                    int(settings["medium_horizon_bars"]),
+                    int(settings["long_horizon_bars"]),
+                ),
+                as_of_date=review["as_of_date"],
+                config_version=str(review["config_version"]),
+            )
+        except (KeyError, TypeError, ValueError) as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        if str(snapshot["input_digest"]) != bytes(review["input_digest"]).hex():
+            raise HTTPException(
+                status_code=409,
+                detail="trend review input has changed since the draft was created",
+            )
+        return snapshot
+
+    @app.put("/api/trend-reviews/{review_id}")
+    def update_trend_review(
+        review_id: str,
+        payload: TrendReviewUpdateInput,
+        request: Request,
+    ) -> dict[str, object]:
+        if (
+            payload.review_status == TrendReviewStatus.CONFIRMED.value
+            and not has_scoreable_expected_labels(payload.expected)
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail="confirmed trend review requires scoreable expected labels",
+            )
+        if (
+            payload.review_status == TrendReviewStatus.CONFIRMED.value
+            and any(item.decision == TrendReviewDecision.PENDING.value for item in payload.labels)
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail="confirmed trend review cannot contain pending labels",
+            )
+        labels = [TrendReviewLabel(
+            item_id=item.item_id,
+            item_type=item.item_type,
+            decision=TrendReviewDecision(item.decision),
+            payload=item.payload,
+            rationale=item.rationale,
+        ) for item in payload.labels]
+        try:
+            review = _store(request).update_trend_review(
+                review_id,
+                expected_revision=payload.revision,
+                status=TrendReviewStatus(payload.review_status),
+                labels=labels,
+                expected=payload.expected,
+                rationale=payload.rationale,
+            )
+        except ValueError as error:
+            status_code = 404 if str(error) == "trend review not found" else 422
+            raise HTTPException(status_code=status_code, detail=str(error)) from error
+        except RuntimeError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        LOGGER.info(
+            "trend_review_updated review_id=%s status=%s revision=%s",
+            review_id, payload.review_status, review["revision"],
+        )
+        return _json_trend_review(review)
 
     @app.post("/api/workspace-context", status_code=status.HTTP_202_ACCEPTED)
     def publish_workspace_context(payload: WorkspaceContextInput) -> dict[str, object]:
@@ -696,6 +896,14 @@ def _json_analysis_run(
 ) -> dict[str, object] | None:
     if value is None:
         return None
+    result = dict(value)
+    digest = result.get("input_digest")
+    if isinstance(digest, bytes):
+        result["input_digest"] = digest.hex()
+    return result
+
+
+def _json_trend_review(value: dict[str, object]) -> dict[str, object]:
     result = dict(value)
     digest = result.get("input_digest")
     if isinstance(digest, bytes):

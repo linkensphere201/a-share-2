@@ -636,6 +636,39 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .trading-system-settings > footer button.primary { color: var(--theme-text-strong); background: var(--theme-accent-soft); }
 .trend-evidence-panel { position: absolute; z-index: 12; top: 30px; left: 0; width: min(340px, calc(100cqw - 14px)); max-height: min(390px, calc(100cqh - 42px)); display: grid; grid-template-rows: 30px minmax(0, 1fr); overflow: hidden; border: 1px solid var(--theme-border); border-radius: 4px; background: var(--theme-surface); color: var(--theme-text); box-shadow: 0 10px 28px #000a; }
 .trend-evidence-panel > header { display: flex; align-items: center; justify-content: space-between; padding: 0 5px 0 9px; border-bottom: 1px solid var(--theme-border); font-size: 10px; }
+.trend-review-panel { position: absolute; z-index: 18; top: 34px; right: 6px; width: min(520px, calc(100cqw - 12px)); max-height: calc(100cqh - 42px); display: grid; grid-template-rows: 32px auto auto auto minmax(90px, 1fr) auto auto; overflow: hidden; border: 1px solid var(--theme-border); border-radius: 4px; background: color-mix(in srgb, var(--theme-surface) 97%, transparent); color: var(--theme-text); box-shadow: 0 12px 34px #000a; font-weight: 400; }
+.trend-review-panel > header { display: flex; align-items: center; justify-content: space-between; padding: 0 6px 0 10px; border-bottom: 1px solid var(--theme-border); color: var(--theme-text-strong); font-size: 11px; }
+.trend-review-panel button { min-height: 25px; display: inline-flex; align-items: center; justify-content: center; gap: 4px; border: 1px solid var(--theme-border); border-radius: 3px; background: var(--theme-raised); color: var(--theme-text); font-size: 9px; }
+.trend-review-panel button:hover:not(:disabled), .trend-review-panel button.active { border-color: var(--theme-accent); background: var(--theme-hover); color: var(--theme-text-strong); }
+.trend-review-panel button.primary { background: var(--theme-accent-soft); color: var(--theme-text-strong); }
+.trend-review-panel button:disabled { opacity: .45; }
+.trend-review-setup { display: grid; grid-template-columns: repeat(5, minmax(74px, 1fr)) auto; gap: 5px; align-items: end; padding: 7px; border-bottom: 1px solid var(--theme-border); }
+.trend-review-setup label, .trend-review-reopen { min-width: 0; display: grid; gap: 3px; color: var(--theme-muted); font-size: 8px; }
+.trend-review-setup input, .trend-review-setup select, .trend-review-reopen select { width: 100%; min-width: 0; height: 25px; border: 1px solid var(--theme-border); border-radius: 3px; padding: 0 5px; background: var(--theme-raised); color: var(--theme-text); font-size: 9px; }
+.trend-review-reopen { grid-template-columns: 58px minmax(0, 1fr); align-items: center; padding: 5px 7px; border-bottom: 1px solid var(--theme-border); }
+.trend-review-summary { min-height: 25px; display: flex; align-items: center; gap: 9px; padding: 0 8px; border-bottom: 1px solid var(--theme-border); color: var(--theme-muted); font-size: 8px; }
+.trend-review-queue { min-height: 0; overflow: auto; }
+.trend-review-candidate { min-height: 34px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 4px 7px; border-bottom: 1px solid var(--theme-border); }
+.trend-review-candidate > div:first-child { min-width: 0; display: flex; align-items: baseline; gap: 7px; }
+.trend-review-candidate > div:first-child > span { flex: 0 0 40px; color: var(--theme-muted); font-size: 8px; }
+.trend-review-candidate small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--theme-text); font-size: 9px; }
+.trend-review-candidate.accepted { border-left: 2px solid #4aa574; }
+.trend-review-candidate.rejected { border-left: 2px solid #d56f75; }
+.trend-review-candidate.ambiguous { border-left: 2px solid #d0a43c; }
+.trend-review-decisions { display: flex; gap: 3px; }
+.trend-review-decisions button { width: 25px; padding: 0; }
+.trend-review-decisions .accept.active { color: #69c28f; }
+.trend-review-decisions .reject.active { color: #e58b90; }
+.trend-review-decisions .ambiguous.active { color: #dfb957; }
+.trend-review-panel > textarea { min-height: 48px; resize: vertical; margin: 6px 7px; border: 1px solid var(--theme-border); border-radius: 3px; padding: 6px; background: var(--theme-raised); color: var(--theme-text); font: 9px/1.45 ui-monospace, Consolas, monospace; }
+.trend-review-panel > footer { display: flex; align-items: center; justify-content: flex-end; gap: 4px; padding: 5px 7px; border-top: 1px solid var(--theme-border); }
+.trend-review-panel > footer > span { margin-right: auto; color: var(--theme-muted); font-size: 8px; }
+.trend-review-panel > footer button { padding: 0 7px; }
+.trend-review-error { margin: 0; padding: 5px 8px; border-bottom: 1px solid #5d3034; color: #e58b90; font-size: 9px; }
+@container (max-width: 620px) {
+  .trend-review-setup { grid-template-columns: repeat(3, minmax(72px, 1fr)); }
+  .trend-review-panel { top: 30px; right: 3px; width: calc(100cqw - 6px); max-height: calc(100cqh - 34px); }
+}
 .trend-evidence-body { overflow: auto; padding: 8px; font-size: 9px; }
 .trend-evidence-body dl { display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: 5px 8px; margin: 0; }
 .trend-evidence-body dt { color: var(--theme-muted); }

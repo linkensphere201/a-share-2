@@ -13,7 +13,7 @@ from typing import Any, Mapping
 SCHEMA_VERSION = "1.0"
 _SYMBOL = re.compile(r"^\d{6}\.(?:SH|SZ|BJ)$")
 _CLASSIFICATIONS = {"positive", "near-miss", "ambiguous", "robustness"}
-_STATUSES = {"proposed", "confirmed", "rejected"}
+_STATUSES = {"proposed", "ambiguous", "confirmed", "rejected"}
 _TAGS = {
     "pivot", "trend-line", "key-level", "pattern", "breakout", "breakdown",
     "retest", "false-breakout", "corporate-action", "suspension", "gap",
@@ -21,6 +21,14 @@ _TAGS = {
 _SCOREABLE_EXPECTED_FIELDS = {
     "pivots", "trend_lines", "key_levels", "patterns", "events", "forbidden",
 }
+
+
+def has_scoreable_expected_labels(expected: Mapping[str, Any]) -> bool:
+    return any(
+        isinstance(expected.get(field), (list, dict))
+        and bool(expected.get(field))
+        for field in _SCOREABLE_EXPECTED_FIELDS
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,11 +118,7 @@ def _parse_case(raw: object) -> TrendReviewCase:
         raise ValueError(f"review case {case_id} requires expected evidence")
     if (
         review_status == "confirmed"
-        and not any(
-            isinstance(expected.get(field), (list, dict))
-            and bool(expected.get(field))
-            for field in _SCOREABLE_EXPECTED_FIELDS
-        )
+        and not has_scoreable_expected_labels(expected)
     ):
         raise ValueError(
             f"confirmed review case {case_id} requires scoreable expected labels"

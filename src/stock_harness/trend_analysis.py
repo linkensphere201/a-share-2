@@ -83,6 +83,68 @@ class TrendAnalysisService:
             ))
         return results
 
+    def build_review_snapshot(
+        self,
+        symbol: str,
+        timeframe: AnalysisTimeframe,
+        horizons: AnalysisHorizons,
+        *,
+        as_of_date: date,
+        config_version: str,
+        pivot_config: DirectionalChangeConfig = DirectionalChangeConfig(),
+    ) -> dict[str, object]:
+        """Calculate an isolated final-only snapshot without registering a target."""
+        started = time.perf_counter()
+        normalized = symbol.strip().upper()
+        analysis_input = self._inputs.build(
+            normalized, as_of_date, timeframe, AnalysisInputMode.FINAL, horizons
+        )
+        if not analysis_input.bars:
+            raise ValueError(f"no analysis bars available for {normalized}")
+        context_payload = self._build_context_evidence(
+            analysis_input, as_of_date, timeframe, horizons
+        )
+        digest = _input_digest(analysis_input, context_payload)
+        generated = _generated_items(analysis_input, horizons, pivot_config)
+        generated.append(GeneratedAnalysisItem(
+            item_id="market-board-context-evidence",
+            item_type=GeneratedItemType.EVIDENCE,
+            payload=context_payload,
+        ))
+        return {
+            "run_id": f"review-{digest.hex()[:24]}",
+            "status": "succeeded",
+            "as_of_date": as_of_date,
+            "input_start_date": analysis_input.bars[0].period_start,
+            "input_end_date": analysis_input.bars[-1].period_end,
+            "input_digest": digest.hex(),
+            "algorithm_version": ALGORITHM_VERSION,
+            "config_version": config_version,
+            "completion_state": (
+                "complete" if analysis_input.bars[-1].period_complete else "partial"
+            ),
+            "attempt": 1,
+            "duration_ms": (time.perf_counter() - started) * 1000,
+            "warnings": [_warning_payload(item) for item in analysis_input.warnings],
+            "failure_details": None,
+            "source_observed_at_ms": None,
+            "expires_at_ms": None,
+            "supersedes_run_id": None,
+            "created_at_ms": None,
+            "completed_at_ms": None,
+            "stale": False,
+            "stale_reasons": [],
+            "items": [
+                {
+                    "item_id": item.item_id,
+                    "item_type": item.item_type.value,
+                    "parent_item_id": item.parent_item_id,
+                    "payload": item.payload,
+                }
+                for item in generated
+            ],
+        }
+
     def _recalculate_one(
         self,
         symbol: str,

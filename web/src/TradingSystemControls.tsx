@@ -2,6 +2,7 @@ import { useState } from 'react'
 import {
   ChevronLeft,
   ChevronRight,
+  ClipboardCheck,
   Eye,
   EyeOff,
   FileSearch,
@@ -30,6 +31,7 @@ type TradingSystemControlsProps = {
   analysisRun?: TrendAnalysisRun | null
   onChange: (state: TradingSystemWindowState) => void
   onRecalculate: (state: TradingSystemWindowState) => void
+  onReview?: () => void
 }
 
 export function TradingSystemControls({
@@ -39,6 +41,7 @@ export function TradingSystemControls({
   analysisRun,
   onChange,
   onRecalculate,
+  onReview,
 }: TradingSystemControlsProps) {
   const descriptor = tradingSystemRegistry.get('trend')!
   const supported = descriptor.supportedInstrumentKinds.includes(instrumentKind)
@@ -129,6 +132,12 @@ export function TradingSystemControls({
           className={evidenceOpen ? 'active' : ''}
           onClick={() => setEvidenceOpen(true)}
         ><FileSearch size={13}/></button>
+        <button
+          title="人工复核趋势分析"
+          aria-label="打开趋势人工复核"
+          disabled={!state.enabled || !supported}
+          onClick={onReview}
+        ><ClipboardCheck size={13}/></button>
         <button
           className={settingsOpen ? 'active' : ''}
           title="趋势交易体系设置"

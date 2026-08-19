@@ -143,6 +143,8 @@ type ChartCanvasProps = {
   trendIsolation?: boolean
   onBreakoutStateChange?: (value: GeneratedBreakoutState | undefined) => void
   onTrendAnalysisChange?: (value: TrendAnalysisRun | null) => void
+  asOfDate?: string
+  trendAnalysisOverride?: TrendAnalysisRun | null
 }
 
 const rising = '#ef5350'
@@ -175,6 +177,11 @@ export const compactCrosshairMarkerOptions = {
   crosshairMarkerBorderWidth: 1,
 } as const
 
+export function dailyBarsUrl(symbol: string, asOfDate?: string): string {
+  const base = `/api/instruments/${encodeURIComponent(symbol)}/daily-bars`
+  return asOfDate ? `${base}?end_date=${encodeURIComponent(asOfDate)}` : base
+}
+
 export function ChartCanvas({
   symbol,
   lineOnly = false,
@@ -199,6 +206,8 @@ export function ChartCanvas({
   trendIsolation = false,
   onBreakoutStateChange,
   onTrendAnalysisChange,
+  asOfDate,
+  trendAnalysisOverride,
 }: ChartCanvasProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -280,6 +289,12 @@ export function ChartCanvas({
   }, [trendIsolation])
 
   useEffect(() => {
+    if (trendAnalysisOverride !== undefined) {
+      setTrendAnalysis(trendAnalysisOverride)
+      setTrendAnalysisPreview(false)
+      setOverlayRevision(value => value + 1)
+      return
+    }
     if (!trendAnalysisEnabled) {
       setTrendAnalysis(null)
       setTrendAnalysisPreview(false)
@@ -312,7 +327,7 @@ export function ChartCanvas({
       controller?.abort()
       window.removeEventListener('stock-harness:trend-analysis-updated', onUpdated)
     }
-  }, [symbol, trendAnalysisEnabled])
+  }, [symbol, trendAnalysisEnabled, trendAnalysisOverride])
 
   useEffect(() => {
     const reload = () => setDrawings(loadSymbolDrawings(symbol))
@@ -643,7 +658,7 @@ export function ChartCanvas({
     setRangeSelection(undefined)
     setMeasurement(undefined)
     setState('loading')
-    fetch(`/api/instruments/${encodeURIComponent(symbol)}/daily-bars`, { signal: controller.signal })
+    fetch(dailyBarsUrl(symbol, asOfDate), { signal: controller.signal })
       .then(response => {
         if (!response.ok) throw new Error(`HTTP ${response.status}`)
         return response.json() as Promise<{ items: DailyBar[] }>
@@ -666,7 +681,7 @@ export function ChartCanvas({
         }
       })
     return () => controller.abort()
-  }, [symbol, replaceBars])
+  }, [symbol, asOfDate, replaceBars])
 
   useEffect(() => () => {
     manualRefreshControllerRef.current?.abort()
@@ -675,6 +690,7 @@ export function ChartCanvas({
 
   useEffect(() => {
     const onRefreshed = (event: Event) => {
+      if (asOfDate) return
       const detail = (event as CustomEvent<{
         symbol?: string
         mode?: 'provisional' | 'canonical' | 'final'
@@ -696,7 +712,7 @@ export function ChartCanvas({
     }
     window.addEventListener('stock-harness:latest-daily-refreshed', onRefreshed)
     return () => window.removeEventListener('stock-harness:latest-daily-refreshed', onRefreshed)
-  }, [symbol, replaceBars])
+  }, [symbol, asOfDate, replaceBars])
 
   const showManualRefreshFeedback = useCallback((value: 'success' | 'warning') => {
     window.clearTimeout(manualRefreshFeedbackTimerRef.current)
@@ -758,6 +774,7 @@ export function ChartCanvas({
   }, [symbol, replaceBars, showManualRefreshFeedback])
 
   useEffect(() => {
+    if (asOfDate) return
     let stopped = false
     let timer = 0
     let controller: AbortController | undefined
@@ -811,7 +828,7 @@ export function ChartCanvas({
       window.clearTimeout(timer)
       controller?.abort()
     }
-  }, [symbol, replaceBars])
+  }, [symbol, asOfDate, replaceBars])
 
   useEffect(() => {
     applyBucketRef.current = (bucket, preserve) => {
@@ -1410,7 +1427,7 @@ export function ChartCanvas({
                 ? '未获得新当日数据，已保留现有数据'
                 : '刷新当日标的'}
           aria-label="刷新当日标的"
-          disabled={manualRefreshing}
+          disabled={manualRefreshing || Boolean(asOfDate)}
           onClick={refreshIntradayNow}
         >{manualRefreshing
           ? <RefreshCw size={13}/>

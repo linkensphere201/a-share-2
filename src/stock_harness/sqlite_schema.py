@@ -427,6 +427,41 @@ CREATE TABLE IF NOT EXISTS generated_analysis_dirty_targets (
     FOREIGN KEY (target_id) REFERENCES generated_analysis_targets(target_id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS trend_review_cases (
+    review_id TEXT PRIMARY KEY,
+    instrument_id INTEGER NOT NULL,
+    schema_version TEXT NOT NULL,
+    dataset_version TEXT NOT NULL,
+    timeframe TEXT NOT NULL CHECK (timeframe = 'daily'),
+    horizon TEXT NOT NULL CHECK (horizon IN ('short', 'long')),
+    interval_start INTEGER NOT NULL,
+    interval_end INTEGER NOT NULL,
+    as_of_date INTEGER NOT NULL,
+    input_digest BLOB NOT NULL,
+    algorithm_version TEXT NOT NULL,
+    config_version TEXT NOT NULL,
+    settings_json TEXT NOT NULL,
+    classification TEXT NOT NULL,
+    review_status TEXT NOT NULL CHECK (
+        review_status IN ('proposed', 'ambiguous', 'confirmed', 'rejected')
+    ),
+    tags_json TEXT NOT NULL,
+    labels_json TEXT NOT NULL,
+    expected_json TEXT NOT NULL,
+    rationale TEXT NOT NULL,
+    sources_json TEXT NOT NULL,
+    revision INTEGER NOT NULL DEFAULT 1 CHECK (revision > 0),
+    created_at_ms INTEGER NOT NULL,
+    updated_at_ms INTEGER NOT NULL,
+    FOREIGN KEY (instrument_id) REFERENCES instruments(instrument_id)
+);
+
+CREATE INDEX IF NOT EXISTS trend_review_case_lookup
+ON trend_review_cases(instrument_id, as_of_date DESC, updated_at_ms DESC);
+
+CREATE INDEX IF NOT EXISTS trend_review_case_status
+ON trend_review_cases(review_status, updated_at_ms DESC);
+
 CREATE INDEX IF NOT EXISTS generated_analysis_dirty_claim
 ON generated_analysis_dirty_targets(lease_until_ms, queued_at_ms, target_id);
 

@@ -2,8 +2,10 @@ import { useEffect, useState } from 'react'
 import { Maximize2, Minimize2, Pencil, X } from 'lucide-react'
 import { ChartCanvas, type ChartIndicator, type GeneratedBreakoutState, type VisibleRange } from './ChartCanvas'
 import { TradingSystemControls } from './TradingSystemControls'
+import { TrendReviewPanel } from './TrendReviewPanel'
 import type { ChartWindowState } from './workspace'
 import type { TradingSystemWindowStates } from './tradingSystems'
+import { normalizeTrendTradingSystemSettings } from './tradingSystems'
 import type { ThemeDefinition } from './themeStore'
 import type { TrendAnalysisRun } from './trendAnalysisClient'
 
@@ -45,9 +47,16 @@ export function ChartWindow({
   const { chart, instrument } = windowState
   const [breakoutState, setBreakoutState] = useState<GeneratedBreakoutState>()
   const [trendAnalysis, setTrendAnalysis] = useState<TrendAnalysisRun | null>(null)
+  const [reviewOpen, setReviewOpen] = useState(false)
+  const [reviewContext, setReviewContext] = useState<{
+    asOfDate: string
+    analysis: TrendAnalysisRun
+  }>()
   useEffect(() => {
     setBreakoutState(undefined)
     setTrendAnalysis(null)
+    setReviewOpen(false)
+    setReviewContext(undefined)
   }, [instrument.symbol])
   return (
     <section className={focused ? 'instrument-window focused' : 'instrument-window'}>
@@ -78,6 +87,7 @@ export function ChartWindow({
           analysisRun={trendAnalysis}
           onChange={trend => onTradingSystemsChange({ ...chart.tradingSystems, trend })}
           onRecalculate={() => onTradingSystemRecalculate('trend')}
+          onReview={() => setReviewOpen(true)}
         />
         <ChartCanvas
           symbol={instrument.symbol}
@@ -100,10 +110,23 @@ export function ChartWindow({
           volumeZonesVisible={chart.tradingSystems.trend.layers['volume-zones'] !== false}
           patternsVisible={chart.tradingSystems.trend.layers.patterns !== false}
           breakoutStateVisible={chart.tradingSystems.trend.layers['breakout-state'] !== false}
-          trendIsolation={chart.tradingSystems.trend.isolate}
+          trendIsolation={chart.tradingSystems.trend.isolate || Boolean(reviewContext)}
+          asOfDate={reviewContext?.asOfDate}
+          trendAnalysisOverride={reviewContext?.analysis}
           onBreakoutStateChange={setBreakoutState}
           onTrendAnalysisChange={setTrendAnalysis}
         />
+        {reviewOpen && <TrendReviewPanel
+          symbol={instrument.symbol}
+          name={instrument.name}
+          settings={normalizeTrendTradingSystemSettings(chart.tradingSystems.trend.settings)}
+          currentAnalysis={trendAnalysis}
+          onContextChange={setReviewContext}
+          onClose={() => {
+            setReviewOpen(false)
+            setReviewContext(undefined)
+          }}
+        />}
       </div>
     </section>
   )
