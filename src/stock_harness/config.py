@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 
 import yaml
+
+from stock_harness.models import FuturesExchange
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,6 +81,43 @@ class EtfHoldingSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class FuturesCanonicalProviderSettings:
+    enabled: bool
+    provider: str
+    token_env: str
+    env_file: Path | None
+    requests_per_minute: float
+    timeout_seconds: float
+    retries: int
+    retry_wait_seconds: float
+    backoff_multiplier: float
+    api_url: str
+
+
+@dataclass(frozen=True, slots=True)
+class FuturesProvisionalProviderSettings:
+    enabled: bool
+    provider: str
+    request_timeout_seconds: float
+    retries: int
+    retry_wait_seconds: float
+    refresh_interval_seconds: int
+    stale_after_seconds: int
+    max_contracts: int
+    fallback_provider: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class FuturesSettings:
+    enabled: bool
+    exchanges: tuple[FuturesExchange, ...]
+    history_start: date
+    correction_window_trading_days: int
+    canonical: FuturesCanonicalProviderSettings
+    provisional: FuturesProvisionalProviderSettings
+
+
+@dataclass(frozen=True, slots=True)
 class RuntimeSettings:
     provider_name: str
     tushare: TushareSettings
@@ -92,6 +132,7 @@ class RuntimeSettings:
     auto_update: AutoUpdateSettings
     intraday: IntradaySettings
     etf_holdings: EtfHoldingSettings
+    futures: FuturesSettings
 
 
 def load_runtime_settings(provider_config: Path, storage_config: Path) -> RuntimeSettings:
@@ -124,6 +165,15 @@ def load_runtime_settings(provider_config: Path, storage_config: Path) -> Runtim
     etf_holdings = providers.get("etf_holdings", {})
     if not isinstance(etf_holdings, dict):
         raise ValueError("configuration section must be a mapping: providers.etf_holdings")
+    futures = providers.get("futures", {})
+    if not isinstance(futures, dict):
+        raise ValueError("configuration section must be a mapping: providers.futures")
+    futures_canonical = futures.get("canonical", {})
+    if not isinstance(futures_canonical, dict):
+        raise ValueError("configuration section must be a mapping: providers.futures.canonical")
+    futures_provisional = futures.get("provisional", {})
+    if not isinstance(futures_provisional, dict):
+        raise ValueError("configuration section must be a mapping: providers.futures.provisional")
     storage = _mapping(storage_data, "storage")
     database_path = _resolve_path(storage_config, str(storage.get("database_path", "../data/market.sqlite")))
     sqlite_cache_size_kib = int(storage.get("sqlite_cache_size_kib", 32_768))
@@ -203,10 +253,92 @@ def load_runtime_settings(provider_config: Path, storage_config: Path) -> Runtim
             max_symbols_per_run=max(1, int(etf_holdings.get("max_symbols_per_run", 25))),
             lookback_open_dates=max(1, int(etf_holdings.get("lookback_open_dates", 5))),
         ),
+        futures=_futures_settings(
+            provider_config,
+            futures,
+            futures_canonical,
+            futures_provisional,
+        ),
     )
 
 
-def load_provider_token(settings: TushareSettings) -> str:
+def _futures_settings(
+    provider_config: Path,
+    settings: dict[str, object],
+    canonical: dict[str, object],
+    provisional: dict[str, object],
+) -> FuturesSettings:
+    canonical_provider = str(canonical.get("provider", "tushare")).lower()
+    if canonical_provider != "tushare":
+        raise ValueError(f"unsupported futures canonical provider: {canonical_provider}")
+    provisional_provider = str(provisional.get("provider", "akshare")).lower()
+    if provisional_provider != "akshare":
+        raise ValueError(f"unsupported futures provisional provider: {provisional_provider}")
+    fallback_value = provisional.get("fallback_provider")
+    fallback_provider = str(fallback_value).lower() if fallback_value else None
+    if fallback_provider not in {None, "akshare-realtime"}:
+        raise ValueError(f"unsupported futures provisional fallback: {fallback_provider}")
+    exchange_values = settings.get("enabled_exchanges", tuple(item.value for item in FuturesExchange))
+    if not isinstance(exchange_values, (list, tuple)):
+        raise ValueError("providers.futures.enabled_exchanges must be a list")
+    try:
+        exchanges = tuple(dict.fromkeys(FuturesExchange(str(value).upper()) for value in exchange_values))
+    except ValueError as error:
+        raise ValueError(f"unsupported futures exchange: {error}") from error
+    if not exchanges:
+        raise ValueError("providers.futures.enabled_exchanges must not be empty")
+    env_file_value = canonical.get("env_file")
+    env_file = _resolve_path(provider_config, str(env_file_value)) if env_file_value else None
+    return FuturesSettings(
+        enabled=bool(settings.get("enabled", False)),
+        exchanges=exchanges,
+        history_start=_configuration_date(settings.get("history_start", "1990-01-01")),
+        correction_window_trading_days=max(
+            0, int(settings.get("correction_window_trading_days", 5))
+        ),
+        canonical=FuturesCanonicalProviderSettings(
+            enabled=bool(canonical.get("enabled", True)),
+            provider=canonical_provider,
+            token_env=str(canonical.get("token_env", "TUSHARE_TOKEN")),
+            env_file=env_file,
+            requests_per_minute=max(0.0, float(canonical.get("requests_per_minute", 120))),
+            timeout_seconds=max(1.0, float(canonical.get("timeout_seconds", 30))),
+            retries=max(0, int(canonical.get("retries", 4))),
+            retry_wait_seconds=max(0.0, float(canonical.get("retry_wait_seconds", 15))),
+            backoff_multiplier=max(1.0, float(canonical.get("backoff_multiplier", 2))),
+            api_url=str(canonical.get("api_url", "http://api.waditu.com/dataapi")),
+        ),
+        provisional=FuturesProvisionalProviderSettings(
+            enabled=bool(provisional.get("enabled", True)),
+            provider=provisional_provider,
+            request_timeout_seconds=max(
+                1.0, float(provisional.get("request_timeout_seconds", 8))
+            ),
+            retries=max(0, int(provisional.get("retries", 1))),
+            retry_wait_seconds=max(0.0, float(provisional.get("retry_wait_seconds", 1))),
+            refresh_interval_seconds=max(
+                10, int(provisional.get("refresh_interval_seconds", 30))
+            ),
+            stale_after_seconds=max(30, int(provisional.get("stale_after_seconds", 90))),
+            max_contracts=max(1, min(500, int(provisional.get("max_contracts", 50)))),
+            fallback_provider=fallback_provider,
+        ),
+    )
+
+
+def _configuration_date(value: object) -> date:
+    text = str(value)
+    if len(text) != 10 or text[4] != "-" or text[7] != "-":
+        raise ValueError(f"configuration date must use YYYY-MM-DD: {value}")
+    try:
+        return date.fromisoformat(text)
+    except ValueError as error:
+        raise ValueError(f"configuration date must use YYYY-MM-DD: {value}") from error
+
+
+def load_provider_token(
+    settings: TushareSettings | FuturesCanonicalProviderSettings,
+) -> str:
     token = os.environ.get(settings.token_env)
     if token:
         return token
