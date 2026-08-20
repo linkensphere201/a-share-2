@@ -2,6 +2,7 @@ from datetime import date
 
 from stock_harness.futures_backfill import run_futures_backfill
 from stock_harness.futures_provider import FuturesCatalog
+from stock_harness.futures_update import run_futures_increment
 from stock_harness.models import (
     FuturesBarState,
     FuturesCalendarDay,
@@ -123,3 +124,49 @@ def test_failed_contract_window_does_not_advance_cursor_or_remove_history() -> N
         assert len(store.list_futures_daily_bars(
             contract.symbol, date(2026, 8, 18), date(2026, 8, 20)
         )) == 1
+
+
+def test_futures_increment_refreshes_correction_window_and_missing_tail() -> None:
+    provider = _Provider()
+    contract = provider.catalog.contracts[0]
+    with SQLiteMarketDataStore(":memory:") as store:
+        store.upsert_futures_catalog(
+            provider.code, provider.catalog.products, provider.catalog.contracts,
+            provider.catalog.continuous_series,
+        )
+        store.upsert_futures_daily_bars(
+            provider.code, [_bar(contract, date(2026, 8, 18))]
+        )
+        store.checkpoint_futures_sync(
+            provider.code, "daily", "SHFE", contract.symbol,
+            date(2026, 8, 18), date(2026, 8, 18), 1,
+        )
+        result = run_futures_increment(
+            provider, store, [FuturesExchange.SHFE], date(2026, 8, 20), 2
+        )
+        assert provider.daily_calls == [(date(2026, 8, 19), date(2026, 8, 20))]
+        assert result.contracts_updated == 1
+        assert result.rows_changed == 2
+        state = store.get_futures_sync_state(
+            provider.code, "daily", "SHFE", contract.symbol
+        )
+        assert state.covered_through == date(2026, 8, 20)
+
+
+def test_zero_correction_window_skips_already_completed_contract() -> None:
+    provider = _Provider()
+    contract = provider.catalog.contracts[0]
+    with SQLiteMarketDataStore(":memory:") as store:
+        store.upsert_futures_catalog(
+            provider.code, provider.catalog.products, provider.catalog.contracts,
+            provider.catalog.continuous_series,
+        )
+        store.checkpoint_futures_sync(
+            provider.code, "daily", "SHFE", contract.symbol,
+            date(2026, 8, 18), date(2026, 8, 20), 3,
+        )
+        result = run_futures_increment(
+            provider, store, [FuturesExchange.SHFE], date(2026, 8, 20), 0
+        )
+        assert provider.daily_calls == []
+        assert result.contracts_updated == 0

@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Callable
 
 from stock_harness.config import RuntimeSettings, load_runtime_settings
+from stock_harness.futures_provider import TushareFuturesProvider
+from stock_harness.futures_update import run_futures_increment
 from stock_harness.list_data import refresh_list_data
 from stock_harness.models import InstrumentKind
 from stock_harness.sqlite_store import SQLiteMarketDataStore
@@ -58,10 +60,14 @@ class IncrementalUpdater:
         self,
         settings: RuntimeSettings,
         provider_factory: Callable[[], TushareDailyProvider] | None = None,
+        futures_provider_factory: Callable[[], TushareFuturesProvider] | None = None,
     ) -> None:
         self.settings = settings
         self._provider_factory = provider_factory or (
             lambda: TushareDailyProvider(settings.tushare)
+        )
+        self._futures_provider_factory = futures_provider_factory or (
+            lambda: TushareFuturesProvider(settings.futures.canonical)
         )
 
     def run_once(
@@ -149,6 +155,32 @@ class IncrementalUpdater:
             errors.extend(list_result.errors)
             if changed > 0 or store.has_dirty_custom_indices():
                 self._refresh_custom_indices(provider, store, completed_end, errors)
+            if self.settings.futures.enabled and self.settings.futures.canonical.enabled:
+                try:
+                    futures_result = run_futures_increment(
+                        self._futures_provider_factory(),
+                        store,
+                        self.settings.futures.exchanges,
+                        completed_end,
+                        self.settings.futures.correction_window_trading_days,
+                    )
+                    changed += futures_result.rows_changed
+                    errors.extend(
+                        f"futures: {item}" for item in futures_result.errors
+                    )
+                    LOGGER.info(
+                        "futures_auto_update_complete exchanges=%d contracts_checked=%d "
+                        "contracts_updated=%d rows_changed=%d mappings=%d errors=%d",
+                        futures_result.exchanges,
+                        futures_result.contracts_checked,
+                        futures_result.contracts_updated,
+                        futures_result.rows_changed,
+                        futures_result.mappings_written,
+                        len(futures_result.errors),
+                    )
+                except Exception as exc:
+                    LOGGER.exception("futures_auto_update_failed")
+                    errors.append(f"futures: {exc}")
             store.checkpoint("PASSIVE")
         return UpdateResult(
             len(trading_dates), checked, written, changed,

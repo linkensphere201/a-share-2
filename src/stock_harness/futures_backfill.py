@@ -58,7 +58,7 @@ def run_futures_backfill(
             store.upsert_futures_calendar(provider.code, calendar)
             store.record_futures_update_receipt(
                 provider.code, "calendar", exchange.value, end_date,
-                len(calendar), _calendar_digest(calendar),
+                len(calendar), futures_calendar_digest(calendar),
                 "complete" if calendar else "empty",
             )
         except Exception as error:
@@ -92,14 +92,14 @@ def run_futures_backfill(
                     bars = provider.fetch_contract_daily(
                         contract, window_start, window_end
                     )
-                    stats = _persist_daily_batches(provider.code, store, bars)
+                    stats = persist_futures_daily_batches(provider.code, store, bars)
                     store.checkpoint_futures_sync(
                         provider.code, "daily", exchange.value, contract.symbol,
                         window_start, window_end, len(bars),
                     )
                     store.record_futures_update_receipt(
                         provider.code, "daily", contract.symbol, window_end,
-                        len(bars), _daily_digest(bars),
+                        len(bars), futures_daily_digest(bars),
                         "complete" if bars else "empty",
                     )
                     completed += 1
@@ -158,7 +158,7 @@ def _missing_windows(
     return tuple((start, end) for start, end in windows if start <= end)
 
 
-def _persist_daily_batches(
+def persist_futures_daily_batches(
     source: str,
     store: SQLiteMarketDataStore,
     bars: Sequence[FuturesDailyBar],
@@ -171,7 +171,7 @@ def _persist_daily_batches(
     return changed
 
 
-def _daily_digest(bars: Sequence[FuturesDailyBar]) -> bytes:
+def futures_daily_digest(bars: Sequence[FuturesDailyBar]) -> bytes:
     payload = [
         [item.symbol, item.trading_day.isoformat(), item.open, item.high,
          item.low, item.close, item.volume_contracts, item.settlement,
@@ -181,7 +181,7 @@ def _daily_digest(bars: Sequence[FuturesDailyBar]) -> bytes:
     return _digest(payload)
 
 
-def _calendar_digest(days: Sequence[object]) -> bytes:
+def futures_calendar_digest(days: Sequence[object]) -> bytes:
     payload = [repr(item) for item in days]
     return _digest(payload)
 
