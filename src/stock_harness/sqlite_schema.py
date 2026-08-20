@@ -725,7 +725,7 @@ BEGIN
 END;
 """
 
-FUTURES_SCHEMA_VERSION = 1
+FUTURES_SCHEMA_VERSION = 2
 
 FUTURES_SCHEMA = """
 CREATE TABLE IF NOT EXISTS futures_products (
@@ -897,6 +897,154 @@ CREATE TABLE IF NOT EXISTS futures_update_receipts (
     PRIMARY KEY (source_id, dataset, scope, effective_date),
     FOREIGN KEY (source_id) REFERENCES sources(source_id)
 ) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS futures_continuous_builds (
+    series_instrument_id INTEGER PRIMARY KEY,
+    source_id INTEGER NOT NULL,
+    price_basis TEXT NOT NULL CHECK (
+        price_basis IN ('raw', 'backward-ratio', 'backward-additive')
+    ),
+    rule_version TEXT NOT NULL,
+    input_digest BLOB NOT NULL,
+    rebuilt_from INTEGER,
+    rebuilt_through INTEGER,
+    row_count INTEGER NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('complete', 'partial', 'failed')),
+    warnings_json TEXT NOT NULL,
+    updated_at_ms INTEGER NOT NULL,
+    FOREIGN KEY (series_instrument_id) REFERENCES futures_continuous_series(instrument_id),
+    FOREIGN KEY (source_id) REFERENCES sources(source_id)
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS futures_continuous_roll_events (
+    series_instrument_id INTEGER NOT NULL,
+    effective_from INTEGER NOT NULL,
+    first_output_day INTEGER NOT NULL,
+    outgoing_contract_instrument_id INTEGER NOT NULL,
+    incoming_contract_instrument_id INTEGER NOT NULL,
+    outgoing_close REAL,
+    incoming_close REAL,
+    adjustment_factor REAL,
+    adjustment_offset REAL,
+    rule_version TEXT NOT NULL,
+    input_digest BLOB NOT NULL,
+    updated_at_ms INTEGER NOT NULL,
+    PRIMARY KEY (series_instrument_id, effective_from),
+    FOREIGN KEY (series_instrument_id) REFERENCES futures_continuous_series(instrument_id),
+    FOREIGN KEY (outgoing_contract_instrument_id) REFERENCES futures_contracts(instrument_id),
+    FOREIGN KEY (incoming_contract_instrument_id) REFERENCES futures_contracts(instrument_id)
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS futures_continuous_dirty_series (
+    series_instrument_id INTEGER PRIMARY KEY,
+    dirty_from INTEGER NOT NULL,
+    reason TEXT NOT NULL,
+    updated_at_ms INTEGER NOT NULL,
+    FOREIGN KEY (series_instrument_id) REFERENCES futures_continuous_series(instrument_id)
+) WITHOUT ROWID;
+
+CREATE TRIGGER IF NOT EXISTS futures_continuous_dirty_after_contract_insert
+AFTER INSERT ON futures_daily_bars
+BEGIN
+    INSERT INTO futures_continuous_dirty_series(
+        series_instrument_id, dirty_from, reason, updated_at_ms
+    )
+    SELECT mapping.series_instrument_id, NEW.trading_day,
+           'mapped-contract-bar-inserted', NEW.updated_at_ms
+    FROM futures_roll_mappings AS mapping
+    WHERE mapping.contract_instrument_id = NEW.instrument_id
+      AND mapping.effective_from = (
+          SELECT max(active.effective_from)
+          FROM futures_roll_mappings AS active
+          WHERE active.source_id = mapping.source_id
+            AND active.series_instrument_id = mapping.series_instrument_id
+            AND active.effective_from <= NEW.trading_day
+      )
+    ON CONFLICT(series_instrument_id) DO UPDATE SET
+        dirty_from = min(dirty_from, excluded.dirty_from),
+        reason = excluded.reason,
+        updated_at_ms = excluded.updated_at_ms;
+END;
+
+CREATE TRIGGER IF NOT EXISTS futures_continuous_dirty_after_contract_update
+AFTER UPDATE ON futures_daily_bars
+WHEN OLD.open IS NOT NEW.open OR OLD.high IS NOT NEW.high
+  OR OLD.low IS NOT NEW.low OR OLD.close IS NOT NEW.close
+  OR OLD.provider_date IS NOT NEW.provider_date
+  OR OLD.previous_close IS NOT NEW.previous_close
+  OR OLD.settlement IS NOT NEW.settlement
+  OR OLD.previous_settlement IS NOT NEW.previous_settlement
+  OR OLD.volume_contracts IS NOT NEW.volume_contracts
+  OR OLD.amount_cny IS NOT NEW.amount_cny
+  OR OLD.open_interest_contracts IS NOT NEW.open_interest_contracts
+  OR OLD.open_interest_change_contracts IS NOT NEW.open_interest_change_contracts
+  OR OLD.delivery_settlement IS NOT NEW.delivery_settlement
+BEGIN
+    INSERT INTO futures_continuous_dirty_series(
+        series_instrument_id, dirty_from, reason, updated_at_ms
+    )
+    SELECT mapping.series_instrument_id, NEW.trading_day,
+           'mapped-contract-bar-corrected', NEW.updated_at_ms
+    FROM futures_roll_mappings AS mapping
+    WHERE mapping.contract_instrument_id = NEW.instrument_id
+      AND mapping.effective_from = (
+          SELECT max(active.effective_from)
+          FROM futures_roll_mappings AS active
+          WHERE active.source_id = mapping.source_id
+            AND active.series_instrument_id = mapping.series_instrument_id
+            AND active.effective_from <= NEW.trading_day
+      )
+    ON CONFLICT(series_instrument_id) DO UPDATE SET
+        dirty_from = min(dirty_from, excluded.dirty_from),
+        reason = excluded.reason,
+        updated_at_ms = excluded.updated_at_ms;
+END;
+
+CREATE TRIGGER IF NOT EXISTS futures_continuous_dirty_after_mapping_insert
+AFTER INSERT ON futures_roll_mappings
+BEGIN
+    INSERT INTO futures_continuous_dirty_series(
+        series_instrument_id, dirty_from, reason, updated_at_ms
+    ) VALUES (
+        NEW.series_instrument_id, NEW.effective_from,
+        'roll-mapping-inserted', NEW.updated_at_ms
+    )
+    ON CONFLICT(series_instrument_id) DO UPDATE SET
+        dirty_from = min(dirty_from, excluded.dirty_from),
+        reason = excluded.reason,
+        updated_at_ms = excluded.updated_at_ms;
+END;
+
+CREATE TRIGGER IF NOT EXISTS futures_continuous_dirty_after_mapping_update
+AFTER UPDATE OF contract_instrument_id ON futures_roll_mappings
+WHEN OLD.contract_instrument_id IS NOT NEW.contract_instrument_id
+BEGIN
+    INSERT INTO futures_continuous_dirty_series(
+        series_instrument_id, dirty_from, reason, updated_at_ms
+    ) VALUES (
+        NEW.series_instrument_id, NEW.effective_from,
+        'roll-mapping-corrected', NEW.updated_at_ms
+    )
+    ON CONFLICT(series_instrument_id) DO UPDATE SET
+        dirty_from = min(dirty_from, excluded.dirty_from),
+        reason = excluded.reason,
+        updated_at_ms = excluded.updated_at_ms;
+END;
+
+CREATE TRIGGER IF NOT EXISTS futures_continuous_dirty_after_mapping_delete
+AFTER DELETE ON futures_roll_mappings
+BEGIN
+    INSERT INTO futures_continuous_dirty_series(
+        series_instrument_id, dirty_from, reason, updated_at_ms
+    ) VALUES (
+        OLD.series_instrument_id, OLD.effective_from,
+        'roll-mapping-removed', OLD.updated_at_ms
+    )
+    ON CONFLICT(series_instrument_id) DO UPDATE SET
+        dirty_from = min(dirty_from, excluded.dirty_from),
+        reason = excluded.reason,
+        updated_at_ms = excluded.updated_at_ms;
+END;
 
 CREATE TABLE IF NOT EXISTS futures_schema_metadata (
     schema_version INTEGER PRIMARY KEY,

@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
+from stock_harness.futures_continuous import materialize_raw_continuous
 from stock_harness.models import (
     FuturesContinuousSeries,
     FuturesBarState,
@@ -100,7 +101,7 @@ def _bar(
 def test_new_store_applies_ready_futures_schema() -> None:
     with SQLiteMarketDataStore(":memory:") as store:
         assert store.futures_storage_status() == {
-            "ready": True, "schema_version": 1, "error": None,
+            "ready": True, "schema_version": 2, "error": None,
         }
         table = store._connection.execute(
             "SELECT name FROM sqlite_master WHERE name = 'futures_contracts'"
@@ -177,7 +178,7 @@ def test_newer_futures_schema_is_not_downgraded(tmp_path: Path) -> None:
         pass
     connection = sqlite3.connect(path)
     connection.execute(
-        "INSERT INTO futures_schema_metadata VALUES (2, 'ready', 1)"
+        "INSERT INTO futures_schema_metadata VALUES (3, 'ready', 1)"
     )
     connection.commit()
     connection.close()
@@ -191,7 +192,7 @@ def test_newer_futures_schema_is_not_downgraded(tmp_path: Path) -> None:
         versions = reopened._connection.execute(
             "SELECT schema_version FROM futures_schema_metadata ORDER BY schema_version"
         ).fetchall()
-        assert [int(item[0]) for item in versions] == [1, 2]
+        assert [int(item[0]) for item in versions] == [2, 3]
 
 
 def test_final_daily_storage_is_idempotent_and_preserves_futures_fields() -> None:
@@ -449,3 +450,69 @@ def test_futures_coverage_reports_field_completeness() -> None:
         assert coverage["rows"] == 1
         assert coverage["missing_settlement_rows"] == 1
         assert coverage["missing_open_interest_rows"] == 1
+
+
+def test_continuous_build_persists_roll_evidence_and_rebuilds_dirty_suffix() -> None:
+    product, first_contract, series = _catalog()
+    second_contract = replace(
+        first_contract,
+        symbol="FUT:SHFE:CU:202610", provider_symbol="CU2610.SHF",
+        contract_month="202610", display_name="Copper 2610",
+        last_trading_date=date(2026, 10, 15), delivery_date=date(2026, 10, 20),
+    )
+    first_day, roll_day = date(2026, 8, 19), date(2026, 8, 20)
+    mappings = [
+        FuturesRollMapping(
+            series.symbol, series.provider_symbol, first_day,
+            first_contract.symbol, first_contract.provider_symbol,
+        ),
+        FuturesRollMapping(
+            series.symbol, series.provider_symbol, roll_day,
+            second_contract.symbol, second_contract.provider_symbol,
+        ),
+    ]
+    first_bar = _bar(first_day, close=101)
+    outgoing_overlap = _bar(roll_day, close=103)
+    incoming_bar = replace(_bar(roll_day, close=108), symbol=second_contract.symbol)
+
+    with SQLiteMarketDataStore(":memory:") as store:
+        store.upsert_futures_catalog(
+            "tushare-futures", [product], [first_contract, second_contract], [series]
+        )
+        store.upsert_futures_roll_mappings("tushare-futures", mappings)
+        store.upsert_futures_daily_bars(
+            "tushare-futures", [first_bar, outgoing_overlap, incoming_bar]
+        )
+        assert store.get_futures_continuous_dirty_state(series.symbol)["dirty_from"] == first_day
+
+        full = materialize_raw_continuous(
+            series, mappings, [first_bar, outgoing_overlap, incoming_bar]
+        )
+        result = store.persist_futures_continuous_build("tushare-futures", full)
+        assert result["rows"] == 2
+        assert store.get_futures_continuous_dirty_state(series.symbol) is None
+        stored = store.list_futures_daily_bars(series.symbol, first_day, roll_day)
+        assert [item.mapped_contract_symbol for item in stored] == [
+            first_contract.symbol, second_contract.symbol,
+        ]
+        assert stored[-1].roll_event is True
+        rolls = store.list_futures_continuous_roll_events(series.symbol)
+        assert rolls[0]["effective_from"] == roll_day
+        assert rolls[0]["incoming_contract_symbol"] == second_contract.symbol
+        assert store.get_futures_continuous_build_status(series.symbol)["status"] == "complete"
+
+        corrected = replace(_bar(roll_day, close=110), symbol=second_contract.symbol)
+        store.upsert_futures_daily_bars("tushare-futures", [corrected])
+        assert store.get_futures_continuous_dirty_state(series.symbol)["dirty_from"] == roll_day
+        suffix = materialize_raw_continuous(
+            series, mappings, [first_bar, outgoing_overlap, corrected],
+            start_date=roll_day,
+        )
+        assert suffix.bars[0].roll_event is True
+        store.persist_futures_continuous_build(
+            "tushare-futures", suffix, rebuilt_from=roll_day
+        )
+        assert store.list_futures_daily_bars(
+            series.symbol, first_day, roll_day
+        )[-1].close == 110
+        assert store.get_futures_continuous_dirty_state(series.symbol) is None

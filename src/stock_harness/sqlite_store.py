@@ -31,6 +31,7 @@ from stock_harness.models import (
     FuturesDailyBar,
     FuturesExchange,
     FuturesLifecycleStatus,
+    FuturesPriceBasis,
     FuturesProduct,
     FuturesRollMapping,
     FuturesSyncState,
@@ -52,6 +53,7 @@ from stock_harness.custom_index import (
     calculate_bar,
     normalize_members,
 )
+from stock_harness.futures_continuous import FuturesContinuousBuild
 from stock_harness.analysis_results import (
     AnalysisNamespace,
     AnalysisRunRecord,
@@ -1417,6 +1419,300 @@ class SQLiteMarketDataStore:
                 "rows": int(row[7]),
                 "missing_settlement_rows": int(row[8]),
                 "missing_open_interest_rows": int(row[9]),
+            }
+            for row in rows
+        ]
+
+    def persist_futures_continuous_build(
+        self,
+        source: str,
+        build: FuturesContinuousBuild,
+        *,
+        rebuilt_from: date | None = None,
+    ) -> dict[str, object]:
+        self._require_futures_storage()
+        if len(build.input_digest) != 32:
+            raise ValueError("continuous build requires a SHA-256 input digest")
+        if any(
+            item.symbol != build.series_symbol
+            or item.state is not FuturesBarState.FINAL
+            or item.source != source
+            or item.mapped_contract_symbol is None
+            for item in build.bars
+        ):
+            raise ValueError("continuous build contains incompatible output bars")
+        if rebuilt_from is not None and any(
+            item.trading_day < rebuilt_from for item in build.bars
+        ):
+            raise ValueError("continuous suffix contains bars before rebuilt_from")
+        if (
+            rebuilt_from is not None
+            and build.price_basis is not FuturesPriceBasis.RAW
+        ):
+            raise ValueError(
+                "backward-adjusted continuous history requires a full rebuild"
+            )
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        with self._lock, self._transaction():
+            source_id = self._source_id(source)
+            series_row = self._connection.execute(
+                """
+                SELECT instrument.instrument_id, series.price_basis,
+                       series.rule_version
+                FROM futures_continuous_series AS series
+                JOIN instruments AS instrument USING (instrument_id)
+                WHERE instrument.symbol = ?
+                """,
+                (build.series_symbol,),
+            ).fetchone()
+            if series_row is None:
+                raise ValueError(f"unknown futures continuous series: {build.series_symbol}")
+            series_id = int(series_row[0])
+            if str(series_row[1]) != build.price_basis.value:
+                raise ValueError("continuous build price basis does not match catalog")
+            if str(series_row[2]) != build.rule_version:
+                raise ValueError("continuous build rule version does not match catalog")
+
+            mapped_symbols = {
+                item.mapped_contract_symbol for item in build.bars
+                if item.mapped_contract_symbol is not None
+            }
+            mapped_symbols.update(
+                value for item in build.rolls for value in (
+                    item.outgoing_contract_symbol, item.incoming_contract_symbol,
+                )
+            )
+            instrument_ids = self._instrument_ids(mapped_symbols)
+            missing = mapped_symbols - instrument_ids.keys()
+            if missing:
+                raise ValueError(
+                    "continuous build references unknown contracts: "
+                    + ", ".join(sorted(missing))
+                )
+
+            if rebuilt_from is None:
+                self._connection.execute(
+                    "DELETE FROM futures_daily_bars WHERE instrument_id = ?",
+                    (series_id,),
+                )
+                self._connection.execute(
+                    "DELETE FROM futures_continuous_roll_events "
+                    "WHERE series_instrument_id = ?",
+                    (series_id,),
+                )
+            else:
+                self._connection.execute(
+                    "DELETE FROM futures_daily_bars "
+                    "WHERE instrument_id = ? AND trading_day >= ?",
+                    (series_id, _date_key(rebuilt_from)),
+                )
+                self._connection.execute(
+                    "DELETE FROM futures_continuous_roll_events "
+                    "WHERE series_instrument_id = ? AND effective_from >= ?",
+                    (series_id, _date_key(rebuilt_from)),
+                )
+
+            for offset in range(0, len(build.bars), 2_000):
+                self._connection.executemany(
+                    """
+                    INSERT INTO futures_daily_bars(
+                        instrument_id, trading_day, provider_date, open, high, low,
+                        close, previous_close, settlement, previous_settlement,
+                        volume_contracts, amount_cny, open_interest_contracts,
+                        open_interest_change_contracts, delivery_settlement,
+                        mapped_contract_instrument_id, roll_event, source_id, updated_at_ms
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        (
+                            series_id, _date_key(item.trading_day),
+                            _date_key(item.provider_date), item.open, item.high,
+                            item.low, item.close, item.previous_close,
+                            item.settlement, item.previous_settlement,
+                            item.volume_contracts, item.amount,
+                            item.open_interest_contracts,
+                            item.open_interest_change_contracts,
+                            item.delivery_settlement,
+                            instrument_ids[item.mapped_contract_symbol],
+                            int(item.roll_event), source_id, now_ms,
+                        )
+                        for item in build.bars[offset:offset + 2_000]
+                    ),
+                )
+            self._connection.executemany(
+                """
+                INSERT INTO futures_continuous_roll_events(
+                    series_instrument_id, effective_from, first_output_day,
+                    outgoing_contract_instrument_id, incoming_contract_instrument_id,
+                    outgoing_close, incoming_close, adjustment_factor,
+                    adjustment_offset, rule_version, input_digest, updated_at_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    (
+                        series_id, _date_key(item.effective_from),
+                        _date_key(item.first_output_day),
+                        instrument_ids[item.outgoing_contract_symbol],
+                        instrument_ids[item.incoming_contract_symbol],
+                        item.outgoing_close, item.incoming_close,
+                        item.adjustment_factor, item.adjustment_offset,
+                        build.rule_version, build.input_digest, now_ms,
+                    )
+                    for item in build.rolls
+                ),
+            )
+            warnings_json = json.dumps(
+                [
+                    {
+                        "code": item.code,
+                        "trading_day": item.trading_day.isoformat(),
+                        "contract_symbol": item.contract_symbol,
+                        "message": item.message,
+                    }
+                    for item in build.warnings
+                ],
+                separators=(",", ":"),
+            )
+            first_day = min((item.trading_day for item in build.bars), default=None)
+            last_day = max((item.trading_day for item in build.bars), default=None)
+            status = "partial" if build.warnings else "complete"
+            self._connection.execute(
+                """
+                INSERT INTO futures_continuous_builds(
+                    series_instrument_id, source_id, price_basis, rule_version,
+                    input_digest, rebuilt_from, rebuilt_through, row_count,
+                    status, warnings_json, updated_at_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(series_instrument_id) DO UPDATE SET
+                    source_id = excluded.source_id,
+                    price_basis = excluded.price_basis,
+                    rule_version = excluded.rule_version,
+                    input_digest = excluded.input_digest,
+                    rebuilt_from = excluded.rebuilt_from,
+                    rebuilt_through = excluded.rebuilt_through,
+                    row_count = excluded.row_count,
+                    status = excluded.status,
+                    warnings_json = excluded.warnings_json,
+                    updated_at_ms = excluded.updated_at_ms
+                """,
+                (
+                    series_id, source_id, build.price_basis.value,
+                    build.rule_version, build.input_digest,
+                    _date_key(rebuilt_from or first_day) if (rebuilt_from or first_day) else None,
+                    _date_key(last_day) if last_day else None,
+                    len(build.bars), status, warnings_json, now_ms,
+                ),
+            )
+            if rebuilt_from is None:
+                self._connection.execute(
+                    "DELETE FROM futures_continuous_dirty_series "
+                    "WHERE series_instrument_id = ?",
+                    (series_id,),
+                )
+            else:
+                self._connection.execute(
+                    "DELETE FROM futures_continuous_dirty_series "
+                    "WHERE series_instrument_id = ? AND dirty_from >= ?",
+                    (series_id, _date_key(rebuilt_from)),
+                )
+        return {
+            "series_symbol": build.series_symbol,
+            "price_basis": build.price_basis.value,
+            "rule_version": build.rule_version,
+            "rebuilt_from": rebuilt_from or first_day,
+            "rebuilt_through": last_day,
+            "rows": len(build.bars), "rolls": len(build.rolls),
+            "status": status, "warnings": len(build.warnings),
+            "input_digest": build.input_digest,
+        }
+
+    def get_futures_continuous_build_status(
+        self, series_symbol: str
+    ) -> dict[str, object] | None:
+        self._require_futures_storage()
+        with self._lock:
+            row = self._connection.execute(
+                """
+                SELECT source.code, series.price_basis, series.rule_version,
+                       build.input_digest, build.rebuilt_from,
+                       build.rebuilt_through, build.row_count, build.status,
+                       build.warnings_json, build.updated_at_ms
+                FROM futures_continuous_builds AS build
+                JOIN futures_continuous_series AS series
+                  ON series.instrument_id = build.series_instrument_id
+                JOIN instruments AS instrument
+                  ON instrument.instrument_id = build.series_instrument_id
+                JOIN sources AS source ON source.source_id = build.source_id
+                WHERE instrument.symbol = ?
+                """,
+                (series_symbol,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "source": str(row[0]), "price_basis": str(row[1]),
+            "rule_version": str(row[2]), "input_digest": bytes(row[3]),
+            "rebuilt_from": _date_from_key(int(row[4])) if row[4] is not None else None,
+            "rebuilt_through": _date_from_key(int(row[5])) if row[5] is not None else None,
+            "rows": int(row[6]), "status": str(row[7]),
+            "warnings": json.loads(str(row[8])), "updated_at_ms": int(row[9]),
+        }
+
+    def get_futures_continuous_dirty_state(
+        self, series_symbol: str
+    ) -> dict[str, object] | None:
+        self._require_futures_storage()
+        with self._lock:
+            row = self._connection.execute(
+                """
+                SELECT dirty.dirty_from, dirty.reason, dirty.updated_at_ms
+                FROM futures_continuous_dirty_series AS dirty
+                JOIN instruments AS instrument
+                  ON instrument.instrument_id = dirty.series_instrument_id
+                WHERE instrument.symbol = ?
+                """,
+                (series_symbol,),
+            ).fetchone()
+        return None if row is None else {
+            "dirty_from": _date_from_key(int(row[0])),
+            "reason": str(row[1]), "updated_at_ms": int(row[2]),
+        }
+
+    def list_futures_continuous_roll_events(
+        self, series_symbol: str
+    ) -> list[dict[str, object]]:
+        self._require_futures_storage()
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT event.effective_from, event.first_output_day,
+                       outgoing.symbol, incoming.symbol,
+                       event.outgoing_close, event.incoming_close,
+                       event.adjustment_factor, event.adjustment_offset,
+                       event.rule_version, event.input_digest
+                FROM futures_continuous_roll_events AS event
+                JOIN instruments AS series
+                  ON series.instrument_id = event.series_instrument_id
+                JOIN instruments AS outgoing
+                  ON outgoing.instrument_id = event.outgoing_contract_instrument_id
+                JOIN instruments AS incoming
+                  ON incoming.instrument_id = event.incoming_contract_instrument_id
+                WHERE series.symbol = ?
+                ORDER BY event.effective_from
+                """,
+                (series_symbol,),
+            ).fetchall()
+        return [
+            {
+                "effective_from": _date_from_key(int(row[0])),
+                "first_output_day": _date_from_key(int(row[1])),
+                "outgoing_contract_symbol": str(row[2]),
+                "incoming_contract_symbol": str(row[3]),
+                "outgoing_close": float(row[4]) if row[4] is not None else None,
+                "incoming_close": float(row[5]) if row[5] is not None else None,
+                "adjustment_factor": float(row[6]) if row[6] is not None else None,
+                "adjustment_offset": float(row[7]) if row[7] is not None else None,
+                "rule_version": str(row[8]), "input_digest": bytes(row[9]),
             }
             for row in rows
         ]
