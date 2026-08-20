@@ -724,3 +724,183 @@ BEGIN
       AND status IN ('queued', 'running', 'partial', 'failed');
 END;
 """
+
+FUTURES_SCHEMA_VERSION = 1
+
+FUTURES_SCHEMA = """
+CREATE TABLE IF NOT EXISTS futures_products (
+    instrument_id INTEGER PRIMARY KEY,
+    product_code TEXT NOT NULL,
+    exchange TEXT NOT NULL,
+    multiplier REAL,
+    per_unit REAL,
+    trading_unit TEXT NOT NULL,
+    quote_unit TEXT NOT NULL,
+    source_id INTEGER NOT NULL,
+    updated_at_ms INTEGER NOT NULL,
+    UNIQUE (exchange, product_code),
+    FOREIGN KEY (instrument_id) REFERENCES instruments(instrument_id),
+    FOREIGN KEY (source_id) REFERENCES sources(source_id)
+);
+
+CREATE TABLE IF NOT EXISTS futures_contracts (
+    instrument_id INTEGER PRIMARY KEY,
+    product_instrument_id INTEGER NOT NULL,
+    provider_symbol TEXT NOT NULL,
+    contract_month TEXT NOT NULL,
+    listed_on INTEGER NOT NULL,
+    last_trading_date INTEGER NOT NULL,
+    delivery_date INTEGER,
+    multiplier REAL,
+    per_unit REAL,
+    trading_unit TEXT NOT NULL,
+    quote_unit TEXT NOT NULL,
+    lifecycle_status TEXT NOT NULL CHECK (
+        lifecycle_status IN ('pending', 'listed', 'trading', 'expired', 'delivered', 'delisted')
+    ),
+    source_id INTEGER NOT NULL,
+    updated_at_ms INTEGER NOT NULL,
+    UNIQUE (source_id, provider_symbol),
+    UNIQUE (product_instrument_id, contract_month),
+    FOREIGN KEY (instrument_id) REFERENCES instruments(instrument_id),
+    FOREIGN KEY (product_instrument_id) REFERENCES futures_products(instrument_id),
+    FOREIGN KEY (source_id) REFERENCES sources(source_id)
+);
+
+CREATE INDEX IF NOT EXISTS futures_contracts_lifecycle
+ON futures_contracts(lifecycle_status, last_trading_date, product_instrument_id);
+
+CREATE TABLE IF NOT EXISTS futures_continuous_series (
+    instrument_id INTEGER PRIMARY KEY,
+    product_instrument_id INTEGER NOT NULL,
+    provider_symbol TEXT NOT NULL,
+    series_kind TEXT NOT NULL CHECK (series_kind IN ('main', 'continuous')),
+    series_variant TEXT NOT NULL,
+    price_basis TEXT NOT NULL CHECK (
+        price_basis IN ('raw', 'backward-ratio', 'backward-additive')
+    ),
+    rule_version TEXT NOT NULL,
+    source_id INTEGER NOT NULL,
+    updated_at_ms INTEGER NOT NULL,
+    UNIQUE (source_id, provider_symbol, price_basis),
+    FOREIGN KEY (instrument_id) REFERENCES instruments(instrument_id),
+    FOREIGN KEY (product_instrument_id) REFERENCES futures_products(instrument_id),
+    FOREIGN KEY (source_id) REFERENCES sources(source_id)
+);
+
+CREATE TABLE IF NOT EXISTS futures_daily_bars (
+    instrument_id INTEGER NOT NULL,
+    trading_day INTEGER NOT NULL,
+    provider_date INTEGER NOT NULL,
+    open REAL NOT NULL,
+    high REAL NOT NULL,
+    low REAL NOT NULL,
+    close REAL NOT NULL,
+    previous_close REAL,
+    settlement REAL,
+    previous_settlement REAL,
+    volume_contracts INTEGER NOT NULL,
+    amount_cny REAL,
+    open_interest_contracts REAL,
+    open_interest_change_contracts REAL,
+    delivery_settlement REAL,
+    mapped_contract_instrument_id INTEGER,
+    roll_event INTEGER NOT NULL DEFAULT 0 CHECK (roll_event IN (0, 1)),
+    source_id INTEGER NOT NULL,
+    updated_at_ms INTEGER NOT NULL,
+    PRIMARY KEY (instrument_id, trading_day),
+    FOREIGN KEY (instrument_id) REFERENCES instruments(instrument_id),
+    FOREIGN KEY (mapped_contract_instrument_id) REFERENCES futures_contracts(instrument_id),
+    FOREIGN KEY (source_id) REFERENCES sources(source_id)
+) WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS futures_daily_bars_date
+ON futures_daily_bars(trading_day, instrument_id);
+
+CREATE TABLE IF NOT EXISTS futures_exchange_calendar (
+    source_id INTEGER NOT NULL,
+    exchange TEXT NOT NULL,
+    calendar_date INTEGER NOT NULL,
+    is_open INTEGER NOT NULL CHECK (is_open IN (0, 1)),
+    previous_trading_day INTEGER,
+    updated_at_ms INTEGER NOT NULL,
+    PRIMARY KEY (source_id, exchange, calendar_date),
+    FOREIGN KEY (source_id) REFERENCES sources(source_id)
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS futures_roll_mappings (
+    source_id INTEGER NOT NULL,
+    series_instrument_id INTEGER NOT NULL,
+    effective_from INTEGER NOT NULL,
+    contract_instrument_id INTEGER NOT NULL,
+    updated_at_ms INTEGER NOT NULL,
+    PRIMARY KEY (source_id, series_instrument_id, effective_from),
+    FOREIGN KEY (source_id) REFERENCES sources(source_id),
+    FOREIGN KEY (series_instrument_id) REFERENCES futures_continuous_series(instrument_id),
+    FOREIGN KEY (contract_instrument_id) REFERENCES futures_contracts(instrument_id)
+) WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS futures_roll_mapping_contract
+ON futures_roll_mappings(contract_instrument_id, effective_from);
+
+CREATE TABLE IF NOT EXISTS futures_provisional_daily_bars (
+    instrument_id INTEGER NOT NULL,
+    trading_day INTEGER NOT NULL,
+    provider_date INTEGER NOT NULL,
+    open REAL NOT NULL,
+    high REAL NOT NULL,
+    low REAL NOT NULL,
+    close REAL NOT NULL,
+    previous_close REAL,
+    previous_settlement REAL,
+    volume_contracts INTEGER NOT NULL,
+    open_interest_contracts REAL,
+    source_id INTEGER NOT NULL,
+    provider_time TEXT NOT NULL,
+    received_at TEXT NOT NULL,
+    takeover_state TEXT NOT NULL CHECK (
+        takeover_state IN ('active', 'canonical-taken-over')
+    ),
+    stale INTEGER NOT NULL DEFAULT 0 CHECK (stale IN (0, 1)),
+    updated_at_ms INTEGER NOT NULL,
+    PRIMARY KEY (instrument_id, trading_day, source_id),
+    FOREIGN KEY (instrument_id) REFERENCES futures_contracts(instrument_id),
+    FOREIGN KEY (source_id) REFERENCES sources(source_id)
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS futures_sync_states (
+    source_id INTEGER NOT NULL,
+    dataset TEXT NOT NULL,
+    scope TEXT NOT NULL,
+    identity TEXT NOT NULL,
+    covered_from INTEGER NOT NULL,
+    covered_through INTEGER NOT NULL,
+    last_batch_rows INTEGER NOT NULL,
+    updated_at_ms INTEGER NOT NULL,
+    PRIMARY KEY (source_id, dataset, scope, identity),
+    FOREIGN KEY (source_id) REFERENCES sources(source_id)
+) WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS futures_sync_states_coverage
+ON futures_sync_states(dataset, scope, covered_through, identity);
+
+CREATE TABLE IF NOT EXISTS futures_update_receipts (
+    source_id INTEGER NOT NULL,
+    dataset TEXT NOT NULL,
+    scope TEXT NOT NULL,
+    effective_date INTEGER NOT NULL,
+    row_count INTEGER NOT NULL,
+    payload_hash BLOB NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('complete', 'empty', 'partial', 'rejected')),
+    message TEXT NOT NULL,
+    updated_at_ms INTEGER NOT NULL,
+    PRIMARY KEY (source_id, dataset, scope, effective_date),
+    FOREIGN KEY (source_id) REFERENCES sources(source_id)
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS futures_schema_metadata (
+    schema_version INTEGER PRIMARY KEY,
+    state TEXT NOT NULL CHECK (state = 'ready'),
+    applied_at_ms INTEGER NOT NULL
+);
+"""

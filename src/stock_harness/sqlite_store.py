@@ -6,6 +6,7 @@ import sqlite3
 import threading
 import time
 import json
+import logging
 from uuid import uuid4
 from contextlib import AbstractContextManager
 from collections.abc import Sequence
@@ -22,6 +23,11 @@ from stock_harness.models import (
     InstrumentCoverage,
     InstrumentKind,
     EtfHolding,
+    FuturesContinuousSeries,
+    FuturesContract,
+    FuturesExchange,
+    FuturesLifecycleStatus,
+    FuturesProduct,
     MarketSnapshot,
     ProviderIncident,
     ProvisionalDailyBar,
@@ -62,7 +68,14 @@ from stock_harness.sqlite_mapping import (
 from stock_harness.sqlite_runtime import InterprocessWriterLock, ThreadOnlyWriterLock, Transaction
 
 
-from stock_harness.sqlite_schema import SCHEMA as _SCHEMA
+from stock_harness.sqlite_schema import (
+    FUTURES_SCHEMA as _FUTURES_SCHEMA,
+    FUTURES_SCHEMA_VERSION as _FUTURES_SCHEMA_VERSION,
+    SCHEMA as _SCHEMA,
+)
+
+
+LOGGER = logging.getLogger(__name__)
 
 _CUSTOM_GROUP_ROLES = {
     "", "sentiment_anchor", "liquidity_anchor", "bellwether",
@@ -178,6 +191,9 @@ class SQLiteMarketDataStore:
         self._configure()
         with self._writer_lock:
             self._connection.executescript(_SCHEMA)
+        self._futures_storage_ready = False
+        self._futures_storage_error: str | None = None
+        self._ensure_futures_schema()
         self._ensure_custom_index_volume()
         self._ensure_custom_group_member_roles()
         self._ensure_market_snapshot_metrics()
@@ -193,6 +209,58 @@ class SQLiteMarketDataStore:
     def close(self) -> None:
         with self._lock:
             self._connection.close()
+
+    def futures_storage_status(self) -> dict[str, object]:
+        return {
+            "ready": self._futures_storage_ready,
+            "schema_version": (
+                _FUTURES_SCHEMA_VERSION if self._futures_storage_ready else None
+            ),
+            "error": self._futures_storage_error,
+        }
+
+    def _ensure_futures_schema(self) -> None:
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        with self._lock, self._writer_lock:
+            try:
+                self._connection.executescript("BEGIN IMMEDIATE;\n" + _FUTURES_SCHEMA)
+                newest = self._connection.execute(
+                    "SELECT max(schema_version) FROM futures_schema_metadata"
+                ).fetchone()[0]
+                if newest is not None and int(newest) > _FUTURES_SCHEMA_VERSION:
+                    raise RuntimeError(
+                        "futures schema is newer than this application: "
+                        f"{newest} > {_FUTURES_SCHEMA_VERSION}"
+                    )
+                self._connection.execute(
+                    """
+                    INSERT INTO futures_schema_metadata(schema_version, state, applied_at_ms)
+                    VALUES (?, 'ready', ?)
+                    ON CONFLICT(schema_version) DO NOTHING
+                    """,
+                    (_FUTURES_SCHEMA_VERSION, now_ms),
+                )
+                self._connection.execute("COMMIT")
+                self._futures_storage_ready = True
+                self._futures_storage_error = None
+            except Exception as error:
+                if self._connection.in_transaction:
+                    self._connection.execute("ROLLBACK")
+                self._futures_storage_ready = False
+                self._futures_storage_error = " ".join(str(error).split())[:500]
+                LOGGER.error(
+                    "futures_schema_migration_failed version=%s error=%s",
+                    _FUTURES_SCHEMA_VERSION,
+                    self._futures_storage_error,
+                    exc_info=True,
+                )
+
+    def _require_futures_storage(self) -> None:
+        if not self._futures_storage_ready:
+            raise RuntimeError(
+                "futures storage is unavailable: "
+                + (self._futures_storage_error or "schema is not ready")
+            )
 
     def checkpoint(self, mode: str = "PASSIVE") -> tuple[int, int, int]:
         mode = mode.upper()
@@ -273,6 +341,214 @@ class SQLiteMarketDataStore:
             changed = [item for item in instruments if existing_names.get(item.symbol) != item.name]
             self._replace_pinyin_aliases_locked(changed)
         return len(rows)
+
+    def upsert_futures_catalog(
+        self,
+        source: str,
+        products: Sequence[FuturesProduct],
+        contracts: Sequence[FuturesContract],
+        continuous_series: Sequence[FuturesContinuousSeries],
+    ) -> dict[str, int]:
+        self._require_futures_storage()
+        for item in products:
+            item.validate()
+        for item in contracts:
+            item.validate()
+        for item in continuous_series:
+            item.validate()
+        product_symbols = {item.symbol for item in products}
+        referenced_products = {
+            item.product_symbol for item in (*contracts, *continuous_series)
+        }
+        missing_products = referenced_products - product_symbols
+        if missing_products:
+            raise ValueError(
+                "futures catalog has missing products: "
+                + ", ".join(sorted(missing_products))
+            )
+        instruments = [
+            *(
+                Instrument(
+                    item.symbol, item.display_name, InstrumentKind.FUTURES_PRODUCT,
+                    item.exchange.value, item.active,
+                )
+                for item in products
+            ),
+            *(
+                Instrument(
+                    item.symbol, item.display_name, InstrumentKind.FUTURES_CONTRACT,
+                    item.exchange.value,
+                    item.lifecycle_status in {
+                        FuturesLifecycleStatus.PENDING,
+                        FuturesLifecycleStatus.LISTED,
+                        FuturesLifecycleStatus.TRADING,
+                    },
+                )
+                for item in contracts
+            ),
+            *(
+                Instrument(
+                    item.symbol, item.display_name, InstrumentKind.FUTURES_CONTINUOUS,
+                    item.exchange.value, item.active,
+                )
+                for item in continuous_series
+            ),
+        ]
+        if len({item.symbol for item in instruments}) != len(instruments):
+            raise ValueError("futures catalog contains duplicate canonical symbols")
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        with self._lock, self._transaction():
+            source_id = self._source_id(source)
+            existing_names = self._instrument_names({item.symbol for item in instruments})
+            self._connection.executemany(
+                """
+                INSERT INTO instruments(symbol, name, kind, exchange, active)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(symbol) DO UPDATE SET
+                    name = excluded.name,
+                    kind = excluded.kind,
+                    exchange = excluded.exchange,
+                    active = excluded.active
+                """,
+                (
+                    (item.symbol, item.name, item.kind.value, item.exchange, int(item.active))
+                    for item in instruments
+                ),
+            )
+            changed = [
+                item for item in instruments
+                if existing_names.get(item.symbol) != item.name
+            ]
+            self._replace_pinyin_aliases_locked(changed)
+            instrument_ids = self._instrument_ids({item.symbol for item in instruments})
+            self._connection.executemany(
+                """
+                INSERT INTO futures_products(
+                    instrument_id, product_code, exchange, multiplier, per_unit,
+                    trading_unit, quote_unit, source_id, updated_at_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(instrument_id) DO UPDATE SET
+                    product_code = excluded.product_code,
+                    exchange = excluded.exchange,
+                    multiplier = excluded.multiplier,
+                    per_unit = excluded.per_unit,
+                    trading_unit = excluded.trading_unit,
+                    quote_unit = excluded.quote_unit,
+                    source_id = excluded.source_id,
+                    updated_at_ms = excluded.updated_at_ms
+                """,
+                (
+                    (
+                        instrument_ids[item.symbol], item.product_code,
+                        item.exchange.value, item.multiplier, item.per_unit,
+                        item.trading_unit, item.quote_unit, source_id, now_ms,
+                    )
+                    for item in products
+                ),
+            )
+            self._connection.executemany(
+                """
+                INSERT INTO futures_contracts(
+                    instrument_id, product_instrument_id, provider_symbol,
+                    contract_month, listed_on, last_trading_date, delivery_date,
+                    multiplier, per_unit, trading_unit, quote_unit,
+                    lifecycle_status, source_id, updated_at_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(instrument_id) DO UPDATE SET
+                    product_instrument_id = excluded.product_instrument_id,
+                    provider_symbol = excluded.provider_symbol,
+                    contract_month = excluded.contract_month,
+                    listed_on = excluded.listed_on,
+                    last_trading_date = excluded.last_trading_date,
+                    delivery_date = excluded.delivery_date,
+                    multiplier = excluded.multiplier,
+                    per_unit = excluded.per_unit,
+                    trading_unit = excluded.trading_unit,
+                    quote_unit = excluded.quote_unit,
+                    lifecycle_status = excluded.lifecycle_status,
+                    source_id = excluded.source_id,
+                    updated_at_ms = excluded.updated_at_ms
+                """,
+                (
+                    (
+                        instrument_ids[item.symbol], instrument_ids[item.product_symbol],
+                        item.provider_symbol, item.contract_month,
+                        _date_key(item.listed_on), _date_key(item.last_trading_date),
+                        _date_key(item.delivery_date) if item.delivery_date else None,
+                        item.multiplier, item.per_unit, item.trading_unit,
+                        item.quote_unit, item.lifecycle_status.value, source_id, now_ms,
+                    )
+                    for item in contracts
+                ),
+            )
+            self._connection.executemany(
+                """
+                INSERT INTO futures_continuous_series(
+                    instrument_id, product_instrument_id, provider_symbol,
+                    series_kind, series_variant, price_basis, rule_version,
+                    source_id, updated_at_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(instrument_id) DO UPDATE SET
+                    product_instrument_id = excluded.product_instrument_id,
+                    provider_symbol = excluded.provider_symbol,
+                    series_kind = excluded.series_kind,
+                    series_variant = excluded.series_variant,
+                    price_basis = excluded.price_basis,
+                    rule_version = excluded.rule_version,
+                    source_id = excluded.source_id,
+                    updated_at_ms = excluded.updated_at_ms
+                """,
+                (
+                    (
+                        instrument_ids[item.symbol], instrument_ids[item.product_symbol],
+                        item.provider_symbol, item.series_kind.value,
+                        item.series_variant, item.price_basis.value,
+                        item.rule_version, source_id, now_ms,
+                    )
+                    for item in continuous_series
+                ),
+            )
+        return {
+            "products": len(products),
+            "contracts": len(contracts),
+            "continuous_series": len(continuous_series),
+        }
+
+    def list_futures_contracts(self) -> list[FuturesContract]:
+        self._require_futures_storage()
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT instrument.symbol, contract.provider_symbol,
+                       product_instrument.symbol, instrument.name, contract.contract_month,
+                       contract.listed_on, contract.last_trading_date,
+                       contract.delivery_date, contract.multiplier, contract.per_unit,
+                       contract.trading_unit, contract.quote_unit,
+                       contract.lifecycle_status, instrument.exchange
+                FROM futures_contracts AS contract
+                JOIN instruments AS instrument USING (instrument_id)
+                JOIN instruments AS product_instrument
+                  ON product_instrument.instrument_id = contract.product_instrument_id
+                ORDER BY instrument.symbol
+                """
+            ).fetchall()
+        return [
+            FuturesContract(
+                symbol=str(row[0]), provider_symbol=str(row[1]),
+                product_symbol=str(row[2]), display_name=str(row[3]),
+                exchange=FuturesExchange(str(row[13])), contract_month=str(row[4]),
+                listed_on=_date_from_key(int(row[5])),
+                last_trading_date=_date_from_key(int(row[6])),
+                delivery_date=(
+                    _date_from_key(int(row[7])) if row[7] is not None else None
+                ),
+                multiplier=float(row[8]) if row[8] is not None else None,
+                per_unit=float(row[9]) if row[9] is not None else None,
+                trading_unit=str(row[10]), quote_unit=str(row[11]),
+                lifecycle_status=FuturesLifecycleStatus(str(row[12])),
+            )
+            for row in rows
+        ]
 
     def upsert_catalog_entries(self, entries: Sequence[CatalogEntry]) -> int:
         if not entries:
