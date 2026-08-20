@@ -35,6 +35,7 @@ export function InstrumentEditor({
   const canSave = Boolean(target) && (target?.type !== 'chart' || draft.length === 1)
 
   const addInstrument = (instrument: Instrument) => {
+    if (instrument.kind === 'futures-product') return
     if (target?.type === 'chart') {
       setDraft([instrument])
     } else if (!selectedSymbols.has(instrument.symbol)) {

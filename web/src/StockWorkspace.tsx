@@ -159,8 +159,9 @@ export function StockWorkspace() {
     updateActiveGroup(group => {
       const source = group.windows.find(item => item.id === id)
       if (!source || source.mode !== 'detached') return group
+      const selectable = instruments.filter(item => item.kind !== 'futures-product')
       if (source.type === 'chart') {
-        const instrument = instruments[0]
+        const instrument = selectable[0]
         if (!instrument || instrument.kind === 'custom-group') return group
         return {
           ...group,
@@ -169,12 +170,12 @@ export function StockWorkspace() {
             : item),
         }
       }
-      const nextSelection = instruments.find(item => item.symbol === source.selectedSymbol) ?? instruments[0]
+      const nextSelection = selectable.find(item => item.symbol === source.selectedSymbol) ?? selectable[0]
       const updated = {
         ...group,
         windows: group.windows.map(item => item.id === id ? {
           ...source,
-          content: { ...source.content, instruments },
+          content: { ...source.content, instruments: selectable },
           selectedSymbol: nextSelection?.symbol,
         } : item),
       }

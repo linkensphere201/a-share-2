@@ -10,6 +10,7 @@ import {
   legacyWorkspaceStorageKey,
   loadWorkspace,
   previousWorkspaceStorageKey,
+  saveWorkspace,
   workspaceStorageKey,
 } from './workspace'
 import { createTradingSystemWindowStates } from './tradingSystems'
@@ -17,6 +18,36 @@ import { createTradingSystemWindowStates } from './tradingSystems'
 afterEach(() => window.localStorage.clear())
 
 describe('workspace persistence', () => {
+  it('persists real and continuous futures targets with their metadata', () => {
+    const state = createDefaultWorkspace()
+    const list = state.groups[0].windows.find(item => item.type === 'instrument-list')!
+    const chart = state.groups[0].windows.find(item => item.type === 'chart')!
+    if (list.type !== 'instrument-list' || chart.type !== 'chart') throw new Error('expected windows')
+    const contract = {
+      symbol: 'FUT:SHFE:CU:202609', name: '沪铜2609', kind: 'futures-contract',
+      exchange: 'SHFE', rows: 200, product_code: 'CU', lifecycle_status: 'trading',
+      contract_month: '202609',
+    }
+    const continuous = {
+      symbol: 'FUTCONT:SHFE:CU:MAIN:raw', name: '沪铜主力', kind: 'futures-continuous',
+      exchange: 'SHFE', rows: 5000, product_code: 'CU', series_kind: 'main',
+      series_variant: 'MAIN',
+    }
+    list.content.instruments = [contract]
+    chart.instrument = continuous
+
+    saveWorkspace(state)
+    const restored = loadWorkspace()
+
+    expect(restored.groups[0].windows).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'instrument-list',
+        content: expect.objectContaining({ instruments: [contract] }),
+      }),
+      expect.objectContaining({ type: 'chart', instrument: continuous }),
+    ]))
+  })
+
   it('derives and deduplicates every active group window reference', () => {
     const state = createDefaultWorkspace()
     const group = state.groups[0]

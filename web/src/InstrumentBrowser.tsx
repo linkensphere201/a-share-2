@@ -185,7 +185,8 @@ export function InstrumentBrowser({
       {!loading && !failed && results.length === 0 && <div className="instrument-editor-empty">没有匹配标的</div>}
       {results.map(item => <button
         key={item.symbol}
-        disabled={selectedSymbols.has(item.symbol)}
+        disabled={selectedSymbols.has(item.symbol) || item.kind === 'futures-product'}
+        title={item.kind === 'futures-product' ? '品种目录不可直接加入窗口，请选择真实或连续合约' : undefined}
         onClick={() => onSelect(item)}
       >
         <span className="instrument-result-identity">
