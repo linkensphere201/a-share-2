@@ -78,7 +78,8 @@ class FuturesProduct:
     product_code: str
     display_name: str
     exchange: FuturesExchange
-    multiplier: float
+    multiplier: float | None
+    per_unit: float | None
     trading_unit: str
     quote_unit: str
     active: bool = True
@@ -87,7 +88,7 @@ class FuturesProduct:
         _require_symbol(self.symbol, "futures product")
         _require_text(self.product_code, "futures product code")
         _require_text(self.display_name, "futures product display name")
-        _require_positive(self.multiplier, "futures product multiplier")
+        _validate_contract_sizes(self.multiplier, self.per_unit, "futures product")
         _require_text(self.trading_unit, "futures product trading unit")
         _require_text(self.quote_unit, "futures product quote unit")
 
@@ -103,7 +104,8 @@ class FuturesContract:
     listed_on: date
     last_trading_date: date
     delivery_date: date | None
-    multiplier: float
+    multiplier: float | None
+    per_unit: float | None
     trading_unit: str
     quote_unit: str
     lifecycle_status: FuturesLifecycleStatus
@@ -118,7 +120,7 @@ class FuturesContract:
             raise ValueError("futures last trading date must not precede listing date")
         if self.delivery_date is not None and self.delivery_date < self.last_trading_date:
             raise ValueError("futures delivery date must not precede last trading date")
-        _require_positive(self.multiplier, "futures contract multiplier")
+        _validate_contract_sizes(self.multiplier, self.per_unit, "futures contract")
         _require_text(self.trading_unit, "futures contract trading unit")
         _require_text(self.quote_unit, "futures contract quote unit")
 
@@ -126,18 +128,22 @@ class FuturesContract:
 @dataclass(frozen=True, slots=True)
 class FuturesContinuousSeries:
     symbol: str
+    provider_symbol: str
     product_symbol: str
     display_name: str
     exchange: FuturesExchange
     series_kind: FuturesSeriesKind
+    series_variant: str
     price_basis: FuturesPriceBasis
     rule_version: str
     active: bool = True
 
     def validate(self) -> None:
         _require_symbol(self.symbol, "futures continuous series")
+        _require_text(self.provider_symbol, "futures continuous Provider symbol")
         _require_symbol(self.product_symbol, "futures product")
         _require_text(self.display_name, "futures continuous display name")
+        _require_text(self.series_variant, "futures continuous series variant")
         _require_text(self.rule_version, "futures continuous rule version")
 
 
@@ -154,6 +160,33 @@ class FuturesTradingDayOwnership:
             raise ValueError("futures day session calendar date must equal trading day")
         if self.session_phase is FuturesSessionPhase.NIGHT and self.calendar_date >= self.trading_day:
             raise ValueError("futures night session calendar date must precede trading day")
+
+
+@dataclass(frozen=True, slots=True)
+class FuturesCalendarDay:
+    exchange: FuturesExchange
+    calendar_date: date
+    is_open: bool
+    previous_trading_day: date | None
+
+    def validate(self) -> None:
+        if self.previous_trading_day is not None and self.previous_trading_day >= self.calendar_date:
+            raise ValueError("previous futures trading day must precede calendar date")
+
+
+@dataclass(frozen=True, slots=True)
+class FuturesRollMapping:
+    series_symbol: str
+    series_provider_symbol: str
+    effective_from: date
+    contract_symbol: str
+    contract_provider_symbol: str
+
+    def validate(self) -> None:
+        _require_symbol(self.series_symbol, "futures continuous series")
+        _require_text(self.series_provider_symbol, "futures continuous Provider symbol")
+        _require_symbol(self.contract_symbol, "futures mapped contract")
+        _require_text(self.contract_provider_symbol, "futures mapped Provider symbol")
 
 
 @dataclass(frozen=True, slots=True)
@@ -499,17 +532,20 @@ def canonical_futures_contract_symbol(
 def canonical_futures_continuous_symbol(
     exchange: FuturesExchange,
     product_code: str,
-    series_kind: FuturesSeriesKind,
+    series_variant: str,
     price_basis: FuturesPriceBasis,
 ) -> str:
     product = _canonical_token(product_code, "product code")
-    return f"FUTCONT:{exchange.value}:{product}:{series_kind.value}:{price_basis.value}"
+    variant = _canonical_token(series_variant, "continuous series variant")
+    return f"FUTCONT:{exchange.value}:{product}:{variant}:{price_basis.value}"
 
 
 def _canonical_token(value: str, label: str) -> str:
     token = value.strip().upper()
-    if not token or not token.isalnum():
-        raise ValueError(f"futures {label} must contain only letters and digits")
+    if not token or not token.replace("_", "").replace("-", "").isalnum():
+        raise ValueError(
+            f"futures {label} contains unsupported characters: {value!r}"
+        )
     return token
 
 
@@ -525,6 +561,19 @@ def _require_text(value: str, label: str) -> None:
 def _require_positive(value: float, label: str) -> None:
     if not isfinite(value) or value <= 0:
         raise ValueError(f"{label} must be finite and positive")
+
+
+def _validate_contract_sizes(
+    multiplier: float | None,
+    per_unit: float | None,
+    label: str,
+) -> None:
+    if multiplier is None and per_unit is None:
+        raise ValueError(f"{label} requires multiplier or per-unit size")
+    if multiplier is not None:
+        _require_positive(multiplier, f"{label} multiplier")
+    if per_unit is not None:
+        _require_positive(per_unit, f"{label} per-unit size")
 
 
 def _validate_ohlc(

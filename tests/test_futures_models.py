@@ -42,11 +42,12 @@ def test_canonical_futures_identities_separate_product_contract_and_series() -> 
     assert canonical_futures_continuous_symbol(
         FuturesExchange.SHFE,
         "cu",
-        FuturesSeriesKind.MAIN,
+        "MAIN",
         FuturesPriceBasis.RAW,
-    ) == "FUTCONT:SHFE:CU:main:raw"
-    with pytest.raises(ValueError, match="letters and digits"):
-        canonical_futures_contract_symbol(FuturesExchange.SHFE, "cu-", "202609")
+    ) == "FUTCONT:SHFE:CU:MAIN:raw"
+    assert canonical_futures_product_symbol(FuturesExchange.DCE, "l_f") == "FUTPROD:DCE:L_F"
+    with pytest.raises(ValueError, match="unsupported characters"):
+        canonical_futures_contract_symbol(FuturesExchange.SHFE, "cu/", "202609")
     with pytest.raises(ValueError, match="YYYYMM"):
         canonical_futures_contract_symbol(FuturesExchange.SHFE, "cu", "2609")
 
@@ -54,7 +55,7 @@ def test_canonical_futures_identities_separate_product_contract_and_series() -> 
 def test_product_contract_and_continuous_metadata_validate() -> None:
     product_symbol = canonical_futures_product_symbol(FuturesExchange.SHFE, "CU")
     FuturesProduct(
-        product_symbol, "CU", "Copper", FuturesExchange.SHFE, 5, "contract", "CNY/tonne",
+        product_symbol, "CU", "Copper", FuturesExchange.SHFE, None, 5, "contract", "CNY/tonne",
     ).validate()
     FuturesContract(
         symbol=canonical_futures_contract_symbol(FuturesExchange.SHFE, "CU", "202609"),
@@ -66,19 +67,22 @@ def test_product_contract_and_continuous_metadata_validate() -> None:
         listed_on=date(2025, 9, 16),
         last_trading_date=date(2026, 9, 15),
         delivery_date=date(2026, 9, 18),
-        multiplier=5,
+        multiplier=None,
+        per_unit=5,
         trading_unit="contract",
         quote_unit="CNY/tonne",
         lifecycle_status=FuturesLifecycleStatus.TRADING,
     ).validate()
     FuturesContinuousSeries(
         symbol=canonical_futures_continuous_symbol(
-            FuturesExchange.SHFE, "CU", FuturesSeriesKind.MAIN, FuturesPriceBasis.RAW,
+            FuturesExchange.SHFE, "CU", "MAIN", FuturesPriceBasis.RAW,
         ),
+        provider_symbol="CU.SHF",
         product_symbol=product_symbol,
         display_name="Copper main raw",
         exchange=FuturesExchange.SHFE,
         series_kind=FuturesSeriesKind.MAIN,
+        series_variant="MAIN",
         price_basis=FuturesPriceBasis.RAW,
         rule_version="mapping-v1",
     ).validate()
@@ -95,7 +99,8 @@ def test_contract_rejects_invalid_lifecycle_dates() -> None:
         listed_on=date(2026, 1, 1),
         last_trading_date=date(2025, 12, 31),
         delivery_date=None,
-        multiplier=10,
+        multiplier=None,
+        per_unit=10,
         trading_unit="contract",
         quote_unit="CNY/tonne",
         lifecycle_status=FuturesLifecycleStatus.EXPIRED,

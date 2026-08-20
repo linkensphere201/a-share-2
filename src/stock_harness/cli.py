@@ -10,9 +10,10 @@ from pathlib import Path
 
 from stock_harness.backfill import run_stock_backfill, run_symbol_backfill, years_ago
 from stock_harness.config import RuntimeSettings, load_runtime_settings
+from stock_harness.futures_provider import TushareFuturesProvider
 from stock_harness.sqlite_store import SQLiteMarketDataStore
 from stock_harness.tushare_provider import TushareBoardDailyProvider, TushareDailyProvider
-from stock_harness.models import InstrumentKind
+from stock_harness.models import FuturesExchange, FuturesLifecycleStatus, InstrumentKind
 from stock_harness.repair import repair_tushare_stock_date
 from stock_harness.repair_providers import BaostockTradeDateRepairProvider
 from stock_harness.validation import validate_symbols
@@ -56,6 +57,14 @@ def main() -> None:
 
     probe = subparsers.add_parser("probe", help="Probe instruments, calendar, and one latest daily snapshot")
     probe.add_argument("--end-date", type=date.fromisoformat, default=date.today())
+    futures_probe = subparsers.add_parser(
+        "probe-futures",
+        help="Probe configured futures contracts, calendars, final daily data, and mappings",
+    )
+    futures_probe.add_argument("--as-of", type=date.fromisoformat, default=date.today())
+    futures_probe.add_argument(
+        "--exchange", action="append", choices=tuple(item.value for item in FuturesExchange),
+    )
 
     backfill = subparsers.add_parser("backfill-stocks", help="Resume full-market stock daily backfill")
     backfill.add_argument("--years", type=int, default=30)
@@ -142,6 +151,57 @@ def main() -> None:
             f"provider={provider.code} instruments={len(instruments)} "
             f"latest_trade_date={calendar[-1]} latest_rows={len(bars)}"
         )
+        return
+    if args.command == "probe-futures":
+        if not settings.futures.enabled or not settings.futures.canonical.enabled:
+            raise RuntimeError("futures canonical Provider is disabled")
+        selected = tuple(
+            FuturesExchange(value) for value in (args.exchange or settings.futures.exchanges)
+        )
+        provider = TushareFuturesProvider(settings.futures.canonical)
+        summaries = []
+        for exchange in selected:
+            catalog = provider.discover_exchange(exchange, args.as_of)
+            calendar = provider.calendar(exchange, args.as_of - timedelta(days=31), args.as_of)
+            open_days = [item.calendar_date for item in calendar if item.is_open]
+            active = [
+                item for item in catalog.contracts
+                if item.lifecycle_status is FuturesLifecycleStatus.TRADING
+            ]
+            daily_rows = 0
+            latest_daily = None
+            if active and open_days:
+                bars = provider.fetch_contract_daily(
+                    active[0], open_days[0], open_days[-1]
+                )
+                daily_rows = len(bars)
+                latest_daily = bars[-1].trading_day if bars else None
+            mapping_rows = 0
+            if catalog.continuous_series and open_days:
+                mappings = provider.fetch_roll_mappings(
+                    catalog.continuous_series[0],
+                    catalog.contracts,
+                    open_days[0],
+                    open_days[-1],
+                )
+                mapping_rows = len(mappings)
+            summaries.append({
+                "exchange": exchange.value,
+                "products": len(catalog.products),
+                "contracts": len(catalog.contracts),
+                "active_contracts": len(active),
+                "continuous_series": len(catalog.continuous_series),
+                "calendar_rows": len(calendar),
+                "open_days": len(open_days),
+                "sample_daily_rows": daily_rows,
+                "latest_sample_daily": latest_daily,
+                "sample_mapping_rows": mapping_rows,
+            })
+        print(json.dumps({
+            "provider": provider.code,
+            "as_of": args.as_of,
+            "exchanges": summaries,
+        }, ensure_ascii=False, indent=2, default=str))
         return
     if args.command == "validate-date":
         providers = []

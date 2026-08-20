@@ -33,7 +33,7 @@ class TushareDailyProvider:
 
     def __init__(self, settings: TushareSettings, client: Any | None = None) -> None:
         self.settings = settings
-        self._client = client or _TushareHttpClient(
+        self._client = client or TushareHttpClient(
             load_provider_token(settings), settings.api_url, settings.timeout_seconds
         )
         self._minimum_interval = 60.0 / settings.requests_per_minute if settings.requests_per_minute > 0 else 0.0
@@ -668,7 +668,7 @@ class TushareBoardDailyProvider:
         )
 
 
-class _TushareHttpClient:
+class TushareHttpClient:
     """Minimal JSON client that avoids importing the pandas-based Tushare SDK."""
 
     def __init__(self, token: str, api_url: str, timeout_seconds: float) -> None:
