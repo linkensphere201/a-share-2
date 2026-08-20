@@ -199,6 +199,32 @@ describe('StockWorkspace', () => {
     expect(screen.getByTestId('chart-canvas').textContent).toBe('BK1128.DC')
   })
 
+  it('routes an exact continuous futures selection into an attached chart', async () => {
+    const state = createDefaultWorkspace()
+    const list = state.groups[0].windows[0]
+    if (list.type !== 'instrument-list') throw new Error('expected list')
+    const future = {
+      symbol: 'FUTCONT:SHFE:CU:MAIN:raw', name: '沪铜主力',
+      kind: 'futures-continuous', exchange: 'SHFE', rows: 5200,
+      product_code: 'CU', series_kind: 'main', series_variant: 'MAIN',
+    }
+    list.content.instruments.push(future)
+    window.localStorage.setItem(workspaceStorageKey, JSON.stringify(state))
+    vi.stubGlobal('fetch', emptyFetch())
+    const user = userEvent.setup()
+
+    render(<App />)
+    await user.click(screen.getByRole('button', { name: '选择 沪铜主力' }))
+
+    expect(screen.getByTestId('chart-canvas').textContent).toBe(future.symbol)
+    await waitFor(() => {
+      const persisted = JSON.parse(window.localStorage.getItem(workspaceStorageKey) ?? '{}')
+      expect(persisted.groups[0].windows[1]).toMatchObject({
+        mode: 'attached', instrument: future,
+      })
+    })
+  })
+
   it('replaces the instrument of a detached chart through the unified editor', async () => {
     const state = createDefaultWorkspace()
     const chart = state.groups[0].windows[1]
@@ -220,6 +246,38 @@ describe('StockWorkspace', () => {
     await waitFor(() => {
       const persisted = JSON.parse(window.localStorage.getItem(workspaceStorageKey) ?? '{}')
       expect(persisted.groups[0].windows[1]).toMatchObject({ mode: 'detached', instrument })
+    })
+  })
+
+  it('keeps an exact real futures contract in a detached chart', async () => {
+    const state = createDefaultWorkspace()
+    const chart = state.groups[0].windows[1]
+    if (chart.type !== 'chart') throw new Error('expected chart')
+    chart.mode = 'detached'
+    state.groups[0].attachments = []
+    window.localStorage.setItem(workspaceStorageKey, JSON.stringify(state))
+    const future = {
+      symbol: 'FUT:SHFE:CU:202609', name: '沪铜2609',
+      kind: 'futures-contract', exchange: 'SHFE', rows: 190,
+      product_code: 'CU', lifecycle_status: 'trading', contract_month: '202609',
+    }
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true, json: async () => ({ items: [future] }),
+    }))
+    const user = userEvent.setup()
+
+    render(<App />)
+    await user.click(screen.getByRole('button', { name: '编辑 CPO概念 标的' }))
+    await user.type(screen.getByRole('textbox', { name: '搜索可添加标的' }), '沪铜2609')
+    await user.click(await screen.findByRole('button', { name: /沪铜2609/ }))
+    await user.click(screen.getByRole('button', { name: '保存并退出' }))
+
+    expect(screen.getByTestId('chart-canvas').textContent).toBe(future.symbol)
+    await waitFor(() => {
+      const persisted = JSON.parse(window.localStorage.getItem(workspaceStorageKey) ?? '{}')
+      expect(persisted.groups[0].windows[1]).toMatchObject({
+        mode: 'detached', instrument: future,
+      })
     })
   })
 

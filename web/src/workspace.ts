@@ -39,6 +39,14 @@ export type Instrument = {
   rows: number
 }
 
+export function isListableInstrument(instrument: Instrument): boolean {
+  return instrument.kind !== 'futures-product'
+}
+
+export function isChartableInstrument(instrument: Instrument): boolean {
+  return isListableInstrument(instrument) && instrument.kind !== 'custom-group'
+}
+
 export type ChartViewState = {
   range: ChartRange
   priceMode: PriceMode
@@ -379,6 +387,7 @@ function normalizeWindow(value: unknown): WorkspaceWindowState | undefined {
 
 function normalizeChartWindow(value: unknown): ChartWindowState | undefined {
   if (!isRecord(value) || typeof value.id !== 'string' || !isInstrument(value.instrument) || !isRecord(value.chart)) return undefined
+  if (!isChartableInstrument(value.instrument)) return undefined
   if (!isChartRange(value.chart.range) || !isPriceMode(value.chart.priceMode)) return undefined
   return {
     id: value.id,
@@ -401,7 +410,7 @@ function normalizeChartWindow(value: unknown): ChartWindowState | undefined {
 function normalizeListWindow(value: Record<string, unknown>): InstrumentListWindowState | undefined {
   if (typeof value.id !== 'string' || !isRecord(value.content) || value.content.mode !== 'manual') return undefined
   const instruments = Array.isArray(value.content.instruments)
-    ? value.content.instruments.filter(isInstrument).filter(uniqueInstrument)
+    ? value.content.instruments.filter(isInstrument).filter(isListableInstrument).filter(uniqueInstrument)
     : []
   const selectedSymbol = instruments.some(item => item.symbol === value.selectedSymbol)
     ? String(value.selectedSymbol)

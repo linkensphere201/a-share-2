@@ -21,6 +21,8 @@ import { beginTrendRequest, isCurrentTrendRequest } from './trendRequestGuard'
 import {
   chartRanges,
   deriveReferencedSymbols,
+  isChartableInstrument,
+  isListableInstrument,
   loadWorkspace,
   saveWorkspace,
   type ChartWindowState,
@@ -159,10 +161,10 @@ export function StockWorkspace() {
     updateActiveGroup(group => {
       const source = group.windows.find(item => item.id === id)
       if (!source || source.mode !== 'detached') return group
-      const selectable = instruments.filter(item => item.kind !== 'futures-product')
+      const selectable = instruments.filter(isListableInstrument)
       if (source.type === 'chart') {
         const instrument = selectable[0]
-        if (!instrument || instrument.kind === 'custom-group') return group
+        if (!instrument || !isChartableInstrument(instrument)) return group
         return {
           ...group,
           windows: group.windows.map(item => item.id === id
@@ -509,7 +511,7 @@ function applyListSelection(group: WindowGroupState, sourceId: string, instrumen
         return { ...item, selectedSymbol: instrument.symbol } satisfies InstrumentListWindowState
       }
       const symbolEdge = edges.find(edge => edge.targetWindowId === item.id && edge.type === 'show-symbol')
-      if (symbolEdge && item.type === 'chart' && item.mode === 'attached' && instrument.kind !== 'custom-group') {
+      if (symbolEdge && item.type === 'chart' && item.mode === 'attached' && isChartableInstrument(instrument)) {
         return { ...item, instrument, chart: { ...item.chart, visibleRange: undefined } }
       }
       const membersEdge = edges.find(edge => edge.targetWindowId === item.id && edge.type === 'show-members')

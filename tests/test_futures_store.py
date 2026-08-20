@@ -409,6 +409,18 @@ def test_custom_group_preserves_ordered_mixed_futures_members_and_tags() -> None
         assert members[1]["contract_month"] == "202609"
 
 
+def test_custom_group_rejects_futures_product_catalog_nodes() -> None:
+    product, contract, series = _catalog()
+    with SQLiteMarketDataStore(":memory:") as store:
+        store.upsert_futures_catalog(
+            "tushare-futures", [product], [contract], [series]
+        )
+        with pytest.raises(ValueError, match="catalog nodes"):
+            store.create_custom_group("invalid", "Invalid", "", [
+                {"symbol": product.symbol, "tags": [], "note": ""},
+            ])
+
+
 def test_fused_read_uses_latest_active_provisional_source() -> None:
     product, contract, series = _catalog()
     day = date(2026, 8, 20)

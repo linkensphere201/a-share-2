@@ -7,6 +7,7 @@ import {
   chartRanges,
   duplicateWindowGroup,
   deriveReferencedSymbols,
+  isChartableInstrument,
   legacyWorkspaceStorageKey,
   loadWorkspace,
   previousWorkspaceStorageKey,
@@ -18,6 +19,26 @@ import { createTradingSystemWindowStates } from './tradingSystems'
 afterEach(() => window.localStorage.clear())
 
 describe('workspace persistence', () => {
+  it('rejects futures product catalog nodes from persisted list and chart targets', () => {
+    const state = createDefaultWorkspace()
+    const list = state.groups[0].windows.find(item => item.type === 'instrument-list')!
+    if (list.type !== 'instrument-list') throw new Error('expected list')
+    const product = {
+      symbol: 'FUTPROD:SHFE:CU', name: '沪铜', kind: 'futures-product',
+      exchange: 'SHFE', rows: 0,
+    }
+    list.content.instruments.push(product)
+    saveWorkspace(state)
+
+    const restored = loadWorkspace().groups[0].windows.find(
+      item => item.type === 'instrument-list'
+    )
+    expect(restored).toMatchObject({
+      content: { instruments: expect.not.arrayContaining([product]) },
+    })
+    expect(isChartableInstrument(product)).toBe(false)
+  })
+
   it('persists selectable futures list columns and sorting', () => {
     const state = createDefaultWorkspace()
     const list = state.groups[0].windows.find(item => item.type === 'instrument-list')!

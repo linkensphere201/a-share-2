@@ -3320,6 +3320,21 @@ class SQLiteMarketDataStore:
         missing = set(symbols) - instrument_ids.keys()
         if missing:
             raise ValueError(f"unknown instruments: {', '.join(sorted(missing))}")
+        product_symbols: list[str] = []
+        instrument_id_values = list(instrument_ids.values())
+        for offset in range(0, len(instrument_id_values), 400):
+            chunk = instrument_id_values[offset : offset + 400]
+            placeholders = ",".join("?" for _ in chunk)
+            product_symbols.extend(str(row[0]) for row in self._connection.execute(
+                f"SELECT symbol FROM instruments WHERE instrument_id IN ({placeholders}) "
+                "AND kind = 'futures-product'",
+                chunk,
+            ).fetchall())
+        if product_symbols:
+            raise ValueError(
+                "futures products are catalog nodes, not custom group members: "
+                + ", ".join(sorted(product_symbols))
+            )
         self._connection.execute(
             "DELETE FROM custom_instrument_group_members WHERE group_id = ?",
             (group_id,),
