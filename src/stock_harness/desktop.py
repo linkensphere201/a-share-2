@@ -24,7 +24,10 @@ from stock_harness.config import load_runtime_settings
 from stock_harness.intraday import IntradayQuoteService
 from stock_harness.futures_intraday import FuturesProvisionalService
 from stock_harness.futures_provider_health import FuturesProviderMonitor
-from stock_harness.futures_provisional_provider import AkShareFuturesSpotProvider
+from stock_harness.futures_provisional_provider import (
+    AkShareFuturesMainContractReporter,
+    AkShareFuturesSpotProvider,
+)
 from stock_harness.runtime_logging import configure_runtime_logging
 from stock_harness.sqlite_store import SQLiteMarketDataStore
 from stock_harness.tushare_provider import TushareDailyProvider
@@ -113,6 +116,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             FuturesProviderMonitor(
                 AkShareFuturesSpotProvider(settings.futures.provisional),
                 settings.futures.provisional.stale_after_seconds,
+            ),
+            main_contract_reporter=AkShareFuturesMainContractReporter(
+                settings.futures.provisional,
+                {
+                    item.symbol: item.display_name
+                    for item in store.list_futures_products()
+                },
             ),
         )
         if settings.futures.enabled

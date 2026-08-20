@@ -590,6 +590,30 @@ class SQLiteMarketDataStore:
             "continuous_series": len(continuous_series),
         }
 
+    def list_futures_products(self) -> list[FuturesProduct]:
+        self._require_futures_storage()
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT instrument.symbol, product.product_code, instrument.name,
+                       product.exchange, product.multiplier, product.per_unit,
+                       product.trading_unit, product.quote_unit, instrument.active
+                FROM futures_products AS product
+                JOIN instruments AS instrument USING (instrument_id)
+                ORDER BY product.exchange, product.product_code
+                """
+            ).fetchall()
+        return [
+            FuturesProduct(
+                symbol=str(row[0]), product_code=str(row[1]),
+                display_name=str(row[2]), exchange=FuturesExchange(str(row[3])),
+                multiplier=float(row[4]) if row[4] is not None else None,
+                per_unit=float(row[5]) if row[5] is not None else None,
+                trading_unit=str(row[6]), quote_unit=str(row[7]), active=bool(row[8]),
+            )
+            for row in rows
+        ]
+
     def list_futures_contracts(self) -> list[FuturesContract]:
         self._require_futures_storage()
         with self._lock:

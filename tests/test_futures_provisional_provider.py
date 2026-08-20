@@ -5,6 +5,7 @@ import pytest
 
 from stock_harness.config import FuturesProvisionalProviderSettings
 from stock_harness.futures_provisional_provider import (
+    AkShareFuturesMainContractReporter,
     AkShareFuturesRealtimeProvider,
     AkShareFuturesSpotProvider,
 )
@@ -245,6 +246,41 @@ def test_realtime_fallback_matches_spot_fields_without_promoting_dynamic_settlem
     assert bar.settlement is None
     assert bar.amount is None
     assert client.node_calls == ["copper_qh"]
+
+
+def test_main_contract_reporter_uses_akshare_duplicate_quote_evidence() -> None:
+    synthetic = _realtime_row(symbol="CU0")
+    real = _realtime_row(symbol="CU2609")
+    client = _RealtimeClient({"copper_qh": [synthetic, real]})
+    reporter = AkShareFuturesMainContractReporter(
+        _settings(), {"FUTPROD:SHFE:CU": "CU"}, client
+    )
+    assert reporter.report([_contract()]) == {
+        "FUTPROD:SHFE:CU": "CU2609",
+    }
+    assert client.node_calls == ["copper_qh"]
+
+
+def test_main_contract_reporter_does_not_guess_without_duplicate_evidence() -> None:
+    rows = [_realtime_row(symbol="CU2609"), _realtime_row(symbol="CU2610")]
+    rows[1]["position"] = "100"
+    reporter = AkShareFuturesMainContractReporter(
+        _settings(), {"FUTPROD:SHFE:CU": "CU"},
+        _RealtimeClient({"copper_qh": rows}),
+    )
+    assert reporter.report([_contract()]) == {}
+
+
+def test_main_contract_reporter_rejects_sparse_duplicate_rows() -> None:
+    rows = [
+        {"symbol": "CU0", "trade": "100"},
+        {"symbol": "CU2609", "trade": "100"},
+    ]
+    reporter = AkShareFuturesMainContractReporter(
+        _settings(), {"FUTPROD:SHFE:CU": "CU"},
+        _RealtimeClient({"copper_qh": rows}),
+    )
+    assert reporter.report([_contract()]) == {}
 
 
 def test_realtime_fallback_requests_each_product_node_once_and_filters_rows() -> None:

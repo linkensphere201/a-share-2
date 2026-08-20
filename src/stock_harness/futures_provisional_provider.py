@@ -235,6 +235,56 @@ class AkShareFuturesRealtimeProvider:
         raise RuntimeError("futures realtime fallback failed unexpectedly")
 
 
+class AkShareFuturesMainContractReporter:
+    """Bounded AKShare-compatible main-contract evidence for selected products."""
+
+    code = "akshare-match-main-contract"
+
+    def __init__(
+        self,
+        settings: FuturesProvisionalProviderSettings,
+        product_display_names: Mapping[str, str],
+        client: FuturesRealtimeClient | None = None,
+    ) -> None:
+        self.settings = settings
+        self._product_display_names = product_display_names
+        self._client = client or _SinaFuturesRealtimeClient(
+            settings.request_timeout_seconds
+        )
+        self._catalog: Mapping[str, str] | None = None
+
+    def update_product_display_names(self, values: Mapping[str, str]) -> None:
+        self._product_display_names = dict(values)
+
+    def report(self, contracts: Sequence[FuturesContract]) -> dict[str, str]:
+        selected = {item.product_symbol: item for item in contracts}
+        if len(selected) > self.settings.max_contracts:
+            raise ValueError("main-contract evidence exceeds configured maximum")
+        if not selected:
+            return {}
+        catalog = self._catalog or self._fetch_with_retry(self._client.node_catalog)
+        self._catalog = catalog
+        result: dict[str, str] = {}
+        for product_symbol, contract in selected.items():
+            node = _realtime_node(contract, self._product_display_names, catalog)
+            rows = self._fetch_with_retry(lambda node=node: self._client.fetch_node(node))
+            reported = _reported_main_contract(rows)
+            if reported is not None:
+                result[product_symbol] = reported
+        return result
+
+    def _fetch_with_retry(self, operation):
+        attempts = self.settings.retries + 1
+        for attempt in range(attempts):
+            try:
+                return operation()
+            except Exception:
+                if attempt + 1 >= attempts:
+                    raise
+                time.sleep(self.settings.retry_wait_seconds)
+        raise RuntimeError("futures main-contract evidence failed unexpectedly")
+
+
 class _SinaFuturesRealtimeClient:
     _catalog_url = (
         "https://vip.stock.finance.sina.com.cn/quotes_service/view/js/"
@@ -261,7 +311,7 @@ class _SinaFuturesRealtimeClient:
 
     def fetch_node(self, node: str) -> Sequence[Mapping[str, object]]:
         query = urlencode({
-            "page": "1", "sort": "position", "asc": "0",
+            "page": "1", "num": "5", "sort": "position", "asc": "0",
             "node": node, "base": "futures",
         })
         payload = json.loads(
@@ -284,6 +334,31 @@ class _SinaFuturesRealtimeClient:
         )
         with urlopen(request, timeout=self.timeout_seconds) as response:
             return response.read()
+
+
+def _reported_main_contract(
+    rows: Sequence[Mapping[str, object]],
+) -> str | None:
+    if len(rows) == 1:
+        value = str(rows[0].get("symbol", "")).strip().upper()
+        return value or None
+    seen: set[tuple[str, ...]] = set()
+    evidence_fields = (
+        "trade", "settlement", "presettlement", "open", "high", "low",
+        "close", "volume", "position", "ticktime", "tradedate",
+    )
+    for row in rows:
+        fingerprint = tuple(str(row.get(field, "")).strip() for field in evidence_fields)
+        symbol = str(row.get("symbol", "")).strip().upper()
+        if symbol and sum(bool(item) for item in fingerprint) >= 6 and fingerprint in seen:
+            return symbol
+        if sum(bool(item) for item in fingerprint) >= 6:
+            seen.add(fingerprint)
+    return None
+
+
+def futures_provider_contract_code(contract: FuturesContract) -> str:
+    return _sina_contract_code(contract)
 
 
 def _realtime_node(

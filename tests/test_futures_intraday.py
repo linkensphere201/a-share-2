@@ -96,6 +96,19 @@ class _Monitor:
         ),)
 
 
+class _MainReporter:
+    def __init__(self, provider_code: str) -> None:
+        self.provider_code = provider_code
+        self.requests = []
+        self.fail = False
+
+    def report(self, contracts):
+        self.requests.append(tuple(item.symbol for item in contracts))
+        if self.fail:
+            raise RuntimeError("main-contract endpoint unavailable")
+        return {item.product_symbol: self.provider_code for item in contracts}
+
+
 def test_active_workspace_references_resolve_to_bounded_real_contracts() -> None:
     product, contract, series = _catalog()
     day = date(2026, 8, 20)
@@ -199,3 +212,107 @@ def test_night_session_does_not_bridge_a_long_exchange_holiday() -> None:
         lambda _value: date(2026, 10, 9),
         _settings().session_rules,
     ) is None
+
+
+def test_continuous_main_mapping_conflict_is_unavailable_without_silent_switch() -> None:
+    product, contract, series = _catalog()
+    day = date(2026, 8, 20)
+    monitor = _Monitor()
+    reporter = _MainReporter("CU2610")
+    with SQLiteMarketDataStore(":memory:") as store:
+        store.upsert_futures_catalog(
+            "tushare-futures", [product], [contract], [series]
+        )
+        store.upsert_futures_calendar("tushare-futures", [
+            FuturesCalendarDay(FuturesExchange.SHFE, day, True, date(2026, 8, 19))
+        ])
+        store.upsert_futures_roll_mappings("tushare-futures", [
+            FuturesRollMapping(
+                series.symbol, series.provider_symbol, day,
+                contract.symbol, contract.provider_symbol,
+            )
+        ])
+        service = FuturesProvisionalService(
+            _settings(), store, monitor, main_contract_reporter=reporter
+        )
+        service.subscribe("group-1", [series.symbol])
+        result = service.refresh_once(
+            datetime(2026, 8, 20, 10, 0, tzinfo=CHINA_TIME)
+        )
+
+        assert result["state"] == "skipped"
+        assert result["skip_reason"] == "mapping-ambiguous"
+        assert result["ambiguous_count"] == 1
+        assert result["ambiguous"][series.symbol] == {
+            "mapped_contract": contract.symbol,
+            "mapped_provider_contract": "CU2609",
+            "reported_provider_contract": "CU2610",
+        }
+        assert monitor.requests == []
+        assert store.list_fused_futures_daily_bars(contract.symbol, day, day) == []
+
+
+def test_mapping_conflict_does_not_block_explicit_real_contract_reference() -> None:
+    product, contract, series = _catalog()
+    day = date(2026, 8, 20)
+    monitor = _Monitor()
+    with SQLiteMarketDataStore(":memory:") as store:
+        store.upsert_futures_catalog(
+            "tushare-futures", [product], [contract], [series]
+        )
+        store.upsert_futures_calendar("tushare-futures", [
+            FuturesCalendarDay(FuturesExchange.SHFE, day, True, date(2026, 8, 19))
+        ])
+        store.upsert_futures_roll_mappings("tushare-futures", [
+            FuturesRollMapping(
+                series.symbol, series.provider_symbol, day,
+                contract.symbol, contract.provider_symbol,
+            )
+        ])
+        service = FuturesProvisionalService(
+            _settings(), store, monitor,
+            main_contract_reporter=_MainReporter("CU2610"),
+        )
+        service.subscribe("group-1", [series.symbol, contract.symbol])
+        result = service.refresh_once(
+            datetime(2026, 8, 20, 10, 0, tzinfo=CHINA_TIME)
+        )
+
+        assert result["state"] == "ready"
+        assert result["resolved"][series.symbol] is None
+        assert result["resolved"][contract.symbol] == contract.symbol
+        assert monitor.requests == [((contract.symbol,), day)]
+
+
+def test_known_mapping_conflict_remains_blocked_during_evidence_outage() -> None:
+    product, contract, series = _catalog()
+    day = date(2026, 8, 20)
+    reporter = _MainReporter("CU2610")
+    with SQLiteMarketDataStore(":memory:") as store:
+        store.upsert_futures_catalog(
+            "tushare-futures", [product], [contract], [series]
+        )
+        store.upsert_futures_calendar("tushare-futures", [
+            FuturesCalendarDay(FuturesExchange.SHFE, day, True, date(2026, 8, 19))
+        ])
+        store.upsert_futures_roll_mappings("tushare-futures", [
+            FuturesRollMapping(
+                series.symbol, series.provider_symbol, day,
+                contract.symbol, contract.provider_symbol,
+            )
+        ])
+        service = FuturesProvisionalService(
+            _settings(), store, _Monitor(), main_contract_reporter=reporter
+        )
+        service.subscribe("group-1", [series.symbol])
+        first = service.refresh_once(
+            datetime(2026, 8, 20, 10, 0, tzinfo=CHINA_TIME)
+        )
+        reporter.fail = True
+        second = service.refresh_once(
+            datetime(2026, 8, 20, 10, 1, tzinfo=CHINA_TIME)
+        )
+
+        assert first["skip_reason"] == "mapping-ambiguous"
+        assert second["skip_reason"] == "mapping-ambiguous"
+        assert second["ambiguous"] == first["ambiguous"]
