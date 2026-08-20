@@ -11,6 +11,7 @@ from pathlib import Path
 from stock_harness.backfill import run_stock_backfill, run_symbol_backfill, years_ago
 from stock_harness.config import RuntimeSettings, load_runtime_settings
 from stock_harness.futures_provider import TushareFuturesProvider
+from stock_harness.futures_provider_health import FuturesProviderMonitor
 from stock_harness.futures_provisional_provider import (
     AkShareFuturesRealtimeProvider,
     AkShareFuturesSpotProvider,
@@ -263,9 +264,13 @@ def main() -> None:
                 settings.futures.provisional, product_display_names
             )
         )
-        bars = provisional.fetch(selected, args.expected_trading_day)
+        monitor = FuturesProviderMonitor(
+            provisional, settings.futures.provisional.stale_after_seconds
+        )
+        bars = monitor.fetch(selected, args.expected_trading_day)
         payload = {
             "provider": provisional.code,
+            "health": monitor.status(),
             "requested_contracts": requested,
             "missing_contracts": provisional.missing_contracts,
             "bars": [
