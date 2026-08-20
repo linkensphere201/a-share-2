@@ -102,6 +102,29 @@ describe('workspace persistence', () => {
     })).toEqual(['300308.SZ', '510300.SH', 'BK1128.DC'])
   })
 
+  it('derives direct, custom-group, and resolved futures references once', () => {
+    const state = createDefaultWorkspace()
+    const group = state.groups[0]
+    const list = group.windows.find(item => item.type === 'instrument-list')!
+    const chart = group.windows.find(item => item.type === 'chart')!
+    if (list.type !== 'instrument-list' || chart.type !== 'chart') throw new Error('expected windows')
+    const continuous = {
+      symbol: 'FUTCONT:SHFE:CU:MAIN:raw', name: '沪铜主力',
+      kind: 'futures-continuous', exchange: 'SHFE', rows: 5200,
+    }
+    list.content.instruments = [{
+      symbol: 'CUSTOM:mixed', name: '混合集合', kind: 'custom-group',
+      exchange: 'LOCAL', rows: 3,
+    }, continuous]
+    chart.instrument = continuous
+
+    expect(deriveReferencedSymbols(group, {
+      [list.id]: ['300308.SZ', continuous.symbol, 'FUT:SHFE:CU:202609'],
+    })).toEqual([
+      '300308.SZ', 'CUSTOM:mixed', 'FUT:SHFE:CU:202609', continuous.symbol,
+    ])
+  })
+
   it('accepts the one-month chart range', () => {
     const state = createDefaultWorkspace()
     const chart = state.groups[0].windows.find(item => item.type === 'chart')!

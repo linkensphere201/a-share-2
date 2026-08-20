@@ -484,15 +484,18 @@ def create_app(
         if intraday_service is None and futures_provisional_service is None:
             return {"state": "disabled", "enabled": False}
         symbols = _expand_subscription_symbols(_store(request), payload.symbols)
+        futures_symbols = _futures_reference_symbols(_store(request), symbols)
+        futures_set = set(futures_symbols)
+        stock_symbols = [symbol for symbol in symbols if symbol not in futures_set]
         try:
             result = (
-                intraday_service.subscribe(payload.group_id, symbols)
+                intraday_service.subscribe(payload.group_id, stock_symbols)
                 if intraday_service else {"state": "disabled", "enabled": False}
             )
             result["futures"] = (
                 futures_provisional_service.subscribe(
                     payload.group_id,
-                    _futures_reference_symbols(_store(request), symbols),
+                    futures_symbols,
                 )
                 if futures_provisional_service
                 else {"state": "disabled", "enabled": False}

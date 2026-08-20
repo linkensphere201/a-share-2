@@ -342,9 +342,17 @@ class _FakeIntradayService:
 class _FakeFuturesProvisionalService:
     def __init__(self):
         self.refreshed = []
+        self.subscribed = []
 
     def status(self):
         return {"state": "idle", "enabled": True}
+
+    def subscribe(self, group_id, symbols):
+        self.subscribed = list(symbols)
+        return {
+            "state": "ready", "enabled": True,
+            "group_id": group_id, "symbol_count": len(self.subscribed),
+        }
 
     def refresh_once(self, *, manual=False, references=None):
         self.refreshed = list(references or [])
@@ -431,6 +439,42 @@ def test_intraday_subscription_expands_custom_groups_and_merges_provisional_bar(
     assert service.subscribed == ["300308.SZ", "BK1128.DC"]
     assert [item["bar_state"] for item in bars.json()["items"]] == ["final", "intraday"]
     assert bars.json()["items"][-1]["close"] == 12
+
+
+def test_intraday_subscription_partitions_mixed_group_futures_references():
+    store, _ = _client()
+    contract = Instrument(
+        "FUT:SHFE:CU:202609", "Copper 2609",
+        InstrumentKind.FUTURES_CONTRACT, "SHFE",
+    )
+    continuous = Instrument(
+        "FUTCONT:SHFE:CU:MAIN:raw", "Copper main",
+        InstrumentKind.FUTURES_CONTINUOUS, "SHFE",
+    )
+    store.upsert_instruments([contract, continuous])
+    group = store.create_custom_group("mixed-live", "Mixed live", "", [
+        {"symbol": "300308.SZ", "tags": [], "note": ""},
+        {"symbol": contract.symbol, "tags": ["real"], "note": ""},
+        {"symbol": continuous.symbol, "tags": ["main"], "note": ""},
+    ])
+    stock_service = _FakeIntradayService()
+    futures_service = _FakeFuturesProvisionalService()
+    client = TestClient(create_app(
+        store,
+        intraday_service=stock_service,
+        futures_provisional_service=futures_service,
+    ))
+    with client:
+        response = client.post("/api/intraday/subscription", json={
+            "group_id": "workspace",
+            "symbols": [group["symbol"], continuous.symbol, "BK1128.DC"],
+        })
+    store.close()
+
+    assert response.status_code == 200
+    assert stock_service.subscribed == ["300308.SZ", "BK1128.DC"]
+    assert futures_service.subscribed == [contract.symbol, continuous.symbol]
+    assert response.json()["futures"]["symbol_count"] == 2
 
 
 def test_intraday_manual_refresh_targets_requested_chart_symbol():
