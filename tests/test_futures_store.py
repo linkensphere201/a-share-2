@@ -376,6 +376,48 @@ def test_market_snapshots_fuse_futures_provisional_and_canonical_metrics() -> No
         assert continuous["last_trading_date"] == date(2026, 9, 15)
 
 
+def test_daily_bars_api_serves_exact_futures_ohlcv_and_evidence() -> None:
+    product, contract, series = _catalog()
+    prior_day = date(2026, 8, 19)
+    current_day = date(2026, 8, 20)
+    observed = datetime(2026, 8, 20, 14, 30, tzinfo=CHINA_TIME)
+    with SQLiteMarketDataStore(":memory:") as store:
+        store.upsert_futures_catalog(
+            "tushare-futures", [product], [contract], [series]
+        )
+        store.upsert_futures_daily_bars("tushare-futures", [
+            _bar(prior_day),
+            replace(
+                _bar(prior_day, close=105),
+                symbol=series.symbol,
+                mapped_contract_symbol=contract.symbol,
+            ),
+        ])
+        store.upsert_futures_provisional_daily_bars(
+            "akshare-futures-zh-spot",
+            [_bar(
+                current_day, FuturesBarState.PROVISIONAL,
+                "akshare-futures-zh-spot", 104, observed,
+            )],
+            observed,
+        )
+        with TestClient(create_app(store)) as client:
+            real = client.get(f"/api/instruments/{contract.symbol}/daily-bars")
+            continuous = client.get(f"/api/instruments/{series.symbol}/daily-bars")
+            detail = client.get(f"/api/instruments/{series.symbol}")
+
+        assert real.status_code == continuous.status_code == detail.status_code == 200
+        real_items = real.json()["items"]
+        assert [item["bar_state"] for item in real_items] == ["final", "intraday"]
+        assert real_items[0]["settlement"] == 101
+        assert real_items[0]["open_interest_change"] == 12
+        assert real_items[1]["provider_time"] == observed.isoformat()
+        continuous_item = continuous.json()["items"][0]
+        assert continuous.json()["symbol"] == series.symbol
+        assert continuous_item["mapped_contract_symbol"] == contract.symbol
+        assert continuous_item["volume"] == 1234
+
+
 def test_custom_group_preserves_ordered_mixed_futures_members_and_tags() -> None:
     product, contract, series = _catalog()
     day = date(2026, 8, 20)

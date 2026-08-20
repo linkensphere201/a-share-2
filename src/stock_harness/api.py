@@ -21,6 +21,7 @@ from stock_harness.intraday import IntradayQuoteService
 from stock_harness.futures_intraday import FuturesProvisionalService
 from stock_harness.models import (
     AdjustmentFactor,
+    FuturesBarState,
     FuturesExchange,
     InstrumentKind,
     StockTradeStatus,
@@ -797,7 +798,7 @@ def create_app(
 
     @app.get("/api/instruments/{symbol}")
     def instrument(request: Request, symbol: str) -> dict[str, object]:
-        row = _store(request).get_instrument_summary(symbol.upper())
+        row = _store(request).get_instrument_summary(_normalize_instrument_symbol(symbol))
         if row is None:
             raise HTTPException(status_code=404, detail="instrument not found")
         return row
@@ -818,10 +819,50 @@ def create_app(
         start_date: date | None = None,
         end_date: date | None = None,
     ) -> dict[str, object]:
-        normalized = symbol.upper()
-        if _store(request).get_instrument_summary(normalized) is None:
+        normalized = _normalize_instrument_symbol(symbol)
+        store = _store(request)
+        instrument = store.get_instrument_summary(normalized)
+        if instrument is None:
             raise HTTPException(status_code=404, detail="instrument not found")
-        rows = _store(request).get_daily_bars(normalized, start_date, end_date)
+        if instrument["kind"] in {
+            InstrumentKind.FUTURES_CONTRACT.value,
+            InstrumentKind.FUTURES_CONTINUOUS.value,
+        }:
+            futures_rows = store.list_fused_futures_daily_bars(
+                normalized,
+                start_date or date(1900, 1, 1),
+                end_date or date.today(),
+            )
+            return {
+                "symbol": normalized,
+                "instrument_kind": instrument["kind"],
+                "items": [
+                    {
+                        "trade_date": row.trading_day,
+                        "open": row.open, "high": row.high,
+                        "low": row.low, "close": row.close,
+                        "volume": row.volume_contracts,
+                        "amount": row.amount,
+                        "previous_close": row.previous_close,
+                        "settlement": row.settlement,
+                        "previous_settlement": row.previous_settlement,
+                        "open_interest": row.open_interest_contracts,
+                        "open_interest_change": row.open_interest_change_contracts,
+                        "mapped_contract_symbol": row.mapped_contract_symbol,
+                        "roll_event": row.roll_event,
+                        "source": row.source,
+                        "bar_state": (
+                            "intraday"
+                            if row.state is FuturesBarState.PROVISIONAL else "final"
+                        ),
+                        "provider_time": (
+                            row.provider_time.isoformat() if row.provider_time else None
+                        ),
+                    }
+                    for row in futures_rows
+                ],
+            }
+        rows = store.get_daily_bars(normalized, start_date, end_date)
         items = [
             {
                 "trade_date": row.trade_date,
@@ -1027,6 +1068,11 @@ def _expand_subscription_symbols(
                 if (value := str(item["symbol"]).strip())
             )
     return sorted(expanded)
+
+
+def _normalize_instrument_symbol(symbol: str) -> str:
+    stripped = symbol.strip()
+    return stripped if stripped.upper().startswith("FUT") else stripped.upper()
 
 
 def _futures_reference_symbols(

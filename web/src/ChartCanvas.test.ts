@@ -36,6 +36,9 @@ describe('chart layout', () => {
       '/api/instruments/000001.SZ/daily-bars?end_date=2026-08-18',
     )
     expect(dailyBarsUrl('000001.SZ')).toBe('/api/instruments/000001.SZ/daily-bars')
+    expect(dailyBarsUrl('FUTCONT:SHFE:CU:MAIN:raw')).toBe(
+      '/api/instruments/FUTCONT%3ASHFE%3ACU%3AMAIN%3Araw/daily-bars',
+    )
   })
 
   it('uses compact line-series markers at crosshair intersections', () => {
