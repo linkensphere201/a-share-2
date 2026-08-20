@@ -1110,10 +1110,22 @@ def _enrich_members(
         enriched.append({
             **item,
             "change_percent": snapshot["change_percent"] if snapshot else None,
+            "settlement_change_percent": (
+                snapshot.get("settlement_change_percent") if snapshot else None
+            ),
             "total_market_cap": snapshot["total_market_cap"] if snapshot else None,
             "close": snapshot["close"] if snapshot else None,
             "volume": snapshot["volume"] if snapshot else None,
             "amount": snapshot["amount"] if snapshot else None,
+            "open_interest": snapshot.get("open_interest") if snapshot else None,
+            "open_interest_change": (
+                snapshot.get("open_interest_change") if snapshot else None
+            ),
+            "source_state": snapshot.get("source_state") if snapshot else None,
+            "contract_month": snapshot.get("contract_month") if snapshot else None,
+            "last_trading_date": (
+                snapshot.get("last_trading_date") if snapshot else None
+            ),
             "snapshot_date": snapshot["trade_date"] if snapshot else None,
         })
     return {

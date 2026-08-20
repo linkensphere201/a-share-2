@@ -3152,27 +3152,46 @@ class SQLiteMarketDataStore:
             rows = self._connection.execute(
                 """
                 SELECT custom.group_id, custom.name, custom.description,
-                       custom.created_at_ms, custom.updated_at_ms, count(member.instrument_id),
-                       avg((
-                           SELECT snapshot.change_percent
-                           FROM market_snapshots AS snapshot
-                           WHERE snapshot.instrument_id = member.instrument_id
-                           ORDER BY snapshot.trade_date DESC
-                           LIMIT 1
-                       ))
+                       custom.created_at_ms, custom.updated_at_ms, count(member.instrument_id)
                 FROM custom_instrument_groups AS custom
                 LEFT JOIN custom_instrument_group_members AS member USING (group_id)
                 GROUP BY custom.group_id
                 ORDER BY custom.name COLLATE NOCASE, custom.group_id
                 """
             ).fetchall()
+            member_rows = self._connection.execute(
+                """
+                SELECT member.group_id, instrument.symbol
+                FROM custom_instrument_group_members AS member
+                JOIN instruments AS instrument USING (instrument_id)
+                ORDER BY member.group_id, member.position
+                """
+            ).fetchall()
+        member_symbols = list(dict.fromkeys(str(row[1]) for row in member_rows))
+        snapshot_rows: list[dict[str, object]] = []
+        for offset in range(0, len(member_symbols), 500):
+            snapshot_rows.extend(self.list_market_snapshots(
+                member_symbols[offset : offset + 500]
+            ))
+        changes = {
+            str(item["symbol"]): float(item["change_percent"])
+            for item in snapshot_rows if item.get("change_percent") is not None
+        }
+        group_changes: dict[str, list[float]] = {}
+        for row in member_rows:
+            change = changes.get(str(row[1]))
+            if change is not None:
+                group_changes.setdefault(str(row[0]), []).append(change)
         groups = [
             {
                 "id": str(row[0]), "symbol": f"CUSTOM:{row[0]}",
                 "name": str(row[1]), "description": str(row[2]),
                 "member_count": int(row[5]), "created_at_ms": int(row[3]),
                 "updated_at_ms": int(row[4]),
-                "average_change_percent": float(row[6]) if row[6] is not None else None,
+                "average_change_percent": (
+                    sum(group_changes[str(row[0])]) / len(group_changes[str(row[0])])
+                    if group_changes.get(str(row[0])) else None
+                ),
             }
             for row in rows
         ]
@@ -3288,7 +3307,13 @@ class SQLiteMarketDataStore:
         members: Sequence[dict[str, object]],
         now_ms: int,
     ) -> None:
-        symbols = [str(item["symbol"]).upper() for item in members]
+        symbols = [
+            value if value.upper().startswith("FUT") else value.upper()
+            for item in members
+            if (value := str(item["symbol"]).strip())
+        ]
+        if len(symbols) != len(members):
+            raise ValueError("custom group member symbol is required")
         if len(symbols) != len(set(symbols)):
             raise ValueError("custom group members must contain unique symbols")
         instrument_ids = self._instrument_ids(set(symbols))

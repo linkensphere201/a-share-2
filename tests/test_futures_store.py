@@ -5,7 +5,9 @@ import sqlite3
 from unittest.mock import patch
 
 import pytest
+from fastapi.testclient import TestClient
 
+from stock_harness.api import create_app
 from stock_harness.futures_continuous import materialize_raw_continuous
 from stock_harness.models import (
     FuturesContinuousSeries,
@@ -372,6 +374,39 @@ def test_market_snapshots_fuse_futures_provisional_and_canonical_metrics() -> No
         assert continuous["symbol"] == series.symbol
         assert continuous["contract_month"] == "202609"
         assert continuous["last_trading_date"] == date(2026, 9, 15)
+
+
+def test_custom_group_preserves_ordered_mixed_futures_members_and_tags() -> None:
+    product, contract, series = _catalog()
+    day = date(2026, 8, 20)
+    stock = Instrument("300308.SZ", "Innolight", InstrumentKind.STOCK, "SZ")
+    with SQLiteMarketDataStore(":memory:") as store:
+        store.upsert_instruments([stock])
+        store.upsert_futures_catalog(
+            "tushare-futures", [product], [contract], [series]
+        )
+        store.upsert_futures_daily_bars("tushare-futures", [replace(
+            _bar(day), symbol=series.symbol,
+            mapped_contract_symbol=contract.symbol,
+        )])
+        created = store.create_custom_group("mixed", "Mixed", "", [
+            {"symbol": stock.symbol, "tags": ["equity"], "note": "stock"},
+            {"symbol": series.symbol, "tags": ["main", "copper"], "note": "future"},
+        ])
+
+        assert [item["symbol"] for item in created["members"]] == [
+            stock.symbol, series.symbol,
+        ]
+        assert created["members"][1]["tags"] == ["main", "copper"]
+        assert store.list_custom_groups()[0]["average_change_percent"] == pytest.approx(
+            3.030303
+        )
+        with TestClient(create_app(store)) as client:
+            members = client.get("/api/instruments/CUSTOM:mixed/members").json()["items"]
+        assert members[1]["symbol"] == series.symbol
+        assert members[1]["settlement_change_percent"] == pytest.approx(3.030303)
+        assert members[1]["source_state"] == "final"
+        assert members[1]["contract_month"] == "202609"
 
 
 def test_fused_read_uses_latest_active_provisional_source() -> None:
