@@ -11,6 +11,7 @@ from pathlib import Path
 from stock_harness.backfill import run_stock_backfill, run_symbol_backfill, years_ago
 from stock_harness.config import RuntimeSettings, load_runtime_settings
 from stock_harness.futures_provider import TushareFuturesProvider
+from stock_harness.futures_provisional_provider import AkShareFuturesSpotProvider
 from stock_harness.sqlite_store import SQLiteMarketDataStore
 from stock_harness.tushare_provider import TushareBoardDailyProvider, TushareDailyProvider
 from stock_harness.models import FuturesExchange, FuturesLifecycleStatus, InstrumentKind
@@ -65,6 +66,19 @@ def main() -> None:
     futures_probe.add_argument(
         "--exchange", action="append", choices=tuple(item.value for item in FuturesExchange),
     )
+    futures_spot_probe = subparsers.add_parser(
+        "probe-futures-spot",
+        help="Probe forming daily bars for explicitly selected active futures contracts",
+    )
+    futures_spot_probe.add_argument(
+        "--exchange", action="append", required=True,
+        choices=tuple(item.value for item in FuturesExchange),
+    )
+    futures_spot_probe.add_argument(
+        "--contract", action="append", required=True,
+        help="Tushare real-contract symbol, for example CU2609.SHF",
+    )
+    futures_spot_probe.add_argument("--expected-trading-day", type=date.fromisoformat)
 
     backfill = subparsers.add_parser("backfill-stocks", help="Resume full-market stock daily backfill")
     backfill.add_argument("--years", type=int, default=30)
@@ -202,6 +216,59 @@ def main() -> None:
             "as_of": args.as_of,
             "exchanges": summaries,
         }, ensure_ascii=False, indent=2, default=str))
+        return
+    if args.command == "probe-futures-spot":
+        if not settings.futures.enabled or not settings.futures.canonical.enabled:
+            raise RuntimeError("futures canonical Provider is disabled")
+        if not settings.futures.provisional.enabled:
+            raise RuntimeError("futures provisional Provider is disabled")
+        requested = tuple(dict.fromkeys(item.upper() for item in args.contract))
+        if len(requested) > settings.futures.provisional.max_contracts:
+            raise ValueError(
+                "requested futures contracts exceed configured provisional maximum"
+            )
+        canonical = TushareFuturesProvider(settings.futures.canonical)
+        discovered = {}
+        for value in dict.fromkeys(args.exchange):
+            catalog = canonical.discover_exchange(
+                FuturesExchange(value), args.expected_trading_day or date.today()
+            )
+            discovered.update(
+                (item.provider_symbol.upper(), item) for item in catalog.contracts
+            )
+        missing = [item for item in requested if item not in discovered]
+        if missing:
+            raise ValueError(f"undiscovered futures contracts: {', '.join(missing)}")
+        selected = [discovered[item] for item in requested]
+        inactive = [
+            item.provider_symbol for item in selected
+            if item.lifecycle_status is not FuturesLifecycleStatus.TRADING
+        ]
+        if inactive:
+            raise ValueError(f"futures contracts are not trading: {', '.join(inactive)}")
+        provisional = AkShareFuturesSpotProvider(settings.futures.provisional)
+        bars = provisional.fetch(selected, args.expected_trading_day)
+        payload = {
+            "provider": provisional.code,
+            "requested_contracts": requested,
+            "missing_contracts": provisional.missing_contracts,
+            "bars": [
+                {
+                    "symbol": item.symbol,
+                    "trading_day": item.trading_day,
+                    "provider_time": item.provider_time,
+                    "ohlc": [item.open, item.high, item.low, item.close],
+                    "volume_contracts": item.volume_contracts,
+                    "open_interest_contracts": item.open_interest_contracts,
+                    "previous_settlement_available": item.previous_settlement is not None,
+                    "settlement_available": item.settlement is not None,
+                    "amount_available": item.amount is not None,
+                    "state": item.state.value,
+                }
+                for item in bars
+            ],
+        }
+        print(json.dumps(payload, ensure_ascii=False, default=str, indent=2))
         return
     if args.command == "validate-date":
         providers = []
