@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import asdict
 import json
 import logging
 from datetime import date, timedelta
@@ -11,6 +12,7 @@ from pathlib import Path
 from stock_harness.backfill import run_stock_backfill, run_symbol_backfill, years_ago
 from stock_harness.config import RuntimeSettings, load_runtime_settings
 from stock_harness.futures_provider import TushareFuturesProvider
+from stock_harness.futures_backfill import run_futures_backfill
 from stock_harness.futures_provider_health import FuturesProviderMonitor
 from stock_harness.futures_provisional_provider import (
     AkShareFuturesRealtimeProvider,
@@ -86,6 +88,19 @@ def main() -> None:
         "--adapter", choices=("spot", "realtime"), default="spot",
     )
     futures_spot_probe.add_argument("--expected-trading-day", type=date.fromisoformat)
+    futures_backfill = subparsers.add_parser(
+        "backfill-futures",
+        help="Resume canonical real-contract and roll-mapping futures history",
+    )
+    futures_backfill.add_argument("--start-date", type=date.fromisoformat)
+    futures_backfill.add_argument(
+        "--end-date", type=date.fromisoformat, default=date.today()
+    )
+    futures_backfill.add_argument(
+        "--exchange", action="append",
+        choices=tuple(item.value for item in FuturesExchange),
+    )
+    futures_backfill.add_argument("--max-contracts", type=int)
 
     backfill = subparsers.add_parser("backfill-stocks", help="Resume full-market stock daily backfill")
     backfill.add_argument("--years", type=int, default=30)
@@ -290,6 +305,27 @@ def main() -> None:
             ],
         }
         print(json.dumps(payload, ensure_ascii=False, default=str, indent=2))
+        return
+    if args.command == "backfill-futures":
+        if not settings.futures.enabled or not settings.futures.canonical.enabled:
+            raise RuntimeError("futures canonical Provider is disabled")
+        selected = tuple(
+            FuturesExchange(value)
+            for value in (args.exchange or settings.futures.exchanges)
+        )
+        provider = TushareFuturesProvider(settings.futures.canonical)
+        with _open_store(settings) as store:
+            result = run_futures_backfill(
+                provider,
+                store,
+                selected,
+                args.start_date or settings.futures.history_start,
+                args.end_date,
+                as_of=args.end_date,
+                max_contracts=args.max_contracts,
+            )
+            store.checkpoint("PASSIVE")
+        print(json.dumps(asdict(result), ensure_ascii=False, default=str, indent=2))
         return
     if args.command == "validate-date":
         providers = []
