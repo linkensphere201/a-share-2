@@ -2105,7 +2105,10 @@ class SQLiteMarketDataStore:
         return len(snapshots)
 
     def list_market_snapshots(self, symbols: Sequence[str]) -> list[dict[str, object]]:
-        ordered = list(dict.fromkeys(item.upper() for item in symbols if item))
+        ordered = list(dict.fromkeys(
+            item.strip() if item.strip().upper().startswith("FUT") else item.strip().upper()
+            for item in symbols if item.strip()
+        ))
         if len(ordered) > 500:
             raise ValueError("market snapshot query exceeds 500 symbols")
         if not ordered:
@@ -2148,7 +2151,113 @@ class SQLiteMarketDataStore:
             }
             for row in rows
         }
+        by_symbol.update(self._list_futures_market_snapshots(ordered))
         return [by_symbol[symbol] for symbol in ordered if symbol in by_symbol]
+
+    def _list_futures_market_snapshots(
+        self,
+        symbols: Sequence[str],
+    ) -> dict[str, dict[str, object]]:
+        futures_symbols = [item for item in symbols if item.upper().startswith("FUT")]
+        if not futures_symbols or not self.futures_storage_status()["ready"]:
+            return {}
+        final_rows: list[sqlite3.Row] = []
+        provisional_rows: list[sqlite3.Row] = []
+        with self._lock:
+            for offset in range(0, len(futures_symbols), 400):
+                chunk = futures_symbols[offset : offset + 400]
+                placeholders = ",".join("?" for _ in chunk)
+                final_rows.extend(self._connection.execute(
+                    f"""
+                    SELECT instrument.symbol, instrument.name, instrument.kind,
+                           instrument.exchange, bar.trading_day, bar.close,
+                           bar.previous_settlement, bar.volume_contracts,
+                           bar.amount_cny, bar.open_interest_contracts,
+                           bar.open_interest_change_contracts, source.code,
+                           COALESCE(contract.contract_month, mapped.contract_month),
+                           COALESCE(contract.last_trading_date, mapped.last_trading_date),
+                           bar.updated_at_ms
+                    FROM instruments AS instrument
+                    JOIN futures_daily_bars AS bar USING (instrument_id)
+                    JOIN sources AS source USING (source_id)
+                    LEFT JOIN futures_contracts AS contract USING (instrument_id)
+                    LEFT JOIN futures_contracts AS mapped
+                      ON mapped.instrument_id = bar.mapped_contract_instrument_id
+                    WHERE instrument.symbol IN ({placeholders})
+                      AND bar.trading_day = (
+                          SELECT max(latest.trading_day)
+                          FROM futures_daily_bars AS latest
+                          WHERE latest.instrument_id = instrument.instrument_id
+                      )
+                    """,
+                    chunk,
+                ).fetchall())
+                provisional_rows.extend(self._connection.execute(
+                    f"""
+                    SELECT instrument.symbol, instrument.name, instrument.kind,
+                           instrument.exchange, bar.trading_day, bar.close,
+                           bar.previous_settlement, bar.volume_contracts,
+                           NULL, bar.open_interest_contracts, NULL, source.code,
+                           contract.contract_month, contract.last_trading_date,
+                           bar.updated_at_ms, bar.stale
+                    FROM instruments AS instrument
+                    JOIN futures_provisional_daily_bars AS bar USING (instrument_id)
+                    JOIN sources AS source USING (source_id)
+                    JOIN futures_contracts AS contract USING (instrument_id)
+                    WHERE instrument.symbol IN ({placeholders})
+                      AND bar.takeover_state = 'active'
+                      AND bar.trading_day = (
+                          SELECT max(latest.trading_day)
+                          FROM futures_provisional_daily_bars AS latest
+                          WHERE latest.instrument_id = instrument.instrument_id
+                            AND latest.takeover_state = 'active'
+                      )
+                    ORDER BY bar.provider_time DESC
+                    """,
+                    chunk,
+                ).fetchall())
+
+        snapshots = {
+            str(row[0]): self._futures_snapshot_row(row, "final")
+            for row in final_rows
+        }
+        for row in provisional_rows:
+            symbol = str(row[0])
+            existing = snapshots.get(symbol)
+            provisional_day = _date_from_key(int(row[4]))
+            if existing is not None and existing["trade_date"] >= provisional_day:
+                continue
+            snapshots[symbol] = self._futures_snapshot_row(
+                row, "provisional-stale" if bool(row[15]) else "provisional"
+            )
+        return snapshots
+
+    @staticmethod
+    def _futures_snapshot_row(row: sqlite3.Row, source_state: str) -> dict[str, object]:
+        previous_settlement = float(row[6]) if row[6] is not None else None
+        close = float(row[5])
+        settlement_change = (
+            (close / previous_settlement - 1) * 100
+            if previous_settlement not in (None, 0) else None
+        )
+        return {
+            "symbol": str(row[0]), "name": str(row[1]),
+            "kind": str(row[2]), "exchange": str(row[3]),
+            "trade_date": _date_from_key(int(row[4])), "close": close,
+            "change_percent": settlement_change,
+            "settlement_change_percent": settlement_change,
+            "volume": int(row[7]),
+            "amount": float(row[8]) if row[8] is not None else None,
+            "open_interest": float(row[9]) if row[9] is not None else None,
+            "open_interest_change": float(row[10]) if row[10] is not None else None,
+            "source": str(row[11]), "source_state": source_state,
+            "contract_month": str(row[12]) if row[12] is not None else None,
+            "last_trading_date": (
+                _date_from_key(int(row[13])) if row[13] is not None else None
+            ),
+            "updated_at_ms": int(row[14]),
+            "total_market_cap": None,
+        }
 
     def _ensure_market_snapshot_metrics(self) -> None:
         columns = {

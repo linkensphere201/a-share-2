@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { ArrowDown, ArrowUp, ArrowUpDown, Columns3, Maximize2, Minimize2, Pencil, X } from 'lucide-react'
-import { defaultListColumns, type Instrument, type InstrumentListWindowState, type ListColumnKey } from './workspace'
+import { allListColumns, type Instrument, type InstrumentListWindowState, type ListColumnKey } from './workspace'
 import { logWarning } from './eventLogger'
 import { instrumentSecondaryLabel } from './InstrumentBrowser'
 import { CustomGroupMindMap, type MindMapAnchor } from './CustomGroupMindMap'
@@ -8,11 +8,17 @@ import { CustomGroupMindMap, type MindMapAnchor } from './CustomGroupMindMap'
 type MarketSnapshot = {
   symbol: string
   trade_date: string
-  change_percent: number
+  change_percent?: number
+  settlement_change_percent?: number
   total_market_cap?: number
   close?: number
   volume?: number
   amount?: number
+  open_interest?: number
+  open_interest_change?: number
+  source_state?: string
+  contract_month?: string
+  last_trading_date?: string
 }
 
 type ListInstrument = Instrument & { available?: boolean }
@@ -153,7 +159,7 @@ export function InstrumentListWindow({
       ? memberMeta.asOf ? `${memberMeta.asOf} · ${memberMeta.source ?? '成分'}` : '暂无成分数据'
       : '等待上游选择'
     : `${sourceItems.length} 个标的`
-  const visibleColumns = defaultListColumns.filter(column => windowState.visibleColumns.includes(column))
+  const visibleColumns = allListColumns.filter(column => windowState.visibleColumns.includes(column))
   const gridStyle = { gridTemplateColumns: visibleColumns.map(columnWidth).join(' ') } satisfies CSSProperties
   const tableStyle = { minWidth: Math.max(96, 96 + (visibleColumns.length - 1) * 48) } satisfies CSSProperties
 
@@ -196,7 +202,7 @@ export function InstrumentListWindow({
               disabled={option.key === 'name'}
               onChange={() => onVisibleColumnsChange(checked
                 ? visibleColumns.filter(column => column !== option.key)
-                : defaultListColumns.filter(column => [...visibleColumns, option.key].includes(column)))}
+                : allListColumns.filter(column => [...visibleColumns, option.key].includes(column)))}
             />
             <span>{option.label}</span>
           </label>
@@ -249,6 +255,12 @@ export function InstrumentListWindow({
               {visibleColumns.includes('volume') && <span className="list-volume">{formatQuantity(snapshot?.volume)}</span>}
               {visibleColumns.includes('amount') && <span className="list-amount">{formatMoney(snapshot?.amount)}</span>}
               {visibleColumns.includes('total_market_cap') && <span className="list-market-cap">{formatMoney(snapshot?.total_market_cap)}</span>}
+              {visibleColumns.includes('settlement_change_percent') && <span className={changeClass(snapshot?.settlement_change_percent)}>{formatChange(snapshot?.settlement_change_percent)}</span>}
+              {visibleColumns.includes('open_interest') && <span>{formatQuantity(snapshot?.open_interest)}</span>}
+              {visibleColumns.includes('open_interest_change') && <span className={changeClass(snapshot?.open_interest_change)}>{formatSignedQuantity(snapshot?.open_interest_change)}</span>}
+              {visibleColumns.includes('source_state') && <span>{formatSourceState(snapshot?.source_state)}</span>}
+              {visibleColumns.includes('contract_month') && <span>{snapshot?.contract_month ?? '—'}</span>}
+              {visibleColumns.includes('last_trading_date') && <span>{snapshot?.last_trading_date ?? '—'}</span>}
             </div>
           })}
           </div>
@@ -271,10 +283,19 @@ const listColumnOptions: Array<{ key: ListColumnKey; label: string }> = [
   { key: 'volume', label: '成交量' },
   { key: 'amount', label: '成交额' },
   { key: 'total_market_cap', label: '总市值' },
+  { key: 'settlement_change_percent', label: '结算涨跌' },
+  { key: 'open_interest', label: '持仓量' },
+  { key: 'open_interest_change', label: '持仓变化' },
+  { key: 'source_state', label: '数据状态' },
+  { key: 'contract_month', label: '合约月份' },
+  { key: 'last_trading_date', label: '最后交易日' },
 ]
 
 function columnWidth(column: ListColumnKey): string {
-  return column === 'name' ? 'minmax(64px, 1fr)' : '48px'
+  if (column === 'name') return 'minmax(64px, 1fr)'
+  if (column === 'last_trading_date') return '78px'
+  if (column === 'source_state' || column === 'contract_month') return '64px'
+  return '56px'
 }
 
 function SortButton({ label, field, sort, onChange }: {
@@ -302,7 +323,10 @@ export function sortListInstruments(
     const rightValue = snapshots[right.symbol]?.[sort.key]
     if (leftValue === undefined || leftValue === null) return rightValue === undefined || rightValue === null ? 0 : 1
     if (rightValue === undefined || rightValue === null) return -1
-    return (leftValue - rightValue) * direction
+    if (typeof leftValue === 'number' && typeof rightValue === 'number') {
+      return (leftValue - rightValue) * direction
+    }
+    return String(leftValue).localeCompare(String(rightValue), 'zh-CN') * direction
   })
 }
 
@@ -316,6 +340,17 @@ function formatQuantity(value?: number): string {
   if (value >= 100_000_000) return `${(value / 100_000_000).toFixed(1)}亿`
   if (value >= 10_000) return `${(value / 10_000).toFixed(1)}万`
   return value.toLocaleString('zh-CN')
+}
+
+function formatSignedQuantity(value?: number): string {
+  if (value === undefined || value === null) return '—'
+  const formatted = formatQuantity(Math.abs(value))
+  return `${value > 0 ? '+' : value < 0 ? '-' : ''}${formatted}`
+}
+
+function formatSourceState(value?: string): string {
+  if (!value) return '—'
+  return ({ final: '正式', provisional: '盘中', 'provisional-stale': '盘中停更' })[value] ?? value
 }
 
 function formatMoney(value?: number): string {

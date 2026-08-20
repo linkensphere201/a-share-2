@@ -58,7 +58,15 @@ export type ChartWindowState = {
   chart: ChartViewState
 }
 
-export type ListColumnKey = 'name' | 'close' | 'change_percent' | 'volume' | 'amount' | 'total_market_cap'
+export type ListColumnKey =
+  | 'name' | 'close' | 'change_percent' | 'volume' | 'amount' | 'total_market_cap'
+  | 'settlement_change_percent' | 'open_interest' | 'open_interest_change'
+  | 'source_state' | 'contract_month' | 'last_trading_date'
+export const allListColumns: ListColumnKey[] = [
+  'name', 'close', 'change_percent', 'volume', 'amount', 'total_market_cap',
+  'settlement_change_percent', 'open_interest', 'open_interest_change',
+  'source_state', 'contract_month', 'last_trading_date',
+]
 export const defaultListColumns: ListColumnKey[] = ['name', 'close', 'change_percent', 'volume', 'amount', 'total_market_cap']
 
 export type InstrumentListWindowState = {
@@ -415,13 +423,13 @@ function normalizeListWindow(value: Record<string, unknown>): InstrumentListWind
 
 function normalizeListColumns(value: unknown): ListColumnKey[] {
   if (!Array.isArray(value)) return [...defaultListColumns]
-  const selected = defaultListColumns.filter(column => value.includes(column))
+  const selected = allListColumns.filter(column => value.includes(column))
   return ['name', ...selected.filter(column => column !== 'name')]
 }
 
 function normalizeListSort(value: unknown): InstrumentListWindowState['sort'] {
   if (!isRecord(value)) return undefined
-  if (!['name', 'close', 'change_percent', 'volume', 'amount', 'total_market_cap'].includes(String(value.key))) return undefined
+  if (!allListColumns.includes(String(value.key) as ListColumnKey)) return undefined
   if (value.direction !== 'asc' && value.direction !== 'desc') return undefined
   return {
     key: value.key as NonNullable<InstrumentListWindowState['sort']>['key'],

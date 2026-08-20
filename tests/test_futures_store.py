@@ -326,6 +326,54 @@ def test_canonical_daily_takes_over_without_deleting_provisional_audit() -> None
         assert audit[0]["close"] == 104
 
 
+def test_market_snapshots_fuse_futures_provisional_and_canonical_metrics() -> None:
+    product, contract, series = _catalog()
+    prior_day = date(2026, 8, 19)
+    current_day = date(2026, 8, 20)
+    observed = datetime(2026, 8, 20, 14, 30, tzinfo=CHINA_TIME)
+    with SQLiteMarketDataStore(":memory:") as store:
+        store.upsert_futures_catalog(
+            "tushare-futures", [product], [contract], [series]
+        )
+        store.upsert_futures_daily_bars("tushare-futures", [_bar(prior_day)])
+        store.upsert_futures_provisional_daily_bars(
+            "akshare-futures-zh-spot",
+            [_bar(
+                current_day, FuturesBarState.PROVISIONAL,
+                "akshare-futures-zh-spot", 104, observed,
+            )],
+            observed,
+        )
+
+        provisional = store.list_market_snapshots([contract.symbol])[0]
+        assert provisional["trade_date"] == current_day
+        assert provisional["source_state"] == "provisional"
+        assert provisional["settlement_change_percent"] == pytest.approx(5.050505)
+        assert provisional["open_interest"] == 4321
+        assert provisional["open_interest_change"] is None
+        assert provisional["contract_month"] == "202609"
+        assert provisional["last_trading_date"] == date(2026, 9, 15)
+
+        store.upsert_futures_daily_bars(
+            "tushare-futures", [_bar(current_day, close=103)]
+        )
+        final = store.list_market_snapshots([contract.symbol])[0]
+        assert final["source_state"] == "final"
+        assert final["close"] == 103
+        assert final["amount"] == 5_000_000
+        assert final["open_interest_change"] == 12
+
+        store.upsert_futures_daily_bars("tushare-futures", [replace(
+            _bar(current_day, close=105),
+            symbol=series.symbol,
+            mapped_contract_symbol=contract.symbol,
+        )])
+        continuous = store.list_market_snapshots([series.symbol])[0]
+        assert continuous["symbol"] == series.symbol
+        assert continuous["contract_month"] == "202609"
+        assert continuous["last_trading_date"] == date(2026, 9, 15)
+
+
 def test_fused_read_uses_latest_active_provisional_source() -> None:
     product, contract, series = _catalog()
     day = date(2026, 8, 20)

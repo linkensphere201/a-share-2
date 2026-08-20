@@ -806,8 +806,7 @@ def create_app(
     ) -> dict[str, object]:
         if len(symbol) > 500:
             raise HTTPException(status_code=422, detail="at most 500 symbols are allowed")
-        normalized = [item.upper() for item in symbol]
-        return {"items": _store(request).list_market_snapshots(normalized)}
+        return {"items": _store(request).list_market_snapshots(symbol)}
 
     @app.get("/api/instruments/{symbol}/daily-bars")
     def daily_bars(

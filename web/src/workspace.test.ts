@@ -18,6 +18,27 @@ import { createTradingSystemWindowStates } from './tradingSystems'
 afterEach(() => window.localStorage.clear())
 
 describe('workspace persistence', () => {
+  it('persists selectable futures list columns and sorting', () => {
+    const state = createDefaultWorkspace()
+    const list = state.groups[0].windows.find(item => item.type === 'instrument-list')!
+    if (list.type !== 'instrument-list') throw new Error('expected list')
+    list.visibleColumns = [
+      'name', 'close', 'settlement_change_percent', 'open_interest',
+      'open_interest_change', 'source_state', 'contract_month', 'last_trading_date',
+    ]
+    list.sort = { key: 'open_interest_change', direction: 'desc' }
+
+    saveWorkspace(state)
+    const restored = loadWorkspace().groups[0].windows.find(
+      item => item.type === 'instrument-list'
+    )
+
+    expect(restored).toMatchObject({
+      visibleColumns: list.visibleColumns,
+      sort: list.sort,
+    })
+  })
+
   it('persists real and continuous futures targets with their metadata', () => {
     const state = createDefaultWorkspace()
     const list = state.groups[0].windows.find(item => item.type === 'instrument-list')!
