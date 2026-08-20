@@ -7,6 +7,7 @@ import threading
 import time
 import json
 import logging
+import hashlib
 from uuid import uuid4
 from contextlib import AbstractContextManager
 from collections.abc import Sequence
@@ -32,6 +33,8 @@ from stock_harness.models import (
     FuturesLifecycleStatus,
     FuturesProduct,
     FuturesRollMapping,
+    FuturesSyncState,
+    FuturesUpdateReceipt,
     MarketSnapshot,
     ProviderIncident,
     ProvisionalDailyBar,
@@ -176,6 +179,43 @@ def _futures_daily_row(
         mapped_contract_symbol=str(row[16]) if row[16] is not None else None,
         roll_event=bool(row[17]),
     )
+
+
+def _futures_sync_row(row: sqlite3.Row) -> FuturesSyncState:
+    return FuturesSyncState(
+        source=str(row[0]), dataset=str(row[1]), scope=str(row[2]),
+        identity=str(row[3]), covered_from=_date_from_key(int(row[4])),
+        covered_through=_date_from_key(int(row[5])), last_batch_rows=int(row[6]),
+        updated_at_ms=int(row[7]),
+    )
+
+
+def _futures_receipt_row(row: sqlite3.Row) -> FuturesUpdateReceipt:
+    return FuturesUpdateReceipt(
+        source=str(row[0]), dataset=str(row[1]), scope=str(row[2]),
+        effective_date=_date_from_key(int(row[3])), row_count=int(row[4]),
+        payload_hash=bytes(row[5]), status=str(row[6]), message=str(row[7]),
+        updated_at_ms=int(row[8]),
+    )
+
+
+def _futures_mapping_hash(mappings: Sequence[FuturesRollMapping]) -> bytes:
+    payload = [
+        {
+            "series": item.series_symbol,
+            "effective_from": item.effective_from.isoformat(),
+            "contract": item.contract_symbol,
+        }
+        for item in sorted(mappings, key=lambda value: value.effective_from)
+    ]
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).digest()
+
+
+def _require_sync_text(value: str, label: str) -> None:
+    if not value or not value.strip():
+        raise ValueError(f"futures sync {label} is required")
 
 
 class SQLiteMarketDataStore:
@@ -593,6 +633,8 @@ class SQLiteMarketDataStore:
         started = time.perf_counter()
         if not bars:
             return WriteStats(0, 0, 0, 0.0)
+        if len(bars) > 2_000:
+            raise ValueError("futures daily batch exceeds 2000 rows")
         identities = {(item.symbol, item.trading_day) for item in bars}
         if len(identities) != len(bars):
             raise ValueError("futures daily batch contains duplicate symbol/date rows")
@@ -826,6 +868,8 @@ class SQLiteMarketDataStore:
         mappings: Sequence[FuturesRollMapping],
     ) -> int:
         self._require_futures_storage()
+        if len(mappings) > 2_000:
+            raise ValueError("futures mapping batch exceeds 2000 rows")
         for item in mappings:
             item.validate()
         identities = {(item.series_symbol, item.effective_from) for item in mappings}
@@ -1085,6 +1129,328 @@ class SQLiteMarketDataStore:
             }
             for row in rows
         ]
+
+    def checkpoint_futures_sync(
+        self,
+        source: str,
+        dataset: str,
+        scope: str,
+        identity: str,
+        covered_from: date,
+        covered_through: date,
+        last_batch_rows: int,
+    ) -> FuturesSyncState:
+        self._require_futures_storage()
+        if covered_from > covered_through:
+            raise ValueError("futures sync coverage start must not exceed end")
+        if last_batch_rows < 0:
+            raise ValueError("futures sync row count must be non-negative")
+        _require_sync_text(dataset, "dataset")
+        _require_sync_text(scope, "scope")
+        _require_sync_text(identity, "identity")
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        with self._lock, self._transaction():
+            source_id = self._source_id(source)
+            self._connection.execute(
+                """
+                INSERT INTO futures_sync_states(
+                    source_id, dataset, scope, identity, covered_from,
+                    covered_through, last_batch_rows, updated_at_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(source_id, dataset, scope, identity) DO UPDATE SET
+                    covered_from = min(covered_from, excluded.covered_from),
+                    covered_through = max(covered_through, excluded.covered_through),
+                    last_batch_rows = excluded.last_batch_rows,
+                    updated_at_ms = excluded.updated_at_ms
+                """,
+                (
+                    source_id, dataset, scope, identity, _date_key(covered_from),
+                    _date_key(covered_through), last_batch_rows, now_ms,
+                ),
+            )
+        state = self.get_futures_sync_state(source, dataset, scope, identity)
+        if state is None:
+            raise RuntimeError("futures sync checkpoint was not persisted")
+        return state
+
+    def get_futures_sync_state(
+        self,
+        source: str,
+        dataset: str,
+        scope: str,
+        identity: str,
+    ) -> FuturesSyncState | None:
+        self._require_futures_storage()
+        with self._lock:
+            row = self._connection.execute(
+                """
+                SELECT source.code, state.dataset, state.scope, state.identity,
+                       state.covered_from, state.covered_through,
+                       state.last_batch_rows, state.updated_at_ms
+                FROM futures_sync_states AS state
+                JOIN sources AS source USING (source_id)
+                WHERE source.code = ? AND state.dataset = ?
+                  AND state.scope = ? AND state.identity = ?
+                """,
+                (source, dataset, scope, identity),
+            ).fetchone()
+        return _futures_sync_row(row) if row is not None else None
+
+    def record_futures_update_receipt(
+        self,
+        source: str,
+        dataset: str,
+        scope: str,
+        effective_date: date,
+        row_count: int,
+        payload_hash: bytes,
+        status: str,
+        message: str = "",
+    ) -> FuturesUpdateReceipt:
+        self._require_futures_storage()
+        if row_count < 0:
+            raise ValueError("futures receipt row count must be non-negative")
+        if not isinstance(payload_hash, bytes) or not payload_hash:
+            raise ValueError("futures receipt payload hash is required")
+        if status not in {"complete", "empty", "partial", "rejected"}:
+            raise ValueError(f"invalid futures receipt status: {status}")
+        _require_sync_text(dataset, "dataset")
+        _require_sync_text(scope, "scope")
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        with self._lock, self._transaction():
+            source_id = self._source_id(source)
+            self._upsert_futures_receipt_locked(
+                source_id, dataset, scope, effective_date, row_count,
+                payload_hash, status, message, now_ms,
+            )
+        receipt = self.get_futures_update_receipt(
+            source, dataset, scope, effective_date
+        )
+        if receipt is None:
+            raise RuntimeError("futures update receipt was not persisted")
+        return receipt
+
+    def get_futures_update_receipt(
+        self,
+        source: str,
+        dataset: str,
+        scope: str,
+        effective_date: date,
+    ) -> FuturesUpdateReceipt | None:
+        self._require_futures_storage()
+        with self._lock:
+            row = self._connection.execute(
+                """
+                SELECT source.code, receipt.dataset, receipt.scope,
+                       receipt.effective_date, receipt.row_count,
+                       receipt.payload_hash, receipt.status, receipt.message,
+                       receipt.updated_at_ms
+                FROM futures_update_receipts AS receipt
+                JOIN sources AS source USING (source_id)
+                WHERE source.code = ? AND receipt.dataset = ?
+                  AND receipt.scope = ? AND receipt.effective_date = ?
+                """,
+                (source, dataset, scope, _date_key(effective_date)),
+            ).fetchone()
+        return _futures_receipt_row(row) if row is not None else None
+
+    def replace_futures_roll_mapping_window(
+        self,
+        source: str,
+        scope: str,
+        series_symbol: str,
+        start_date: date,
+        end_date: date,
+        mappings: Sequence[FuturesRollMapping],
+    ) -> tuple[FuturesSyncState, FuturesUpdateReceipt]:
+        self._require_futures_storage()
+        _require_sync_text(scope, "scope")
+        if start_date > end_date:
+            raise ValueError("futures mapping window start must not exceed end")
+        if len(mappings) > 2_000:
+            raise ValueError("futures mapping batch exceeds 2000 rows")
+        if any(
+            item.series_symbol != series_symbol
+            or not start_date <= item.effective_from <= end_date
+            for item in mappings
+        ):
+            raise ValueError("futures mappings must belong to the replacement window")
+        if len({item.effective_from for item in mappings}) != len(mappings):
+            raise ValueError("futures mapping window contains duplicate dates")
+        for item in mappings:
+            item.validate()
+        payload_hash = _futures_mapping_hash(mappings)
+        status = "complete" if mappings else "empty"
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        with self._lock, self._transaction():
+            source_id = self._source_id(source)
+            ids = self._instrument_ids({
+                series_symbol,
+                *(item.contract_symbol for item in mappings),
+            })
+            if series_symbol not in ids:
+                raise ValueError(f"unknown futures series: {series_symbol}")
+            missing_contracts = {
+                item.contract_symbol for item in mappings
+                if item.contract_symbol not in ids
+            }
+            if missing_contracts:
+                raise ValueError(
+                    "unknown futures mapping contracts: "
+                    + ", ".join(sorted(missing_contracts))
+                )
+            series_row = self._connection.execute(
+                "SELECT provider_symbol FROM futures_continuous_series WHERE instrument_id = ?",
+                (ids[series_symbol],),
+            ).fetchone()
+            if series_row is None:
+                raise ValueError(f"not a futures continuous series: {series_symbol}")
+            contract_provider_symbols = {
+                str(row[0]): str(row[1])
+                for row in self._connection.execute(
+                    """
+                    SELECT instrument.symbol, contract.provider_symbol
+                    FROM futures_contracts AS contract
+                    JOIN instruments AS instrument USING (instrument_id)
+                    WHERE contract.instrument_id IN (
+                    """
+                    + ",".join("?" for _ in mappings)
+                    + ")",
+                    [ids[item.contract_symbol] for item in mappings],
+                )
+            } if mappings else {}
+            if any(
+                str(series_row[0]) != item.series_provider_symbol
+                or contract_provider_symbols.get(item.contract_symbol)
+                != item.contract_provider_symbol
+                for item in mappings
+            ):
+                raise ValueError("futures mapping Provider identity mismatch")
+            self._connection.execute(
+                """
+                DELETE FROM futures_roll_mappings
+                WHERE source_id = ? AND series_instrument_id = ?
+                  AND effective_from BETWEEN ? AND ?
+                """,
+                (
+                    source_id, ids[series_symbol],
+                    _date_key(start_date), _date_key(end_date),
+                ),
+            )
+            self._connection.executemany(
+                """
+                INSERT INTO futures_roll_mappings(
+                    source_id, series_instrument_id, effective_from,
+                    contract_instrument_id, updated_at_ms
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    (
+                        source_id, ids[series_symbol], _date_key(item.effective_from),
+                        ids[item.contract_symbol], now_ms,
+                    )
+                    for item in mappings
+                ),
+            )
+            self._connection.execute(
+                """
+                INSERT INTO futures_sync_states(
+                    source_id, dataset, scope, identity, covered_from,
+                    covered_through, last_batch_rows, updated_at_ms
+                ) VALUES (?, 'roll-mapping', ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(source_id, dataset, scope, identity) DO UPDATE SET
+                    covered_from = min(covered_from, excluded.covered_from),
+                    covered_through = max(covered_through, excluded.covered_through),
+                    last_batch_rows = excluded.last_batch_rows,
+                    updated_at_ms = excluded.updated_at_ms
+                """,
+                (
+                    source_id, scope, series_symbol, _date_key(start_date),
+                    _date_key(end_date), len(mappings), now_ms,
+                ),
+            )
+            self._upsert_futures_receipt_locked(
+                source_id, "roll-mapping", series_symbol, end_date,
+                len(mappings), payload_hash, status, "", now_ms,
+            )
+        state = self.get_futures_sync_state(
+            source, "roll-mapping", scope, series_symbol
+        )
+        receipt = self.get_futures_update_receipt(
+            source, "roll-mapping", series_symbol, end_date
+        )
+        if state is None or receipt is None:
+            raise RuntimeError("futures mapping checkpoint transaction was incomplete")
+        return state, receipt
+
+    def list_futures_coverage(self) -> list[dict[str, object]]:
+        self._require_futures_storage()
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT instrument.symbol, instrument.name, instrument.exchange,
+                       product.product_code, contract.lifecycle_status,
+                       min(bar.trading_day), max(bar.trading_day), count(bar.trading_day),
+                       count(bar.trading_day) FILTER (WHERE bar.settlement IS NULL),
+                       count(bar.trading_day) FILTER (WHERE bar.open_interest_contracts IS NULL)
+                FROM futures_contracts AS contract
+                JOIN instruments AS instrument USING (instrument_id)
+                JOIN futures_products AS product
+                  ON product.instrument_id = contract.product_instrument_id
+                LEFT JOIN futures_daily_bars AS bar USING (instrument_id)
+                GROUP BY contract.instrument_id
+                ORDER BY instrument.exchange, product.product_code,
+                         contract.contract_month
+                """
+            ).fetchall()
+        return [
+            {
+                "symbol": str(row[0]), "name": str(row[1]),
+                "exchange": str(row[2]), "product_code": str(row[3]),
+                "lifecycle_status": str(row[4]),
+                "first_trading_day": (
+                    _date_from_key(int(row[5])) if row[5] is not None else None
+                ),
+                "last_trading_day": (
+                    _date_from_key(int(row[6])) if row[6] is not None else None
+                ),
+                "rows": int(row[7]),
+                "missing_settlement_rows": int(row[8]),
+                "missing_open_interest_rows": int(row[9]),
+            }
+            for row in rows
+        ]
+
+    def _upsert_futures_receipt_locked(
+        self,
+        source_id: int,
+        dataset: str,
+        scope: str,
+        effective_date: date,
+        row_count: int,
+        payload_hash: bytes,
+        status: str,
+        message: str,
+        now_ms: int,
+    ) -> None:
+        self._connection.execute(
+            """
+            INSERT INTO futures_update_receipts(
+                source_id, dataset, scope, effective_date, row_count,
+                payload_hash, status, message, updated_at_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(source_id, dataset, scope, effective_date) DO UPDATE SET
+                row_count = excluded.row_count,
+                payload_hash = excluded.payload_hash,
+                status = excluded.status,
+                message = excluded.message,
+                updated_at_ms = excluded.updated_at_ms
+            """,
+            (
+                source_id, dataset, scope, _date_key(effective_date), row_count,
+                payload_hash, status, message[:500], now_ms,
+            ),
+        )
 
     def upsert_catalog_entries(self, entries: Sequence[CatalogEntry]) -> int:
         if not entries:

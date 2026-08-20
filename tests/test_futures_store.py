@@ -328,3 +328,124 @@ def test_futures_storage_rejects_stock_target_and_mapping_provider_mismatch() ->
             store.upsert_futures_roll_mappings(
                 "tushare-futures", [invalid_mapping]
             )
+
+
+def test_futures_sync_checkpoint_and_receipt_round_trip(tmp_path: Path) -> None:
+    path = tmp_path / "sync.sqlite"
+    with SQLiteMarketDataStore(path) as store:
+        first = store.checkpoint_futures_sync(
+            "tushare-futures", "daily", "SHFE", "CU2609.SHF",
+            date(2026, 8, 1), date(2026, 8, 10), 8,
+        )
+        merged = store.checkpoint_futures_sync(
+            "tushare-futures", "daily", "SHFE", "CU2609.SHF",
+            date(2026, 8, 5), date(2026, 8, 20), 7,
+        )
+        receipt = store.record_futures_update_receipt(
+            "tushare-futures", "daily", "CU2609.SHF",
+            date(2026, 8, 20), 7, b"digest", "complete", "ok",
+        )
+        assert first.covered_through == date(2026, 8, 10)
+        assert (merged.covered_from, merged.covered_through) == (
+            date(2026, 8, 1), date(2026, 8, 20)
+        )
+        assert merged.last_batch_rows == 7
+    with SQLiteMarketDataStore(path) as reopened:
+        assert reopened.get_futures_sync_state(
+            "tushare-futures", "daily", "SHFE", "CU2609.SHF"
+        ) == merged
+        assert reopened.get_futures_update_receipt(
+            "tushare-futures", "daily", "CU2609.SHF", date(2026, 8, 20)
+        ) == receipt
+
+
+def test_mapping_window_replacement_is_atomic_and_correction_aware() -> None:
+    product, first_contract, series = _catalog()
+    second_contract = replace(
+        first_contract,
+        symbol="FUT:SHFE:CU:202610",
+        provider_symbol="CU2610.SHF",
+        contract_month="202610",
+        display_name="Copper 2610",
+        last_trading_date=date(2026, 10, 15),
+        delivery_date=date(2026, 10, 20),
+    )
+    first_day, second_day = date(2026, 8, 19), date(2026, 8, 20)
+
+    def mapping(day, contract):
+        return FuturesRollMapping(
+            series.symbol, series.provider_symbol, day,
+            contract.symbol, contract.provider_symbol,
+        )
+
+    with SQLiteMarketDataStore(":memory:") as store:
+        store.upsert_futures_catalog(
+            "tushare-futures", [product], [first_contract, second_contract], [series]
+        )
+        state, initial_receipt = store.replace_futures_roll_mapping_window(
+            "tushare-futures", "SHFE", series.symbol, first_day, second_day,
+            [mapping(first_day, first_contract), mapping(second_day, first_contract)],
+        )
+        assert (state.covered_from, state.covered_through) == (first_day, second_day)
+        corrected_state, corrected_receipt = store.replace_futures_roll_mapping_window(
+            "tushare-futures", "SHFE", series.symbol, second_day, second_day,
+            [mapping(second_day, second_contract)],
+        )
+        stored = store.list_futures_roll_mappings(series.symbol, first_day, second_day)
+        assert [item.contract_symbol for item in stored] == [
+            first_contract.symbol, second_contract.symbol,
+        ]
+        assert corrected_state.covered_from == first_day
+        assert corrected_receipt.payload_hash != initial_receipt.payload_hash
+
+        invalid = replace(
+            mapping(second_day, first_contract),
+            contract_provider_symbol="WRONG.SHF",
+        )
+        with pytest.raises(ValueError, match="Provider identity mismatch"):
+            store.replace_futures_roll_mapping_window(
+                "tushare-futures", "SHFE", series.symbol,
+                second_day, second_day, [invalid],
+            )
+        assert store.list_futures_roll_mappings(
+            series.symbol, second_day, second_day
+        )[0].contract_symbol == second_contract.symbol
+
+
+def test_empty_mapping_window_removes_suffix_and_records_empty_receipt() -> None:
+    product, contract, series = _catalog()
+    day = date(2026, 8, 20)
+    mapping = FuturesRollMapping(
+        series.symbol, series.provider_symbol, day,
+        contract.symbol, contract.provider_symbol,
+    )
+    with SQLiteMarketDataStore(":memory:") as store:
+        store.upsert_futures_catalog(
+            "tushare-futures", [product], [contract], [series]
+        )
+        store.replace_futures_roll_mapping_window(
+            "tushare-futures", "SHFE", series.symbol, day, day, [mapping]
+        )
+        _state, receipt = store.replace_futures_roll_mapping_window(
+            "tushare-futures", "SHFE", series.symbol, day, day, []
+        )
+        assert store.list_futures_roll_mappings(series.symbol, day, day) == []
+        assert (receipt.status, receipt.row_count) == ("empty", 0)
+
+
+def test_futures_coverage_reports_field_completeness() -> None:
+    product, contract, series = _catalog()
+    day = date(2026, 8, 20)
+    with SQLiteMarketDataStore(":memory:") as store:
+        store.upsert_futures_catalog(
+            "tushare-futures", [product], [contract], [series]
+        )
+        store.upsert_futures_daily_bars(
+            "tushare-futures",
+            [replace(_bar(day), settlement=None, open_interest_contracts=None)],
+        )
+        coverage = store.list_futures_coverage()[0]
+        assert coverage["symbol"] == contract.symbol
+        assert coverage["rows"] == 1
+        assert coverage["missing_settlement_rows"] == 1
+        assert coverage["missing_open_interest_rows"] == 1

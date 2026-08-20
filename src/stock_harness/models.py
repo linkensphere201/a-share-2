@@ -190,6 +190,31 @@ class FuturesRollMapping:
 
 
 @dataclass(frozen=True, slots=True)
+class FuturesSyncState:
+    source: str
+    dataset: str
+    scope: str
+    identity: str
+    covered_from: date
+    covered_through: date
+    last_batch_rows: int
+    updated_at_ms: int
+
+
+@dataclass(frozen=True, slots=True)
+class FuturesUpdateReceipt:
+    source: str
+    dataset: str
+    scope: str
+    effective_date: date
+    row_count: int
+    payload_hash: bytes
+    status: str
+    message: str
+    updated_at_ms: int
+
+
+@dataclass(frozen=True, slots=True)
 class FuturesDailyBar:
     symbol: str
     trading_day: date
