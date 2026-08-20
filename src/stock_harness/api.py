@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 import logging
 from pathlib import Path
 import time
@@ -16,10 +16,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from stock_harness.config import load_runtime_settings
+from stock_harness.config import FuturesExchangeCutoff, load_runtime_settings
 from stock_harness.intraday import IntradayQuoteService
 from stock_harness.futures_intraday import FuturesProvisionalService
-from stock_harness.models import AdjustmentFactor, InstrumentKind, StockTradeStatus
+from stock_harness.models import (
+    AdjustmentFactor,
+    FuturesExchange,
+    InstrumentKind,
+    StockTradeStatus,
+)
 from stock_harness.runtime_logging import EVENT_BUFFER, record_frontend_event
 from stock_harness.sqlite_store import SQLiteMarketDataStore
 from stock_harness.workspace_context import WorkspaceContextInput, WorkspaceContextService
@@ -37,6 +42,7 @@ from stock_harness.trend_reviews import (
 
 
 LOGGER = logging.getLogger(__name__)
+CHINA_TIME = timezone(timedelta(hours=8))
 
 CustomGroupRole = Literal[
     "", "sentiment_anchor", "liquidity_anchor", "bellwether",
@@ -148,6 +154,8 @@ def create_app(
     update_trigger: Callable[[], dict[str, object]] | None = None,
     intraday_service: IntradayQuoteService | None = None,
     futures_provisional_service: FuturesProvisionalService | None = None,
+    futures_final_cutoffs: tuple[FuturesExchangeCutoff, ...] = (),
+    now_provider: Callable[[], datetime] | None = None,
     custom_index_factor_loader: Callable[
         [list[str], date, date], list[AdjustmentFactor]
     ] | None = None,
@@ -176,6 +184,7 @@ def create_app(
             app.state.store.close()
 
     app = FastAPI(title="StockHarness API", version="0.1.0", lifespan=lifespan)
+    now_provider = now_provider or (lambda: datetime.now(CHINA_TIME))
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -526,13 +535,31 @@ def create_app(
                 )
             if intraday_service is not None:
                 stock_status = intraday_service.status()
-            futures_status = (
+            futures_status: dict[str, object] = (
                 futures_provisional_service.refresh_once(
                     manual=True, references=futures_symbols
                 )
                 if futures_provisional_service is not None and futures_symbols
                 else {"state": "disabled", "enabled": False}
             )
+            if futures_symbols:
+                futures_status["mode"] = "provisional"
+            if (
+                futures_symbols
+                and futures_status.get("state") in {"disabled", "skipped"}
+                and futures_status.get("skip_reason") in {None, "market-closed"}
+                and update_trigger is not None
+                and _futures_final_update_due(
+                    store, futures_symbols, futures_final_cutoffs, now_provider()
+                )
+            ):
+                final_status = update_trigger()
+                futures_status = {
+                    **futures_status,
+                    "mode": "final",
+                    "state": final_status.get("state", "queued"),
+                    "final_update": final_status,
+                }
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return {
@@ -982,6 +1009,33 @@ def _futures_reference_symbols(
         }:
             result.append(symbol)
     return result
+
+
+def _futures_final_update_due(
+    store: SQLiteMarketDataStore,
+    symbols: list[str],
+    cutoffs: tuple[FuturesExchangeCutoff, ...],
+    observed_at: datetime,
+) -> bool:
+    cutoff_by_exchange = {item.exchange: item.final_data_after for item in cutoffs}
+    exchanges: set[FuturesExchange] = set()
+    for symbol in symbols:
+        summary = store.get_instrument_summary(symbol)
+        if summary is None:
+            return False
+        try:
+            exchanges.add(FuturesExchange(str(summary["exchange"])))
+        except ValueError:
+            return False
+    if not exchanges or any(exchange not in cutoff_by_exchange for exchange in exchanges):
+        return False
+    local = (
+        observed_at.replace(tzinfo=CHINA_TIME)
+        if observed_at.tzinfo is None
+        else observed_at.astimezone(CHINA_TIME)
+    )
+    current = local.time().replace(tzinfo=None)
+    return all(current >= cutoff_by_exchange[exchange] for exchange in exchanges)
 
 
 def _effective_intraday_items(

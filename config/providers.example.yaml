@@ -28,6 +28,14 @@ providers:
     enabled_exchanges: [CFFEX, DCE, CZCE, SHFE, INE, GFEX]
     history_start: 1990-01-01
     correction_window_trading_days: 5
+    # Conservative Provider-availability thresholds, not exchange close times.
+    final_data_cutoffs:
+      CFFEX: "18:00"
+      DCE: "18:00"
+      CZCE: "18:00"
+      SHFE: "18:00"
+      INE: "18:00"
+      GFEX: "18:00"
     canonical:
       enabled: true
       provider: tushare

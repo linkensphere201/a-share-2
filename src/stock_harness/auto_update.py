@@ -37,6 +37,7 @@ class UpdateResult:
 @dataclass(frozen=True, slots=True)
 class UpdateStatus:
     state: str = "idle"
+    last_outcome: str | None = None
     trigger: str | None = None
     started_at: str | None = None
     completed_at: str | None = None
@@ -392,6 +393,9 @@ class AutoUpdateService:
                     manual_queued = self._manual_pending
                 self._set_status(UpdateStatus(
                     state="queued" if manual_queued else ("warning" if result.errors else "idle"),
+                    last_outcome=None if manual_queued else (
+                        "partial" if result.errors else "completed"
+                    ),
                     trigger="manual" if manual_queued else trigger,
                     started_at=started.isoformat(),
                     completed_at=completed.isoformat(),
@@ -407,9 +411,11 @@ class AutoUpdateService:
                     error="; ".join(result.errors[:5]) if result.errors else None,
                 ))
                 LOGGER.info(
-                    "auto_update_run_complete trigger=%s state=%s snapshots_written=%s rows_changed=%s errors=%s",
+                    "auto_update_run_complete trigger=%s state=%s outcome=%s "
+                    "snapshots_written=%s rows_changed=%s errors=%s",
                     trigger,
                     "warning" if result.errors else "idle",
+                    "partial" if result.errors else "completed",
                     result.snapshots_written,
                     result.rows_changed,
                     len(result.errors),
@@ -424,6 +430,7 @@ class AutoUpdateService:
                 completed = datetime.now()
                 self._set_status(UpdateStatus(
                     state="error",
+                    last_outcome="failed",
                     trigger=trigger,
                     started_at=started.isoformat(),
                     completed_at=completed.isoformat(),

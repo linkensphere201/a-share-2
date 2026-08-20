@@ -153,6 +153,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         update_trigger=update_service.trigger if update_service else None,
         intraday_service=intraday_service,
         futures_provisional_service=futures_provisional_service,
+        futures_final_cutoffs=settings.futures.final_cutoffs,
         custom_index_factor_loader=load_custom_index_factors,
         custom_index_status_loader=load_custom_index_statuses,
     )

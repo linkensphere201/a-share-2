@@ -53,6 +53,9 @@ def test_futures_provider_configuration_is_independent_and_bounded(tmp_path: Pat
     assert settings.futures.provisional.max_contracts == 500
     assert settings.futures.provisional.fallback_provider == "akshare-realtime"
     assert settings.futures.provisional.session_rules
+    assert {item.exchange: item.final_data_after for item in settings.futures.final_cutoffs}[
+        FuturesExchange.SHFE
+    ] == time(18)
 
 
 def test_futures_product_sessions_are_parsed_and_can_cross_midnight(tmp_path: Path) -> None:
@@ -73,6 +76,23 @@ def test_futures_product_sessions_are_parsed_and_can_cross_midnight(tmp_path: Pa
     assert copper.product_code == "CU"
     assert copper.night[0].start == time(21)
     assert copper.night[0].end == time(1)
+
+
+def test_futures_final_data_cutoffs_are_exchange_specific(tmp_path: Path) -> None:
+    settings = _load(
+        tmp_path,
+        """
+  futures:
+    final_data_cutoffs: {CFFEX: "16:30", SHFE: "18:15"}
+""",
+    )
+    cutoffs = {
+        item.exchange: item.final_data_after for item in settings.futures.final_cutoffs
+    }
+    assert cutoffs == {
+        FuturesExchange.CFFEX: time(16, 30),
+        FuturesExchange.SHFE: time(18, 15),
+    }
 
 
 def test_futures_token_uses_its_own_environment_contract(
@@ -111,6 +131,15 @@ def test_futures_token_uses_its_own_environment_contract(
         (
             "provisional: {sessions: {SHFE: {CU: {night: ['21:00']}}}}",
             "invalid futures session window",
+        ),
+        ("final_data_cutoffs: []", "final_data_cutoffs must be a mapping"),
+        (
+            "final_data_cutoffs: {UNKNOWN: '18:00'}",
+            "unsupported futures final cutoff exchange",
+        ),
+        (
+            "final_data_cutoffs: {SHFE: later}",
+            "invalid futures final data cutoff",
         ),
     ],
 )

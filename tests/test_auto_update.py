@@ -198,6 +198,10 @@ def test_auto_update_service_accepts_a_nonblocking_manual_trigger():
 
         assert requested["accepted"] is True
         assert updater.calls == [False, True]
+        deadline = time.time() + 2
+        while service.status()["state"] in {"queued", "running"} and time.time() < deadline:
+            time.sleep(0.01)
+        assert service.status()["last_outcome"] == "completed"
     finally:
         service.stop()
 
@@ -235,6 +239,38 @@ def test_manual_trigger_queues_behind_an_active_scheduled_update():
     finally:
         release_first.set()
         service.stop()
+
+
+def test_auto_update_status_exposes_partial_and_failed_outcomes():
+    class PartialUpdater:
+        def run_once(self, _now, include_current_day=False):
+            return UpdateResult(0, 0, 0, 0, 0, 0, 0, 0, ("futures warning",))
+
+    partial = AutoUpdateService(PartialUpdater(), 3600)
+    partial.start()
+    try:
+        deadline = time.time() + 2
+        while partial.status()["state"] in {"idle", "running"} and time.time() < deadline:
+            time.sleep(0.01)
+        assert partial.status()["state"] == "warning"
+        assert partial.status()["last_outcome"] == "partial"
+    finally:
+        partial.stop()
+
+    class FailedUpdater:
+        def run_once(self, _now, include_current_day=False):
+            raise RuntimeError("provider unavailable")
+
+    failed = AutoUpdateService(FailedUpdater(), 3600)
+    failed.start()
+    try:
+        deadline = time.time() + 2
+        while failed.status()["state"] in {"idle", "running"} and time.time() < deadline:
+            time.sleep(0.01)
+        assert failed.status()["state"] == "error"
+        assert failed.status()["last_outcome"] == "failed"
+    finally:
+        failed.stop()
 
 
 def test_incremental_update_ignores_out_of_scope_rejections_and_resolves_incident(

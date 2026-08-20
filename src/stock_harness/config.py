@@ -109,6 +109,12 @@ class FuturesProductSessionRule:
 
 
 @dataclass(frozen=True, slots=True)
+class FuturesExchangeCutoff:
+    exchange: FuturesExchange
+    final_data_after: time
+
+
+@dataclass(frozen=True, slots=True)
 class FuturesProvisionalProviderSettings:
     enabled: bool
     provider: str
@@ -130,6 +136,7 @@ class FuturesSettings:
     correction_window_trading_days: int
     canonical: FuturesCanonicalProviderSettings
     provisional: FuturesProvisionalProviderSettings
+    final_cutoffs: tuple[FuturesExchangeCutoff, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -339,7 +346,33 @@ def _futures_settings(
             fallback_provider=fallback_provider,
             session_rules=_futures_session_rules(provisional.get("sessions")),
         ),
+        final_cutoffs=_futures_final_cutoffs(settings.get("final_data_cutoffs")),
     )
+
+
+def _futures_final_cutoffs(value: object) -> tuple[FuturesExchangeCutoff, ...]:
+    data = (
+        {exchange.value: "18:00" for exchange in FuturesExchange}
+        if value is None else value
+    )
+    if not isinstance(data, dict):
+        raise ValueError("providers.futures.final_data_cutoffs must be a mapping")
+    result: list[FuturesExchangeCutoff] = []
+    for raw_exchange, raw_cutoff in data.items():
+        try:
+            exchange = FuturesExchange(str(raw_exchange).upper())
+        except ValueError as error:
+            raise ValueError(
+                f"unsupported futures final cutoff exchange: {raw_exchange}"
+            ) from error
+        try:
+            cutoff = time.fromisoformat(str(raw_cutoff))
+        except ValueError as error:
+            raise ValueError(
+                f"invalid futures final data cutoff: {raw_exchange}={raw_cutoff}"
+            ) from error
+        result.append(FuturesExchangeCutoff(exchange, cutoff))
+    return tuple(result)
 
 
 def _futures_session_rules(value: object) -> tuple[FuturesProductSessionRule, ...]:

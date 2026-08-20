@@ -1,12 +1,13 @@
-from datetime import date
+from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 
 from fastapi.testclient import TestClient
 
 from stock_harness.api import create_app
+from stock_harness.config import FuturesExchangeCutoff
 from stock_harness.models import (
     AdjustmentFactor, BoardMembership, CatalogEntry, DailyBar, EtfHolding, Instrument,
-    InstrumentKind, MarketSnapshot,
+    FuturesExchange, InstrumentKind, MarketSnapshot,
 )
 from stock_harness.sqlite_store import SQLiteMarketDataStore
 
@@ -463,6 +464,69 @@ def test_intraday_manual_refresh_routes_futures_and_returns_skip_reason():
     assert service.refreshed == [symbol]
     assert response.json()["futures"]["skip_reason"] == "market-closed"
     assert response.json()["futures"]["manual"] is True
+
+
+def test_futures_refresh_after_exchange_cutoff_queues_final_increment():
+    store = SQLiteMarketDataStore(":memory:")
+    symbol = "FUTCONT:SHFE:CU:MAIN:raw"
+    store.upsert_instruments([
+        Instrument(
+            symbol, "Copper main", InstrumentKind.FUTURES_CONTINUOUS, "SHFE"
+        )
+    ])
+    service = _FakeFuturesProvisionalService()
+    calls = []
+    china = timezone(timedelta(hours=8))
+    client = TestClient(create_app(
+        store,
+        futures_provisional_service=service,
+        futures_final_cutoffs=(
+            FuturesExchangeCutoff(FuturesExchange.SHFE, time(18)),
+        ),
+        update_trigger=lambda: calls.append("queued") or {
+            "accepted": True, "state": "queued",
+        },
+        now_provider=lambda: datetime(2026, 8, 21, 18, 30, tzinfo=china),
+    ))
+    with client:
+        response = client.post("/api/intraday/refresh", json={"symbols": [symbol]})
+    store.close()
+
+    assert response.status_code == 200
+    assert calls == ["queued"]
+    assert response.json()["futures"]["mode"] == "final"
+    assert response.json()["futures"]["state"] == "queued"
+
+
+def test_futures_refresh_before_exchange_cutoff_keeps_provisional_result():
+    store = SQLiteMarketDataStore(":memory:")
+    symbol = "FUTCONT:SHFE:CU:MAIN:raw"
+    store.upsert_instruments([
+        Instrument(
+            symbol, "Copper main", InstrumentKind.FUTURES_CONTINUOUS, "SHFE"
+        )
+    ])
+    calls = []
+    china = timezone(timedelta(hours=8))
+    client = TestClient(create_app(
+        store,
+        futures_provisional_service=_FakeFuturesProvisionalService(),
+        futures_final_cutoffs=(
+            FuturesExchangeCutoff(FuturesExchange.SHFE, time(18)),
+        ),
+        update_trigger=lambda: calls.append("queued") or {
+            "accepted": True, "state": "queued",
+        },
+        now_provider=lambda: datetime(2026, 8, 21, 17, 59, tzinfo=china),
+    ))
+    with client:
+        response = client.post("/api/intraday/refresh", json={"symbols": [symbol]})
+    store.close()
+
+    assert response.status_code == 200
+    assert calls == []
+    assert response.json()["futures"]["mode"] == "provisional"
+    assert response.json()["futures"]["skip_reason"] == "market-closed"
 
 
 def test_manual_final_daily_update_endpoint_queues_background_refresh():
