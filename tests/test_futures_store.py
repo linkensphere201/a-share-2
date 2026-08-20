@@ -1,5 +1,5 @@
 from dataclasses import replace
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 import sqlite3
 from unittest.mock import patch
@@ -8,16 +8,23 @@ import pytest
 
 from stock_harness.models import (
     FuturesContinuousSeries,
+    FuturesBarState,
+    FuturesCalendarDay,
     FuturesContract,
+    FuturesDailyBar,
     FuturesExchange,
     FuturesLifecycleStatus,
     FuturesPriceBasis,
     FuturesProduct,
+    FuturesRollMapping,
     FuturesSeriesKind,
     Instrument,
     InstrumentKind,
 )
 from stock_harness.sqlite_store import SQLiteMarketDataStore
+
+
+CHINA_TIME = timezone(timedelta(hours=8))
 
 
 def _catalog():
@@ -59,6 +66,35 @@ def _catalog():
         rule_version="tushare-fut-mapping-v1",
     )
     return product, contract, series
+
+
+def _bar(
+    trading_day: date,
+    state: FuturesBarState = FuturesBarState.FINAL,
+    source: str = "tushare-futures",
+    close: float = 102,
+    provider_time: datetime | None = None,
+) -> FuturesDailyBar:
+    return FuturesDailyBar(
+        symbol="FUT:SHFE:CU:202609",
+        trading_day=trading_day,
+        provider_date=trading_day,
+        open=100,
+        high=max(103, close),
+        low=99,
+        close=close,
+        previous_close=98,
+        settlement=101 if state is FuturesBarState.FINAL else None,
+        previous_settlement=99,
+        volume_contracts=1234,
+        amount=5_000_000 if state is FuturesBarState.FINAL else None,
+        open_interest_contracts=4321,
+        open_interest_change_contracts=(12 if state is FuturesBarState.FINAL else None),
+        delivery_settlement=None,
+        source=source,
+        state=state,
+        provider_time=provider_time,
+    )
 
 
 def test_new_store_applies_ready_futures_schema() -> None:
@@ -156,3 +192,139 @@ def test_newer_futures_schema_is_not_downgraded(tmp_path: Path) -> None:
             "SELECT schema_version FROM futures_schema_metadata ORDER BY schema_version"
         ).fetchall()
         assert [int(item[0]) for item in versions] == [1, 2]
+
+
+def test_final_daily_storage_is_idempotent_and_preserves_futures_fields() -> None:
+    product, contract, series = _catalog()
+    day = date(2026, 8, 20)
+    bar = _bar(day)
+    with SQLiteMarketDataStore(":memory:") as store:
+        store.upsert_futures_catalog(
+            "tushare-futures", [product], [contract], [series]
+        )
+        first = store.upsert_futures_daily_bars("tushare-futures", [bar])
+        second = store.upsert_futures_daily_bars("tushare-futures", [bar])
+        stored = store.list_futures_daily_bars(contract.symbol, day, day)
+        assert (first.changed, second.changed, second.unchanged) == (1, 0, 1)
+        assert stored == [bar]
+        corrected = replace(bar, close=103)
+        assert store.upsert_futures_daily_bars(
+            "tushare-futures", [corrected]
+        ).changed == 1
+        assert store.list_futures_daily_bars(contract.symbol, day, day)[0].close == 103
+
+
+def test_calendar_and_roll_mapping_round_trip() -> None:
+    product, contract, series = _catalog()
+    day = date(2026, 8, 20)
+    calendar = FuturesCalendarDay(
+        FuturesExchange.SHFE, day, True, date(2026, 8, 19)
+    )
+    mapping = FuturesRollMapping(
+        series.symbol, series.provider_symbol, day,
+        contract.symbol, contract.provider_symbol,
+    )
+    with SQLiteMarketDataStore(":memory:") as store:
+        store.upsert_futures_catalog(
+            "tushare-futures", [product], [contract], [series]
+        )
+        assert store.upsert_futures_calendar("tushare-futures", [calendar]) == 1
+        assert store.upsert_futures_roll_mappings("tushare-futures", [mapping]) == 1
+        assert store.list_futures_calendar(
+            "tushare-futures", FuturesExchange.SHFE, day, day
+        ) == [calendar]
+        assert store.list_futures_roll_mappings(series.symbol, day, day) == [mapping]
+
+
+def test_canonical_daily_takes_over_without_deleting_provisional_audit() -> None:
+    product, contract, series = _catalog()
+    prior_day = date(2026, 8, 19)
+    current_day = date(2026, 8, 20)
+    observed = datetime(2026, 8, 20, 14, 30, tzinfo=CHINA_TIME)
+    provisional = _bar(
+        current_day, FuturesBarState.PROVISIONAL,
+        "akshare-futures-zh-spot", 104, observed,
+    )
+    with SQLiteMarketDataStore(":memory:") as store:
+        store.upsert_futures_catalog(
+            "tushare-futures", [product], [contract], [series]
+        )
+        store.upsert_futures_daily_bars("tushare-futures", [_bar(prior_day)])
+        store.upsert_futures_provisional_daily_bars(
+            provisional.source, [provisional], observed
+        )
+        fused = store.list_fused_futures_daily_bars(
+            contract.symbol, prior_day, current_day
+        )
+        assert [item.state for item in fused] == [
+            FuturesBarState.FINAL, FuturesBarState.PROVISIONAL,
+        ]
+
+        final = _bar(current_day, close=103)
+        store.upsert_futures_daily_bars("tushare-futures", [final])
+        fused = store.list_fused_futures_daily_bars(
+            contract.symbol, prior_day, current_day
+        )
+        audit = store.list_futures_provisional_audit(contract.symbol)
+        assert fused == [_bar(prior_day), final]
+        assert audit[0]["takeover_state"] == "canonical-taken-over"
+        assert audit[0]["close"] == 104
+
+
+def test_fused_read_uses_latest_active_provisional_source() -> None:
+    product, contract, series = _catalog()
+    day = date(2026, 8, 20)
+    early = datetime(2026, 8, 20, 14, 0, tzinfo=CHINA_TIME)
+    late = early + timedelta(seconds=10)
+    spot = _bar(day, FuturesBarState.PROVISIONAL, "spot", 102, early)
+    fallback = _bar(day, FuturesBarState.PROVISIONAL, "fallback", 103, late)
+    with SQLiteMarketDataStore(":memory:") as store:
+        store.upsert_futures_catalog(
+            "tushare-futures", [product], [contract], [series]
+        )
+        store.upsert_futures_provisional_daily_bars("spot", [spot], early)
+        store.upsert_futures_provisional_daily_bars("fallback", [fallback], late)
+        fused = store.list_fused_futures_daily_bars(contract.symbol, day, day)
+        assert fused == [fallback]
+        assert len(store.list_futures_provisional_audit(contract.symbol)) == 2
+
+
+def test_final_and_provisional_namespaces_reject_wrong_state() -> None:
+    product, contract, series = _catalog()
+    day = date(2026, 8, 20)
+    observed = datetime(2026, 8, 20, 14, 0, tzinfo=CHINA_TIME)
+    with SQLiteMarketDataStore(":memory:") as store:
+        store.upsert_futures_catalog(
+            "tushare-futures", [product], [contract], [series]
+        )
+        with pytest.raises(ValueError, match="final bars only"):
+            store.upsert_futures_daily_bars(
+                "spot", [_bar(day, FuturesBarState.PROVISIONAL, "spot", 102, observed)]
+            )
+        with pytest.raises(ValueError, match="provisional bars only"):
+            store.upsert_futures_provisional_daily_bars(
+                "tushare-futures", [_bar(day)], observed
+            )
+
+
+def test_futures_storage_rejects_stock_target_and_mapping_provider_mismatch() -> None:
+    product, contract, series = _catalog()
+    day = date(2026, 8, 20)
+    with SQLiteMarketDataStore(":memory:") as store:
+        store.upsert_futures_catalog(
+            "tushare-futures", [product], [contract], [series]
+        )
+        stock = Instrument("600519.SH", "Kweichow Moutai", InstrumentKind.STOCK, "SH")
+        store.upsert_instruments([stock])
+        with pytest.raises(ValueError, match="invalid instrument kinds"):
+            store.upsert_futures_daily_bars(
+                "tushare-futures", [replace(_bar(day), symbol=stock.symbol)]
+            )
+        invalid_mapping = FuturesRollMapping(
+            series.symbol, "WRONG.SHF", day,
+            contract.symbol, contract.provider_symbol,
+        )
+        with pytest.raises(ValueError, match="Provider identity mismatch"):
+            store.upsert_futures_roll_mappings(
+                "tushare-futures", [invalid_mapping]
+            )

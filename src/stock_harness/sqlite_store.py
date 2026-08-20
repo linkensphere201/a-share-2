@@ -24,10 +24,14 @@ from stock_harness.models import (
     InstrumentKind,
     EtfHolding,
     FuturesContinuousSeries,
+    FuturesBarState,
+    FuturesCalendarDay,
     FuturesContract,
+    FuturesDailyBar,
     FuturesExchange,
     FuturesLifecycleStatus,
     FuturesProduct,
+    FuturesRollMapping,
     MarketSnapshot,
     ProviderIncident,
     ProvisionalDailyBar,
@@ -142,6 +146,36 @@ def _trend_review_row(row: sqlite3.Row) -> dict[str, object]:
         "created_at_ms": int(row[21]),
         "updated_at_ms": int(row[22]),
     }
+
+
+def _futures_daily_row(
+    row: sqlite3.Row,
+    state: FuturesBarState,
+) -> FuturesDailyBar:
+    return FuturesDailyBar(
+        symbol=str(row[0]),
+        trading_day=_date_from_key(int(row[1])),
+        provider_date=_date_from_key(int(row[2])),
+        open=float(row[3]), high=float(row[4]), low=float(row[5]), close=float(row[6]),
+        previous_close=float(row[7]) if row[7] is not None else None,
+        settlement=float(row[8]) if row[8] is not None else None,
+        previous_settlement=float(row[9]) if row[9] is not None else None,
+        volume_contracts=int(row[10]),
+        amount=float(row[11]) if row[11] is not None else None,
+        open_interest_contracts=float(row[12]) if row[12] is not None else None,
+        open_interest_change_contracts=(
+            float(row[13]) if row[13] is not None else None
+        ),
+        delivery_settlement=float(row[14]) if row[14] is not None else None,
+        source=str(row[15]),
+        state=state,
+        provider_time=(
+            datetime.fromisoformat(str(row[18]))
+            if state is FuturesBarState.PROVISIONAL else None
+        ),
+        mapped_contract_symbol=str(row[16]) if row[16] is not None else None,
+        roll_event=bool(row[17]),
+    )
 
 
 class SQLiteMarketDataStore:
@@ -547,6 +581,508 @@ class SQLiteMarketDataStore:
                 trading_unit=str(row[10]), quote_unit=str(row[11]),
                 lifecycle_status=FuturesLifecycleStatus(str(row[12])),
             )
+            for row in rows
+        ]
+
+    def upsert_futures_daily_bars(
+        self,
+        source: str,
+        bars: Sequence[FuturesDailyBar],
+    ) -> WriteStats:
+        self._require_futures_storage()
+        started = time.perf_counter()
+        if not bars:
+            return WriteStats(0, 0, 0, 0.0)
+        identities = {(item.symbol, item.trading_day) for item in bars}
+        if len(identities) != len(bars):
+            raise ValueError("futures daily batch contains duplicate symbol/date rows")
+        for item in bars:
+            item.validate()
+            if item.state is not FuturesBarState.FINAL:
+                raise ValueError("canonical futures daily storage accepts final bars only")
+            if item.source != source:
+                raise ValueError("futures daily bars must share the requested source")
+        symbols = {item.symbol for item in bars}
+        symbols.update(
+            item.mapped_contract_symbol for item in bars
+            if item.mapped_contract_symbol is not None
+        )
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        with self._lock, self._transaction():
+            instrument_ids = self._instrument_ids(symbols)
+            missing = symbols - instrument_ids.keys()
+            if missing:
+                raise ValueError(
+                    "unknown futures daily instruments: " + ", ".join(sorted(missing))
+                )
+            kinds = {
+                str(row[0]): str(row[1])
+                for row in self._connection.execute(
+                    "SELECT symbol, kind FROM instruments WHERE symbol IN ("
+                    + ",".join("?" for _ in symbols)
+                    + ")",
+                    sorted(symbols),
+                )
+            }
+            invalid_targets = [
+                item.symbol for item in bars
+                if kinds[item.symbol] not in {
+                    InstrumentKind.FUTURES_CONTRACT.value,
+                    InstrumentKind.FUTURES_CONTINUOUS.value,
+                }
+            ]
+            invalid_mapped = [
+                item.mapped_contract_symbol for item in bars
+                if item.mapped_contract_symbol is not None
+                and kinds[item.mapped_contract_symbol]
+                != InstrumentKind.FUTURES_CONTRACT.value
+            ]
+            if invalid_targets or invalid_mapped:
+                raise ValueError("futures daily storage received invalid instrument kinds")
+            source_id = self._source_id(source)
+            before = self._connection.total_changes
+            self._connection.executemany(
+                """
+                INSERT INTO futures_daily_bars(
+                    instrument_id, trading_day, provider_date, open, high, low,
+                    close, previous_close, settlement, previous_settlement,
+                    volume_contracts, amount_cny, open_interest_contracts,
+                    open_interest_change_contracts, delivery_settlement,
+                    mapped_contract_instrument_id, roll_event, source_id, updated_at_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(instrument_id, trading_day) DO UPDATE SET
+                    provider_date = excluded.provider_date,
+                    open = excluded.open,
+                    high = excluded.high,
+                    low = excluded.low,
+                    close = excluded.close,
+                    previous_close = excluded.previous_close,
+                    settlement = excluded.settlement,
+                    previous_settlement = excluded.previous_settlement,
+                    volume_contracts = excluded.volume_contracts,
+                    amount_cny = excluded.amount_cny,
+                    open_interest_contracts = excluded.open_interest_contracts,
+                    open_interest_change_contracts = excluded.open_interest_change_contracts,
+                    delivery_settlement = excluded.delivery_settlement,
+                    mapped_contract_instrument_id = excluded.mapped_contract_instrument_id,
+                    roll_event = excluded.roll_event,
+                    source_id = excluded.source_id,
+                    updated_at_ms = excluded.updated_at_ms
+                WHERE provider_date IS NOT excluded.provider_date
+                   OR open IS NOT excluded.open OR high IS NOT excluded.high
+                   OR low IS NOT excluded.low OR close IS NOT excluded.close
+                   OR previous_close IS NOT excluded.previous_close
+                   OR settlement IS NOT excluded.settlement
+                   OR previous_settlement IS NOT excluded.previous_settlement
+                   OR volume_contracts IS NOT excluded.volume_contracts
+                   OR amount_cny IS NOT excluded.amount_cny
+                   OR open_interest_contracts IS NOT excluded.open_interest_contracts
+                   OR open_interest_change_contracts IS NOT excluded.open_interest_change_contracts
+                   OR delivery_settlement IS NOT excluded.delivery_settlement
+                   OR mapped_contract_instrument_id IS NOT excluded.mapped_contract_instrument_id
+                   OR roll_event IS NOT excluded.roll_event
+                   OR source_id IS NOT excluded.source_id
+                """,
+                (
+                    (
+                        instrument_ids[item.symbol], _date_key(item.trading_day),
+                        _date_key(item.provider_date), item.open, item.high, item.low,
+                        item.close, item.previous_close, item.settlement,
+                        item.previous_settlement, item.volume_contracts, item.amount,
+                        item.open_interest_contracts,
+                        item.open_interest_change_contracts,
+                        item.delivery_settlement,
+                        (
+                            instrument_ids[item.mapped_contract_symbol]
+                            if item.mapped_contract_symbol else None
+                        ),
+                        int(item.roll_event), source_id, now_ms,
+                    )
+                    for item in bars
+                ),
+            )
+            changed = self._connection.total_changes - before
+            self._connection.execute(
+                """
+                UPDATE futures_provisional_daily_bars
+                SET takeover_state = 'canonical-taken-over', updated_at_ms = ?
+                WHERE takeover_state = 'active'
+                  AND EXISTS (
+                      SELECT 1 FROM futures_daily_bars AS final
+                      WHERE final.instrument_id = futures_provisional_daily_bars.instrument_id
+                        AND final.trading_day = futures_provisional_daily_bars.trading_day
+                  )
+                """,
+                (now_ms,),
+            )
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        return WriteStats(len(bars), changed, len(bars) - changed, elapsed_ms)
+
+    def list_futures_daily_bars(
+        self,
+        symbol: str,
+        start_date: date,
+        end_date: date,
+    ) -> list[FuturesDailyBar]:
+        self._require_futures_storage()
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT instrument.symbol, bar.trading_day, bar.provider_date,
+                       bar.open, bar.high, bar.low, bar.close, bar.previous_close,
+                       bar.settlement, bar.previous_settlement, bar.volume_contracts,
+                       bar.amount_cny, bar.open_interest_contracts,
+                       bar.open_interest_change_contracts, bar.delivery_settlement,
+                       source.code, mapped.symbol, bar.roll_event
+                FROM futures_daily_bars AS bar
+                JOIN instruments AS instrument USING (instrument_id)
+                JOIN sources AS source USING (source_id)
+                LEFT JOIN instruments AS mapped
+                  ON mapped.instrument_id = bar.mapped_contract_instrument_id
+                WHERE instrument.symbol = ?
+                  AND bar.trading_day BETWEEN ? AND ?
+                ORDER BY bar.trading_day
+                """,
+                (symbol, _date_key(start_date), _date_key(end_date)),
+            ).fetchall()
+        return [_futures_daily_row(row, FuturesBarState.FINAL) for row in rows]
+
+    def upsert_futures_calendar(
+        self,
+        source: str,
+        days: Sequence[FuturesCalendarDay],
+    ) -> int:
+        self._require_futures_storage()
+        for item in days:
+            item.validate()
+        identities = {(item.exchange, item.calendar_date) for item in days}
+        if len(identities) != len(days):
+            raise ValueError("futures calendar batch contains duplicate exchange/date rows")
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        with self._lock, self._transaction():
+            source_id = self._source_id(source)
+            self._connection.executemany(
+                """
+                INSERT INTO futures_exchange_calendar(
+                    source_id, exchange, calendar_date, is_open,
+                    previous_trading_day, updated_at_ms
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(source_id, exchange, calendar_date) DO UPDATE SET
+                    is_open = excluded.is_open,
+                    previous_trading_day = excluded.previous_trading_day,
+                    updated_at_ms = excluded.updated_at_ms
+                """,
+                (
+                    (
+                        source_id, item.exchange.value, _date_key(item.calendar_date),
+                        int(item.is_open),
+                        (
+                            _date_key(item.previous_trading_day)
+                            if item.previous_trading_day else None
+                        ),
+                        now_ms,
+                    )
+                    for item in days
+                ),
+            )
+        return len(days)
+
+    def list_futures_calendar(
+        self,
+        source: str,
+        exchange: FuturesExchange,
+        start_date: date,
+        end_date: date,
+    ) -> list[FuturesCalendarDay]:
+        self._require_futures_storage()
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT calendar.calendar_date, calendar.is_open,
+                       calendar.previous_trading_day
+                FROM futures_exchange_calendar AS calendar
+                JOIN sources AS source USING (source_id)
+                WHERE source.code = ? AND calendar.exchange = ?
+                  AND calendar.calendar_date BETWEEN ? AND ?
+                ORDER BY calendar.calendar_date
+                """,
+                (source, exchange.value, _date_key(start_date), _date_key(end_date)),
+            ).fetchall()
+        return [
+            FuturesCalendarDay(
+                exchange=exchange,
+                calendar_date=_date_from_key(int(row[0])),
+                is_open=bool(row[1]),
+                previous_trading_day=(
+                    _date_from_key(int(row[2])) if row[2] is not None else None
+                ),
+            )
+            for row in rows
+        ]
+
+    def upsert_futures_roll_mappings(
+        self,
+        source: str,
+        mappings: Sequence[FuturesRollMapping],
+    ) -> int:
+        self._require_futures_storage()
+        for item in mappings:
+            item.validate()
+        identities = {(item.series_symbol, item.effective_from) for item in mappings}
+        if len(identities) != len(mappings):
+            raise ValueError("futures mapping batch contains duplicate series/date rows")
+        symbols = {
+            value
+            for item in mappings
+            for value in (item.series_symbol, item.contract_symbol)
+        }
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        with self._lock, self._transaction():
+            instrument_ids = self._instrument_ids(symbols)
+            missing = symbols - instrument_ids.keys()
+            if missing:
+                raise ValueError("unknown futures mapping instruments: " + ", ".join(sorted(missing)))
+            series_provider_symbols = {
+                str(row[0]): str(row[1])
+                for row in self._connection.execute(
+                    """
+                    SELECT instrument.symbol, series.provider_symbol
+                    FROM futures_continuous_series AS series
+                    JOIN instruments AS instrument USING (instrument_id)
+                    WHERE instrument.symbol IN (
+                    """ + ",".join("?" for _ in symbols) + ")",
+                    sorted(symbols),
+                )
+            }
+            contract_provider_symbols = {
+                str(row[0]): str(row[1])
+                for row in self._connection.execute(
+                    """
+                    SELECT instrument.symbol, contract.provider_symbol
+                    FROM futures_contracts AS contract
+                    JOIN instruments AS instrument USING (instrument_id)
+                    WHERE instrument.symbol IN (
+                    """ + ",".join("?" for _ in symbols) + ")",
+                    sorted(symbols),
+                )
+            }
+            if any(
+                series_provider_symbols.get(item.series_symbol)
+                != item.series_provider_symbol
+                or contract_provider_symbols.get(item.contract_symbol)
+                != item.contract_provider_symbol
+                for item in mappings
+            ):
+                raise ValueError("futures mapping Provider identity mismatch")
+            source_id = self._source_id(source)
+            self._connection.executemany(
+                """
+                INSERT INTO futures_roll_mappings(
+                    source_id, series_instrument_id, effective_from,
+                    contract_instrument_id, updated_at_ms
+                ) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(source_id, series_instrument_id, effective_from) DO UPDATE SET
+                    contract_instrument_id = excluded.contract_instrument_id,
+                    updated_at_ms = excluded.updated_at_ms
+                """,
+                (
+                    (
+                        source_id, instrument_ids[item.series_symbol],
+                        _date_key(item.effective_from),
+                        instrument_ids[item.contract_symbol], now_ms,
+                    )
+                    for item in mappings
+                ),
+            )
+        return len(mappings)
+
+    def list_futures_roll_mappings(
+        self,
+        series_symbol: str,
+        start_date: date,
+        end_date: date,
+    ) -> list[FuturesRollMapping]:
+        self._require_futures_storage()
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT series.symbol, series_meta.provider_symbol,
+                       mapping.effective_from, contract.symbol,
+                       contract_meta.provider_symbol
+                FROM futures_roll_mappings AS mapping
+                JOIN instruments AS series
+                  ON series.instrument_id = mapping.series_instrument_id
+                JOIN futures_continuous_series AS series_meta
+                  ON series_meta.instrument_id = series.instrument_id
+                JOIN instruments AS contract
+                  ON contract.instrument_id = mapping.contract_instrument_id
+                JOIN futures_contracts AS contract_meta
+                  ON contract_meta.instrument_id = contract.instrument_id
+                WHERE series.symbol = ? AND mapping.effective_from BETWEEN ? AND ?
+                ORDER BY mapping.effective_from
+                """,
+                (series_symbol, _date_key(start_date), _date_key(end_date)),
+            ).fetchall()
+        return [
+            FuturesRollMapping(
+                series_symbol=str(row[0]), series_provider_symbol=str(row[1]),
+                effective_from=_date_from_key(int(row[2])),
+                contract_symbol=str(row[3]), contract_provider_symbol=str(row[4]),
+            )
+            for row in rows
+        ]
+
+    def upsert_futures_provisional_daily_bars(
+        self,
+        source: str,
+        bars: Sequence[FuturesDailyBar],
+        received_at: datetime,
+        stale_symbols: Sequence[str] = (),
+    ) -> int:
+        self._require_futures_storage()
+        identities = {(item.symbol, item.trading_day) for item in bars}
+        if len(identities) != len(bars):
+            raise ValueError("provisional futures batch contains duplicate symbol/date rows")
+        for item in bars:
+            item.validate()
+            if item.state is not FuturesBarState.PROVISIONAL:
+                raise ValueError("provisional futures storage accepts provisional bars only")
+            if item.source != source:
+                raise ValueError("provisional futures bars must share the requested source")
+        stale = {item.upper() for item in stale_symbols}
+        symbols = {item.symbol for item in bars}
+        if not stale <= symbols:
+            raise ValueError("stale futures symbols must belong to the provisional batch")
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        with self._lock, self._transaction():
+            instrument_ids = self._instrument_ids(symbols)
+            missing = symbols - instrument_ids.keys()
+            if missing:
+                raise ValueError(
+                    "unknown provisional futures contracts: " + ", ".join(sorted(missing))
+                )
+            if symbols:
+                placeholders = ",".join("?" for _ in symbols)
+                real_ids = {
+                    int(row[0]) for row in self._connection.execute(
+                        f"SELECT instrument_id FROM futures_contracts "
+                        f"WHERE instrument_id IN ({placeholders})",
+                        [instrument_ids[item] for item in sorted(symbols)],
+                    )
+                }
+                if real_ids != set(instrument_ids.values()):
+                    raise ValueError("provisional futures storage accepts real contracts only")
+            source_id = self._source_id(source)
+            self._connection.executemany(
+                """
+                INSERT INTO futures_provisional_daily_bars(
+                    instrument_id, trading_day, provider_date, open, high, low,
+                    close, previous_close, previous_settlement, volume_contracts,
+                    open_interest_contracts, source_id, provider_time, received_at,
+                    takeover_state, stale, updated_at_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    CASE WHEN EXISTS (
+                        SELECT 1 FROM futures_daily_bars AS final
+                        WHERE final.instrument_id = ? AND final.trading_day = ?
+                    ) THEN 'canonical-taken-over' ELSE 'active' END,
+                    ?, ?)
+                ON CONFLICT(instrument_id, trading_day, source_id) DO UPDATE SET
+                    provider_date = excluded.provider_date,
+                    open = excluded.open,
+                    high = excluded.high,
+                    low = excluded.low,
+                    close = excluded.close,
+                    previous_close = excluded.previous_close,
+                    previous_settlement = excluded.previous_settlement,
+                    volume_contracts = excluded.volume_contracts,
+                    open_interest_contracts = excluded.open_interest_contracts,
+                    provider_time = excluded.provider_time,
+                    received_at = excluded.received_at,
+                    takeover_state = excluded.takeover_state,
+                    stale = excluded.stale,
+                    updated_at_ms = excluded.updated_at_ms
+                """,
+                (
+                    (
+                        instrument_ids[item.symbol], _date_key(item.trading_day),
+                        _date_key(item.provider_date), item.open, item.high, item.low,
+                        item.close, item.previous_close, item.previous_settlement,
+                        item.volume_contracts, item.open_interest_contracts,
+                        source_id, item.provider_time.isoformat(),
+                        received_at.isoformat(), instrument_ids[item.symbol],
+                        _date_key(item.trading_day), int(item.symbol.upper() in stale), now_ms,
+                    )
+                    for item in bars
+                ),
+            )
+        return len(bars)
+
+    def list_fused_futures_daily_bars(
+        self,
+        symbol: str,
+        start_date: date,
+        end_date: date,
+    ) -> list[FuturesDailyBar]:
+        final = self.list_futures_daily_bars(symbol, start_date, end_date)
+        latest_final = final[-1].trading_day if final else None
+        with self._lock:
+            row = self._connection.execute(
+                """
+                SELECT instrument.symbol, bar.trading_day, bar.provider_date,
+                       bar.open, bar.high, bar.low, bar.close, bar.previous_close,
+                       NULL, bar.previous_settlement, bar.volume_contracts,
+                       NULL, bar.open_interest_contracts, NULL, NULL,
+                       source.code, NULL, 0, bar.provider_time
+                FROM futures_provisional_daily_bars AS bar
+                JOIN instruments AS instrument USING (instrument_id)
+                JOIN sources AS source USING (source_id)
+                WHERE instrument.symbol = ?
+                  AND bar.trading_day BETWEEN ? AND ?
+                  AND bar.takeover_state = 'active'
+                  AND (? IS NULL OR bar.trading_day > ?)
+                ORDER BY bar.trading_day DESC, bar.provider_time DESC
+                LIMIT 1
+                """,
+                (
+                    symbol, _date_key(start_date), _date_key(end_date),
+                    _date_key(latest_final) if latest_final else None,
+                    _date_key(latest_final) if latest_final else None,
+                ),
+            ).fetchone()
+        if row is not None:
+            final.append(_futures_daily_row(row, FuturesBarState.PROVISIONAL))
+        return final
+
+    def list_futures_provisional_audit(
+        self,
+        symbol: str,
+    ) -> list[dict[str, object]]:
+        self._require_futures_storage()
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT bar.trading_day, source.code, bar.provider_time,
+                       bar.received_at, bar.takeover_state, bar.stale,
+                       bar.close, bar.volume_contracts
+                FROM futures_provisional_daily_bars AS bar
+                JOIN instruments AS instrument USING (instrument_id)
+                JOIN sources AS source USING (source_id)
+                WHERE instrument.symbol = ?
+                ORDER BY bar.trading_day, source.code
+                """,
+                (symbol,),
+            ).fetchall()
+        return [
+            {
+                "trading_day": _date_from_key(int(row[0])),
+                "source": str(row[1]),
+                "provider_time": datetime.fromisoformat(str(row[2])),
+                "received_at": datetime.fromisoformat(str(row[3])),
+                "takeover_state": str(row[4]),
+                "stale": bool(row[5]),
+                "close": float(row[6]),
+                "volume_contracts": int(row[7]),
+            }
             for row in rows
         ]
 
