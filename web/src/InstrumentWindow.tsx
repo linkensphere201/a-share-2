@@ -8,6 +8,7 @@ import type { TradingSystemWindowStates } from './tradingSystems'
 import { normalizeTrendTradingSystemSettings } from './tradingSystems'
 import type { ThemeDefinition } from './themeStore'
 import type { TrendAnalysisRun } from './trendAnalysisClient'
+import type { TrendReviewGeometryTarget } from './trendReviewGeometry'
 
 type InstrumentWindowProps = {
   windowState: ChartWindowState
@@ -52,11 +53,13 @@ export function ChartWindow({
     asOfDate: string
     analysis: TrendAnalysisRun
   }>()
+  const [reviewGeometryTarget, setReviewGeometryTarget] = useState<TrendReviewGeometryTarget>()
   useEffect(() => {
     setBreakoutState(undefined)
     setTrendAnalysis(null)
     setReviewOpen(false)
     setReviewContext(undefined)
+    setReviewGeometryTarget(undefined)
   }, [instrument.symbol])
   return (
     <section className={focused ? 'instrument-window focused' : 'instrument-window'}>
@@ -113,6 +116,7 @@ export function ChartWindow({
           trendIsolation={chart.tradingSystems.trend.isolate || Boolean(reviewContext)}
           asOfDate={reviewContext?.asOfDate}
           trendAnalysisOverride={reviewContext?.analysis}
+          reviewGeometryTarget={reviewGeometryTarget}
           onBreakoutStateChange={setBreakoutState}
           onTrendAnalysisChange={setTrendAnalysis}
         />
@@ -122,9 +126,11 @@ export function ChartWindow({
           settings={normalizeTrendTradingSystemSettings(chart.tradingSystems.trend.settings)}
           currentAnalysis={trendAnalysis}
           onContextChange={setReviewContext}
+          onGeometryTargetChange={setReviewGeometryTarget}
           onClose={() => {
             setReviewOpen(false)
             setReviewContext(undefined)
+            setReviewGeometryTarget(undefined)
           }}
         />}
       </div>

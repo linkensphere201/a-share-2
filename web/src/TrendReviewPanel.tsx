@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Check, CheckCircle2, HelpCircle, LoaderCircle, Save, X, XCircle } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Check, CheckCircle2, HelpCircle, LoaderCircle, MousePointer2, Save, X, XCircle } from 'lucide-react'
 import type { TrendAnalysisRun } from './trendAnalysisClient'
 import {
   createTrendReview,
@@ -12,6 +12,10 @@ import {
   type TrendReviewStatus,
 } from './trendReviewClient'
 import type { TrendTradingSystemSettings } from './tradingSystems'
+import {
+  mergeReviewLabelsIntoAnalysis,
+  type TrendReviewGeometryTarget,
+} from './trendReviewGeometry'
 
 type TrendReviewContext = { asOfDate: string; analysis: TrendAnalysisRun }
 
@@ -21,6 +25,7 @@ type TrendReviewPanelProps = {
   settings: TrendTradingSystemSettings
   currentAnalysis?: TrendAnalysisRun | null
   onContextChange: (value: TrendReviewContext | undefined) => void
+  onGeometryTargetChange: (value: TrendReviewGeometryTarget | undefined) => void
   onClose: () => void
 }
 
@@ -30,6 +35,7 @@ export function TrendReviewPanel({
   settings,
   currentAnalysis,
   onContextChange,
+  onGeometryTargetChange,
   onClose,
 }: TrendReviewPanelProps) {
   const initialAsOf = currentAnalysis?.as_of_date ?? localDate()
@@ -42,18 +48,44 @@ export function TrendReviewPanel({
   const [labels, setLabels] = useState<TrendReviewLabel[]>([])
   const [rationale, setRationale] = useState('')
   const [recent, setRecent] = useState<TrendReview[]>([])
+  const [baseAnalysis, setBaseAnalysis] = useState<TrendAnalysisRun>()
+  const [selectedLabelId, setSelectedLabelId] = useState<string>()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string>()
   const counts = useMemo(() => decisionCounts(labels), [labels])
   const locked = review?.review_status === 'confirmed'
+  const selectedLabel = labels.find(item => item.item_id === selectedLabelId)
+
+  const replaceGeometryLabel = useCallback((updated: TrendReviewLabel) => {
+    setLabels(items => items.map(item => item.item_id === updated.item_id ? updated : item))
+  }, [])
+
+  useEffect(() => {
+    if (!baseAnalysis || !review) return
+    onContextChange({
+      asOfDate: review.as_of_date,
+      analysis: mergeReviewLabelsIntoAnalysis(baseAnalysis, labels),
+    })
+  }, [baseAnalysis, labels, onContextChange, review])
+
+  useEffect(() => {
+    onGeometryTargetChange(selectedLabel && !locked
+      ? { label: selectedLabel, onChange: replaceGeometryLabel }
+      : undefined)
+    return () => onGeometryTargetChange(undefined)
+  }, [locked, onGeometryTargetChange, replaceGeometryLabel, selectedLabel])
 
   useEffect(() => {
     let active = true
     void listTrendReviews(symbol).then(items => {
       if (active) setRecent(items)
     }).catch(() => undefined)
-    return () => { active = false; onContextChange(undefined) }
-  }, [symbol, onContextChange])
+    return () => {
+      active = false
+      onContextChange(undefined)
+      onGeometryTargetChange(undefined)
+    }
+  }, [symbol, onContextChange, onGeometryTargetChange])
 
   const create = async () => {
     setBusy(true)
@@ -65,9 +97,10 @@ export function TrendReviewPanel({
       })
       setReview(result.review)
       setLabels(result.review.labels)
+      setSelectedLabelId(undefined)
       setRationale(result.review.rationale)
       setRecent(items => [result.review, ...items])
-      onContextChange({ asOfDate: result.review.as_of_date, analysis: result.analysis })
+      setBaseAnalysis(result.analysis)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason))
     } finally {
@@ -84,13 +117,14 @@ export function TrendReviewPanel({
       const analysis = await rebuildTrendReviewSnapshot(reviewId)
       setReview(selected)
       setLabels(selected.labels)
+      setSelectedLabelId(undefined)
       setRationale(selected.rationale)
       setAsOfDate(selected.as_of_date)
       setIntervalStart(selected.interval_start)
       setIntervalEnd(selected.interval_end)
       setHorizon(selected.horizon)
       setClassification(selected.classification as typeof classification)
-      onContextChange({ asOfDate: selected.as_of_date, analysis })
+      setBaseAnalysis(analysis)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason))
     } finally {
@@ -105,6 +139,7 @@ export function TrendReviewPanel({
     try {
       const updated = await updateTrendReview(review, status, labels, rationale)
       setReview(updated)
+      setLabels(updated.labels)
       setRecent(items => items.map(item => item.review_id === updated.review_id ? updated : item))
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason))
@@ -141,9 +176,17 @@ export function TrendReviewPanel({
           <span>截点 {review.as_of_date}</span><span>待定 {counts.pending}</span><span>接受 {counts.accepted}</span><span>拒绝 {counts.rejected}</span><span>不确定 {counts.ambiguous}</span><span>修订 {review.revision}</span>
         </div>
         <div className="trend-review-queue">
-          {labels.map(label => <article key={label.item_id} className={`trend-review-candidate ${label.decision}`}>
+          {labels.map(label => <article key={label.item_id} className={`trend-review-candidate ${label.decision} ${selectedLabelId === label.item_id ? 'geometry-selected' : ''}`}>
             <div><span>{itemTypeLabel(label.item_type)}</span><small>{itemSummary(label)}</small></div>
             <div className="trend-review-decisions">
+              <button
+                disabled={locked}
+                className={selectedLabelId === label.item_id ? 'active geometry' : ''}
+                title="在图表上调整几何"
+                aria-label={`调整几何 ${label.item_id}`}
+                aria-pressed={selectedLabelId === label.item_id}
+                onClick={() => setSelectedLabelId(value => value === label.item_id ? undefined : label.item_id)}
+              ><MousePointer2 size={13}/></button>
               <button disabled={locked} className={label.decision === 'accepted' ? 'active accept' : ''} title="接受" aria-label={`接受 ${label.item_id}`} onClick={() => decide(label.item_id, 'accepted')}><CheckCircle2 size={13}/></button>
               <button disabled={locked} className={label.decision === 'rejected' ? 'active reject' : ''} title="拒绝" aria-label={`拒绝 ${label.item_id}`} onClick={() => decide(label.item_id, 'rejected')}><XCircle size={13}/></button>
               <button disabled={locked} className={label.decision === 'ambiguous' ? 'active ambiguous' : ''} title="不确定" aria-label={`不确定 ${label.item_id}`} onClick={() => decide(label.item_id, 'ambiguous')}><HelpCircle size={13}/></button>

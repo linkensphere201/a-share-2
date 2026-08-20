@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TrendReviewPanel } from './TrendReviewPanel'
@@ -54,18 +54,46 @@ describe('TrendReviewPanel', () => {
       ...review, review_status: status, labels, rationale, revision: 2,
     }))
     const onContextChange = vi.fn()
+    const onGeometryTargetChange = vi.fn()
     const user = userEvent.setup()
     render(<TrendReviewPanel
       symbol="000001.SZ"
       name="平安银行"
       settings={trendTradingSystemDefaults}
       onContextChange={onContextChange}
+      onGeometryTargetChange={onGeometryTargetChange}
       onClose={vi.fn()}
     />)
 
     await user.click(screen.getByRole('button', { name: /加载截点/ }))
-    expect(onContextChange).toHaveBeenCalledWith({ asOfDate: '2026-08-18', analysis })
+    expect(onContextChange).toHaveBeenCalledWith({
+      asOfDate: '2026-08-18',
+      analysis: expect.objectContaining({
+        run_id: 'review-run',
+        items: expect.arrayContaining([
+          expect.objectContaining({ item_id: 'line-1' }),
+          expect.objectContaining({ item_id: 'pattern-1' }),
+        ]),
+      }),
+    })
     await user.click(screen.getByRole('button', { name: '接受 line-1' }))
+    await user.click(screen.getByRole('button', { name: '调整几何 line-1' }))
+    expect(onGeometryTargetChange).toHaveBeenLastCalledWith(expect.objectContaining({
+      label: expect.objectContaining({ item_id: 'line-1', decision: 'accepted' }),
+      onChange: expect.any(Function),
+    }))
+    const geometryTarget = onGeometryTargetChange.mock.calls.at(-1)?.[0]
+    act(() => geometryTarget.onChange({
+      ...geometryTarget.label,
+      payload: { ...geometryTarget.label.payload, first_price: 10.5 },
+    }))
+    await waitFor(() => expect(onContextChange).toHaveBeenLastCalledWith(expect.objectContaining({
+      analysis: expect.objectContaining({
+        items: expect.arrayContaining([
+          expect.objectContaining({ item_id: 'line-1', payload: expect.objectContaining({ first_price: 10.5 }) }),
+        ]),
+      }),
+    })))
     await user.click(screen.getByRole('button', { name: '拒绝 pattern-1' }))
     await user.type(screen.getByRole('textbox', { name: '复核说明' }), '人工复核完成')
     await user.click(screen.getByRole('button', { name: '确认入库' }))

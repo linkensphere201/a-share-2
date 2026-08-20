@@ -16,6 +16,12 @@ import type { ThemeDefinition } from './themeStore'
 import { loadTrendAnalysis, type TrendAnalysisRun } from './trendAnalysisClient'
 import { refreshLatestDailyBar } from './latestDailyRefreshClient'
 import {
+  reviewGeometryHandles,
+  updateReviewGeometryHandle,
+  type TrendReviewGeometryHandle,
+  type TrendReviewGeometryTarget,
+} from './trendReviewGeometry'
+import {
   projectMarketAnnotations,
   projectMeasurement,
   projectPaneTop,
@@ -118,6 +124,13 @@ type TrendLineAnchorDrag = {
   moved: boolean
 }
 
+type ReviewGeometryDrag = {
+  pointerId: number
+  handleId: string
+}
+
+type ProjectedReviewGeometryHandle = TrendReviewGeometryHandle & { x: number; y: number }
+
 
 type ChartCanvasProps = {
   symbol: string
@@ -145,6 +158,7 @@ type ChartCanvasProps = {
   onTrendAnalysisChange?: (value: TrendAnalysisRun | null) => void
   asOfDate?: string
   trendAnalysisOverride?: TrendAnalysisRun | null
+  reviewGeometryTarget?: TrendReviewGeometryTarget
 }
 
 const rising = '#ef5350'
@@ -208,6 +222,7 @@ export function ChartCanvas({
   onTrendAnalysisChange,
   asOfDate,
   trendAnalysisOverride,
+  reviewGeometryTarget,
 }: ChartCanvasProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -230,6 +245,7 @@ export function ChartCanvas({
   const drawingDragRef = useRef<DrawingDrag | undefined>(undefined)
   const lineMoveDragRef = useRef<TrendLineMoveDrag | undefined>(undefined)
   const lineAnchorDragRef = useRef<TrendLineAnchorDrag | undefined>(undefined)
+  const reviewGeometryDragRef = useRef<ReviewGeometryDrag | undefined>(undefined)
   const bucketRef = useRef(1)
   const applyBucketRef = useRef<(bucket: number, preserve?: ViewportSnapshot) => void>(() => undefined)
   const recalculateLodRef = useRef<() => void>(() => undefined)
@@ -1380,6 +1396,57 @@ export function ChartCanvas({
   const generatedBreakoutState = readGeneratedBreakoutState(
     trendAnalysis, breakoutStateVisible,
   )
+  const projectedReviewGeometry = projectReviewGeometryHandles(
+    reviewGeometryTarget,
+    chartRef.current,
+    candleRef.current ?? closeLineRef.current,
+    hostRef.current,
+  )
+
+  const moveReviewGeometryHandle = (event: ReactPointerEvent<SVGCircleElement>) => {
+    const drag = reviewGeometryDragRef.current
+    const target = reviewGeometryTarget
+    const chart = chartRef.current
+    const priceSeries = candleRef.current ?? closeLineRef.current
+    const host = hostRef.current
+    if (!drag || drag.pointerId !== event.pointerId || !target || !chart || !priceSeries || !host) return
+    const handle = reviewGeometryHandles(target.label).find(item => item.id === drag.handleId)
+    if (!handle) return
+    const point = chartPoint(event, host)
+    const paneHeight = chart.panes()[0]?.getHeight() ?? host.clientHeight
+    const price = priceSeries.coordinateToPrice(clamp(point.y, 0, paneHeight))
+    if (price === null || !Number.isFinite(price)) return
+    if (handle.priceOnly) {
+      target.onChange(updateReviewGeometryHandle(target.label, handle.id, { price }))
+      return
+    }
+    const anchor = resolveDrawingAnchor(point.x, clamp(point.y, 0, paneHeight))
+    if (!anchor) return
+    target.onChange(updateReviewGeometryHandle(target.label, handle.id, {
+      date: anchor.date,
+      price: anchor.price,
+    }))
+  }
+
+  const startReviewGeometryHandle = (
+    event: ReactPointerEvent<SVGCircleElement>,
+    handle: ProjectedReviewGeometryHandle,
+  ) => {
+    if (event.button !== 0 || !reviewGeometryTarget) return
+    event.preventDefault()
+    event.stopPropagation()
+    event.currentTarget.setPointerCapture(event.pointerId)
+    reviewGeometryDragRef.current = { pointerId: event.pointerId, handleId: handle.id }
+  }
+
+  const finishReviewGeometryHandle = (event: ReactPointerEvent<SVGCircleElement>) => {
+    if (reviewGeometryDragRef.current?.pointerId !== event.pointerId) return
+    moveReviewGeometryHandle(event)
+    reviewGeometryDragRef.current = undefined
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+  }
   useEffect(() => {
     onBreakoutStateChange?.(generatedBreakoutState)
   }, [
@@ -1532,6 +1599,15 @@ export function ChartCanvas({
           breakoutState={generatedBreakoutState}
           run={trendAnalysis}
           preview={trendAnalysisPreview}
+        />
+      )}
+      {reviewGeometryTarget && projectedReviewGeometry.length > 0 && (
+        <TrendReviewGeometryOverlay
+          handles={projectedReviewGeometry}
+          onMoveStart={startReviewGeometryHandle}
+          onMove={moveReviewGeometryHandle}
+          onMoveEnd={finishReviewGeometryHandle}
+          onMoveCancel={finishReviewGeometryHandle}
         />
       )}
       {drawingTool === 'trend-line' && (
@@ -1817,6 +1893,24 @@ export type GeneratedBreakoutState = {
   eventKind?: 'upward-breakout' | 'downward-breakdown' | 'retest' | 'false-breakout-risk' | 'no-structural-change'
 }
 
+export function projectReviewGeometryHandles(
+  target: TrendReviewGeometryTarget | undefined,
+  chart: IChartApi | null,
+  priceSeries: { priceToCoordinate: (price: number) => number | null } | null,
+  host: HTMLDivElement | null,
+): ProjectedReviewGeometryHandle[] {
+  if (!target || !chart || !priceSeries || !host) return []
+  const paneHeight = chart.panes()[0]?.getHeight() ?? host.clientHeight
+  return reviewGeometryHandles(target.label).flatMap(handle => {
+    const x = handle.priceOnly
+      ? 18
+      : handle.date ? chart.timeScale().timeToCoordinate(handle.date as Time) : null
+    const y = priceSeries.priceToCoordinate(handle.price)
+    if (x === null || y === null || y < -12 || y > paneHeight + 12) return []
+    return [{ ...handle, x, y }]
+  })
+}
+
 export function projectGeneratedPivots(
   run: TrendAnalysisRun | null,
   chart: IChartApi | null,
@@ -2085,6 +2179,45 @@ export function readGeneratedBreakoutState(
       ? { eventKind: item.payload.event_kind }
       : {}),
   }
+}
+
+function TrendReviewGeometryOverlay({
+  handles,
+  onMoveStart,
+  onMove,
+  onMoveEnd,
+  onMoveCancel,
+}: {
+  handles: ProjectedReviewGeometryHandle[]
+  onMoveStart: (event: ReactPointerEvent<SVGCircleElement>, handle: ProjectedReviewGeometryHandle) => void
+  onMove: (event: ReactPointerEvent<SVGCircleElement>) => void
+  onMoveEnd: (event: ReactPointerEvent<SVGCircleElement>) => void
+  onMoveCancel: (event: ReactPointerEvent<SVGCircleElement>) => void
+}) {
+  return (
+    <div className="trend-review-geometry-overlay" aria-label="人工复核几何编辑">
+      <svg width="100%" height="100%">
+        {handles.map(handle => (
+          <g key={handle.id}>
+            {handle.priceOnly && <line className="trend-review-price-guide" x1={handle.x} y1={handle.y} x2="100%" y2={handle.y}/>}
+            <circle
+              className="trend-review-geometry-hit"
+              cx={handle.x}
+              cy={handle.y}
+              r={10}
+              role="button"
+              aria-label={`拖动${handle.label}`}
+              onPointerDown={event => onMoveStart(event, handle)}
+              onPointerMove={onMove}
+              onPointerUp={onMoveEnd}
+              onPointerCancel={onMoveCancel}
+            />
+            <circle className="trend-review-geometry-handle" cx={handle.x} cy={handle.y} r={4}/>
+          </g>
+        ))}
+      </svg>
+    </div>
+  )
 }
 
 function GeneratedAnalysisOverlay({
