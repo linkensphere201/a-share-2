@@ -22,6 +22,9 @@ from stock_harness.api import create_app
 from stock_harness.auto_update import AutoUpdateService
 from stock_harness.config import load_runtime_settings
 from stock_harness.intraday import IntradayQuoteService
+from stock_harness.futures_intraday import FuturesProvisionalService
+from stock_harness.futures_provider_health import FuturesProviderMonitor
+from stock_harness.futures_provisional_provider import AkShareFuturesSpotProvider
 from stock_harness.runtime_logging import configure_runtime_logging
 from stock_harness.sqlite_store import SQLiteMarketDataStore
 from stock_harness.tushare_provider import TushareDailyProvider
@@ -103,6 +106,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         if settings.intraday.enabled and not args.no_intraday and not args.smoke_test
         else None
     )
+    futures_provisional_service = (
+        FuturesProvisionalService(
+            settings.futures.provisional,
+            store,
+            FuturesProviderMonitor(
+                AkShareFuturesSpotProvider(settings.futures.provisional),
+                settings.futures.provisional.stale_after_seconds,
+            ),
+        )
+        if settings.futures.enabled
+        and settings.futures.provisional.enabled
+        and not args.no_intraday
+        and not args.smoke_test
+        else None
+    )
     factor_provider: TushareDailyProvider | None = None
     analysis_worker = TrendAnalysisWorker(store) if not args.smoke_test else None
 
@@ -134,6 +152,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         update_status=update_service.status if update_service else None,
         update_trigger=update_service.trigger if update_service else None,
         intraday_service=intraday_service,
+        futures_provisional_service=futures_provisional_service,
         custom_index_factor_loader=load_custom_index_factors,
         custom_index_status_loader=load_custom_index_statuses,
     )
@@ -144,6 +163,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             update_service.start()
         if intraday_service is not None:
             intraday_service.start()
+        if futures_provisional_service is not None:
+            futures_provisional_service.start()
         if analysis_worker is not None:
             analysis_worker.start()
         LOGGER.info("desktop_ready url=%s frontend_url=%s", url, frontend_url)
@@ -160,6 +181,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             analysis_worker.stop()
         if intraday_service is not None:
             intraday_service.stop()
+        if futures_provisional_service is not None:
+            futures_provisional_service.stop()
         if update_service is not None:
             update_service.stop()
         server.stop()

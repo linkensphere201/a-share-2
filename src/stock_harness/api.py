@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 
 from stock_harness.config import load_runtime_settings
 from stock_harness.intraday import IntradayQuoteService
+from stock_harness.futures_intraday import FuturesProvisionalService
 from stock_harness.models import AdjustmentFactor, InstrumentKind, StockTradeStatus
 from stock_harness.runtime_logging import EVENT_BUFFER, record_frontend_event
 from stock_harness.sqlite_store import SQLiteMarketDataStore
@@ -146,6 +147,7 @@ def create_app(
     update_status: Callable[[], dict[str, object]] | None = None,
     update_trigger: Callable[[], dict[str, object]] | None = None,
     intraday_service: IntradayQuoteService | None = None,
+    futures_provisional_service: FuturesProvisionalService | None = None,
     custom_index_factor_loader: Callable[
         [list[str], date, date], list[AdjustmentFactor]
     ] | None = None,
@@ -461,15 +463,32 @@ def create_app(
 
     @app.get("/api/intraday/status")
     def intraday_status() -> dict[str, object]:
-        return intraday_service.status() if intraday_service else {"state": "disabled", "enabled": False}
+        result = intraday_service.status() if intraday_service else {"state": "disabled", "enabled": False}
+        result["futures"] = (
+            futures_provisional_service.status()
+            if futures_provisional_service else {"state": "disabled", "enabled": False}
+        )
+        return result
 
     @app.post("/api/intraday/subscription")
     def intraday_subscription(request: Request, payload: IntradaySubscriptionInput) -> dict[str, object]:
-        if intraday_service is None:
+        if intraday_service is None and futures_provisional_service is None:
             return {"state": "disabled", "enabled": False}
         symbols = _expand_subscription_symbols(_store(request), payload.symbols)
         try:
-            return intraday_service.subscribe(payload.group_id, symbols)
+            result = (
+                intraday_service.subscribe(payload.group_id, symbols)
+                if intraday_service else {"state": "disabled", "enabled": False}
+            )
+            result["futures"] = (
+                futures_provisional_service.subscribe(
+                    payload.group_id,
+                    _futures_reference_symbols(_store(request), symbols),
+                )
+                if futures_provisional_service
+                else {"state": "disabled", "enabled": False}
+            )
+            return result
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -916,7 +935,8 @@ def _expand_subscription_symbols(
 ) -> list[str]:
     expanded: set[str] = set()
     for raw_symbol in symbols:
-        symbol = raw_symbol.strip().upper()
+        stripped = raw_symbol.strip()
+        symbol = stripped if stripped.startswith("FUT") else stripped.upper()
         if not symbol:
             continue
         if not symbol.startswith("CUSTOM:"):
@@ -924,8 +944,29 @@ def _expand_subscription_symbols(
             continue
         custom = store.get_custom_group(symbol.split(":", 1)[1].lower())
         if custom is not None:
-            expanded.update(str(item["symbol"]).upper() for item in custom["members"])
+            expanded.update(
+                value if value.startswith("FUT") else value.upper()
+                for item in custom["members"]
+                if (value := str(item["symbol"]).strip())
+            )
     return sorted(expanded)
+
+
+def _futures_reference_symbols(
+    store: SQLiteMarketDataStore, symbols: list[str]
+) -> list[str]:
+    result: list[str] = []
+    for symbol in symbols:
+        try:
+            kind = str(store.get_instrument_summary(symbol)["kind"])
+        except (KeyError, TypeError):
+            continue
+        if kind in {
+            InstrumentKind.FUTURES_CONTRACT.value,
+            InstrumentKind.FUTURES_CONTINUOUS.value,
+        }:
+            result.append(symbol)
+    return result
 
 
 def _effective_intraday_items(

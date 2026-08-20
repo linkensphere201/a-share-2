@@ -626,6 +626,116 @@ class SQLiteMarketDataStore:
             for row in rows
         ]
 
+    def get_futures_contracts(
+        self, symbols: Sequence[str]
+    ) -> list[FuturesContract]:
+        self._require_futures_storage()
+        normalized = tuple(sorted({item.strip().upper() for item in symbols if item.strip()}))
+        if not normalized:
+            return []
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT instrument.symbol, contract.provider_symbol,
+                       product_instrument.symbol, instrument.name,
+                       contract.contract_month, contract.listed_on,
+                       contract.last_trading_date, contract.delivery_date,
+                       contract.multiplier, contract.per_unit,
+                       contract.trading_unit, contract.quote_unit,
+                       contract.lifecycle_status, instrument.exchange
+                FROM futures_contracts AS contract
+                JOIN instruments AS instrument USING (instrument_id)
+                JOIN instruments AS product_instrument
+                  ON product_instrument.instrument_id = contract.product_instrument_id
+                WHERE instrument.symbol IN (
+                """ + ",".join("?" for _ in normalized) + ") ORDER BY instrument.symbol",
+                normalized,
+            ).fetchall()
+        return [
+            FuturesContract(
+                symbol=str(row[0]), provider_symbol=str(row[1]),
+                product_symbol=str(row[2]), display_name=str(row[3]),
+                exchange=FuturesExchange(str(row[13])), contract_month=str(row[4]),
+                listed_on=_date_from_key(int(row[5])),
+                last_trading_date=_date_from_key(int(row[6])),
+                delivery_date=(
+                    _date_from_key(int(row[7])) if row[7] is not None else None
+                ),
+                multiplier=float(row[8]) if row[8] is not None else None,
+                per_unit=float(row[9]) if row[9] is not None else None,
+                trading_unit=str(row[10]), quote_unit=str(row[11]),
+                lifecycle_status=FuturesLifecycleStatus(str(row[12])),
+            )
+            for row in rows
+        ]
+
+    def resolve_futures_contract_references(
+        self,
+        source: str,
+        references: Sequence[str],
+        trading_day: date,
+    ) -> dict[str, str | None]:
+        self._require_futures_storage()
+        normalized = tuple(sorted({item.strip() for item in references if item.strip()}))
+        if not normalized:
+            return {}
+        with self._lock:
+            kinds = {
+                str(row[0]): str(row[1])
+                for row in self._connection.execute(
+                    "SELECT symbol, kind FROM instruments WHERE symbol IN ("
+                    + ",".join("?" for _ in normalized) + ")",
+                    normalized,
+                )
+            }
+            result: dict[str, str | None] = {}
+            for symbol in normalized:
+                kind = kinds.get(symbol)
+                if kind == InstrumentKind.FUTURES_CONTRACT.value:
+                    result[symbol] = symbol
+                    continue
+                if kind != InstrumentKind.FUTURES_CONTINUOUS.value:
+                    result[symbol] = None
+                    continue
+                row = self._connection.execute(
+                    """
+                    SELECT contract.symbol
+                    FROM futures_roll_mappings AS mapping
+                    JOIN sources AS source USING (source_id)
+                    JOIN instruments AS series
+                      ON series.instrument_id = mapping.series_instrument_id
+                    JOIN instruments AS contract
+                      ON contract.instrument_id = mapping.contract_instrument_id
+                    WHERE source.code = ? AND series.symbol = ?
+                      AND mapping.effective_from <= ?
+                    ORDER BY mapping.effective_from DESC LIMIT 1
+                    """,
+                    (source, symbol, _date_key(trading_day)),
+                ).fetchone()
+                result[symbol] = str(row[0]) if row is not None else None
+        return result
+
+    def next_futures_open_day(
+        self,
+        source: str,
+        exchange: FuturesExchange,
+        on_or_after: date,
+    ) -> date | None:
+        self._require_futures_storage()
+        with self._lock:
+            row = self._connection.execute(
+                """
+                SELECT calendar.calendar_date
+                FROM futures_exchange_calendar AS calendar
+                JOIN sources AS source USING (source_id)
+                WHERE source.code = ? AND calendar.exchange = ?
+                  AND calendar.is_open = 1 AND calendar.calendar_date >= ?
+                ORDER BY calendar.calendar_date LIMIT 1
+                """,
+                (source, exchange.value, _date_key(on_or_after)),
+            ).fetchone()
+        return _date_from_key(int(row[0])) if row is not None else None
+
     def upsert_futures_daily_bars(
         self,
         source: str,
@@ -1098,6 +1208,38 @@ class SQLiteMarketDataStore:
         if row is not None:
             final.append(_futures_daily_row(row, FuturesBarState.PROVISIONAL))
         return final
+
+    def mark_futures_provisional_stale(
+        self,
+        source: str,
+        symbols: Sequence[str],
+    ) -> int:
+        self._require_futures_storage()
+        normalized = tuple(sorted({item.strip() for item in symbols if item.strip()}))
+        if not normalized:
+            return 0
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        with self._lock, self._transaction():
+            source_id = self._source_id(source)
+            instrument_ids = self._instrument_ids(normalized)
+            missing = set(normalized) - instrument_ids.keys()
+            if missing:
+                raise ValueError(
+                    "unknown provisional futures contracts: "
+                    + ", ".join(sorted(missing))
+                )
+            before = self._connection.total_changes
+            self._connection.execute(
+                """
+                UPDATE futures_provisional_daily_bars
+                SET stale = 1, updated_at_ms = ?
+                WHERE source_id = ? AND takeover_state = 'active' AND stale = 0
+                  AND instrument_id IN (
+                """ + ",".join("?" for _ in instrument_ids) + ")",
+                (now_ms, source_id, *instrument_ids.values()),
+            )
+            changed = self._connection.total_changes - before
+        return changed
 
     def list_futures_provisional_audit(
         self,
