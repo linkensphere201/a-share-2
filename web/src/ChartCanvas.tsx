@@ -134,6 +134,8 @@ type ProjectedReviewGeometryHandle = TrendReviewGeometryHandle & { x: number; y:
 
 type ChartCanvasProps = {
   symbol: string
+  instrumentName?: string
+  instrumentKind?: string
   lineOnly?: boolean
   theme: ThemeDefinition
   range: ChartRange
@@ -198,6 +200,8 @@ export function dailyBarsUrl(symbol: string, asOfDate?: string): string {
 
 export function ChartCanvas({
   symbol,
+  instrumentName,
+  instrumentKind,
   lineOnly = false,
   theme,
   range,
@@ -493,6 +497,7 @@ export function ChartCanvas({
         ? previousCloseByDateRef.current.get(rendered.period_start)
         : undefined
       setReadout({
+        ...rendered,
         trade_date: rendered && rendered.period_start !== rendered.trade_date
           ? `${rendered.period_start} → ${rendered.trade_date}`
           : String(param.time),
@@ -502,7 +507,10 @@ export function ChartCanvas({
         close: candle.close,
         volume: rendered?.volume ?? 0,
         source: rendered?.source ?? '',
-        changePercent: calculateChangePercent(candle.close, previousClose),
+        changePercent: calculateChangePercent(
+          candle.close,
+          rendered?.previous_settlement ?? previousClose,
+        ),
         ma5: valueAt(ma5, param),
         ma20: valueAt(ma20, param),
         ma60: valueAt(ma60, param),
@@ -1620,7 +1628,11 @@ export function ChartCanvas({
           onContextMenu={event => event.preventDefault()}
         />
       )}
-      {readout && <ChartReadout value={readout}/>}
+      {readout && <ChartReadout
+        value={readout}
+        instrumentName={instrumentName}
+        futures={instrumentKind === 'futures-contract' || instrumentKind === 'futures-continuous'}
+      />}
       {volumePaneTop !== undefined && <PaneHeader kind="volume" top={volumePaneTop} onHide={() => onVolumeVisibleChange?.(false)}/>}
       {macdPaneTop !== undefined && <PaneHeader kind="macd" top={macdPaneTop} onHide={() => onIndicatorChange?.('none')}/>}
       {selectionBox && <div className="chart-range-selection" style={selectionBox}/>}
@@ -2417,7 +2429,11 @@ function MeasurementOverlay({
   )
 }
 
-function ChartReadout({ value }: { value: Readout }) {
+function ChartReadout({ value, instrumentName, futures }: {
+  value: Readout
+  instrumentName?: string
+  futures: boolean
+}) {
   const candleTone = value.changePercent === undefined
     ? value.close >= value.open ? 'rise' : 'fall'
     : value.changePercent >= 0 ? 'rise' : 'fall'
@@ -2426,14 +2442,23 @@ function ChartReadout({ value }: { value: Readout }) {
     : value.changePercent >= 0 ? 'rise' : 'fall'
   return (
     <div className="chart-readout">
-      {value.bar_state === 'intraday' && <span className={value.stale ? 'live-badge stale' : 'live-badge'}>{value.stale ? '盘中延迟' : '盘中'}</span>}
+      {futures && instrumentName && <span>{instrumentName}</span>}
+      {value.bar_state === 'intraday'
+        ? <span className={value.stale ? 'live-badge stale' : 'live-badge'}>{value.stale ? '盘中延迟' : '盘中'}</span>
+        : futures && <span className="final-badge">正式</span>}
       <span>{value.trade_date}</span>
       <span>开 <b>{formatPrice(value.open)}</b></span>
       <span>高 <b>{formatPrice(value.high)}</b></span>
       <span>低 <b>{formatPrice(value.low)}</b></span>
       <span>收 <b className={candleTone}>{formatPrice(value.close)}</b></span>
-      <span>涨跌 <b className={changeTone}>{formatChangePercent(value.changePercent)}</b></span>
+      <span>{futures ? '结算涨跌' : '涨跌'} <b className={changeTone}>{formatChangePercent(value.changePercent)}</b></span>
+      {futures && value.previous_settlement != null && <span>昨结 <b>{formatPrice(value.previous_settlement)}</b></span>}
+      {futures && value.settlement != null && <span>结算 <b>{formatPrice(value.settlement)}</b></span>}
       <span>量 <b>{formatVolume(value.volume)}</b></span>
+      {futures && value.amount != null && <span>额 <b>{formatVolume(value.amount)}</b></span>}
+      {futures && value.open_interest != null && <span>持仓 <b>{formatVolume(value.open_interest)}</b></span>}
+      {futures && value.open_interest_change != null && <span>增仓 <b className={value.open_interest_change >= 0 ? 'rise' : 'fall'}>{formatSignedVolume(value.open_interest_change)}</b></span>}
+      {futures && value.mapped_contract_symbol && <span>映射 <b>{value.mapped_contract_symbol}</b></span>}
       {value.ma5 !== undefined && <span className="ma5-value">MA5 {formatPrice(value.ma5)}</span>}
       {value.ma20 !== undefined && <span className="ma20-value">MA20 {formatPrice(value.ma20)}</span>}
       {value.ma60 !== undefined && <span className="ma60-value">MA60 {formatPrice(value.ma60)}</span>}
@@ -2547,4 +2572,8 @@ function formatVolume(value: number): string {
   if (value >= 100_000_000) return `${(value / 100_000_000).toFixed(2)}亿`
   if (value >= 10_000) return `${(value / 10_000).toFixed(1)}万`
   return value.toLocaleString('zh-CN')
+}
+
+function formatSignedVolume(value: number): string {
+  return `${value > 0 ? '+' : value < 0 ? '-' : ''}${formatVolume(Math.abs(value))}`
 }

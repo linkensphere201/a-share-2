@@ -7,6 +7,14 @@ export type DailyBar = {
   low: number
   close: number
   volume: number
+  amount?: number | null
+  previous_close?: number | null
+  settlement?: number | null
+  previous_settlement?: number | null
+  open_interest?: number | null
+  open_interest_change?: number | null
+  mapped_contract_symbol?: string | null
+  roll_event?: boolean
   source: string
   bar_state?: 'final' | 'intraday'
   stale?: boolean
@@ -145,6 +153,7 @@ export function aggregateBars(bars: DailyBar[], bucket: number): RenderBar[] {
     const first = group[0]
     const last = group.at(-1)!
     output.push({
+      ...last,
       trade_date: last.trade_date,
       period_start: first.trade_date,
       open: first.open,
@@ -319,7 +328,10 @@ export function latestReadout(bars: DailyBar[]): Readout | null {
   if (!latest) return null
   return {
     ...latest,
-    changePercent: calculateChangePercent(latest.close, bars.at(-2)?.close),
+    changePercent: calculateChangePercent(
+      latest.close,
+      latest.previous_settlement ?? bars.at(-2)?.close,
+    ),
     ma5: latestAverage(bars, 5),
     ma20: latestAverage(bars, 20),
     ma60: latestAverage(bars, 60),

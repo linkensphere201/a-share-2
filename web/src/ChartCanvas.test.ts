@@ -16,6 +16,7 @@ import {
   snapLogicalRangeToDataEdge,
   createRangeMeasurement,
   detectPriceGaps,
+  latestReadout,
   movingAverage,
   mergeProvisionalBar,
   millisecondsUntilMarketSession,
@@ -144,6 +145,21 @@ describe('provisional daily bars', () => {
     expect(shouldUseFinalDailyRefresh(new Date(2026, 7, 4, 12, 0))).toBe(false)
     expect(shouldUseFinalDailyRefresh(new Date(2026, 7, 4, 15, 1))).toBe(true)
     expect(shouldUseFinalDailyRefresh(new Date(2026, 7, 8, 10, 0))).toBe(true)
+  })
+
+  it('uses previous settlement for futures readout change', () => {
+    const readout = latestReadout([{
+      ...finalBar,
+      close: 103,
+      previous_settlement: 100,
+      settlement: 102,
+      open_interest: 12_000,
+      open_interest_change: 300,
+      mapped_contract_symbol: 'FUT:SHFE:CU:202609',
+    }])
+    expect(readout?.changePercent).toBeCloseTo(3)
+    expect(readout?.settlement).toBe(102)
+    expect(readout?.mapped_contract_symbol).toBe('FUT:SHFE:CU:202609')
   })
 })
 

@@ -94,6 +94,8 @@ export function ChartWindow({
         />
         <ChartCanvas
           symbol={instrument.symbol}
+          instrumentName={instrument.name}
+          instrumentKind={instrument.kind}
           lineOnly={instrument.kind === 'custom-index' && chart.seriesMode === 'line'}
           theme={theme}
           range={chart.range}
