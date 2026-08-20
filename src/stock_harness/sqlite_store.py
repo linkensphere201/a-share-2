@@ -4738,15 +4738,63 @@ class SQLiteMarketDataStore:
         source_system: str | None = None,
         family: str | None = None,
         category: str | None = None,
+        exchange: str | None = None,
+        futures_product: str | None = None,
+        futures_lifecycle: str | None = None,
+        futures_series_kind: str | None = None,
+        active: bool | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[dict[str, object]]:
         if not 1 <= limit <= 501 or offset < 0:
             raise ValueError("invalid instrument pagination")
         if classification not in {
-            None, "stock", "etf", "index", "custom-index", "concept", "industry", "sector"
+            None, "stock", "etf", "index", "custom-index", "concept", "industry",
+            "sector", "futures", "futures-product", "futures-contract",
+            "futures-continuous",
         }:
             raise ValueError("invalid instrument classification")
+        if futures_lifecycle and futures_lifecycle not in {
+            "pending", "listed", "trading", "expired", "delivered", "delisted",
+        }:
+            raise ValueError("invalid futures lifecycle status")
+        if futures_series_kind and futures_series_kind not in {"main", "continuous"}:
+            raise ValueError("invalid futures series kind")
+        futures_requested = (
+            classification is not None and classification.startswith("futures")
+        ) or any((futures_product, futures_lifecycle, futures_series_kind))
+        if futures_requested and not self._futures_storage_ready:
+            return []
+        futures_min_case = (
+            "WHEN selected.kind IN ('futures-contract', 'futures-continuous') THEN "
+            "(SELECT min(bar.trading_day) FROM futures_daily_bars AS bar "
+            "WHERE bar.instrument_id = selected.instrument_id)"
+            if self._futures_storage_ready else ""
+        )
+        futures_max_case = (
+            "WHEN selected.kind IN ('futures-contract', 'futures-continuous') THEN "
+            "(SELECT max(bar.trading_day) FROM futures_daily_bars AS bar "
+            "WHERE bar.instrument_id = selected.instrument_id)"
+            if self._futures_storage_ready else ""
+        )
+        futures_count_case = (
+            "WHEN selected.kind IN ('futures-contract', 'futures-continuous') THEN "
+            "(SELECT count(*) FROM futures_daily_bars AS bar "
+            "WHERE bar.instrument_id = selected.instrument_id)"
+            if self._futures_storage_ready else ""
+        )
+        futures_metadata = (
+            "COALESCE((SELECT product_code FROM futures_products WHERE instrument_id = selected.instrument_id), "
+            "(SELECT product.product_code FROM futures_contracts AS contract JOIN futures_products AS product "
+            "ON product.instrument_id = contract.product_instrument_id WHERE contract.instrument_id = selected.instrument_id), "
+            "(SELECT product.product_code FROM futures_continuous_series AS series JOIN futures_products AS product "
+            "ON product.instrument_id = series.product_instrument_id WHERE series.instrument_id = selected.instrument_id)), "
+            "(SELECT lifecycle_status FROM futures_contracts WHERE instrument_id = selected.instrument_id), "
+            "(SELECT contract_month FROM futures_contracts WHERE instrument_id = selected.instrument_id), "
+            "(SELECT series_kind FROM futures_continuous_series WHERE instrument_id = selected.instrument_id), "
+            "(SELECT series_variant FROM futures_continuous_series WHERE instrument_id = selected.instrument_id)"
+            if self._futures_storage_ready else "NULL, NULL, NULL, NULL, NULL"
+        )
         clauses: list[str] = []
         parameters: list[object] = []
         if query.strip():
@@ -4765,6 +4813,44 @@ class SQLiteMarketDataStore:
             class_clause, class_parameters = _instrument_classification_clause(classification)
             clauses.append(class_clause)
             parameters.extend(class_parameters)
+        if exchange:
+            clauses.append("instrument.exchange = ?")
+            parameters.append(exchange.upper())
+        if active is not None:
+            clauses.append("instrument.active = ?")
+            parameters.append(int(active))
+        if futures_product:
+            product = futures_product.strip().upper()
+            clauses.append(
+                "(EXISTS (SELECT 1 FROM futures_products AS product "
+                "WHERE product.instrument_id = instrument.instrument_id "
+                "AND product.product_code = ?) OR EXISTS ("
+                "SELECT 1 FROM futures_contracts AS contract "
+                "JOIN futures_products AS product "
+                "ON product.instrument_id = contract.product_instrument_id "
+                "WHERE contract.instrument_id = instrument.instrument_id "
+                "AND product.product_code = ?) OR EXISTS ("
+                "SELECT 1 FROM futures_continuous_series AS series "
+                "JOIN futures_products AS product "
+                "ON product.instrument_id = series.product_instrument_id "
+                "WHERE series.instrument_id = instrument.instrument_id "
+                "AND product.product_code = ?))"
+            )
+            parameters.extend((product, product, product))
+        if futures_lifecycle:
+            clauses.append(
+                "EXISTS (SELECT 1 FROM futures_contracts AS contract "
+                "WHERE contract.instrument_id = instrument.instrument_id "
+                "AND contract.lifecycle_status = ?)"
+            )
+            parameters.append(futures_lifecycle)
+        if futures_series_kind:
+            clauses.append(
+                "EXISTS (SELECT 1 FROM futures_continuous_series AS series "
+                "WHERE series.instrument_id = instrument.instrument_id "
+                "AND series.series_kind = ?)"
+            )
+            parameters.append(futures_series_kind)
         for column, value in (
             ("catalog.source_system", source_system),
             ("catalog.family", family),
@@ -4796,20 +4882,24 @@ class SQLiteMarketDataStore:
                            (SELECT min(bar.trade_date) FROM custom_index_daily_bars AS bar
                             JOIN custom_indices AS custom USING (index_id)
                             WHERE custom.instrument_id = selected.instrument_id)
+                       {futures_min_case}
                        ELSE (SELECT min(trade_date) FROM daily_bars
                              WHERE instrument_id = selected.instrument_id) END,
                        CASE WHEN selected.kind = 'custom-index' THEN
                            (SELECT max(bar.trade_date) FROM custom_index_daily_bars AS bar
                             JOIN custom_indices AS custom USING (index_id)
                             WHERE custom.instrument_id = selected.instrument_id)
+                       {futures_max_case}
                        ELSE (SELECT max(trade_date) FROM daily_bars
                              WHERE instrument_id = selected.instrument_id) END,
                        CASE WHEN selected.kind = 'custom-index' THEN
                            (SELECT count(*) FROM custom_index_daily_bars AS bar
                             JOIN custom_indices AS custom USING (index_id)
                             WHERE custom.instrument_id = selected.instrument_id)
+                       {futures_count_case}
                        ELSE (SELECT count(*) FROM daily_bars
-                             WHERE instrument_id = selected.instrument_id) END
+                             WHERE instrument_id = selected.instrument_id) END,
+                       {futures_metadata}
                 FROM selected
                 ORDER BY selected.kind, selected.name, selected.symbol
                 """,
@@ -4818,9 +4908,39 @@ class SQLiteMarketDataStore:
         return [_instrument_row(row) for row in rows]
 
     def get_instrument_summary(self, symbol: str) -> dict[str, object] | None:
+        futures_min_case = (
+            "WHEN instrument.kind IN ('futures-contract', 'futures-continuous') THEN "
+            "(SELECT min(bar.trading_day) FROM futures_daily_bars AS bar "
+            "WHERE bar.instrument_id = instrument.instrument_id)"
+            if self._futures_storage_ready else ""
+        )
+        futures_max_case = (
+            "WHEN instrument.kind IN ('futures-contract', 'futures-continuous') THEN "
+            "(SELECT max(bar.trading_day) FROM futures_daily_bars AS bar "
+            "WHERE bar.instrument_id = instrument.instrument_id)"
+            if self._futures_storage_ready else ""
+        )
+        futures_count_case = (
+            "WHEN instrument.kind IN ('futures-contract', 'futures-continuous') THEN "
+            "(SELECT count(*) FROM futures_daily_bars AS bar "
+            "WHERE bar.instrument_id = instrument.instrument_id)"
+            if self._futures_storage_ready else ""
+        )
+        futures_metadata = (
+            "COALESCE((SELECT product_code FROM futures_products WHERE instrument_id = instrument.instrument_id), "
+            "(SELECT product.product_code FROM futures_contracts AS contract JOIN futures_products AS product "
+            "ON product.instrument_id = contract.product_instrument_id WHERE contract.instrument_id = instrument.instrument_id), "
+            "(SELECT product.product_code FROM futures_continuous_series AS series JOIN futures_products AS product "
+            "ON product.instrument_id = series.product_instrument_id WHERE series.instrument_id = instrument.instrument_id)), "
+            "(SELECT lifecycle_status FROM futures_contracts WHERE instrument_id = instrument.instrument_id), "
+            "(SELECT contract_month FROM futures_contracts WHERE instrument_id = instrument.instrument_id), "
+            "(SELECT series_kind FROM futures_continuous_series WHERE instrument_id = instrument.instrument_id), "
+            "(SELECT series_variant FROM futures_continuous_series WHERE instrument_id = instrument.instrument_id)"
+            if self._futures_storage_ready else "NULL, NULL, NULL, NULL, NULL"
+        )
         with self._lock:
             row = self._connection.execute(
-                """
+                f"""
                 SELECT instrument.symbol, instrument.name, instrument.kind,
                        instrument.exchange, instrument.active,
                        catalog.source_system, catalog.family, catalog.category,
@@ -4828,20 +4948,24 @@ class SQLiteMarketDataStore:
                            (SELECT min(bar.trade_date) FROM custom_index_daily_bars AS bar
                             JOIN custom_indices AS custom USING (index_id)
                             WHERE custom.instrument_id = instrument.instrument_id)
+                       {futures_min_case}
                        ELSE (SELECT min(trade_date) FROM daily_bars
                              WHERE instrument_id = instrument.instrument_id) END,
                        CASE WHEN instrument.kind = 'custom-index' THEN
                            (SELECT max(bar.trade_date) FROM custom_index_daily_bars AS bar
                             JOIN custom_indices AS custom USING (index_id)
                             WHERE custom.instrument_id = instrument.instrument_id)
+                       {futures_max_case}
                        ELSE (SELECT max(trade_date) FROM daily_bars
                              WHERE instrument_id = instrument.instrument_id) END,
                        CASE WHEN instrument.kind = 'custom-index' THEN
                            (SELECT count(*) FROM custom_index_daily_bars AS bar
                             JOIN custom_indices AS custom USING (index_id)
                             WHERE custom.instrument_id = instrument.instrument_id)
+                       {futures_count_case}
                        ELSE (SELECT count(*) FROM daily_bars
-                             WHERE instrument_id = instrument.instrument_id) END
+                             WHERE instrument_id = instrument.instrument_id) END,
+                       {futures_metadata}
                 FROM instruments AS instrument
                 LEFT JOIN instrument_catalog_entries AS catalog USING (instrument_id)
                 WHERE instrument.symbol = ? COLLATE NOCASE

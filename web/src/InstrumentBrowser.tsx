@@ -2,7 +2,10 @@ import { useEffect, useRef, useState } from 'react'
 import { Plus, Search } from 'lucide-react'
 import type { Instrument } from './workspace'
 
-type BrowseClass = 'all' | 'custom-group' | 'stock' | 'etf' | 'index' | 'custom-index' | 'concept' | 'industry' | 'sector'
+type BrowseClass = 'all' | 'custom-group' | 'stock' | 'etf' | 'index' | 'custom-index' | 'concept' | 'industry' | 'sector' | 'futures'
+type FuturesType = 'all' | 'futures-contract' | 'futures-continuous'
+type FuturesLifecycle = 'all' | 'pending' | 'listed' | 'trading' | 'expired' | 'delivered' | 'delisted'
+type FuturesSeriesKind = 'all' | 'main' | 'continuous'
 
 type InstrumentBrowserProps = {
   selectedSymbols: Set<string>
@@ -21,6 +24,7 @@ const browseClasses: { value: BrowseClass; label: string }[] = [
   { value: 'etf', label: 'ETF' },
   { value: 'index', label: '指数' },
   { value: 'custom-index', label: '自定义指数' },
+  { value: 'futures', label: '期货' },
   { value: 'stock', label: '个股' },
   { value: 'sector', label: '其他板块' },
 ]
@@ -40,6 +44,12 @@ export function InstrumentBrowser({
   const [hasMore, setHasMore] = useState(false)
   const [loading, setLoading] = useState(false)
   const [failed, setFailed] = useState(false)
+  const [futuresType, setFuturesType] = useState<FuturesType>('all')
+  const [futuresExchange, setFuturesExchange] = useState('')
+  const [futuresProduct, setFuturesProduct] = useState('')
+  const [futuresLifecycle, setFuturesLifecycle] = useState<FuturesLifecycle>('all')
+  const [futuresSeriesKind, setFuturesSeriesKind] = useState<FuturesSeriesKind>('all')
+  const [futuresFacets, setFuturesFacets] = useState<FuturesFacets>({ exchanges: [], products: [] })
   const generationRef = useRef(0)
   const loadMoreControllerRef = useRef<AbortController | undefined>(undefined)
   const visibleBrowseClasses = stockOnly
@@ -54,6 +64,21 @@ export function InstrumentBrowser({
   }, [classification, excludeCustomGroups, stockOnly])
 
   useEffect(() => {
+    if (classification !== 'futures' || futuresFacets.products.length > 0) return
+    const controller = new AbortController()
+    fetch('/api/futures/search-facets', { signal: controller.signal })
+      .then(response => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`)
+        return response.json() as Promise<FuturesFacets>
+      })
+      .then(setFuturesFacets)
+      .catch(error => {
+        if ((error as Error).name !== 'AbortError') setFailed(true)
+      })
+    return () => controller.abort()
+  }, [classification, futuresFacets.products.length])
+
+  useEffect(() => {
     const generation = ++generationRef.current
     loadMoreControllerRef.current?.abort()
     loadMoreControllerRef.current = undefined
@@ -61,7 +86,7 @@ export function InstrumentBrowser({
     const handle = window.setTimeout(() => {
       setLoading(true)
       setFailed(false)
-        fetchInstrumentPage(query, classification, 0, controller.signal)
+        fetchInstrumentPage(query, classification, 0, futuresFilters(), controller.signal)
         .then(body => {
           if (generation !== generationRef.current) return
           setResults(filterResults(body.items, excludeCustomGroups))
@@ -82,7 +107,10 @@ export function InstrumentBrowser({
       window.clearTimeout(handle)
       controller.abort()
     }
-  }, [classification, excludeCustomGroups, query])
+  }, [
+    classification, excludeCustomGroups, query, futuresType, futuresExchange,
+    futuresProduct, futuresLifecycle, futuresSeriesKind,
+  ])
 
   const loadMore = () => {
     if (loading || !hasMore) return
@@ -92,7 +120,7 @@ export function InstrumentBrowser({
     loadMoreControllerRef.current = controller
     setLoading(true)
     setFailed(false)
-    fetchInstrumentPage(query, classification, nextOffset, controller.signal)
+    fetchInstrumentPage(query, classification, nextOffset, futuresFilters(), controller.signal)
       .then(body => {
         if (generation !== generationRef.current) return
         setResults(current => uniqueBySymbol([...current, ...filterResults(body.items, excludeCustomGroups)]))
@@ -107,6 +135,14 @@ export function InstrumentBrowser({
         if (!controller.signal.aborted && generation === generationRef.current) setLoading(false)
       })
   }
+
+  const futuresFilters = (): FuturesFilters => ({
+    type: futuresType,
+    exchange: futuresExchange,
+    product: futuresProduct,
+    lifecycle: futuresLifecycle,
+    seriesKind: futuresSeriesKind,
+  })
 
   return <section className="instrument-browser" aria-label="标的分类浏览">
     <div className="instrument-editor-search">
@@ -126,6 +162,23 @@ export function InstrumentBrowser({
         onClick={() => setClassification(item.value)}
       >{item.label}</button>)}
     </div>
+    {classification === 'futures' && <div className="instrument-browser-futures-filters">
+      <label>类型<select aria-label="期货类型" value={futuresType} onChange={event => setFuturesType(event.target.value as FuturesType)}>
+        <option value="all">全部</option><option value="futures-contract">真实合约</option><option value="futures-continuous">连续合约</option>
+      </select></label>
+      <label>交易所<select aria-label="期货交易所" value={futuresExchange} onChange={event => { setFuturesExchange(event.target.value); setFuturesProduct('') }}>
+        <option value="">全部</option>{futuresFacets.exchanges.map(value => <option key={value} value={value}>{value}</option>)}
+      </select></label>
+      <label>品种<select aria-label="期货品种" value={futuresProduct} onChange={event => setFuturesProduct(event.target.value)}>
+        <option value="">全部</option>{futuresFacets.products.filter(item => !futuresExchange || item.exchange === futuresExchange).map(item => <option key={item.symbol} value={item.code}>{item.name} {item.code}</option>)}
+      </select></label>
+      {futuresType !== 'futures-continuous' && <label>状态<select aria-label="期货合约状态" value={futuresLifecycle} onChange={event => setFuturesLifecycle(event.target.value as FuturesLifecycle)}>
+        <option value="all">全部</option><option value="trading">交易中</option><option value="listed">已上市</option><option value="pending">待上市</option><option value="expired">已到期</option><option value="delivered">已交割</option><option value="delisted">已退市</option>
+      </select></label>}
+      {futuresType !== 'futures-contract' && <label>连续类型<select aria-label="期货连续类型" value={futuresSeriesKind} onChange={event => setFuturesSeriesKind(event.target.value as FuturesSeriesKind)}>
+        <option value="all">全部</option><option value="main">主力</option><option value="continuous">连续</option>
+      </select></label>}
+    </div>}
     <div className="instrument-editor-results">
       {loading && results.length === 0 && <div className="instrument-editor-empty">正在加载标的</div>}
       {!loading && failed && <div className="instrument-editor-empty error">标的加载失败</div>}
@@ -153,11 +206,21 @@ export function InstrumentBrowser({
 }
 
 type InstrumentPage = { items: Instrument[]; has_more: boolean; next_offset: number }
+type FuturesProductFacet = { symbol: string; code: string; name: string; exchange: string; active: boolean }
+type FuturesFacets = { exchanges: string[]; products: FuturesProductFacet[] }
+type FuturesFilters = {
+  type: FuturesType
+  exchange: string
+  product: string
+  lifecycle: FuturesLifecycle
+  seriesKind: FuturesSeriesKind
+}
 
 async function fetchInstrumentPage(
   query: string,
   classification: BrowseClass,
   offset: number,
+  futures: FuturesFilters,
   signal?: AbortSignal,
 ): Promise<InstrumentPage> {
   if (classification === 'custom-group') {
@@ -168,7 +231,13 @@ async function fetchInstrumentPage(
     return { items: body.items.map(customGroupInstrument), has_more: false, next_offset: body.items.length }
   }
   const params = new URLSearchParams({ query, limit: '80', offset: String(offset) })
-  if (classification !== 'all') params.set('classification', classification)
+  if (classification === 'futures') {
+    params.set('classification', futures.type === 'all' ? 'futures' : futures.type)
+    if (futures.exchange) params.set('exchange', futures.exchange)
+    if (futures.product) params.set('futures_product', futures.product)
+    if (futures.type !== 'futures-continuous' && futures.lifecycle !== 'all') params.set('futures_lifecycle', futures.lifecycle)
+    if (futures.type !== 'futures-contract' && futures.seriesKind !== 'all') params.set('futures_series_kind', futures.seriesKind)
+  } else if (classification !== 'all') params.set('classification', classification)
   const response = await fetch(`/api/instruments?${params}`, { signal })
   if (!response.ok) throw new Error(`HTTP ${response.status}`)
   const body = await response.json() as Partial<InstrumentPage> & { items: Instrument[] }

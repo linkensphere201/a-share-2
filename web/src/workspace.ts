@@ -29,6 +29,11 @@ export type Instrument = {
   source_label?: string
   member_count?: number
   average_change_percent?: number | null
+  product_code?: string | null
+  lifecycle_status?: string | null
+  contract_month?: string | null
+  series_kind?: string | null
+  series_variant?: string | null
   first_trade_date?: string
   last_trade_date?: string
   rows: number

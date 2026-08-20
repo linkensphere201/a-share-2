@@ -136,6 +136,57 @@ def test_futures_catalog_upsert_is_idempotent_and_preserves_relations() -> None:
         assert tuple(counts) == (1, 1, 1)
 
 
+def test_futures_search_filters_metadata_coverage_and_pinyin() -> None:
+    product, contract, series = _catalog()
+    product = replace(product, display_name="沪铜")
+    contract = replace(contract, display_name="沪铜2609")
+    series = replace(series, display_name="沪铜主力")
+    expired = replace(
+        contract,
+        symbol="FUT:SHFE:CU:202603",
+        provider_symbol="CU2603.SHF",
+        display_name="沪铜2603",
+        contract_month="202603",
+        last_trading_date=date(2026, 3, 16),
+        delivery_date=date(2026, 3, 19),
+        lifecycle_status=FuturesLifecycleStatus.EXPIRED,
+    )
+    day = date(2026, 8, 20)
+    with SQLiteMarketDataStore(":memory:") as store:
+        store.upsert_futures_catalog(
+            "tushare-futures", [product], [contract, expired], [series]
+        )
+        store.upsert_futures_daily_bars("tushare-futures", [_bar(day)])
+
+        futures = store.search_instruments(classification="futures")
+        trading = store.search_instruments(
+            classification="futures-contract",
+            exchange="shfe",
+            futures_product="cu",
+            futures_lifecycle="trading",
+        )
+        main = store.search_instruments(
+            classification="futures-continuous",
+            futures_series_kind="main",
+        )
+        pinyin = store.search_instruments("htzl", classification="futures")
+
+        assert {item["symbol"] for item in futures} == {
+            product.symbol, contract.symbol, expired.symbol, series.symbol,
+        }
+        assert [item["symbol"] for item in trading] == [contract.symbol]
+        assert trading[0]["product_code"] == "CU"
+        assert trading[0]["lifecycle_status"] == "trading"
+        assert trading[0]["contract_month"] == "202609"
+        assert trading[0]["first_trade_date"] == day
+        assert trading[0]["last_trade_date"] == day
+        assert trading[0]["rows"] == 1
+        assert [item["symbol"] for item in main] == [series.symbol]
+        assert main[0]["series_kind"] == "main"
+        assert main[0]["series_variant"] == "MAIN"
+        assert [item["symbol"] for item in pinyin] == [series.symbol]
+
+
 def test_catalog_with_missing_product_rolls_back_before_exposing_instrument() -> None:
     product, contract, _series = _catalog()
     invalid = replace(contract, product_symbol="FUTPROD:SHFE:AL")

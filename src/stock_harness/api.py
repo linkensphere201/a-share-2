@@ -575,11 +575,19 @@ def create_app(
         query: str = "",
         kind: list[InstrumentKind] | None = Query(default=None),
         classification: Literal[
-            "stock", "etf", "index", "custom-index", "concept", "industry", "sector"
+            "stock", "etf", "index", "custom-index", "concept", "industry", "sector",
+            "futures", "futures-product", "futures-contract", "futures-continuous",
         ] | None = None,
         source_system: str | None = None,
         family: str | None = None,
         category: str | None = None,
+        exchange: str | None = None,
+        futures_product: str | None = None,
+        futures_lifecycle: Literal[
+            "pending", "listed", "trading", "expired", "delivered", "delisted"
+        ] | None = None,
+        futures_series_kind: Literal["main", "continuous"] | None = None,
+        active: bool | None = None,
         limit: int = Query(default=100, ge=1, le=500),
         offset: int = Query(default=0, ge=0),
     ) -> dict[str, object]:
@@ -590,6 +598,11 @@ def create_app(
             source_system=source_system,
             family=family,
             category=category,
+            exchange=exchange,
+            futures_product=futures_product,
+            futures_lifecycle=futures_lifecycle,
+            futures_series_kind=futures_series_kind,
+            active=active,
             limit=limit + 1,
             offset=offset,
         )
@@ -616,6 +629,26 @@ def create_app(
         return {
             "items": custom_rows + rows, "limit": limit, "offset": offset,
             "has_more": has_more, "next_offset": offset + len(rows),
+        }
+
+    @app.get("/api/futures/search-facets")
+    def futures_search_facets(request: Request) -> dict[str, object]:
+        store = _store(request)
+        if not store.futures_storage_status()["ready"]:
+            return {"exchanges": [], "products": []}
+        products = store.list_futures_products()
+        return {
+            "exchanges": sorted({item.exchange.value for item in products}),
+            "products": [
+                {
+                    "symbol": item.symbol,
+                    "code": item.product_code,
+                    "name": item.display_name,
+                    "exchange": item.exchange.value,
+                    "active": item.active,
+                }
+                for item in products
+            ],
         }
 
     @app.get("/api/custom-groups")

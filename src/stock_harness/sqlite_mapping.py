@@ -42,6 +42,7 @@ def _instrument_row(row: sqlite3.Row) -> dict[str, object]:
         "classification_label": {
             "stock": "个股", "etf": "ETF", "index": "指数",
             "custom-index": "自定义指数",
+            "futures-product": "期货品种",
             "futures-contract": "期货合约",
             "futures-continuous": "期货连续",
             "concept": "概念板块", "industry": "行业板块", "sector": "其他板块",
@@ -52,12 +53,26 @@ def _instrument_row(row: sqlite3.Row) -> dict[str, object]:
         "first_trade_date": _date_from_key(int(row[8])) if row[8] is not None else None,
         "last_trade_date": _date_from_key(int(row[9])) if row[9] is not None else None,
         "rows": int(row[10]),
+        "product_code": row[11] if len(row) > 11 else None,
+        "lifecycle_status": row[12] if len(row) > 12 else None,
+        "contract_month": row[13] if len(row) > 13 else None,
+        "series_kind": row[14] if len(row) > 14 else None,
+        "series_variant": row[15] if len(row) > 15 else None,
     }
 
 
 def _instrument_classification_clause(classification: str) -> tuple[str, list[object]]:
-    if classification in {"stock", "etf", "index", "custom-index"}:
+    if classification in {
+        "stock", "etf", "index", "custom-index", "futures-product",
+        "futures-contract", "futures-continuous",
+    }:
         return "instrument.kind = ?", [classification]
+    if classification == "futures":
+        return (
+            "instrument.kind IN ('futures-product', 'futures-contract', "
+            "'futures-continuous')",
+            [],
+        )
     concept = (
         "(instrument.kind = 'sector' AND ("
         "catalog.category IN ('概念板块', 'concept') OR "
@@ -108,6 +123,8 @@ def _instrument_source_label(
         return "申万"
     if classification == "custom-index":
         return "本地"
+    if classification.startswith("futures-"):
+        return exchange
     if classification in {"etf", "stock"}:
         return {"SH": "上交所", "SZ": "深交所", "BJ": "北交所"}.get(
             exchange, exchange

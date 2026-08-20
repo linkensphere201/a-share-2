@@ -395,6 +395,9 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .instrument-browser-filters button { flex: 0 0 auto; height: 28px; padding: 0 9px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: #778290; font-size: 9px; }
 .instrument-browser-filters button:hover { color: #d9dfe7; }
 .instrument-browser-filters button.active { border-bottom-color: #4b84c6; color: #eef1f5; }
+.instrument-browser-futures-filters { display: flex; flex-wrap: wrap; gap: 6px 10px; padding: 8px 12px; border-bottom: 1px solid #303743; background: #171c22; }
+.instrument-browser-futures-filters label { display: flex; align-items: center; gap: 5px; color: #87919e; font-size: 9px; font-weight: 400; }
+.instrument-browser-futures-filters select { height: 25px; min-width: 82px; max-width: 150px; border: 1px solid #303743; border-radius: 3px; background: #1b2129; color: #d9dfe7; font-size: 9px; font-weight: 400; }
 .instrument-editor-results { min-height: 0; overflow: auto; padding: 3px 12px 8px; background: #13181e; }
 .instrument-editor-results > button { width: 100%; min-height: 42px; display: grid; grid-template-columns: minmax(120px, 1fr) auto 20px; align-items: center; gap: 8px; padding: 5px 8px; border: 0; border-bottom: 1px solid #252c35; background: transparent; color: #d7dde5; text-align: left; }
 .instrument-editor-results > button:hover:not(:disabled) { background: #222a34; }

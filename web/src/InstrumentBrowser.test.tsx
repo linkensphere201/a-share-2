@@ -11,6 +11,51 @@ afterEach(() => {
 })
 
 describe('InstrumentBrowser', () => {
+  it('browses futures by exchange product type and lifecycle', async () => {
+    const requests: string[] = []
+    const contract = {
+      symbol: 'FUT:SHFE:CU:202609', name: '沪铜2609', kind: 'futures-contract',
+      exchange: 'SHFE', rows: 100, product_code: 'CU', lifecycle_status: 'trading',
+      classification_label: '期货合约', source_label: 'SHFE',
+    }
+    vi.stubGlobal('fetch', vi.fn((input: string | URL | Request) => {
+      const url = String(input)
+      requests.push(url)
+      if (url === '/api/futures/search-facets') return Promise.resolve({
+        ok: true,
+        json: async () => ({
+          exchanges: ['SHFE'],
+          products: [{ symbol: 'FUTPROD:SHFE:CU', code: 'CU', name: '沪铜', exchange: 'SHFE', active: true }],
+        }),
+      })
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({ items: [contract], has_more: false, next_offset: 1 }),
+      })
+    }))
+    const user = userEvent.setup()
+
+    render(<InstrumentBrowser
+      selectedSymbols={new Set()}
+      onSelect={() => undefined}
+      searchLabel="搜索标的"
+      placeholder="搜索"
+    />)
+    await user.click(screen.getByRole('tab', { name: '期货' }))
+    await user.selectOptions(screen.getByRole('combobox', { name: '期货类型' }), 'futures-contract')
+    await user.selectOptions(screen.getByRole('combobox', { name: '期货交易所' }), 'SHFE')
+    await user.selectOptions(screen.getByRole('combobox', { name: '期货品种' }), 'CU')
+    await user.selectOptions(screen.getByRole('combobox', { name: '期货合约状态' }), 'trading')
+
+    expect(await screen.findByText('沪铜2609')).toBeTruthy()
+    await waitFor(() => expect(requests.some(url =>
+      url.includes('classification=futures-contract')
+      && url.includes('exchange=SHFE')
+      && url.includes('futures_product=CU')
+      && url.includes('futures_lifecycle=trading')
+    )).toBe(true))
+  })
+
   it('browses a classified board list without requiring a keyword', async () => {
     const concept = {
       symbol: 'BK0475.DC', name: '半导体', kind: 'sector', exchange: 'DC', rows: 1000,
