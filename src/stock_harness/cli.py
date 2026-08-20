@@ -11,7 +11,10 @@ from pathlib import Path
 from stock_harness.backfill import run_stock_backfill, run_symbol_backfill, years_ago
 from stock_harness.config import RuntimeSettings, load_runtime_settings
 from stock_harness.futures_provider import TushareFuturesProvider
-from stock_harness.futures_provisional_provider import AkShareFuturesSpotProvider
+from stock_harness.futures_provisional_provider import (
+    AkShareFuturesRealtimeProvider,
+    AkShareFuturesSpotProvider,
+)
 from stock_harness.sqlite_store import SQLiteMarketDataStore
 from stock_harness.tushare_provider import TushareBoardDailyProvider, TushareDailyProvider
 from stock_harness.models import FuturesExchange, FuturesLifecycleStatus, InstrumentKind
@@ -77,6 +80,9 @@ def main() -> None:
     futures_spot_probe.add_argument(
         "--contract", action="append", required=True,
         help="Tushare real-contract symbol, for example CU2609.SHF",
+    )
+    futures_spot_probe.add_argument(
+        "--adapter", choices=("spot", "realtime"), default="spot",
     )
     futures_spot_probe.add_argument("--expected-trading-day", type=date.fromisoformat)
 
@@ -229,9 +235,13 @@ def main() -> None:
             )
         canonical = TushareFuturesProvider(settings.futures.canonical)
         discovered = {}
+        product_display_names = {}
         for value in dict.fromkeys(args.exchange):
             catalog = canonical.discover_exchange(
                 FuturesExchange(value), args.expected_trading_day or date.today()
+            )
+            product_display_names.update(
+                (item.symbol, item.display_name) for item in catalog.products
             )
             discovered.update(
                 (item.provider_symbol.upper(), item) for item in catalog.contracts
@@ -246,7 +256,13 @@ def main() -> None:
         ]
         if inactive:
             raise ValueError(f"futures contracts are not trading: {', '.join(inactive)}")
-        provisional = AkShareFuturesSpotProvider(settings.futures.provisional)
+        provisional = (
+            AkShareFuturesSpotProvider(settings.futures.provisional)
+            if args.adapter == "spot"
+            else AkShareFuturesRealtimeProvider(
+                settings.futures.provisional, product_display_names
+            )
+        )
         bars = provisional.fetch(selected, args.expected_trading_day)
         payload = {
             "provider": provisional.code,

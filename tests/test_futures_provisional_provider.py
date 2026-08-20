@@ -4,7 +4,10 @@ from datetime import date, datetime, timedelta, timezone
 import pytest
 
 from stock_harness.config import FuturesProvisionalProviderSettings
-from stock_harness.futures_provisional_provider import AkShareFuturesSpotProvider
+from stock_harness.futures_provisional_provider import (
+    AkShareFuturesRealtimeProvider,
+    AkShareFuturesSpotProvider,
+)
 from stock_harness.models import (
     FuturesBarState,
     FuturesContract,
@@ -24,6 +27,19 @@ class _Client:
     def fetch(self, provider_codes):
         self.calls.append(tuple(provider_codes))
         return self.response
+
+
+class _RealtimeClient:
+    def __init__(self, rows_by_node) -> None:
+        self.rows_by_node = rows_by_node
+        self.node_calls: list[str] = []
+
+    def node_catalog(self):
+        return {"CU": "copper_qh"}
+
+    def fetch_node(self, node: str):
+        self.node_calls.append(node)
+        return self.rows_by_node.get(node, [])
 
 
 def _settings(**changes) -> FuturesProvisionalProviderSettings:
@@ -89,6 +105,39 @@ def _financial_row(code: str = "IF2609", trading_day: str = "2026-08-20") -> str
     fields[37] = "15:00:00"
     fields[38] = "CSI 300 futures 2609"
     return f'var hq_str_nf_{code}="{",".join(fields)}";'
+
+
+def _realtime_row(
+    symbol: str = "CU2609",
+    exchange: str = "shfe",
+    trading_day: str = "2026-08-20",
+):
+    return {
+        "symbol": symbol,
+        "exchange": exchange,
+        "name": "copper 2609",
+        "trade": "107200.00",
+        "settlement": "107180.00",
+        "presettlement": "106980.000",
+        "open": "107020.00",
+        "high": "107390.00",
+        "low": "106980.00",
+        "close": "107200.00",
+        "volume": "67532",
+        "position": "162899",
+        "ticktime": "15:00:00",
+        "tradedate": trading_day,
+        "preclose": "106850.000",
+        "prevsettlement": "106980.00",
+    }
+
+
+def _fallback(client, product_display_names=None):
+    return AkShareFuturesRealtimeProvider(
+        _settings(),
+        product_display_names or {"FUTPROD:SHFE:CU": "CU"},
+        client,
+    )
 
 
 def test_parses_selected_commodity_forming_daily_bar_without_fabricated_fields() -> None:
@@ -179,3 +228,91 @@ def test_rejects_ambiguous_provider_code() -> None:
     provider = AkShareFuturesSpotProvider(_settings(), _Client(""))
     with pytest.raises(ValueError, match="ambiguous Sina"):
         provider.fetch(contracts)
+
+
+def test_realtime_fallback_matches_spot_fields_without_promoting_dynamic_settlement() -> None:
+    client = _RealtimeClient({"copper_qh": [_realtime_row()]})
+    bar = _fallback(client).fetch(
+        [_contract()],
+        expected_trading_day=date(2026, 8, 20),
+        observed_at=datetime(2026, 8, 20, 15, 1, tzinfo=CHINA_TIME),
+    )[0]
+    assert (bar.open, bar.high, bar.low, bar.close) == (107020, 107390, 106980, 107200)
+    assert bar.volume_contracts == 67532
+    assert bar.open_interest_contracts == 162899
+    assert bar.previous_close == 106850
+    assert bar.previous_settlement == 106980
+    assert bar.settlement is None
+    assert bar.amount is None
+    assert client.node_calls == ["copper_qh"]
+
+
+def test_realtime_fallback_requests_each_product_node_once_and_filters_rows() -> None:
+    second = replace(
+        _contract(provider_symbol="CU2610.SHF"),
+        symbol="FUT:SHFE:CU:202610",
+        contract_month="202610",
+        display_name="CU2610",
+    )
+    extra = _realtime_row(symbol="CU2611")
+    row_2610 = _realtime_row(symbol="CU2610")
+    client = _RealtimeClient({"copper_qh": [_realtime_row(), row_2610, extra]})
+    bars = _fallback(client).fetch(
+        [_contract(), second]
+    )
+    assert [item.symbol for item in bars] == [
+        "FUT:SHFE:CU:202609", "FUT:SHFE:CU:202610",
+    ]
+    assert client.node_calls == ["copper_qh"]
+
+
+def test_realtime_fallback_uses_cffex_shared_node() -> None:
+    contract = _contract(FuturesExchange.CFFEX, "IF2609.CFX")
+    row = _realtime_row(symbol="IF2609", exchange="cffex")
+    client = _RealtimeClient({"qz_qh": [row]})
+    bars = _fallback(client).fetch([contract])
+    assert bars[0].symbol == contract.symbol
+    assert client.node_calls == ["qz_qh"]
+
+
+def test_realtime_fallback_routes_cffex_by_product_instead_of_exchange() -> None:
+    contract = replace(
+        _contract(FuturesExchange.CFFEX, "IC2609.CFX"),
+        symbol="FUT:CFFEX:IC:202609",
+        product_symbol="FUTPROD:CFFEX:IC",
+        display_name="IC2609",
+    )
+    row = _realtime_row(symbol="IC2609", exchange="cffex")
+    client = _RealtimeClient({"zzgz_qh": [row]})
+    bars = _fallback(client).fetch([contract])
+    assert bars[0].symbol == contract.symbol
+    assert client.node_calls == ["zzgz_qh"]
+
+
+def test_realtime_fallback_rejects_unlisted_cffex_product() -> None:
+    contract = replace(
+        _contract(FuturesExchange.CFFEX, "TL2609.CFX"),
+        symbol="FUT:CFFEX:TL:202609",
+        product_symbol="FUTPROD:CFFEX:TL",
+        display_name="TL2609",
+    )
+    provider = _fallback(_RealtimeClient({}))
+    with pytest.raises(ValueError, match="unsupported CFFEX.*TL"):
+        provider.fetch([contract])
+
+
+def test_realtime_fallback_rejects_conflicting_previous_settlement() -> None:
+    row = _realtime_row()
+    row["presettlement"] = "106981"
+    provider = _fallback(_RealtimeClient({"copper_qh": [row]}))
+    with pytest.raises(ValueError, match="conflicting.*previous settlement"):
+        provider.fetch([_contract()])
+
+
+def test_realtime_fallback_does_not_guess_missing_product_node() -> None:
+    contract = _contract()
+    provider = _fallback(
+        _RealtimeClient({}), {contract.product_symbol: "unknown"}
+    )
+    with pytest.raises(ValueError, match="missing Sina futures realtime node"):
+        provider.fetch([contract])
