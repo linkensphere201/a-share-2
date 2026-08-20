@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, time
 from pathlib import Path
 
 import yaml
@@ -95,6 +95,20 @@ class FuturesCanonicalProviderSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class FuturesSessionWindow:
+    start: time
+    end: time
+
+
+@dataclass(frozen=True, slots=True)
+class FuturesProductSessionRule:
+    exchange: FuturesExchange
+    product_code: str
+    day: tuple[FuturesSessionWindow, ...]
+    night: tuple[FuturesSessionWindow, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class FuturesProvisionalProviderSettings:
     enabled: bool
     provider: str
@@ -105,6 +119,7 @@ class FuturesProvisionalProviderSettings:
     stale_after_seconds: int
     max_contracts: int
     fallback_provider: str | None
+    session_rules: tuple[FuturesProductSessionRule, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -322,8 +337,93 @@ def _futures_settings(
             stale_after_seconds=max(30, int(provisional.get("stale_after_seconds", 90))),
             max_contracts=max(1, min(500, int(provisional.get("max_contracts", 50)))),
             fallback_provider=fallback_provider,
+            session_rules=_futures_session_rules(provisional.get("sessions")),
         ),
     )
+
+
+def _futures_session_rules(value: object) -> tuple[FuturesProductSessionRule, ...]:
+    data = _default_futures_sessions() if value is None else value
+    if not isinstance(data, dict):
+        raise ValueError("providers.futures.provisional.sessions must be a mapping")
+    rules: list[FuturesProductSessionRule] = []
+    for raw_exchange, raw_products in data.items():
+        try:
+            exchange = FuturesExchange(str(raw_exchange).upper())
+        except ValueError as error:
+            raise ValueError(f"unsupported futures session exchange: {raw_exchange}") from error
+        if not isinstance(raw_products, dict):
+            raise ValueError(f"futures sessions for {exchange.value} must be a mapping")
+        for raw_product, raw_rule in raw_products.items():
+            product_code = str(raw_product).strip().upper()
+            if not product_code:
+                raise ValueError("futures session product code is required")
+            if not isinstance(raw_rule, dict):
+                raise ValueError(
+                    f"futures session rule must be a mapping: {exchange.value}.{product_code}"
+                )
+            rules.append(FuturesProductSessionRule(
+                exchange=exchange,
+                product_code=product_code,
+                day=_session_windows(raw_rule.get("day", ()), exchange, product_code, "day"),
+                night=_session_windows(
+                    raw_rule.get("night", ()), exchange, product_code, "night"
+                ),
+            ))
+    identities = {(item.exchange, item.product_code) for item in rules}
+    if len(identities) != len(rules):
+        raise ValueError("duplicate futures session rule")
+    return tuple(rules)
+
+
+def _session_windows(
+    value: object,
+    exchange: FuturesExchange,
+    product_code: str,
+    phase: str,
+) -> tuple[FuturesSessionWindow, ...]:
+    if not isinstance(value, (list, tuple)):
+        raise ValueError(
+            f"futures session windows must be a list: {exchange.value}.{product_code}.{phase}"
+        )
+    result: list[FuturesSessionWindow] = []
+    for raw_window in value:
+        text = str(raw_window).strip()
+        parts = text.split("-")
+        if len(parts) != 2:
+            raise ValueError(f"invalid futures session window: {text}")
+        try:
+            start, end = (time.fromisoformat(item) for item in parts)
+        except ValueError as error:
+            raise ValueError(f"invalid futures session window: {text}") from error
+        if start == end:
+            raise ValueError(f"futures session window cannot span 24 hours: {text}")
+        result.append(FuturesSessionWindow(start, end))
+    return tuple(result)
+
+
+def _default_futures_sessions() -> dict[str, object]:
+    commodity_day = {
+        "day": ["09:00-10:15", "10:30-11:30", "13:30-15:00"]
+    }
+    return {
+        "CFFEX": {
+            "*": {"day": []},
+            "IF": {"day": ["09:30-11:30", "13:00-15:00"]},
+            "IH": {"day": ["09:30-11:30", "13:00-15:00"]},
+            "IC": {"day": ["09:30-11:30", "13:00-15:00"]},
+            "IM": {"day": ["09:30-11:30", "13:00-15:00"]},
+            "T": {"day": ["09:30-11:30", "13:00-15:15"]},
+            "TF": {"day": ["09:30-11:30", "13:00-15:15"]},
+            "TS": {"day": ["09:30-11:30", "13:00-15:15"]},
+            "TL": {"day": ["09:30-11:30", "13:00-15:15"]},
+        },
+        "SHFE": {"*": commodity_day},
+        "DCE": {"*": commodity_day},
+        "CZCE": {"*": commodity_day},
+        "INE": {"*": commodity_day},
+        "GFEX": {"*": commodity_day},
+    }
 
 
 def _configuration_date(value: object) -> date:

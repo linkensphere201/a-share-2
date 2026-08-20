@@ -338,6 +338,23 @@ class _FakeIntradayService:
         }
 
 
+class _FakeFuturesProvisionalService:
+    def __init__(self):
+        self.refreshed = []
+
+    def status(self):
+        return {"state": "idle", "enabled": True}
+
+    def refresh_once(self, *, manual=False, references=None):
+        self.refreshed = list(references or [])
+        return {
+            "state": "skipped",
+            "enabled": True,
+            "skip_reason": "market-closed",
+            "manual": manual,
+        }
+
+
 def test_workspace_context_is_memory_only_and_enriched_with_latest_chart_state():
     store, _ = _client()
     service = _FakeIntradayService()
@@ -426,6 +443,26 @@ def test_intraday_manual_refresh_targets_requested_chart_symbol():
     assert response.status_code == 200
     assert service.refreshed == ["BK1128.DC"]
     assert response.json()["items"][0]["source"] == "test_live"
+
+
+def test_intraday_manual_refresh_routes_futures_and_returns_skip_reason():
+    store = SQLiteMarketDataStore(":memory:")
+    symbol = "FUTCONT:SHFE:CU:MAIN:raw"
+    store.upsert_instruments([
+        Instrument(
+            symbol, "Copper main", InstrumentKind.FUTURES_CONTINUOUS, "SHFE"
+        )
+    ])
+    service = _FakeFuturesProvisionalService()
+    client = TestClient(create_app(store, futures_provisional_service=service))
+    with client:
+        response = client.post("/api/intraday/refresh", json={"symbols": [symbol]})
+    store.close()
+
+    assert response.status_code == 200
+    assert service.refreshed == [symbol]
+    assert response.json()["futures"]["skip_reason"] == "market-closed"
+    assert response.json()["futures"]["manual"] is True
 
 
 def test_manual_final_daily_update_endpoint_queues_background_refresh():

@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, time
 from pathlib import Path
 
 import pytest
@@ -52,6 +52,27 @@ def test_futures_provider_configuration_is_independent_and_bounded(tmp_path: Pat
     assert settings.futures.provisional.stale_after_seconds == 30
     assert settings.futures.provisional.max_contracts == 500
     assert settings.futures.provisional.fallback_provider == "akshare-realtime"
+    assert settings.futures.provisional.session_rules
+
+
+def test_futures_product_sessions_are_parsed_and_can_cross_midnight(tmp_path: Path) -> None:
+    settings = _load(
+        tmp_path,
+        """
+  futures:
+    provisional:
+      sessions:
+        SHFE:
+          "*": {day: ["09:00-10:15", "10:30-11:30", "13:30-15:00"]}
+          CU: {night: ["21:00-01:00"]}
+""",
+    )
+    wildcard, copper = settings.futures.provisional.session_rules
+    assert wildcard.product_code == "*"
+    assert len(wildcard.day) == 3
+    assert copper.product_code == "CU"
+    assert copper.night[0].start == time(21)
+    assert copper.night[0].end == time(1)
 
 
 def test_futures_token_uses_its_own_environment_contract(
@@ -81,6 +102,15 @@ def test_futures_token_uses_its_own_environment_contract(
         (
             "provisional: {fallback_provider: silent-other}",
             "unsupported futures provisional fallback",
+        ),
+        ("provisional: {sessions: []}", "sessions must be a mapping"),
+        (
+            "provisional: {sessions: {UNKNOWN: {'*': {day: []}}}}",
+            "unsupported futures session exchange",
+        ),
+        (
+            "provisional: {sessions: {SHFE: {CU: {night: ['21:00']}}}}",
+            "invalid futures session window",
         ),
     ],
 )

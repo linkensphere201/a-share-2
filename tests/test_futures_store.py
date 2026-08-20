@@ -122,6 +122,8 @@ def test_futures_catalog_upsert_is_idempotent_and_preserves_relations() -> None:
             "products": 1, "contracts": 1, "continuous_series": 1,
         }
         assert store.list_futures_contracts() == [contract]
+        assert store.get_instrument_summary(contract.symbol)["classification_label"] == "期货合约"
+        assert store.get_instrument_summary(series.symbol)["classification_label"] == "期货连续"
         counts = store._connection.execute(
             """
             SELECT

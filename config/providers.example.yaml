@@ -50,6 +50,41 @@ providers:
       max_contracts: 50
       # Keep unset until futures_zh_realtime passes M6.2.6 parity tests.
       fallback_provider:
+      # Day sessions have conservative built-in defaults. Night sessions are
+      # product-specific and must be declared explicitly from current exchange rules.
+      sessions:
+        CFFEX:
+          "*": {day: []}
+          IF: {day: ["09:30-11:30", "13:00-15:00"]}
+          IH: {day: ["09:30-11:30", "13:00-15:00"]}
+          IC: {day: ["09:30-11:30", "13:00-15:00"]}
+          IM: {day: ["09:30-11:30", "13:00-15:00"]}
+          T: {day: ["09:30-11:30", "13:00-15:15"]}
+          TF: {day: ["09:30-11:30", "13:00-15:15"]}
+          TS: {day: ["09:30-11:30", "13:00-15:15"]}
+          TL: {day: ["09:30-11:30", "13:00-15:15"]}
+        SHFE:
+          "*": {day: ["09:00-10:15", "10:30-11:30", "13:30-15:00"]}
+          CU:
+            night: ["21:00-01:00"]
+          AU:
+            night: ["21:00-02:30"]
+          RB:
+            night: ["21:00-23:00"]
+        DCE:
+          "*": {day: ["09:00-10:15", "10:30-11:30", "13:30-15:00"]}
+          A:
+            night: ["21:00-23:00"]
+        CZCE:
+          "*": {day: ["09:00-10:15", "10:30-11:30", "13:30-15:00"]}
+          CF:
+            night: ["21:00-23:00"]
+        INE:
+          "*": {day: ["09:00-10:15", "10:30-11:30", "13:30-15:00"]}
+          SC:
+            night: ["21:00-02:30"]
+        GFEX:
+          "*": {day: ["09:00-10:15", "10:30-11:30", "13:30-15:00"]}
   etf_holdings:
     enabled: true
     # Startup stays bounded; the dedicated sync command can fill the entire ETF catalog.

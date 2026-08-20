@@ -512,19 +512,34 @@ def create_app(
     def intraday_refresh(
         request: Request, payload: IntradayRefreshInput
     ) -> dict[str, object]:
-        if intraday_service is None:
-            return {"items": [], "status": {"state": "disabled", "enabled": False}}
+        store = _store(request)
+        futures_symbols = _futures_reference_symbols(store, payload.symbols)
+        stock_symbols = [item for item in payload.symbols if item not in futures_symbols]
+        items: list[dict[str, object]] = []
+        canonical_symbols: list[str] = []
+        stock_status: dict[str, object] = {"state": "disabled", "enabled": False}
         try:
-            intraday_service.refresh_symbols(payload.symbols)
+            if intraday_service is not None and stock_symbols:
+                intraday_service.refresh_symbols(stock_symbols)
+                items, canonical_symbols = _effective_intraday_items(
+                    store, intraday_service, stock_symbols
+                )
+            if intraday_service is not None:
+                stock_status = intraday_service.status()
+            futures_status = (
+                futures_provisional_service.refresh_once(
+                    manual=True, references=futures_symbols
+                )
+                if futures_provisional_service is not None and futures_symbols
+                else {"state": "disabled", "enabled": False}
+            )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        items, canonical_symbols = _effective_intraday_items(
-            _store(request), intraday_service, payload.symbols
-        )
         return {
             "items": items,
             "canonical_symbols": canonical_symbols,
-            "status": intraday_service.status(),
+            "status": stock_status,
+            "futures": futures_status,
         }
 
     @app.get("/api/instruments")

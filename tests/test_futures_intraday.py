@@ -1,8 +1,13 @@
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 
-from stock_harness.config import FuturesProvisionalProviderSettings
+from stock_harness.config import (
+    FuturesProductSessionRule,
+    FuturesProvisionalProviderSettings,
+    FuturesSessionWindow,
+)
 from stock_harness.futures_intraday import (
     FuturesProvisionalService,
+    futures_contract_session_trading_day,
     futures_session_trading_day,
 )
 from stock_harness.models import (
@@ -47,7 +52,25 @@ def _catalog():
 
 def _settings() -> FuturesProvisionalProviderSettings:
     return FuturesProvisionalProviderSettings(
-        True, "akshare", 8, 1, 1, 30, 90, 10, None
+        True, "akshare", 8, 1, 1, 30, 90, 10, None,
+        (
+            FuturesProductSessionRule(
+                FuturesExchange.SHFE,
+                "*",
+                (
+                    FuturesSessionWindow(time(9), time(10, 15)),
+                    FuturesSessionWindow(time(10, 30), time(11, 30)),
+                    FuturesSessionWindow(time(13, 30), time(15)),
+                ),
+                (),
+            ),
+            FuturesProductSessionRule(
+                FuturesExchange.SHFE,
+                "CU",
+                (),
+                (FuturesSessionWindow(time(21), time(1)),),
+            ),
+        ),
     )
 
 
@@ -127,4 +150,52 @@ def test_futures_sessions_assign_night_observations_to_next_open_day() -> None:
     ) == monday
     assert futures_session_trading_day(
         FuturesExchange.CFFEX, observed, next_open
+    ) is None
+
+
+def test_product_session_uses_wildcard_day_and_exact_cross_midnight_night() -> None:
+    _, contract, _ = _catalog()
+    settings = _settings()
+    friday = date(2026, 8, 21)
+    monday = date(2026, 8, 24)
+    next_open = lambda value: monday if value >= friday else friday
+
+    assert futures_contract_session_trading_day(
+        contract,
+        datetime(2026, 8, 21, 10, 0, tzinfo=CHINA_TIME),
+        lambda value: value,
+        settings.session_rules,
+    ) == friday
+    assert futures_contract_session_trading_day(
+        contract,
+        datetime(2026, 8, 21, 0, 30, tzinfo=CHINA_TIME),
+        next_open,
+        settings.session_rules,
+    ) == monday
+    assert futures_contract_session_trading_day(
+        contract,
+        datetime(2026, 8, 21, 1, 30, tzinfo=CHINA_TIME),
+        next_open,
+        settings.session_rules,
+    ) is None
+
+
+def test_product_without_configured_night_session_is_closed() -> None:
+    _, contract, _ = _catalog()
+    rules = (_settings().session_rules[0],)
+    assert futures_contract_session_trading_day(
+        contract,
+        datetime(2026, 8, 21, 21, 30, tzinfo=CHINA_TIME),
+        lambda value: value,
+        rules,
+    ) is None
+
+
+def test_night_session_does_not_bridge_a_long_exchange_holiday() -> None:
+    _, contract, _ = _catalog()
+    assert futures_contract_session_trading_day(
+        contract,
+        datetime(2026, 10, 1, 21, 30, tzinfo=CHINA_TIME),
+        lambda _value: date(2026, 10, 9),
+        _settings().session_rules,
     ) is None

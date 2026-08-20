@@ -42,6 +42,8 @@ def _instrument_row(row: sqlite3.Row) -> dict[str, object]:
         "classification_label": {
             "stock": "个股", "etf": "ETF", "index": "指数",
             "custom-index": "自定义指数",
+            "futures-contract": "期货合约",
+            "futures-continuous": "期货连续",
             "concept": "概念板块", "industry": "行业板块", "sector": "其他板块",
         }[classification],
         "source_label": _instrument_source_label(
