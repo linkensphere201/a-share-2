@@ -35,6 +35,7 @@ from stock_harness.models import (
     FuturesPriceBasis,
     FuturesProduct,
     FuturesRollMapping,
+    FuturesSeriesKind,
     FuturesSyncState,
     FuturesUpdateReceipt,
     MarketSnapshot,
@@ -691,6 +692,36 @@ class SQLiteMarketDataStore:
                 per_unit=float(row[9]) if row[9] is not None else None,
                 trading_unit=str(row[10]), quote_unit=str(row[11]),
                 lifecycle_status=FuturesLifecycleStatus(str(row[12])),
+            )
+            for row in rows
+        ]
+
+    def list_futures_continuous_series(self) -> list[FuturesContinuousSeries]:
+        self._require_futures_storage()
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT instrument.symbol, series.provider_symbol,
+                       product_instrument.symbol, instrument.name,
+                       instrument.exchange, series.series_kind,
+                       series.series_variant, series.price_basis,
+                       series.rule_version
+                FROM futures_continuous_series AS series
+                JOIN instruments AS instrument USING (instrument_id)
+                JOIN instruments AS product_instrument
+                  ON product_instrument.instrument_id = series.product_instrument_id
+                ORDER BY instrument.exchange, instrument.symbol
+                """
+            ).fetchall()
+        return [
+            FuturesContinuousSeries(
+                symbol=str(row[0]), provider_symbol=str(row[1]),
+                product_symbol=str(row[2]), display_name=str(row[3]),
+                exchange=FuturesExchange(str(row[4])),
+                series_kind=FuturesSeriesKind(str(row[5])),
+                series_variant=str(row[6]),
+                price_basis=FuturesPriceBasis(str(row[7])),
+                rule_version=str(row[8]),
             )
             for row in rows
         ]
@@ -1902,7 +1933,6 @@ class SQLiteMarketDataStore:
             + sum(
                 item["invalid_bar_rows"]
                 + item["unit_mismatch_contracts"]
-                + item["missing_covered_open_days"]
                 for item in products
             )
             + int(continuous[5] or 0)
@@ -1916,6 +1946,9 @@ class SQLiteMarketDataStore:
                 "contracts_with_rows": sum(item["contracts_with_rows"] for item in products),
                 "daily_rows": sum(item["daily_rows"] for item in products),
                 "duplicate_daily_keys": duplicate_rows,
+                "missing_covered_open_days": sum(
+                    item["missing_covered_open_days"] for item in products
+                ),
                 "structural_errors": structural_errors,
             },
             "products": products,

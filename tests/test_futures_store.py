@@ -370,6 +370,7 @@ def test_futures_integrity_audit_separates_backlog_from_structural_errors() -> N
     assert report["summary"]["contracts_with_rows"] == 1
     assert report["summary"]["daily_rows"] == 1
     assert report["products"][0]["missing_covered_open_days"] == 0
+    assert report["summary"]["missing_covered_open_days"] == 0
     assert report["products"][0]["invalid_bar_rows"] == 0
     assert report["products"][0]["unit_mismatch_contracts"] == 0
     assert report["continuous"]["series_with_mappings"] == 1

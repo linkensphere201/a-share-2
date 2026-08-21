@@ -13,6 +13,7 @@ from stock_harness.backfill import run_stock_backfill, run_symbol_backfill, year
 from stock_harness.config import RuntimeSettings, load_runtime_settings
 from stock_harness.futures_provider import TushareFuturesProvider
 from stock_harness.futures_backfill import run_futures_backfill
+from stock_harness.futures_continuous_build import build_futures_continuous_series
 from stock_harness.futures_provider_health import FuturesProviderMonitor
 from stock_harness.futures_provisional_provider import (
     AkShareFuturesRealtimeProvider,
@@ -137,6 +138,18 @@ def main() -> None:
     futures_audit.add_argument(
         "--output", type=Path, default=Path("data/reports/futures-integrity.json")
     )
+    futures_continuous = subparsers.add_parser(
+        "build-futures-continuous",
+        help="Materialize new or dirty futures continuous daily series",
+    )
+    futures_continuous.add_argument("--start-date", type=date.fromisoformat)
+    futures_continuous.add_argument("--end-date", type=date.fromisoformat, default=date.today())
+    futures_continuous.add_argument(
+        "--exchange", action="append",
+        choices=tuple(item.value for item in FuturesExchange),
+    )
+    futures_continuous.add_argument("--max-series", type=int)
+    futures_continuous.add_argument("--force", action="store_true")
 
     backfill = subparsers.add_parser("backfill-stocks", help="Resume full-market stock daily backfill")
     backfill.add_argument("--years", type=int, default=30)
@@ -428,6 +441,20 @@ def main() -> None:
             f"contracts={summary['contracts']} rows={summary['daily_rows']} "
             f"structural_errors={summary['structural_errors']}"
         )
+        return
+    if args.command == "build-futures-continuous":
+        selected = tuple(FuturesExchange(value) for value in (args.exchange or ()))
+        with _open_store(settings) as store:
+            result = build_futures_continuous_series(
+                store, "tushare-futures",
+                args.start_date or settings.futures.history_start,
+                args.end_date,
+                exchanges=selected,
+                max_series=args.max_series,
+                force=args.force,
+            )
+            store.checkpoint("PASSIVE")
+        print(json.dumps(asdict(result), ensure_ascii=False, default=str, indent=2))
         return
     if args.command == "validate-date":
         providers = []
