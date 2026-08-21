@@ -215,6 +215,7 @@ class TushareFuturesProvider:
         if start_date > end_date:
             return ()
         bars: dict[date, FuturesDailyBar] = {}
+        rejected_dates: list[date] = []
         for window_start, window_end in _date_windows(start_date, end_date, 1_800):
             rows = self._rows(self._call(
                 "fut_daily",
@@ -230,28 +231,38 @@ class TushareFuturesProvider:
                 trading_day = _required_date(row, "trade_date")
                 if not window_start <= trading_day <= window_end:
                     raise ValueError("fut_daily returned a date outside the requested window")
-                bar = FuturesDailyBar(
-                    symbol=contract.symbol,
-                    trading_day=trading_day,
-                    provider_date=trading_day,
-                    open=_number(row, "open"),
-                    high=_number(row, "high"),
-                    low=_number(row, "low"),
-                    close=_number(row, "close"),
-                    previous_close=_optional_float(row, "pre_close"),
-                    settlement=_optional_float(row, "settle"),
-                    previous_settlement=_optional_float(row, "pre_settle"),
-                    volume_contracts=int(round(_number(row, "vol"))),
-                    # Tushare documents futures amount in ten-thousand CNY.
-                    amount=_scaled_optional(row, "amount", 10_000),
-                    open_interest_contracts=_optional_float(row, "oi"),
-                    open_interest_change_contracts=_optional_float(row, "oi_chg"),
-                    delivery_settlement=_optional_float(row, "delv_settle"),
-                    source=self.code,
-                    state=FuturesBarState.FINAL,
-                )
-                bar.validate()
+                try:
+                    bar = FuturesDailyBar(
+                        symbol=contract.symbol,
+                        trading_day=trading_day,
+                        provider_date=trading_day,
+                        open=_number(row, "open"),
+                        high=_number(row, "high"),
+                        low=_number(row, "low"),
+                        close=_number(row, "close"),
+                        previous_close=_optional_float(row, "pre_close"),
+                        settlement=_optional_float(row, "settle"),
+                        previous_settlement=_optional_float(row, "pre_settle"),
+                        volume_contracts=int(round(_number(row, "vol"))),
+                        # Tushare documents futures amount in ten-thousand CNY.
+                        amount=_scaled_optional(row, "amount", 10_000),
+                        open_interest_contracts=_optional_float(row, "oi"),
+                        open_interest_change_contracts=_optional_float(row, "oi_chg"),
+                        delivery_settlement=_optional_float(row, "delv_settle"),
+                        source=self.code,
+                        state=FuturesBarState.FINAL,
+                    )
+                    bar.validate()
+                except (TypeError, ValueError):
+                    rejected_dates.append(trading_day)
+                    continue
                 _insert_unique(bars, trading_day, bar, "fut_daily")
+        if rejected_dates:
+            LOGGER.warning(
+                "futures_provider_daily_rows_rejected symbol=%s count=%d first_date=%s last_date=%s",
+                contract.symbol, len(rejected_dates), min(rejected_dates),
+                max(rejected_dates),
+            )
         return tuple(bars[key] for key in sorted(bars))
 
     def fetch_roll_mappings(

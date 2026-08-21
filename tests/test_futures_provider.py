@@ -136,6 +136,31 @@ def test_fetches_final_daily_fields_without_stock_volume_semantics() -> None:
     assert bar.change_percent() == pytest.approx(3)
 
 
+def test_rejects_only_invalid_daily_rows_without_losing_valid_history(caplog) -> None:
+    class MixedDailyClient(_Client):
+        def fut_daily(self, **kwargs):
+            valid = super().fut_daily(**kwargs)[0]
+            missing_open = {**valid, "trade_date": "20260819", "open": None}
+            invalid_envelope = {
+                **valid, "trade_date": "20260818", "high": 102, "close": 103,
+            }
+            return [missing_open, valid, invalid_envelope]
+
+    provider = TushareFuturesProvider(_settings(), MixedDailyClient())
+    contract = provider.discover_exchange(
+        FuturesExchange.SHFE, date(2026, 8, 20),
+    ).contracts[0]
+    with caplog.at_level("WARNING"):
+        bars = provider.fetch_contract_daily(
+            contract, date(2026, 8, 18), date(2026, 8, 20),
+        )
+
+    assert [bar.trading_day for bar in bars] == [date(2026, 8, 20)]
+    assert "futures_provider_daily_rows_rejected" in caplog.text
+    assert "count=2" in caplog.text
+    assert "empty field" not in caplog.text
+
+
 def test_resolves_roll_mapping_to_known_canonical_real_contract() -> None:
     provider = TushareFuturesProvider(_settings(), _Client())
     catalog = provider.discover_exchange(FuturesExchange.SHFE, date(2026, 8, 20))
