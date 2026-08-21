@@ -364,7 +364,7 @@ def main() -> None:
         )
         counts = {
             status: sum(item.status == status for item in report.results)
-            for status in ("match", "mismatch", "missing", "error")
+            for status in ("match", "partial", "mismatch", "missing", "error")
         }
         print(
             f"futures_validation output={args.output} trade_date={args.trade_date} "

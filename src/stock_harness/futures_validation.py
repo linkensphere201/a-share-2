@@ -28,7 +28,7 @@ class FuturesFieldDifference:
     validator: float | int | None
     absolute_difference: float | None
     relative_difference: float | None
-    matched: bool
+    matched: bool | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,6 +118,7 @@ class AkShareSinaFuturesValidationProvider:
         return _validation_bar(
             contract, trade_date, matching[0], self.code,
             open_interest_field="hold",
+            zero_settlement_is_missing=True,
         )
 
     def _get_client(self) -> Any:
@@ -202,12 +203,20 @@ def _validate_one(
         _difference(field, unit, getattr(primary, field), getattr(validator, field), tolerance)
         for field, unit, tolerance in specs
     )
-    mismatches = [item.field for item in fields if not item.matched]
+    mismatches = [item.field for item in fields if item.matched is False]
+    unavailable = [item.field for item in fields if item.matched is None]
+    status = "mismatch" if mismatches else "partial" if unavailable else "match"
+    message = (
+        f"mismatched fields: {', '.join(mismatches)}"
+        if mismatches else
+        f"unavailable fields: {', '.join(unavailable)}"
+        if unavailable else
+        "all required fields matched"
+    )
     return FuturesValidationResult(
         contract.symbol, contract.provider_symbol, contract.exchange.value,
         trade_date, "tushare-final-store", provider.code,
-        "mismatch" if mismatches else "match", fields,
-        f"mismatched fields: {', '.join(mismatches)}" if mismatches else "all available fields matched",
+        status, fields, message,
     )
 
 
@@ -219,7 +228,7 @@ def _difference(
     tolerance: float,
 ) -> FuturesFieldDifference:
     if primary is None or validator is None:
-        return FuturesFieldDifference(field, unit, primary, validator, None, None, False)
+        return FuturesFieldDifference(field, unit, primary, validator, None, None, None)
     absolute = abs(float(primary) - float(validator))
     denominator = abs(float(primary))
     relative = absolute / denominator if denominator else (0.0 if absolute == 0 else None)
@@ -245,7 +254,11 @@ def _validation_bar(
     source: str,
     *,
     open_interest_field: str,
+    zero_settlement_is_missing: bool = False,
 ) -> FuturesDailyBar:
+    settlement = _optional_number(row, "settle")
+    if zero_settlement_is_missing and settlement == 0:
+        settlement = None
     bar = FuturesDailyBar(
         symbol=contract.symbol,
         trading_day=trade_date,
@@ -253,7 +266,7 @@ def _validation_bar(
         open=_number(row, "open"), high=_number(row, "high"),
         low=_number(row, "low"), close=_number(row, "close"),
         previous_close=None,
-        settlement=_optional_number(row, "settle"),
+        settlement=settlement,
         previous_settlement=_optional_number(row, "pre_settle"),
         volume_contracts=int(round(_number(row, "volume"))),
         amount=None,

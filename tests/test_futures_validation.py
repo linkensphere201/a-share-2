@@ -109,6 +109,27 @@ def test_reports_provider_errors_and_missing_catalog_without_mutating_store():
     assert before == after
 
 
+def test_reports_sina_zero_settlement_as_unavailable_instead_of_mismatch():
+    class SinaWithoutSettlement(_AkShare):
+        def futures_zh_daily_sina(self, **kwargs):
+            frame = super().futures_zh_daily_sina(**kwargs)
+            frame.rows[0]["settle"] = 0
+            return frame
+
+    with _store()[0] as store:
+        report = validate_futures_contracts(
+            store, [AkShareSinaFuturesValidationProvider(SinaWithoutSettlement())],
+            ["FUT:SHFE:CU:202609"], DAY,
+        )
+    assert report.results[0].status == "partial"
+    assert report.results[0].message == "unavailable fields: settlement"
+    settlement = next(
+        item for item in report.results[0].fields if item.field == "settlement"
+    )
+    assert settlement.validator is None
+    assert settlement.matched is None
+
+
 def test_accepts_czce_three_digit_exchange_symbol_only_for_matching_decade():
     contract = _contract(FuturesExchange.CZCE, "CU2609.ZCE")
 
