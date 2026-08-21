@@ -54,7 +54,7 @@ from stock_harness.trend_context import (
 )
 
 
-ALGORITHM_VERSION = "trend-causal-replay-v16"
+ALGORITHM_VERSION = "trend-causal-replay-v17"
 LOGGER = logging.getLogger(__name__)
 
 
@@ -458,6 +458,8 @@ def _input_digest(
         "mode": value.mode.value,
         "as_of_date": value.as_of_date.isoformat(),
         "price_basis": value.price_basis,
+        "volume_semantics": value.volume_semantics,
+        "instrument": asdict(value.instrument),
         "bars": [
             {
                 "start": bar.period_start.isoformat(),
@@ -469,6 +471,13 @@ def _input_digest(
                 "observed_at_ms": (
                     bar.observed_at_ms if bar.contains_provisional else None
                 ),
+                "settlement": bar.settlement,
+                "previous_settlement": bar.previous_settlement,
+                "amount": bar.amount,
+                "open_interest": bar.open_interest,
+                "open_interest_change": bar.open_interest_change,
+                "mapped_contracts": bar.mapped_contracts,
+                "roll_event": bar.contains_roll_event,
             }
             for bar in value.bars
         ],

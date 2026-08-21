@@ -9,6 +9,17 @@ from stock_harness.analysis_inputs import (
 from stock_harness.models import (
     AdjustmentFactor,
     DailyBar,
+    FuturesBarState,
+    FuturesCalendarDay,
+    FuturesContinuousSeries,
+    FuturesContract,
+    FuturesDailyBar,
+    FuturesExchange,
+    FuturesLifecycleStatus,
+    FuturesPriceBasis,
+    FuturesProduct,
+    FuturesRollMapping,
+    FuturesSeriesKind,
     Instrument,
     InstrumentKind,
     ProvisionalDailyBar,
@@ -302,3 +313,73 @@ def test_sqlite_analysis_queries_are_bounded_and_preserve_store_contract():
         assert len(store.get_adjustment_factors("000001.SZ", days[0], days[-1])) == 3
         assert len(store.get_stock_trade_statuses("000001.SZ", days[0], days[-1])) == 3
         assert len(result.bars) == 3
+
+
+def test_futures_input_preserves_units_settlement_oi_mapping_and_preview_isolation():
+    product = FuturesProduct(
+        "FUTPROD:SHFE:CU", "CU", "Copper", FuturesExchange.SHFE,
+        None, 5, "contract", "CNY/tonne",
+    )
+    contract = FuturesContract(
+        "FUT:SHFE:CU:202609", "CU2609.SHF", product.symbol, "Copper 2609",
+        FuturesExchange.SHFE, "202609", date(2025, 9, 16), date(2026, 9, 15),
+        date(2026, 9, 18), None, 5, "contract", "CNY/tonne",
+        FuturesLifecycleStatus.TRADING,
+    )
+    series = FuturesContinuousSeries(
+        "FUTCONT:SHFE:CU:MAIN:raw", "CU.SHF", product.symbol, "Copper main",
+        FuturesExchange.SHFE, FuturesSeriesKind.MAIN, "MAIN",
+        FuturesPriceBasis.RAW, "mapping-v1",
+    )
+    prior, current = date(2026, 8, 19), date(2026, 8, 20)
+    observed = datetime(2026, 8, 20, 6, 30, tzinfo=timezone.utc)
+    final = FuturesDailyBar(
+        series.symbol, prior, prior, 100, 103, 99, 102, 98, 101, 99,
+        1234, 5_000_000, 4321, 12, None, "tushare-futures",
+        FuturesBarState.FINAL, mapped_contract_symbol=contract.symbol, roll_event=True,
+    )
+    provisional = FuturesDailyBar(
+        contract.symbol, current, current, 102, 105, 101, 104, 102, None, 101,
+        456, None, 4400, None, None, "akshare-futures-zh-spot",
+        FuturesBarState.PROVISIONAL, provider_time=observed,
+    )
+    with SQLiteMarketDataStore(":memory:") as store:
+        store.upsert_futures_catalog(
+            "tushare-futures", [product], [contract], [series]
+        )
+        store.upsert_futures_roll_mappings("tushare-futures", [FuturesRollMapping(
+            series.symbol, series.provider_symbol, current,
+            contract.symbol, contract.provider_symbol,
+        )])
+        store.upsert_futures_calendar("tushare-futures", [
+            FuturesCalendarDay(FuturesExchange.SHFE, day, True, None)
+            for day in (prior, current)
+        ])
+        store.upsert_futures_daily_bars("tushare-futures", [final])
+        store.upsert_futures_provisional_daily_bars(
+            provisional.source, [provisional], observed
+        )
+
+        service = AnalysisInputService(store)
+        official = service.build(series.symbol, current, mode=AnalysisInputMode.FINAL)
+        preview = service.build(series.symbol, current, mode=AnalysisInputMode.PREVIEW)
+
+        assert [bar.period_end for bar in official.bars] == [prior]
+        assert [bar.period_end for bar in preview.bars] == [prior, current]
+        assert official.instrument.product_code == "CU"
+        assert official.instrument.change_basis == "previous-settlement"
+        assert official.instrument.active is True
+        assert official.instrument.lifecycle_status is None
+        assert official.instrument.per_unit == 5
+        assert official.instrument.trading_unit == "contract"
+        assert official.instrument.quote_unit == "CNY/tonne"
+        assert official.instrument.rule_version == "mapping-v1"
+        assert official.volume_semantics == "contracts"
+        assert official.bars[0].settlement == 101
+        assert official.bars[0].open_interest == 4321
+        assert official.bars[0].open_interest_change == 12
+        assert official.bars[0].mapped_contracts == (contract.symbol,)
+        assert official.bars[0].contains_roll_event is True
+        assert preview.bars[-1].mapped_contracts == (contract.symbol,)
+        assert preview.provisional_date == current
+        assert preview.provisional_provider_time == observed

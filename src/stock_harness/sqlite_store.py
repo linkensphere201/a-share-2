@@ -3085,6 +3085,21 @@ class SQLiteMarketDataStore:
 
     def get_latest_daily_bar_date(self, symbol: str) -> date | None:
         kind = self.get_instrument_kind(symbol)
+        if kind in {
+            InstrumentKind.FUTURES_CONTRACT,
+            InstrumentKind.FUTURES_CONTINUOUS,
+        }:
+            with self._lock:
+                row = self._connection.execute(
+                    """
+                    SELECT max(bar.trading_day)
+                    FROM futures_daily_bars AS bar
+                    JOIN instruments AS instrument USING (instrument_id)
+                    WHERE instrument.symbol = ? COLLATE NOCASE
+                    """,
+                    (symbol.upper(),),
+                ).fetchone()
+            return _date_from_key(int(row[0])) if row and row[0] is not None else None
         if kind is InstrumentKind.CUSTOM_INDEX:
             with self._lock:
                 row = self._connection.execute(
@@ -4983,8 +4998,24 @@ class SQLiteMarketDataStore:
             "(SELECT series_kind FROM futures_continuous_series WHERE instrument_id = selected.instrument_id), "
             "(SELECT series_variant FROM futures_continuous_series WHERE instrument_id = selected.instrument_id), "
             "(SELECT price_basis FROM futures_continuous_series WHERE instrument_id = selected.instrument_id), "
-            "(SELECT rule_version FROM futures_continuous_series WHERE instrument_id = selected.instrument_id)"
-            if self._futures_storage_ready else "NULL, NULL, NULL, NULL, NULL, NULL, NULL"
+            "(SELECT rule_version FROM futures_continuous_series WHERE instrument_id = selected.instrument_id), "
+            "COALESCE((SELECT multiplier FROM futures_contracts WHERE instrument_id = selected.instrument_id), "
+            "(SELECT multiplier FROM futures_products WHERE instrument_id = selected.instrument_id), "
+            "(SELECT product.multiplier FROM futures_continuous_series AS series JOIN futures_products AS product "
+            "ON product.instrument_id = series.product_instrument_id WHERE series.instrument_id = selected.instrument_id)), "
+            "COALESCE((SELECT per_unit FROM futures_contracts WHERE instrument_id = selected.instrument_id), "
+            "(SELECT per_unit FROM futures_products WHERE instrument_id = selected.instrument_id), "
+            "(SELECT product.per_unit FROM futures_continuous_series AS series JOIN futures_products AS product "
+            "ON product.instrument_id = series.product_instrument_id WHERE series.instrument_id = selected.instrument_id)), "
+            "COALESCE((SELECT trading_unit FROM futures_contracts WHERE instrument_id = selected.instrument_id), "
+            "(SELECT trading_unit FROM futures_products WHERE instrument_id = selected.instrument_id), "
+            "(SELECT product.trading_unit FROM futures_continuous_series AS series JOIN futures_products AS product "
+            "ON product.instrument_id = series.product_instrument_id WHERE series.instrument_id = selected.instrument_id)), "
+            "COALESCE((SELECT quote_unit FROM futures_contracts WHERE instrument_id = selected.instrument_id), "
+            "(SELECT quote_unit FROM futures_products WHERE instrument_id = selected.instrument_id), "
+            "(SELECT product.quote_unit FROM futures_continuous_series AS series JOIN futures_products AS product "
+            "ON product.instrument_id = series.product_instrument_id WHERE series.instrument_id = selected.instrument_id))"
+            if self._futures_storage_ready else "NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL"
         )
         clauses: list[str] = []
         parameters: list[object] = []
@@ -5128,8 +5159,24 @@ class SQLiteMarketDataStore:
             "(SELECT series_kind FROM futures_continuous_series WHERE instrument_id = instrument.instrument_id), "
             "(SELECT series_variant FROM futures_continuous_series WHERE instrument_id = instrument.instrument_id), "
             "(SELECT price_basis FROM futures_continuous_series WHERE instrument_id = instrument.instrument_id), "
-            "(SELECT rule_version FROM futures_continuous_series WHERE instrument_id = instrument.instrument_id)"
-            if self._futures_storage_ready else "NULL, NULL, NULL, NULL, NULL, NULL, NULL"
+            "(SELECT rule_version FROM futures_continuous_series WHERE instrument_id = instrument.instrument_id), "
+            "COALESCE((SELECT multiplier FROM futures_contracts WHERE instrument_id = instrument.instrument_id), "
+            "(SELECT multiplier FROM futures_products WHERE instrument_id = instrument.instrument_id), "
+            "(SELECT product.multiplier FROM futures_continuous_series AS series JOIN futures_products AS product "
+            "ON product.instrument_id = series.product_instrument_id WHERE series.instrument_id = instrument.instrument_id)), "
+            "COALESCE((SELECT per_unit FROM futures_contracts WHERE instrument_id = instrument.instrument_id), "
+            "(SELECT per_unit FROM futures_products WHERE instrument_id = instrument.instrument_id), "
+            "(SELECT product.per_unit FROM futures_continuous_series AS series JOIN futures_products AS product "
+            "ON product.instrument_id = series.product_instrument_id WHERE series.instrument_id = instrument.instrument_id)), "
+            "COALESCE((SELECT trading_unit FROM futures_contracts WHERE instrument_id = instrument.instrument_id), "
+            "(SELECT trading_unit FROM futures_products WHERE instrument_id = instrument.instrument_id), "
+            "(SELECT product.trading_unit FROM futures_continuous_series AS series JOIN futures_products AS product "
+            "ON product.instrument_id = series.product_instrument_id WHERE series.instrument_id = instrument.instrument_id)), "
+            "COALESCE((SELECT quote_unit FROM futures_contracts WHERE instrument_id = instrument.instrument_id), "
+            "(SELECT quote_unit FROM futures_products WHERE instrument_id = instrument.instrument_id), "
+            "(SELECT product.quote_unit FROM futures_continuous_series AS series JOIN futures_products AS product "
+            "ON product.instrument_id = series.product_instrument_id WHERE series.instrument_id = instrument.instrument_id))"
+            if self._futures_storage_ready else "NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL"
         )
         with self._lock:
             row = self._connection.execute(

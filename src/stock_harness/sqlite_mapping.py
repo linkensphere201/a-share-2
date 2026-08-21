@@ -60,6 +60,10 @@ def _instrument_row(row: sqlite3.Row) -> dict[str, object]:
         "series_variant": row[15] if len(row) > 15 else None,
         "price_basis": row[16] if len(row) > 16 else None,
         "rule_version": row[17] if len(row) > 17 else None,
+        "multiplier": row[18] if len(row) > 18 else None,
+        "per_unit": row[19] if len(row) > 19 else None,
+        "trading_unit": row[20] if len(row) > 20 else None,
+        "quote_unit": row[21] if len(row) > 21 else None,
     }
 
 

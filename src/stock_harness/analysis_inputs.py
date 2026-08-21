@@ -9,6 +9,10 @@ from typing import Protocol, Sequence
 
 from stock_harness.models import (
     AdjustmentFactor,
+    FuturesBarState,
+    FuturesCalendarDay,
+    FuturesDailyBar,
+    FuturesExchange,
     InstrumentKind,
     ProvisionalDailyBar,
     StockTradeStatus,
@@ -69,6 +73,31 @@ class AnalysisBar:
     contains_provisional: bool
     period_complete: bool
     observed_at_ms: int
+    settlement: float | None = None
+    previous_settlement: float | None = None
+    amount: float | None = None
+    open_interest: float | None = None
+    open_interest_change: float | None = None
+    mapped_contracts: tuple[str, ...] = ()
+    contains_roll_event: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class AnalysisInstrumentContext:
+    kind: str
+    exchange: str | None = None
+    change_basis: str = "previous-close"
+    active: bool | None = None
+    product_code: str | None = None
+    lifecycle_status: str | None = None
+    contract_month: str | None = None
+    multiplier: float | None = None
+    per_unit: float | None = None
+    trading_unit: str | None = None
+    quote_unit: str | None = None
+    series_kind: str | None = None
+    series_variant: str | None = None
+    rule_version: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,6 +117,7 @@ class AnalysisInput:
     provisional_date: date | None
     provisional_source: str | None
     provisional_provider_time: datetime | None
+    instrument: AnalysisInstrumentContext
 
 
 class AnalysisInputStore(Protocol):
@@ -117,6 +147,16 @@ class AnalysisInputStore(Protocol):
         self, symbol: str
     ) -> ProvisionalDailyBar | None: ...
 
+    def get_instrument_summary(self, symbol: str) -> dict[str, object] | None: ...
+
+    def list_fused_futures_daily_bars(
+        self, symbol: str, start_date: date, end_date: date
+    ) -> list[FuturesDailyBar]: ...
+
+    def list_futures_calendar(
+        self, source: str, exchange: FuturesExchange, start_date: date, end_date: date
+    ) -> list[FuturesCalendarDay]: ...
+
 
 @dataclass(frozen=True, slots=True)
 class _SourceBar:
@@ -129,14 +169,27 @@ class _SourceBar:
     source: str
     provisional: bool
     observed_at_ms: int
+    settlement: float | None = None
+    previous_settlement: float | None = None
+    amount: float | None = None
+    open_interest: float | None = None
+    open_interest_change: float | None = None
+    mapped_contract_symbol: str | None = None
+    roll_event: bool = False
 
 
 class AnalysisInputService:
     """Build inputs using only evidence available through one explicit date."""
 
-    def __init__(self, store: AnalysisInputStore, calendar_source: str = "tushare") -> None:
+    def __init__(
+        self,
+        store: AnalysisInputStore,
+        calendar_source: str = "tushare",
+        futures_calendar_source: str = "tushare-futures",
+    ) -> None:
         self._store = store
         self._calendar_source = calendar_source
+        self._futures_calendar_source = futures_calendar_source
 
     def build(
         self,
@@ -151,17 +204,44 @@ class AnalysisInputService:
             raise ValueError("analysis symbol is required")
 
         horizons.validate()
-        final_rows = self._store.get_recent_daily_bars(
-            normalized_symbol, as_of_date, _daily_read_limit(timeframe, horizons.long)
-        )
-        final_bars = sorted(
-            (_stored_bar(row) for row in final_rows if row.trade_date <= as_of_date),
-            key=lambda row: row.trade_date,
-        )
+        kind = self._store.get_instrument_kind(normalized_symbol)
+        summary_reader = getattr(self._store, "get_instrument_summary", None)
+        summary = summary_reader(normalized_symbol) if summary_reader else {}
+        summary = summary or {}
+        normalized_symbol = str(summary.get("symbol") or normalized_symbol)
+        read_limit = _daily_read_limit(timeframe, horizons.long)
+        futures_kind = kind in {
+            InstrumentKind.FUTURES_CONTRACT,
+            InstrumentKind.FUTURES_CONTINUOUS,
+        }
+        fused_futures: list[FuturesDailyBar] = []
+        if futures_kind:
+            start_date = as_of_date - timedelta(days=read_limit * 3 + 60)
+            fused_futures = self._store.list_fused_futures_daily_bars(
+                normalized_symbol, start_date, as_of_date
+            )[-read_limit:]
+            final_bars = [
+                _futures_bar(row) for row in fused_futures
+                if row.trading_day <= as_of_date and row.state is FuturesBarState.FINAL
+            ]
+        else:
+            final_rows = self._store.get_recent_daily_bars(
+                normalized_symbol, as_of_date, read_limit
+            )
+            final_bars = sorted(
+                (_stored_bar(row) for row in final_rows if row.trade_date <= as_of_date),
+                key=lambda row: row.trade_date,
+            )
         latest_final_date = final_bars[-1].trade_date if final_bars else None
 
-        provisional = None
-        if mode is AnalysisInputMode.PREVIEW:
+        provisional: ProvisionalDailyBar | FuturesDailyBar | None = None
+        if mode is AnalysisInputMode.PREVIEW and futures_kind:
+            provisional = next((
+                row for row in reversed(fused_futures)
+                if row.state is FuturesBarState.PROVISIONAL
+                and (latest_final_date is None or row.trading_day > latest_final_date)
+            ), None)
+        elif mode is AnalysisInputMode.PREVIEW:
             candidate = self._store.get_latest_provisional_daily_bar(normalized_symbol)
             if (
                 candidate is not None
@@ -172,11 +252,15 @@ class AnalysisInputService:
 
         source_bars = final_bars
         if provisional is not None:
-            source_bars = [*source_bars, _provisional_bar(provisional)]
+            source_bars = [
+                *source_bars,
+                _futures_bar(provisional)
+                if isinstance(provisional, FuturesDailyBar)
+                else _provisional_bar(provisional),
+            ]
 
-        kind = self._store.get_instrument_kind(normalized_symbol)
         warnings: list[AnalysisInputWarning] = []
-        price_basis = "raw"
+        price_basis = str(summary.get("price_basis") or "raw")
         if kind is InstrumentKind.STOCK and source_bars:
             source_bars, price_basis, adjustment_warning = self._adjust_stock_prices(
                 normalized_symbol, source_bars, as_of_date
@@ -186,11 +270,21 @@ class AnalysisInputService:
 
         trading_dates: list[date] = []
         if source_bars:
-            trading_dates = self._store.list_trading_dates(
-                self._calendar_source,
-                source_bars[0].trade_date,
-                as_of_date + timedelta(days=40),
-            )
+            if futures_kind and summary.get("exchange"):
+                trading_dates = [
+                    item.calendar_date for item in self._store.list_futures_calendar(
+                        self._futures_calendar_source,
+                        FuturesExchange(str(summary["exchange"])),
+                        source_bars[0].trade_date,
+                        as_of_date + timedelta(days=40),
+                    ) if item.is_open
+                ]
+            else:
+                trading_dates = self._store.list_trading_dates(
+                    self._calendar_source,
+                    source_bars[0].trade_date,
+                    as_of_date + timedelta(days=40),
+                )
             missing_warning = self._missing_bar_warning(
                 normalized_symbol, kind, source_bars, trading_dates, as_of_date
             )
@@ -216,9 +310,14 @@ class AnalysisInputService:
             warnings=tuple(warnings),
             bars=bars,
             latest_final_date=latest_final_date,
-            provisional_date=provisional.trade_date if provisional else None,
+            provisional_date=(
+                provisional.trading_day
+                if isinstance(provisional, FuturesDailyBar)
+                else (provisional.trade_date if provisional else None)
+            ),
             provisional_source=provisional.source if provisional else None,
             provisional_provider_time=provisional.provider_time if provisional else None,
+            instrument=_instrument_context(kind, summary),
         )
 
     def _adjust_stock_prices(
@@ -311,6 +410,29 @@ def _provisional_bar(row: ProvisionalDailyBar) -> _SourceBar:
     )
 
 
+def _futures_bar(row: FuturesDailyBar) -> _SourceBar:
+    return _SourceBar(
+        trade_date=row.trading_day,
+        open=row.open,
+        high=row.high,
+        low=row.low,
+        close=row.close,
+        volume=row.volume_contracts,
+        source=row.source,
+        provisional=row.state is FuturesBarState.PROVISIONAL,
+        observed_at_ms=(
+            _timestamp_ms(row.provider_time) if row.provider_time is not None else 0
+        ),
+        settlement=row.settlement,
+        previous_settlement=row.previous_settlement,
+        amount=row.amount,
+        open_interest=row.open_interest_contracts,
+        open_interest_change=row.open_interest_change_contracts,
+        mapped_contract_symbol=row.mapped_contract_symbol,
+        roll_event=row.roll_event,
+    )
+
+
 def _scale_bar(row: _SourceBar, scale: float) -> _SourceBar:
     return _SourceBar(
         trade_date=row.trade_date,
@@ -322,6 +444,13 @@ def _scale_bar(row: _SourceBar, scale: float) -> _SourceBar:
         source=row.source,
         provisional=row.provisional,
         observed_at_ms=row.observed_at_ms,
+        settlement=row.settlement,
+        previous_settlement=row.previous_settlement,
+        amount=row.amount,
+        open_interest=row.open_interest,
+        open_interest_change=row.open_interest_change,
+        mapped_contract_symbol=row.mapped_contract_symbol,
+        roll_event=row.roll_event,
     )
 
 
@@ -376,6 +505,21 @@ def _analysis_bar(rows: tuple[_SourceBar, ...], period_complete: bool) -> Analys
         contains_provisional=any(row.provisional for row in rows),
         period_complete=period_complete,
         observed_at_ms=max(row.observed_at_ms for row in rows),
+        settlement=last.settlement,
+        previous_settlement=first.previous_settlement,
+        amount=(
+            sum(row.amount for row in rows if row.amount is not None)
+            if any(row.amount is not None for row in rows) else None
+        ),
+        open_interest=last.open_interest,
+        open_interest_change=(
+            sum(row.open_interest_change for row in rows if row.open_interest_change is not None)
+            if any(row.open_interest_change is not None for row in rows) else None
+        ),
+        mapped_contracts=tuple(dict.fromkeys(
+            row.mapped_contract_symbol for row in rows if row.mapped_contract_symbol
+        )),
+        contains_roll_event=any(row.roll_event for row in rows),
     )
 
 
@@ -444,8 +588,15 @@ def _volume_capability(
         InstrumentKind.INDEX: "provider-defined-index-volume",
         InstrumentKind.SECTOR: "provider-defined-board-volume",
         InstrumentKind.CUSTOM_INDEX: "unweighted-constituent-share-sum",
+        InstrumentKind.FUTURES_CONTRACT: "contracts",
+        InstrumentKind.FUTURES_CONTINUOUS: "contracts",
     }.get(kind, "unknown")
-    if kind in {InstrumentKind.STOCK, InstrumentKind.ETF}:
+    if kind in {
+        InstrumentKind.STOCK,
+        InstrumentKind.ETF,
+        InstrumentKind.FUTURES_CONTRACT,
+        InstrumentKind.FUTURES_CONTINUOUS,
+    }:
         return semantics, None
     return semantics, AnalysisInputWarning(
         code="volume_not_cross_symbol_comparable",
@@ -458,3 +609,52 @@ def _timestamp_ms(value: datetime) -> int:
     if value.tzinfo is None:
         value = value.replace(tzinfo=timezone.utc)
     return int(value.timestamp() * 1000)
+
+
+def _instrument_context(
+    kind: InstrumentKind | None, summary: dict[str, object]
+) -> AnalysisInstrumentContext:
+    return AnalysisInstrumentContext(
+        kind=kind.value if kind is not None else "unknown",
+        exchange=str(summary["exchange"]) if summary.get("exchange") else None,
+        change_basis=(
+            "previous-settlement"
+            if kind in {
+                InstrumentKind.FUTURES_CONTRACT,
+                InstrumentKind.FUTURES_CONTINUOUS,
+            }
+            else "previous-close"
+        ),
+        active=bool(summary["active"]) if summary.get("active") is not None else None,
+        product_code=(
+            str(summary["product_code"]) if summary.get("product_code") else None
+        ),
+        lifecycle_status=(
+            str(summary["lifecycle_status"])
+            if summary.get("lifecycle_status") else None
+        ),
+        contract_month=(
+            str(summary["contract_month"]) if summary.get("contract_month") else None
+        ),
+        multiplier=(
+            float(summary["multiplier"]) if summary.get("multiplier") is not None else None
+        ),
+        per_unit=(
+            float(summary["per_unit"]) if summary.get("per_unit") is not None else None
+        ),
+        trading_unit=(
+            str(summary["trading_unit"]) if summary.get("trading_unit") else None
+        ),
+        quote_unit=(
+            str(summary["quote_unit"]) if summary.get("quote_unit") else None
+        ),
+        series_kind=(
+            str(summary["series_kind"]) if summary.get("series_kind") else None
+        ),
+        series_variant=(
+            str(summary["series_variant"]) if summary.get("series_variant") else None
+        ),
+        rule_version=(
+            str(summary["rule_version"]) if summary.get("rule_version") else None
+        ),
+    )
