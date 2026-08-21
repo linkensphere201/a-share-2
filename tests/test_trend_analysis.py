@@ -115,7 +115,7 @@ def test_explicit_recalculate_registers_and_persists_only_requested_timeframes()
             if item["item_id"] == "key-level-volume-profile-evidence"
         )
         assert "not exact position cost" in evidence["payload"]["uncertainty"]
-        assert results[0]["algorithm_version"] == "trend-causal-replay-v18"
+        assert results[0]["algorithm_version"] == "trend-causal-replay-v19"
         pattern_items = [
             item for item in results[0]["items"] if item["item_type"] == "pattern"
         ]
@@ -182,6 +182,101 @@ def test_real_and_supported_continuous_futures_run_full_analysis_and_review():
         assert store.get_latest_generated_analysis_run(
             series[-1].symbol, "trend", "daily"
         )["run_id"] != snapshot["run_id"]
+    finally:
+        store.close()
+
+
+def test_raw_continuous_roll_excludes_prefix_and_roll_flow_from_every_result():
+    store, contract, series, days = _futures_store()
+    raw = next(item for item in series if item.price_basis is FuturesPriceBasis.RAW)
+    roll_index = 12
+
+    def bar(day: date, close: float, *, roll: bool = False) -> FuturesDailyBar:
+        return FuturesDailyBar(
+            raw.symbol, day, day, close, close + 0.2, close - 0.2, close,
+            close - 0.1, close, close - 0.1, 999, 99_999, 2_000, 800,
+            None, "tushare-futures", FuturesBarState.FINAL,
+            mapped_contract_symbol=contract.symbol, roll_event=roll,
+        )
+
+    try:
+        store.upsert_futures_daily_bars(
+            "tushare-futures", [bar(days[roll_index], 10, roll=True)]
+        )
+        service = TrendAnalysisService(store)
+        first = service.recalculate(
+            raw.symbol, [AnalysisTimeframe.DAILY], AnalysisHorizons(6, 12, 20),
+            config_version="raw-roll-v1", include_preview=False,
+            as_of_date=days[-1],
+        )[0]
+
+        store.upsert_futures_daily_bars(
+            "tushare-futures", [bar(days[3], 10_000)]
+        )
+        changed_prefix = service.recalculate(
+            raw.symbol, [AnalysisTimeframe.DAILY], AnalysisHorizons(6, 12, 20),
+            config_version="raw-roll-v1", include_preview=False,
+            as_of_date=days[-1],
+        )[0]
+
+        assert changed_prefix["input_digest"] != first["input_digest"]
+        assert changed_prefix["items"] == first["items"]
+        qualification = next(
+            item["payload"] for item in first["items"]
+            if item["item_id"] == "futures-roll-qualification"
+        )
+        assert qualification["mode"] == "post-latest-roll-segment"
+        assert qualification["excluded_prefix_bars"] == roll_index
+        assert qualification["excluded_roll_volume_dates"] == [
+            days[roll_index].isoformat()
+        ]
+        assert all(
+            "roll_qualification" in item["payload"]
+            for item in first["items"]
+            if item["item_id"] != "futures-roll-qualification"
+        )
+        weekly = service.recalculate(
+            raw.symbol, [AnalysisTimeframe.WEEKLY], AnalysisHorizons(2, 3, 4),
+            config_version="raw-roll-weekly-v1", include_preview=False,
+            as_of_date=days[-1],
+        )[0]
+        weekly_qualification = next(
+            item["payload"] for item in weekly["items"]
+            if item["item_id"] == "futures-roll-qualification"
+        )
+        assert weekly_qualification["eligible_start_date"] == days[roll_index].isoformat()
+    finally:
+        store.close()
+
+
+def test_adjusted_continuous_roll_retains_price_history_with_explicit_qualification():
+    store, contract, series, days = _futures_store()
+    adjusted = next(
+        item for item in series
+        if item.price_basis is FuturesPriceBasis.BACKWARD_RATIO
+    )
+    roll_day = days[12]
+    try:
+        store.upsert_futures_daily_bars("tushare-futures", [FuturesDailyBar(
+            adjusted.symbol, roll_day, roll_day, 10, 10.2, 9.8, 10,
+            9.9, 10, 9.9, 999, 99_999, 2_000, 800, None,
+            "tushare-futures", FuturesBarState.FINAL,
+            mapped_contract_symbol=contract.symbol, roll_event=True,
+        )])
+        result = TrendAnalysisService(store).recalculate(
+            adjusted.symbol, [AnalysisTimeframe.DAILY], AnalysisHorizons(6, 12, 20),
+            config_version="adjusted-roll-v1", include_preview=False,
+            as_of_date=days[-1],
+        )[0]
+        qualification = next(
+            item["payload"] for item in result["items"]
+            if item["item_id"] == "futures-roll-qualification"
+        )
+
+        assert qualification["mode"] == "adjusted-series-qualified"
+        assert qualification["excluded_prefix_bars"] == 0
+        assert qualification["eligible_start_date"] == days[0].isoformat()
+        assert qualification["excluded_roll_volume_dates"] == [roll_day.isoformat()]
     finally:
         store.close()
 

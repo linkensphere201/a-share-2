@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import date, timedelta
 import hashlib
 import json
@@ -54,7 +54,7 @@ from stock_harness.trend_context import (
 )
 
 
-ALGORITHM_VERSION = "trend-causal-replay-v18"
+ALGORITHM_VERSION = "trend-causal-replay-v19"
 LOGGER = logging.getLogger(__name__)
 
 
@@ -101,16 +101,18 @@ class TrendAnalysisService:
         )
         if not analysis_input.bars:
             raise ValueError(f"no analysis bars available for {normalized}")
+        detector_input, roll_qualification = _qualify_roll_input(analysis_input)
         context_payload = self._build_context_evidence(
-            analysis_input, as_of_date, timeframe, horizons
+            detector_input, as_of_date, timeframe, horizons
         )
         digest = _input_digest(analysis_input, context_payload)
-        generated = _generated_items(analysis_input, horizons, pivot_config)
+        generated = _generated_items(detector_input, horizons, pivot_config)
         generated.append(GeneratedAnalysisItem(
             item_id="market-board-context-evidence",
             item_type=GeneratedItemType.EVIDENCE,
             payload=context_payload,
         ))
+        generated = _apply_roll_qualification(generated, roll_qualification)
         return {
             "run_id": f"review-{digest.hex()[:24]}",
             "status": "succeeded",
@@ -230,8 +232,9 @@ class TrendAnalysisService:
             )
             if not analysis_input.bars:
                 raise ValueError(f"no analysis bars available for {normalized}")
+            detector_input, roll_qualification = _qualify_roll_input(analysis_input)
             context_payload = self._build_context_evidence(
-                analysis_input, cutoff, timeframe, horizons
+                detector_input, cutoff, timeframe, horizons
             )
             namespace = (
                 AnalysisNamespace.PREVIEW
@@ -262,13 +265,14 @@ class TrendAnalysisService:
             run_id = run.run_id
             if not run.reused:
                 items = _generated_items(
-                    analysis_input, horizons, pivot_config
+                    detector_input, horizons, pivot_config
                 )
                 items.append(GeneratedAnalysisItem(
                     item_id="market-board-context-evidence",
                     item_type=GeneratedItemType.EVIDENCE,
                     payload=context_payload,
                 ))
+                items = _apply_roll_qualification(items, roll_qualification)
                 self._store.complete_generated_analysis_run(
                     run.run_id,
                     items,
@@ -446,6 +450,86 @@ class TrendAnalysisWorker:
                 continue
             self._wake.wait(self._poll_interval_seconds)
             self._wake.clear()
+
+
+def _qualify_roll_input(
+    value: AnalysisInput,
+) -> tuple[AnalysisInput, dict[str, object] | None]:
+    if value.instrument.kind != "futures-continuous":
+        return value, None
+    roll_indexes = [
+        index for index, bar in enumerate(value.bars) if bar.contains_roll_event
+    ]
+    if not roll_indexes:
+        return value, None
+
+    latest_roll_index = roll_indexes[-1]
+    raw_basis = value.price_basis == "raw"
+    selected = value.bars[latest_roll_index:] if raw_basis else value.bars
+    qualified_bars = tuple(
+        replace(
+            bar,
+            volume=0,
+            amount=None,
+            open_interest_change=None,
+        ) if bar.contains_roll_event else bar
+        for bar in selected
+    )
+    qualification = {
+        "kind": "futures-roll-qualification",
+        "mode": (
+            "post-latest-roll-segment" if raw_basis
+            else "adjusted-series-qualified"
+        ),
+        "price_basis": value.price_basis,
+        "roll_dates": [
+            value.bars[index].period_end.isoformat() for index in roll_indexes
+        ],
+        "latest_roll_date": value.bars[latest_roll_index].period_end.isoformat(),
+        "excluded_prefix_bars": latest_roll_index if raw_basis else 0,
+        "eligible_start_date": qualified_bars[0].period_start.isoformat(),
+        "eligible_end_date": qualified_bars[-1].period_end.isoformat(),
+        "excluded_roll_volume_dates": [
+            bar.period_end.isoformat() for bar in selected if bar.contains_roll_event
+        ],
+        "price_evidence_policy": (
+            "Price evidence before the latest raw-series roll is excluded."
+            if raw_basis else
+            "Adjusted price history is retained and every result is roll-qualified."
+        ),
+        "flow_evidence_policy": (
+            "Roll-period volume, amount, and open-interest change are excluded from scoring."
+        ),
+    }
+    return replace(value, bars=qualified_bars), qualification
+
+
+def _apply_roll_qualification(
+    items: Sequence[GeneratedAnalysisItem],
+    qualification: dict[str, object] | None,
+) -> list[GeneratedAnalysisItem]:
+    if qualification is None:
+        return list(items)
+    marker = {
+        "mode": qualification["mode"],
+        "price_basis": qualification["price_basis"],
+        "roll_dates": qualification["roll_dates"],
+    }
+    qualified = [
+        GeneratedAnalysisItem(
+            item_id=item.item_id,
+            item_type=item.item_type,
+            payload={**item.payload, "roll_qualification": marker},
+            parent_item_id=item.parent_item_id,
+        )
+        for item in items
+    ]
+    qualified.append(GeneratedAnalysisItem(
+        item_id="futures-roll-qualification",
+        item_type=GeneratedItemType.EVIDENCE,
+        payload=qualification,
+    ))
+    return qualified
 
 
 def _input_digest(

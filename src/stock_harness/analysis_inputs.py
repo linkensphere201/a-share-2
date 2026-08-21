@@ -478,14 +478,21 @@ def _aggregate(
     active_key: tuple[int, int] | None = None
     for row in ordered:
         key = _period_key(row.trade_date, timeframe)
-        if key != active_key:
+        if key != active_key or row.roll_event:
             groups.append([])
             active_key = key
         groups[-1].append(row)
     return [
         _analysis_bar(
             tuple(group),
-            _aggregate_period_complete(group, timeframe, trading_dates, index < len(groups) - 1),
+            _aggregate_period_complete(
+                group,
+                timeframe,
+                trading_dates,
+                index < len(groups) - 1
+                and _period_key(groups[index + 1][0].trade_date, timeframe)
+                != _period_key(group[-1].trade_date, timeframe),
+            ),
         )
         for index, group in enumerate(groups)
     ]
