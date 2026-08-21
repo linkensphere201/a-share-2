@@ -75,8 +75,13 @@ def run_futures_backfill(
                 "complete" if calendar else "empty",
             )
         except Exception as error:
-            LOGGER.exception("futures_backfill_exchange_failed exchange=%s", exchange.value)
-            errors.append(f"{exchange.value} catalog/calendar: {error}")
+            LOGGER.error(
+                "futures_backfill_exchange_failed exchange=%s error_type=%s",
+                exchange.value, type(error).__name__,
+            )
+            errors.append(
+                f"{exchange.value} catalog/calendar: {type(error).__name__}"
+            )
             continue
 
         discovered += len(catalog.contracts)
@@ -133,7 +138,8 @@ def run_futures_backfill(
                     changed += stats
                 except Exception as error:
                     errors.append(
-                        f"{contract.symbol} {window_start}..{window_end}: {error}"
+                        f"{contract.symbol} {window_start}..{window_end}: "
+                        f"{type(error).__name__}"
                     )
                     _log_bounded_failure(
                         len(errors), "contract", exchange, contract.symbol, error
@@ -155,7 +161,9 @@ def run_futures_backfill(
                 )
                 mappings_written += len(mappings)
             except Exception as error:
-                errors.append(f"{series.symbol} mapping: {error}")
+                errors.append(
+                    f"{series.symbol} mapping: {type(error).__name__}"
+                )
                 _log_bounded_failure(
                     len(errors), "mapping", exchange, series.symbol, error
                 )

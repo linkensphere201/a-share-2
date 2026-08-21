@@ -120,9 +120,9 @@ def test_repeated_warning_is_rate_limited(caplog) -> None:
     assert len(warnings) == 1
 
 
-def test_failure_updates_health_and_preserves_exception() -> None:
+def test_failure_updates_health_and_redacts_diagnostics(caplog) -> None:
     provider = _Provider()
-    provider.error = ValueError("commodity futures spot row has 4 fields")
+    provider.error = ValueError("commodity futures spot row has 4 fields token=secret")
     monitor = FuturesProviderMonitor(provider, 90)
     with pytest.raises(ValueError, match="row has 4"):
         monitor.fetch([_contract()])
@@ -130,6 +130,9 @@ def test_failure_updates_health_and_preserves_exception() -> None:
     assert status["state"] == "error"
     assert status["consecutive_failures"] == 1
     assert status["last_issue"] is FuturesProviderIssueKind.MALFORMED_ROW
+    assert status["last_error"] == "ValueError"
+    assert "token=secret" not in caplog.text
+    assert "detail=ValueError" in caplog.text
 
 
 @pytest.mark.parametrize(

@@ -101,7 +101,7 @@ class FuturesProviderMonitor:
             )
         except Exception as error:
             issue = classify_futures_provider_error(error)
-            message = _bounded_error(error)
+            message = type(error).__name__
             with self._lock:
                 self._health = FuturesProviderHealth(
                     provider=self.provider.code,
@@ -220,7 +220,3 @@ def classify_futures_provider_error(error: Exception) -> FuturesProviderIssueKin
 def _localized(value: datetime) -> datetime:
     return value if value.tzinfo is not None else value.replace(tzinfo=CHINA_TIME)
 
-
-def _bounded_error(error: Exception) -> str:
-    message = " ".join(str(error).split())
-    return message[:500]

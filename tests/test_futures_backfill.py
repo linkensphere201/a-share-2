@@ -187,15 +187,35 @@ def test_rejected_daily_rows_are_persisted_as_partial_quality_evidence() -> None
 def test_backfill_logs_bounded_structure_without_provider_error_text(caplog) -> None:
     provider = _Provider(fail_daily=True)
     with SQLiteMarketDataStore(":memory:") as store, caplog.at_level(logging.INFO):
-        run_futures_backfill(
+        result = run_futures_backfill(
             provider, store, [FuturesExchange.SHFE],
             date(2026, 8, 18), date(2026, 8, 20),
         )
+    assert result.errors == (
+        "FUT:SHFE:CU:202609 2026-08-18..2026-08-20: RuntimeError",
+    )
     assert "futures_backfill_started" in caplog.text
     assert "futures_backfill_item_failed" in caplog.text
     assert "error_type=RuntimeError" in caplog.text
     assert "daily unavailable" not in caplog.text
     assert "futures_backfill_completed" in caplog.text
+
+
+def test_backfill_exchange_failure_omits_exception_text_and_stack(caplog) -> None:
+    class CatalogFailureProvider(_Provider):
+        def discover_exchange(self, exchange, as_of):
+            raise RuntimeError("token=should-not-escape")
+
+    with SQLiteMarketDataStore(":memory:") as store, caplog.at_level(logging.INFO):
+        result = run_futures_backfill(
+            CatalogFailureProvider(), store, [FuturesExchange.SHFE],
+            date(2026, 8, 18), date(2026, 8, 20),
+        )
+
+    assert result.errors == ("SHFE catalog/calendar: RuntimeError",)
+    assert "error_type=RuntimeError" in caplog.text
+    assert "should-not-escape" not in caplog.text
+    assert "Traceback" not in caplog.text
 
 
 def test_increment_logs_bounded_structure_without_provider_error_text(caplog) -> None:
