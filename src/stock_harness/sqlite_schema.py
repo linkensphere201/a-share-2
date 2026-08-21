@@ -817,6 +817,60 @@ CREATE TABLE IF NOT EXISTS futures_daily_bars (
 CREATE INDEX IF NOT EXISTS futures_daily_bars_date
 ON futures_daily_bars(trading_day, instrument_id);
 
+CREATE TRIGGER IF NOT EXISTS futures_bar_queues_generated_analysis
+AFTER INSERT ON futures_daily_bars
+BEGIN
+    INSERT INTO generated_analysis_dirty_targets(
+        target_id, dirty_from, dirty_through, reason, generation, queued_at_ms
+    )
+    SELECT target_id, NEW.trading_day, NEW.trading_day,
+           'futures_canonical_bar_changed', 1, NEW.updated_at_ms
+    FROM generated_analysis_targets
+    WHERE instrument_id = NEW.instrument_id AND enabled = 1
+    ON CONFLICT(target_id) DO UPDATE SET
+        dirty_from = min(dirty_from, excluded.dirty_from),
+        dirty_through = max(dirty_through, excluded.dirty_through),
+        reason = excluded.reason,
+        generation = generation + 1,
+        queued_at_ms = excluded.queued_at_ms,
+        claimed_at_ms = NULL,
+        lease_until_ms = NULL;
+END;
+
+CREATE TRIGGER IF NOT EXISTS futures_bar_correction_queues_generated_analysis
+AFTER UPDATE ON futures_daily_bars
+WHEN OLD.provider_date IS NOT NEW.provider_date
+  OR OLD.open IS NOT NEW.open OR OLD.high IS NOT NEW.high
+  OR OLD.low IS NOT NEW.low OR OLD.close IS NOT NEW.close
+  OR OLD.previous_close IS NOT NEW.previous_close
+  OR OLD.settlement IS NOT NEW.settlement
+  OR OLD.previous_settlement IS NOT NEW.previous_settlement
+  OR OLD.volume_contracts IS NOT NEW.volume_contracts
+  OR OLD.amount_cny IS NOT NEW.amount_cny
+  OR OLD.open_interest_contracts IS NOT NEW.open_interest_contracts
+  OR OLD.open_interest_change_contracts IS NOT NEW.open_interest_change_contracts
+  OR OLD.delivery_settlement IS NOT NEW.delivery_settlement
+  OR OLD.mapped_contract_instrument_id IS NOT NEW.mapped_contract_instrument_id
+  OR OLD.roll_event IS NOT NEW.roll_event
+  OR OLD.source_id IS NOT NEW.source_id
+BEGIN
+    INSERT INTO generated_analysis_dirty_targets(
+        target_id, dirty_from, dirty_through, reason, generation, queued_at_ms
+    )
+    SELECT target_id, NEW.trading_day, NEW.trading_day,
+           'futures_canonical_bar_corrected', 1, NEW.updated_at_ms
+    FROM generated_analysis_targets
+    WHERE instrument_id = NEW.instrument_id AND enabled = 1
+    ON CONFLICT(target_id) DO UPDATE SET
+        dirty_from = min(dirty_from, excluded.dirty_from),
+        dirty_through = max(dirty_through, excluded.dirty_through),
+        reason = excluded.reason,
+        generation = generation + 1,
+        queued_at_ms = excluded.queued_at_ms,
+        claimed_at_ms = NULL,
+        lease_until_ms = NULL;
+END;
+
 CREATE TABLE IF NOT EXISTS futures_exchange_calendar (
     source_id INTEGER NOT NULL,
     exchange TEXT NOT NULL,

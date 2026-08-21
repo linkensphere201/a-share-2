@@ -2966,6 +2966,20 @@ class SQLiteMarketDataStore:
     def get_instrument_lifecycle(
         self, symbol: str
     ) -> tuple[date | None, date | None]:
+        if self.get_instrument_kind(symbol) is InstrumentKind.FUTURES_CONTRACT:
+            with self._lock:
+                row = self._connection.execute(
+                    """
+                    SELECT contract.listed_on, contract.last_trading_date
+                    FROM futures_contracts AS contract
+                    JOIN instruments AS instrument USING (instrument_id)
+                    WHERE instrument.symbol = ? COLLATE NOCASE
+                    """,
+                    (symbol,),
+                ).fetchone()
+            if row is None:
+                return None, None
+            return _date_from_key(int(row[0])), _date_from_key(int(row[1]))
         with self._lock:
             row = self._connection.execute(
                 """
