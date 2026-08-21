@@ -22,12 +22,24 @@ MAX_GROUPS = 200
 MAX_GROUP_MEMBERS = 500
 MAX_MEMBERSHIPS = 500
 MAX_DAILY_BARS = 8_000
+MAX_FUTURES_ROWS = 500
 LOGGER = logging.getLogger(__name__)
 _WARNING_LOCK = threading.Lock()
 _WARNING_TIMES: dict[str, float] = {}
 _MARKET_SYMBOL_PATTERN = re.compile(r"[A-Z0-9]+(?:\.[A-Z0-9]+)?\Z")
 _CUSTOM_SYMBOL_PATTERN = re.compile(
     r"CUSTOM:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\Z",
+    re.IGNORECASE,
+)
+_FUTURES_PRODUCT_PATTERN = re.compile(
+    r"FUTPROD:([A-Z0-9]+):([A-Z0-9]+)\Z", re.IGNORECASE
+)
+_FUTURES_CONTRACT_PATTERN = re.compile(
+    r"FUT:([A-Z0-9]+):([A-Z0-9]+):([0-9]{6})\Z", re.IGNORECASE
+)
+_FUTURES_CONTINUOUS_PATTERN = re.compile(
+    r"FUTCONT:([A-Z0-9]+):([A-Z0-9]+):([A-Z0-9-]+):"
+    r"(raw|backward-ratio|backward-additive)\Z",
     re.IGNORECASE,
 )
 
@@ -267,6 +279,66 @@ class StockHarnessMcpTools:
 
         return self._execute("get_latest_quote", load)
 
+    def list_futures_coverage(
+        self,
+        kind: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> dict[str, object]:
+        if kind not in {None, "futures-contract", "futures-continuous"}:
+            raise ValueError("kind must be futures-contract or futures-continuous")
+        limit = _bounded(limit, 1, MAX_FUTURES_ROWS, "limit")
+        offset = _bounded(offset, 0, 100_000, "offset")
+        params: list[tuple[str, object]] = [("limit", limit), ("offset", offset)]
+        if kind is not None:
+            params.append(("kind", kind))
+        return self._execute(
+            "list_futures_coverage",
+            lambda: self.api.get("/api/futures/coverage", params),
+        )
+
+    def get_futures_continuous(
+        self,
+        symbol: str,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        max_mappings: int = 200,
+        max_rolls: int = 200,
+    ) -> dict[str, object]:
+        normalized = _symbol(symbol)
+        if not normalized.startswith("FUTCONT:"):
+            raise ValueError("symbol must identify a futures continuous series")
+        start = _iso_date(start_date, "start_date")
+        end = _iso_date(end_date, "end_date")
+        if start and end and start > end:
+            raise ValueError("start_date must not be after end_date")
+        max_mappings = _bounded(max_mappings, 1, MAX_FUTURES_ROWS, "max_mappings")
+        max_rolls = _bounded(max_rolls, 1, MAX_FUTURES_ROWS, "max_rolls")
+        params: list[tuple[str, object]] = [
+            ("max_mappings", max_mappings), ("max_rolls", max_rolls)
+        ]
+        if start:
+            params.append(("start_date", start.isoformat()))
+        if end:
+            params.append(("end_date", end.isoformat()))
+        return self._execute(
+            "get_futures_continuous",
+            lambda: self.api.get(f"/api/futures/continuous/{normalized}", params),
+        )
+
+    def get_trend_analysis(
+        self, symbol: str, timeframe: str = "daily"
+    ) -> dict[str, object]:
+        normalized = _symbol(symbol)
+        if timeframe not in {"daily", "weekly", "monthly"}:
+            raise ValueError("timeframe must be daily, weekly, or monthly")
+        return self._execute(
+            "get_trend_analysis",
+            lambda: self.api.get(
+                f"/api/analysis/trend/{normalized}", [("timeframe", timeframe)]
+            ),
+        )
+
     def list_instrument_members(
         self, symbol: str, limit: int = 100, offset: int = 0
     ) -> dict[str, object]:
@@ -337,6 +409,23 @@ def _symbol(value: str) -> str:
     custom_match = _CUSTOM_SYMBOL_PATTERN.fullmatch(stripped)
     if custom_match:
         return f"CUSTOM:{custom_match.group(1).lower()}"
+    product_match = _FUTURES_PRODUCT_PATTERN.fullmatch(stripped)
+    if product_match:
+        return f"FUTPROD:{product_match.group(1).upper()}:{product_match.group(2).upper()}"
+    contract_match = _FUTURES_CONTRACT_PATTERN.fullmatch(stripped)
+    if contract_match:
+        return (
+            f"FUT:{contract_match.group(1).upper()}:"
+            f"{contract_match.group(2).upper()}:{contract_match.group(3)}"
+        )
+    continuous_match = _FUTURES_CONTINUOUS_PATTERN.fullmatch(stripped)
+    if continuous_match:
+        return (
+            f"FUTCONT:{continuous_match.group(1).upper()}:"
+            f"{continuous_match.group(2).upper()}:"
+            f"{continuous_match.group(3).upper()}:"
+            f"{continuous_match.group(4).lower()}"
+        )
     normalized = stripped.upper()
     if not normalized or len(normalized) > 200 or not _MARKET_SYMBOL_PATTERN.fullmatch(normalized):
         raise ValueError("invalid symbol")

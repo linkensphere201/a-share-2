@@ -18,9 +18,11 @@ from stock_harness.mcp_tools import LocalStockHarnessApi, StockHarnessMcpTools
 
 READ_ONLY = ToolAnnotations(read_only_hint=True, open_world_hint=False)
 INSTRUCTIONS = (
-    "StockHarness is a local, read-only A-share research source. Always report symbol, "
-    "effective date, source, and final/intraday state from tool results. Treat intraday "
-    "bars as provisional. Never infer trading authorization or attempt mutation."
+    "StockHarness is a local, read-only A-share and domestic-futures research source. "
+    "Always report exact symbol, effective trading date, source, units, and final/intraday "
+    "state. Treat intraday bars as provisional and continuous-series findings as derived "
+    "evidence with explicit price basis and mapping. Never infer trading authorization or "
+    "attempt mutation."
 )
 
 
@@ -51,7 +53,10 @@ def build_server(tools: StockHarnessMcpTools | None = None) -> MCPServer:
     @server.tool(title="Search StockHarness instruments", annotations=READ_ONLY)
     async def search_instruments(
         query: Annotated[str, Field(max_length=100)] = "",
-        classification: Literal["stock", "etf", "index", "concept", "industry", "sector"] | None = None,
+        classification: Literal[
+            "stock", "etf", "index", "concept", "industry", "sector",
+            "futures", "futures-product", "futures-contract", "futures-continuous",
+        ] | None = None,
         source_system: Annotated[str | None, Field(max_length=40)] = None,
         family: Annotated[str | None, Field(max_length=80)] = None,
         category: Annotated[str | None, Field(max_length=80)] = None,
@@ -103,6 +108,37 @@ def build_server(tools: StockHarnessMcpTools | None = None) -> MCPServer:
     ) -> dict[str, object]:
         """Get latest completed daily bar and any newer provisional intraday daily bar."""
         return await invoke(service.get_latest_quote, symbol)
+
+    @server.tool(title="List futures coverage", annotations=READ_ONLY)
+    async def list_futures_coverage(
+        kind: Literal["futures-contract", "futures-continuous"] | None = None,
+        limit: Annotated[int, Field(ge=1, le=500)] = 100,
+        offset: Annotated[int, Field(ge=0, le=100_000)] = 0,
+    ) -> dict[str, object]:
+        """List bounded real/continuous futures coverage and field-completeness evidence."""
+        return await invoke(service.list_futures_coverage, kind, limit, offset)
+
+    @server.tool(title="Inspect futures continuous series", annotations=READ_ONLY)
+    async def get_futures_continuous(
+        symbol: Annotated[str, Field(min_length=1, max_length=200)],
+        start_date: Annotated[str | None, Field(description="Inclusive YYYY-MM-DD date.")] = None,
+        end_date: Annotated[str | None, Field(description="Inclusive YYYY-MM-DD date.")] = None,
+        max_mappings: Annotated[int, Field(ge=1, le=500)] = 200,
+        max_rolls: Annotated[int, Field(ge=1, le=500)] = 200,
+    ) -> dict[str, object]:
+        """Inspect price basis, effective contract mappings, roll events, and build provenance."""
+        return await invoke(
+            service.get_futures_continuous,
+            symbol, start_date, end_date, max_mappings, max_rolls,
+        )
+
+    @server.tool(title="Get trend-analysis evidence", annotations=READ_ONLY)
+    async def get_trend_analysis(
+        symbol: Annotated[str, Field(min_length=1, max_length=200)],
+        timeframe: Literal["daily", "weekly", "monthly"] = "daily",
+    ) -> dict[str, object]:
+        """Read official/preview trend evidence without triggering recalculation."""
+        return await invoke(service.get_trend_analysis, symbol, timeframe)
 
     @server.tool(title="List instrument members", annotations=READ_ONLY)
     async def list_instrument_members(

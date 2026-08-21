@@ -47,11 +47,19 @@ def test_mcp_protocol_lists_only_read_tools_and_calls_health():
                 "get_custom_group",
                 "get_daily_bars",
                 "get_latest_quote",
+                "list_futures_coverage",
+                "get_futures_continuous",
+                "get_trend_analysis",
                 "list_instrument_members",
                 "list_symbol_boards",
             }
             assert all(tool.annotations.read_only_hint for tool in listed.tools)
             assert all(tool.annotations.open_world_hint is False for tool in listed.tools)
+            assert not any(
+                token in name
+                for name in names
+                for token in ("order", "account", "position", "provider", "sql", "credential")
+            )
 
             result = await client.call_tool("stock_harness_health", {})
             assert result.is_error is False

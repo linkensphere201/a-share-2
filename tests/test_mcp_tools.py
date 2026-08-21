@@ -52,6 +52,66 @@ def test_symbols_reject_url_control_characters_and_preserve_custom_group_ids():
     for value in ("000001.SZ?token=secret", "000001.SZ#fragment", "000001%2FSZ"):
         with pytest.raises(ValueError, match="invalid symbol"):
             tools.get_instrument(value)
+    for value in (
+        "FUT:SHFE:CU:202609?token=secret",
+        "FUTCONT:SHFE:CU:MAIN:raw/../../sql",
+        "FUTCONT:SHFE:CU:MAIN:raw#provider",
+    ):
+        with pytest.raises(ValueError, match="invalid symbol"):
+            tools.get_instrument(value)
+
+
+def test_futures_symbols_preserve_canonical_identity_and_read_bounded_evidence():
+    series = "FUTCONT:SHFE:CU:MAIN:raw"
+    api = FakeApi({
+        f"/api/instruments/{series}": {
+            "symbol": series, "kind": "futures-continuous", "price_basis": "raw"
+        },
+        f"/api/instruments/{series}/daily-bars": {
+            "items": [{
+                "trade_date": "2026-08-20", "close": 100,
+                "volume": 50, "open_interest": 60,
+                "mapped_contract_symbol": "FUT:SHFE:CU:202609",
+                "bar_state": "intraday", "source": "akshare-futures-zh-spot",
+                "stale": False,
+            }]
+        },
+        "/api/futures/coverage": {"items": [{"symbol": series}]},
+        f"/api/futures/continuous/{series}": {
+            "instrument": {"symbol": series},
+            "mappings": [{"contract_symbol": "FUT:SHFE:CU:202609"}],
+            "rolls": [],
+        },
+        f"/api/analysis/trend/{series}": {
+            "symbol": series, "official": None, "preview": {"items": []}
+        },
+    })
+    tools = StockHarnessMcpTools(api)
+
+    instrument = tools.get_instrument("futcont:shfe:cu:main:RAW")
+    bars = tools.get_daily_bars(series, max_bars=10)
+    coverage = tools.list_futures_coverage("futures-continuous", 20, 0)
+    continuous = tools.get_futures_continuous(
+        series, "2026-01-01", "2026-08-20", 10, 10
+    )
+    trend = tools.get_trend_analysis(series, "daily")
+
+    assert instrument["ok"] is True
+    assert bars["data"]["items"][0]["mapped_contract_symbol"].startswith("FUT:")
+    assert bars["data"]["freshness"]["latest_state"] == "intraday"
+    assert coverage["ok"] is continuous["ok"] is trend["ok"] is True
+    assert api.calls == [
+        (f"/api/instruments/{series}", []),
+        (f"/api/instruments/{series}/daily-bars", []),
+        ("/api/futures/coverage", [
+            ("limit", 20), ("offset", 0), ("kind", "futures-continuous"),
+        ]),
+        (f"/api/futures/continuous/{series}", [
+            ("max_mappings", 10), ("max_rolls", 10),
+            ("start_date", "2026-01-01"), ("end_date", "2026-08-20"),
+        ]),
+        (f"/api/analysis/trend/{series}", [("timeframe", "daily")]),
+    ]
 
 
 def test_custom_group_is_bounded_and_preserves_roles_tags_and_notes():

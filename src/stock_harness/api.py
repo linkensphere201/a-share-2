@@ -686,6 +686,62 @@ def create_app(
             "next_offset": offset + min(limit, len(rows)),
         }
 
+    @app.get("/api/futures/continuous/{symbol}")
+    def futures_continuous_detail(
+        request: Request,
+        symbol: str,
+        start_date: date | None = None,
+        end_date: date | None = None,
+        max_mappings: int = Query(default=200, ge=1, le=500),
+        max_rolls: int = Query(default=200, ge=1, le=500),
+    ) -> dict[str, object]:
+        store = _store(request)
+        instrument = store.get_instrument_summary(symbol)
+        if instrument is None:
+            raise HTTPException(status_code=404, detail="instrument not found")
+        if instrument["kind"] != InstrumentKind.FUTURES_CONTINUOUS.value:
+            raise HTTPException(
+                status_code=400, detail="instrument is not a futures continuous series"
+            )
+        canonical = str(instrument["symbol"])
+        start = start_date or date(1900, 1, 1)
+        end = end_date or date.today()
+        if start > end:
+            raise HTTPException(status_code=422, detail="start_date must not exceed end_date")
+        mappings = store.list_futures_roll_mappings(canonical, start, end)
+        rolls = store.list_futures_continuous_roll_events(canonical)
+        build = store.get_futures_continuous_build_status(canonical)
+        dirty = store.get_futures_continuous_dirty_state(canonical)
+        if build is not None and isinstance(build.get("input_digest"), bytes):
+            build = {**build, "input_digest": build["input_digest"].hex()}
+        roll_items = []
+        for item in rolls[-max_rolls:]:
+            payload = dict(item)
+            if isinstance(payload.get("input_digest"), bytes):
+                payload["input_digest"] = payload["input_digest"].hex()
+            roll_items.append(payload)
+        return {
+            "instrument": instrument,
+            "requested_range": {"start_date": start, "end_date": end},
+            "mappings": [
+                {
+                    "effective_from": item.effective_from,
+                    "contract_symbol": item.contract_symbol,
+                    "series_provider_symbol": item.series_provider_symbol,
+                    "contract_provider_symbol": item.contract_provider_symbol,
+                    "source": "tushare-futures",
+                }
+                for item in mappings[-max_mappings:]
+            ],
+            "mapping_total": len(mappings),
+            "mappings_truncated": len(mappings) > max_mappings,
+            "build": build,
+            "dirty": dirty,
+            "rolls": roll_items,
+            "roll_total": len(rolls),
+            "rolls_truncated": len(rolls) > max_rolls,
+        }
+
     @app.get("/api/custom-groups")
     def custom_groups(request: Request, query: str = "") -> dict[str, object]:
         return {"items": _store(request).list_custom_groups(query)}

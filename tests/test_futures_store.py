@@ -836,3 +836,19 @@ def test_continuous_build_persists_roll_evidence_and_rebuilds_dirty_suffix() -> 
             series.symbol, first_day, roll_day
         )[-1].close == 110
         assert store.get_futures_continuous_dirty_state(series.symbol) is None
+        with TestClient(create_app(store)) as client:
+            detail = client.get(
+                f"/api/futures/continuous/{series.symbol}",
+                params={
+                    "start_date": first_day.isoformat(),
+                    "end_date": roll_day.isoformat(),
+                },
+            )
+        payload = detail.json()
+        assert detail.status_code == 200
+        assert payload["instrument"]["symbol"] == series.symbol
+        assert payload["build"]["input_digest"] == suffix.input_digest.hex()
+        assert [item["contract_symbol"] for item in payload["mappings"]] == [
+            first_contract.symbol, second_contract.symbol,
+        ]
+        assert payload["rolls"][0]["input_digest"] == suffix.input_digest.hex()
