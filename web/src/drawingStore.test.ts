@@ -12,6 +12,7 @@ import {
   type TrendLineAnchor,
 } from './drawingStore'
 import { chooseAnchor, extendLineToBounds, orientTrendLineAnchors, renderDateForAnchor, replaceTrendLineAnchor, translateTrendLineAnchors } from './trendLines'
+import { aggregateBars, mergeProvisionalBar, type DailyBar } from './chartData'
 
 describe('symbol drawing repository', () => {
   beforeEach(() => window.localStorage.clear())
@@ -138,6 +139,49 @@ describe('symbol drawing repository', () => {
       { date: '2026-07-31', price: 81_000, snap: 'high' },
     ], 'normal')).toThrow('identity is incomplete')
   })
+
+  it('persists the complete futures trend-line editing workflow', () => {
+    const target = {
+      symbol: 'FUT:SHFE:CU:202609',
+      instrumentKind: 'futures-contract',
+    }
+    const created = createTrendLine(target, [
+      { date: '2026-07-01', price: 78_000, snap: 'low' },
+      { date: '2026-07-31', price: 81_000, snap: 'high' },
+    ], 'log', new Date('2026-08-05T00:00:00Z'), () => 'cu-edit')
+    const endpointEdited = replaceTrendLineAnchor(created.anchors, 1, {
+      date: '2026-08-01', price: 82_000, snap: 'high',
+    })
+    const moved = translateTrendLineAnchors(
+      endpointEdited,
+      ['2026-07-01', '2026-07-02', '2026-07-31', '2026-08-01', '2026-08-04'],
+      1,
+      78_000,
+      79_000,
+      'log',
+    )
+    const horizontal = orientTrendLineAnchors(moved, 'horizontal')
+    saveTrendLine({
+      ...created,
+      anchors: horizontal,
+      visible: false,
+      style: { ...created.style, color: '#57a7d9', dash: 'long-dashed' },
+      updatedAt: '2026-08-06T00:00:00.000Z',
+    })
+
+    const restored = loadSymbolDrawings(target)[0]
+    expect(restored).toMatchObject({
+      symbol: target.symbol,
+      instrumentKind: 'futures-contract',
+      coordinateMode: 'log',
+      visible: false,
+      style: { color: '#57a7d9', dash: 'long-dashed' },
+    })
+    expect(restored.anchors[0].price).toBe(restored.anchors[1].price)
+    expect(extendLineToBounds(
+      { x1: 25, y1: 50, x2: 75, y2: 50 }, 100, 100,
+    )).toEqual({ x1: 0, y1: 50, x2: 100, y2: 50 })
+  })
 })
 
 describe('trend-line anchors', () => {
@@ -217,4 +261,47 @@ describe('trend-line anchors', () => {
       { date: '2026-08-05', price: 30, snap: 'free' },
     ])
   })
+
+  it('keeps futures data anchors immutable across LOD and provisional replacement', () => {
+    const target = {
+      symbol: 'FUTCONT:SHFE:CU:MAIN:raw',
+      instrumentKind: 'futures-continuous',
+      priceBasis: 'raw',
+      ruleVersion: 'tushare-fut-mapping-v1',
+    }
+    const drawing = createTrendLine(target, [
+      { date: '2026-08-01', price: 78_000, snap: 'low' },
+      { date: '2026-08-03', price: 81_000, snap: 'high' },
+    ], 'log', new Date('2026-08-05T00:00:00Z'), () => 'stable-line')
+    saveTrendLine(drawing)
+    const bars: DailyBar[] = [
+      daily('2026-08-01', 78_000), daily('2026-08-02', 79_000),
+      daily('2026-08-03', 81_000), daily('2026-08-04', 80_000),
+    ]
+    const lod = aggregateBars(bars, 2)
+    expect(renderDateForAnchor(drawing.anchors[0].date, lod)).toBe('2026-08-02')
+    expect(renderDateForAnchor(drawing.anchors[1].date, lod)).toBe('2026-08-04')
+
+    const withProvisional = mergeProvisionalBar(bars, {
+      ...daily('2026-08-05', 82_000), bar_state: 'intraday',
+    })
+    const canonical = withProvisional.map(item => item.trade_date === '2026-08-05'
+      ? { ...item, close: 81_500, bar_state: 'final' as const }
+      : item)
+    expect(canonical.at(-1)?.bar_state).toBe('final')
+    expect(loadSymbolDrawings(target)[0].anchors).toEqual(drawing.anchors)
+  })
 })
+
+function daily(trade_date: string, close: number): DailyBar {
+  return {
+    trade_date,
+    open: close - 100,
+    high: close + 200,
+    low: close - 200,
+    close,
+    volume: 1_000,
+    source: 'test',
+    bar_state: 'final',
+  }
+}
