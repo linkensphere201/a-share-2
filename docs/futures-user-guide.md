@@ -78,6 +78,6 @@ MCP cannot access accounts, positions, orders, credentials, arbitrary Provider c
 - ETF/stock market-cap fields and stock-specific board semantics do not apply to futures.
 - A continuous series is a derived analytical view, not a tradable contract and not a profit/backtest substitute.
 - Backward-additive identity is reserved by the schema but its materializer is not implemented; current adjusted builds support backward-ratio only and fail closed for additive requests.
-- Final four/six-chart target-machine performance, packaged visual acceptance, full archive size, and real day/night takeover evidence remain M6 acceptance items until recorded in the project report.
+- The fixed Windows package passes offline backend/frontend smoke startup. Final four/six-chart interaction performance, packaged visual inspection, full archive size, and real day/night takeover evidence remain M6 acceptance items until recorded in the project report.
 
 For configuration, history, backup, recovery, and troubleshooting, see [`futures-operations.md`](futures-operations.md).
