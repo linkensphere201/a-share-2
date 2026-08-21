@@ -1538,8 +1538,8 @@ class SQLiteMarketDataStore:
         _require_sync_text(scope, "scope")
         if start_date > end_date:
             raise ValueError("futures mapping window start must not exceed end")
-        if len(mappings) > 2_000:
-            raise ValueError("futures mapping batch exceeds 2000 rows")
+        if len(mappings) > 20_000:
+            raise ValueError("futures mapping window exceeds 20000 rows")
         if any(
             item.series_symbol != series_symbol
             or not start_date <= item.effective_from <= end_date
@@ -1576,6 +1576,9 @@ class SQLiteMarketDataStore:
             ).fetchone()
             if series_row is None:
                 raise ValueError(f"not a futures continuous series: {series_symbol}")
+            mapping_contract_symbols = sorted({
+                item.contract_symbol for item in mappings
+            })
             contract_provider_symbols = {
                 str(row[0]): str(row[1])
                 for row in self._connection.execute(
@@ -1585,9 +1588,9 @@ class SQLiteMarketDataStore:
                     JOIN instruments AS instrument USING (instrument_id)
                     WHERE contract.instrument_id IN (
                     """
-                    + ",".join("?" for _ in mappings)
+                    + ",".join("?" for _ in mapping_contract_symbols)
                     + ")",
-                    [ids[item.contract_symbol] for item in mappings],
+                    [ids[item] for item in mapping_contract_symbols],
                 )
             } if mappings else {}
             if any(
@@ -1608,21 +1611,23 @@ class SQLiteMarketDataStore:
                     _date_key(start_date), _date_key(end_date),
                 ),
             )
-            self._connection.executemany(
-                """
-                INSERT INTO futures_roll_mappings(
-                    source_id, series_instrument_id, effective_from,
-                    contract_instrument_id, updated_at_ms
-                ) VALUES (?, ?, ?, ?, ?)
-                """,
-                (
+            for offset in range(0, len(mappings), 2_000):
+                self._connection.executemany(
+                    """
+                    INSERT INTO futures_roll_mappings(
+                        source_id, series_instrument_id, effective_from,
+                        contract_instrument_id, updated_at_ms
+                    ) VALUES (?, ?, ?, ?, ?)
+                    """,
                     (
-                        source_id, ids[series_symbol], _date_key(item.effective_from),
-                        ids[item.contract_symbol], now_ms,
-                    )
-                    for item in mappings
-                ),
-            )
+                        (
+                            source_id, ids[series_symbol],
+                            _date_key(item.effective_from),
+                            ids[item.contract_symbol], now_ms,
+                        )
+                        for item in mappings[offset:offset + 2_000]
+                    ),
+                )
             self._connection.execute(
                 """
                 INSERT INTO futures_sync_states(

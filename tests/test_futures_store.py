@@ -765,6 +765,32 @@ def test_empty_mapping_window_removes_suffix_and_records_empty_receipt() -> None
         assert (receipt.status, receipt.row_count) == ("empty", 0)
 
 
+def test_large_mapping_window_is_written_in_atomic_bounded_batches() -> None:
+    product, contract, series = _catalog()
+    first_day = date(2018, 1, 1)
+    mappings = [
+        FuturesRollMapping(
+            series.symbol, series.provider_symbol, first_day + timedelta(days=offset),
+            contract.symbol, contract.provider_symbol,
+        )
+        for offset in range(2_001)
+    ]
+    with SQLiteMarketDataStore(":memory:") as store:
+        store.upsert_futures_catalog(
+            "tushare-futures", [product], [contract], [series]
+        )
+        state, receipt = store.replace_futures_roll_mapping_window(
+            "tushare-futures", "SHFE", series.symbol,
+            first_day, first_day + timedelta(days=2_000), mappings,
+        )
+        stored = store.list_futures_roll_mappings(
+            series.symbol, first_day, first_day + timedelta(days=2_000)
+        )
+    assert len(stored) == 2_001
+    assert state.last_batch_rows == 2_001
+    assert receipt.row_count == 2_001
+
+
 def test_futures_coverage_reports_field_completeness() -> None:
     product, contract, series = _catalog()
     day = date(2026, 8, 20)
