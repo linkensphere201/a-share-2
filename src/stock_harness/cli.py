@@ -18,6 +18,11 @@ from stock_harness.futures_provisional_provider import (
     AkShareFuturesRealtimeProvider,
     AkShareFuturesSpotProvider,
 )
+from stock_harness.futures_validation import (
+    AkShareExchangeFuturesValidationProvider,
+    AkShareSinaFuturesValidationProvider,
+    validate_futures_contracts,
+)
 from stock_harness.sqlite_store import SQLiteMarketDataStore
 from stock_harness.tushare_provider import TushareBoardDailyProvider, TushareDailyProvider
 from stock_harness.models import FuturesExchange, FuturesLifecycleStatus, InstrumentKind
@@ -101,6 +106,18 @@ def main() -> None:
         choices=tuple(item.value for item in FuturesExchange),
     )
     futures_backfill.add_argument("--max-contracts", type=int)
+    futures_validate = subparsers.add_parser(
+        "validate-futures",
+        help="Compare stored final futures bars with exchange and public chart sources",
+    )
+    futures_validate.add_argument("--trade-date", type=date.fromisoformat, required=True)
+    futures_validate.add_argument("--symbol", action="append", dest="symbols", required=True)
+    futures_validate.add_argument(
+        "--source", action="append", choices=("exchange", "sina"), dest="sources",
+    )
+    futures_validate.add_argument(
+        "--output", type=Path, default=Path("data/reports/futures-validation.json")
+    )
 
     backfill = subparsers.add_parser("backfill-stocks", help="Resume full-market stock daily backfill")
     backfill.add_argument("--years", type=int, default=30)
@@ -326,6 +343,34 @@ def main() -> None:
             )
             store.checkpoint("PASSIVE")
         print(json.dumps(asdict(result), ensure_ascii=False, default=str, indent=2))
+        return
+    if args.command == "validate-futures":
+        providers = []
+        for source in tuple(dict.fromkeys(args.sources or ("exchange", "sina"))):
+            providers.append(
+                AkShareExchangeFuturesValidationProvider()
+                if source == "exchange"
+                else AkShareSinaFuturesValidationProvider()
+            )
+        with _open_store(settings) as store:
+            report = validate_futures_contracts(
+                store, providers, args.symbols, args.trade_date,
+                price_abs_tolerance=settings.validation.price_abs_tolerance,
+            )
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(
+            json.dumps(report.to_dict(), ensure_ascii=False, indent=2, default=str) + "\n",
+            encoding="utf-8",
+        )
+        counts = {
+            status: sum(item.status == status for item in report.results)
+            for status in ("match", "mismatch", "missing", "error")
+        }
+        print(
+            f"futures_validation output={args.output} trade_date={args.trade_date} "
+            f"checked={len(report.results)} "
+            + " ".join(f"{key}={value}" for key, value in counts.items())
+        )
         return
     if args.command == "validate-date":
         providers = []
