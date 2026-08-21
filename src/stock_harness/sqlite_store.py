@@ -1309,32 +1309,63 @@ class SQLiteMarketDataStore:
     def list_futures_provisional_audit(
         self,
         symbol: str,
+        start_date: date | None = None,
+        end_date: date | None = None,
+        *,
+        limit: int = 10_000,
     ) -> list[dict[str, object]]:
         self._require_futures_storage()
+        if start_date is not None and end_date is not None and start_date > end_date:
+            raise ValueError("futures provisional audit start must not exceed end")
+        if not 1 <= limit <= 10_000:
+            raise ValueError("invalid futures provisional audit limit")
         with self._lock:
             rows = self._connection.execute(
                 """
-                SELECT bar.trading_day, source.code, bar.provider_time,
-                       bar.received_at, bar.takeover_state, bar.stale,
-                       bar.close, bar.volume_contracts
+                SELECT bar.trading_day, bar.provider_date, source.code,
+                       bar.provider_time, bar.received_at, bar.takeover_state,
+                       bar.stale, bar.open, bar.high, bar.low, bar.close,
+                       bar.previous_close, bar.previous_settlement,
+                       bar.volume_contracts, bar.open_interest_contracts
                 FROM futures_provisional_daily_bars AS bar
                 JOIN instruments AS instrument USING (instrument_id)
                 JOIN sources AS source USING (source_id)
                 WHERE instrument.symbol = ?
+                  AND (? IS NULL OR bar.trading_day >= ?)
+                  AND (? IS NULL OR bar.trading_day <= ?)
                 ORDER BY bar.trading_day, source.code
+                LIMIT ?
                 """,
-                (symbol,),
+                (
+                    symbol,
+                    _date_key(start_date) if start_date else None,
+                    _date_key(start_date) if start_date else None,
+                    _date_key(end_date) if end_date else None,
+                    _date_key(end_date) if end_date else None,
+                    limit,
+                ),
             ).fetchall()
         return [
             {
                 "trading_day": _date_from_key(int(row[0])),
-                "source": str(row[1]),
-                "provider_time": datetime.fromisoformat(str(row[2])),
-                "received_at": datetime.fromisoformat(str(row[3])),
-                "takeover_state": str(row[4]),
-                "stale": bool(row[5]),
-                "close": float(row[6]),
-                "volume_contracts": int(row[7]),
+                "provider_date": _date_from_key(int(row[1])),
+                "source": str(row[2]),
+                "provider_time": datetime.fromisoformat(str(row[3])),
+                "received_at": datetime.fromisoformat(str(row[4])),
+                "takeover_state": str(row[5]),
+                "stale": bool(row[6]),
+                "open": float(row[7]),
+                "high": float(row[8]),
+                "low": float(row[9]),
+                "close": float(row[10]),
+                "previous_close": float(row[11]) if row[11] is not None else None,
+                "previous_settlement": (
+                    float(row[12]) if row[12] is not None else None
+                ),
+                "volume_contracts": int(row[13]),
+                "open_interest_contracts": (
+                    float(row[14]) if row[14] is not None else None
+                ),
             }
             for row in rows
         ]

@@ -21,6 +21,7 @@ from stock_harness.futures_provisional_provider import (
 from stock_harness.futures_validation import (
     AkShareExchangeFuturesValidationProvider,
     AkShareSinaFuturesValidationProvider,
+    compare_futures_provisional_takeovers,
     validate_futures_contracts,
 )
 from stock_harness.sqlite_store import SQLiteMarketDataStore
@@ -117,6 +118,17 @@ def main() -> None:
     )
     futures_validate.add_argument(
         "--output", type=Path, default=Path("data/reports/futures-validation.json")
+    )
+    futures_takeover = subparsers.add_parser(
+        "audit-futures-takeover",
+        help="Compare retained provisional futures observations with final rows",
+    )
+    futures_takeover.add_argument("--start-date", type=date.fromisoformat, required=True)
+    futures_takeover.add_argument("--end-date", type=date.fromisoformat, required=True)
+    futures_takeover.add_argument("--symbol", action="append", dest="symbols", required=True)
+    futures_takeover.add_argument(
+        "--output", type=Path,
+        default=Path("data/reports/futures-provisional-takeover.json"),
     )
 
     backfill = subparsers.add_parser("backfill-stocks", help="Resume full-market stock daily backfill")
@@ -369,6 +381,29 @@ def main() -> None:
         print(
             f"futures_validation output={args.output} trade_date={args.trade_date} "
             f"checked={len(report.results)} "
+            + " ".join(f"{key}={value}" for key, value in counts.items())
+        )
+        return
+    if args.command == "audit-futures-takeover":
+        with _open_store(settings) as store:
+            report = compare_futures_provisional_takeovers(
+                store, args.symbols, args.start_date, args.end_date,
+                price_abs_tolerance=settings.validation.price_abs_tolerance,
+            )
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(
+            json.dumps(report.to_dict(), ensure_ascii=False, indent=2, default=str) + "\n",
+            encoding="utf-8",
+        )
+        counts = {
+            status: sum(item.status == status for item in report.results)
+            for status in (
+                "match", "partial", "changed", "pending-final", "missing-catalog"
+            )
+        }
+        print(
+            f"futures_takeover_audit output={args.output} "
+            f"start={args.start_date} end={args.end_date} rows={len(report.results)} "
             + " ".join(f"{key}={value}" for key, value in counts.items())
         )
         return

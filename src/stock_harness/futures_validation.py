@@ -58,6 +58,40 @@ class FuturesValidationReport:
         return asdict(self)
 
 
+@dataclass(frozen=True, slots=True)
+class FuturesTakeoverResult:
+    symbol: str
+    provider_symbol: str
+    exchange: str
+    trading_day: date
+    provider_date: date
+    session_phase: str
+    provisional_source: str
+    provider_time: str
+    received_at: str
+    takeover_state: str
+    stale: bool
+    final_source: str | None
+    final_settlement: float | None
+    status: str
+    fields: tuple[FuturesFieldDifference, ...]
+    message: str
+
+
+@dataclass(frozen=True, slots=True)
+class FuturesTakeoverReport:
+    schema_version: str
+    requested_symbols: tuple[str, ...]
+    start_date: date
+    end_date: date
+    price_abs_tolerance: float
+    count_abs_tolerance: float
+    results: tuple[FuturesTakeoverResult, ...]
+
+    def to_dict(self) -> dict[str, object]:
+        return asdict(self)
+
+
 class AkShareExchangeFuturesValidationProvider:
     """Exchange-published daily data exposed by AKShare's unified adapter."""
 
@@ -164,6 +198,116 @@ def validate_futures_contracts(
         price_abs_tolerance=price_abs_tolerance,
         count_abs_tolerance=count_abs_tolerance,
         results=tuple(results),
+    )
+
+
+def compare_futures_provisional_takeovers(
+    store: SQLiteMarketDataStore,
+    symbols: Sequence[str],
+    start_date: date,
+    end_date: date,
+    *,
+    price_abs_tolerance: float = 0.001,
+    count_abs_tolerance: float = 0.0,
+) -> FuturesTakeoverReport:
+    if start_date > end_date:
+        raise ValueError("futures takeover audit start must not exceed end")
+    if price_abs_tolerance < 0 or count_abs_tolerance < 0:
+        raise ValueError("futures takeover tolerances must be non-negative")
+    requested = tuple(dict.fromkeys(item.strip().upper() for item in symbols if item.strip()))
+    contracts = {item.symbol: item for item in store.get_futures_contracts(requested)}
+    results: list[FuturesTakeoverResult] = []
+    for symbol in requested:
+        contract = contracts.get(symbol)
+        if contract is None:
+            results.append(FuturesTakeoverResult(
+                symbol, "", "", start_date, start_date, "unknown", "", "", "",
+                "", False, None, None, "missing-catalog", (),
+                "contract is not registered in the local futures catalog",
+            ))
+            continue
+        final_by_day = {
+            item.trading_day: item
+            for item in store.list_futures_daily_bars(symbol, start_date, end_date)
+        }
+        for audit in store.list_futures_provisional_audit(symbol, start_date, end_date):
+            results.append(_compare_takeover_row(
+                contract, audit, final_by_day.get(audit["trading_day"]),
+                price_abs_tolerance, count_abs_tolerance,
+            ))
+    return FuturesTakeoverReport(
+        schema_version="futures-provisional-takeover-v1",
+        requested_symbols=requested,
+        start_date=start_date,
+        end_date=end_date,
+        price_abs_tolerance=price_abs_tolerance,
+        count_abs_tolerance=count_abs_tolerance,
+        results=tuple(results),
+    )
+
+
+def _compare_takeover_row(
+    contract: FuturesContract,
+    audit: Mapping[str, object],
+    final: FuturesDailyBar | None,
+    price_tolerance: float,
+    count_tolerance: float,
+) -> FuturesTakeoverResult:
+    trading_day = audit["trading_day"]
+    provider_date = audit["provider_date"]
+    provider_time = audit["provider_time"]
+    assert isinstance(trading_day, date)
+    assert isinstance(provider_date, date)
+    if final is None:
+        fields: tuple[FuturesFieldDifference, ...] = ()
+        status = "pending-final"
+        message = "canonical final row is not available"
+    else:
+        specs = (
+            ("open", contract.quote_unit, price_tolerance),
+            ("high", contract.quote_unit, price_tolerance),
+            ("low", contract.quote_unit, price_tolerance),
+            ("close", contract.quote_unit, price_tolerance),
+            ("volume_contracts", "contracts", count_tolerance),
+            ("open_interest_contracts", "contracts", count_tolerance),
+        )
+        fields = tuple(
+            _difference(field, unit, getattr(final, field), audit[field], tolerance)
+            for field, unit, tolerance in specs
+        )
+        changed = [item.field for item in fields if item.matched is False]
+        unavailable = [item.field for item in fields if item.matched is None]
+        status = "changed" if changed else "partial" if unavailable else "match"
+        message = (
+            f"changed fields: {', '.join(changed)}"
+            if changed else
+            f"unavailable fields: {', '.join(unavailable)}"
+            if unavailable else
+            "retained provisional fields matched the final row"
+        )
+    provider_hour = getattr(provider_time, "hour", 12)
+    phase = (
+        "night"
+        if provider_date != trading_day or provider_hour >= 18 or provider_hour < 8
+        else "day"
+    )
+    return FuturesTakeoverResult(
+        symbol=contract.symbol,
+        provider_symbol=contract.provider_symbol,
+        exchange=contract.exchange.value,
+        trading_day=trading_day,
+        provider_date=provider_date,
+        session_phase=phase,
+        provisional_source=str(audit["source"]),
+        provider_time=str(provider_time.isoformat()),
+        received_at=str(audit["received_at"].isoformat()),
+        takeover_state=str(audit["takeover_state"]),
+        stale=bool(audit["stale"]),
+        final_source=final.source if final else None,
+        final_settlement=final.settlement if final else None,
+        status=status,
+        fields=fields,
+        message=message,
     )
 
 

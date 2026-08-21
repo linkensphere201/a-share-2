@@ -1,8 +1,10 @@
-from datetime import date
+from dataclasses import replace
+from datetime import date, datetime, timedelta, timezone
 
 from stock_harness.futures_validation import (
     AkShareExchangeFuturesValidationProvider,
     AkShareSinaFuturesValidationProvider,
+    compare_futures_provisional_takeovers,
     validate_futures_contracts,
 )
 from stock_harness.models import (
@@ -144,3 +146,78 @@ def test_accepts_czce_three_digit_exchange_symbol_only_for_matching_decade():
     bar = AkShareExchangeFuturesValidationProvider(Client()).fetch_contract_daily(contract, DAY)
     assert bar is not None
     assert bar.symbol == contract.symbol
+
+
+def test_compares_retained_day_and_night_observations_with_later_final_rows():
+    china = timezone(timedelta(hours=8))
+    with _store()[0] as store:
+        contract = store.get_futures_contracts(["FUT:SHFE:CU:202609"])[0]
+        day_time = datetime(2026, 8, 20, 14, 30, tzinfo=china)
+        store.upsert_futures_provisional_daily_bars(
+            "akshare-futures-spot",
+            [FuturesDailyBar(
+                symbol=contract.symbol, trading_day=DAY, provider_date=DAY,
+                open=100, high=105, low=97, close=104, previous_close=99,
+                settlement=None, previous_settlement=100, volume_contracts=12000,
+                amount=None, open_interest_contracts=54000,
+                open_interest_change_contracts=None, delivery_settlement=None,
+                source="akshare-futures-spot", state=FuturesBarState.PROVISIONAL,
+                provider_time=day_time,
+            )],
+            day_time,
+        )
+        next_day = date(2026, 8, 21)
+        night_time = datetime(2026, 8, 20, 21, 30, tzinfo=china)
+        store.upsert_futures_provisional_daily_bars(
+            "akshare-futures-spot",
+            [FuturesDailyBar(
+                symbol=contract.symbol, trading_day=next_day, provider_date=DAY,
+                open=103, high=106, low=102, close=105, previous_close=103,
+                settlement=None, previous_settlement=102, volume_contracts=500,
+                amount=None, open_interest_contracts=54500,
+                open_interest_change_contracts=None, delivery_settlement=None,
+                source="akshare-futures-spot", state=FuturesBarState.PROVISIONAL,
+                provider_time=night_time,
+            )],
+            night_time,
+        )
+        prior_final = store.list_futures_daily_bars(contract.symbol, DAY, DAY)[0]
+        store.upsert_futures_daily_bars("tushare", [replace(
+            prior_final, trading_day=next_day, provider_date=next_day,
+            open=103, high=107, low=101, close=104, settlement=104.5,
+            volume_contracts=700, open_interest_contracts=54600,
+        )])
+        report = compare_futures_provisional_takeovers(
+            store, [contract.symbol], DAY, next_day
+        )
+    assert [item.session_phase for item in report.results] == ["day", "night"]
+    assert [item.status for item in report.results] == ["changed", "changed"]
+    assert all(item.takeover_state == "canonical-taken-over" for item in report.results)
+    assert report.results[1].provider_date == DAY
+    assert report.results[1].trading_day == next_day
+    assert report.results[1].final_settlement == 104.5
+    assert "high" in report.results[1].message
+
+
+def test_takeover_audit_keeps_pending_final_and_missing_catalog_explicit():
+    china = timezone(timedelta(hours=8))
+    with _store()[0] as store:
+        contract = store.get_futures_contracts(["FUT:SHFE:CU:202609"])[0]
+        next_day = date(2026, 8, 21)
+        observed = datetime(2026, 8, 20, 21, 0, tzinfo=china)
+        store.upsert_futures_provisional_daily_bars(
+            "akshare-futures-spot",
+            [FuturesDailyBar(
+                symbol=contract.symbol, trading_day=next_day, provider_date=DAY,
+                open=103, high=104, low=102, close=103, previous_close=103,
+                settlement=None, previous_settlement=102, volume_contracts=1,
+                amount=None, open_interest_contracts=None,
+                open_interest_change_contracts=None, delivery_settlement=None,
+                source="akshare-futures-spot", state=FuturesBarState.PROVISIONAL,
+                provider_time=observed,
+            )], observed,
+        )
+        report = compare_futures_provisional_takeovers(
+            store, [contract.symbol, "FUT:DCE:A:202609"], next_day, next_day
+        )
+    assert [item.status for item in report.results] == ["pending-final", "missing-catalog"]
