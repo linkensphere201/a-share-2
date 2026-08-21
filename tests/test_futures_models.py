@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import date, datetime, timezone
 
 import pytest
@@ -135,6 +136,20 @@ def test_futures_change_defaults_to_previous_settlement_not_candle_direction() -
     assert bar.change_percent() == pytest.approx(1.0)
     assert bar.change_percent(FuturesChangeBasis.PREVIOUS_CLOSE) == pytest.approx(3.06122449)
     assert bar.to_chart_bar().trade_date == date(2026, 8, 20)
+
+
+def test_futures_daily_bar_allows_negative_tas_spread_prices() -> None:
+    bar = replace(
+        _bar(),
+        symbol="FUT:INE:SCTAS:202510",
+        open=0.1,
+        high=0.1,
+        low=-0.1,
+        close=-0.1,
+        previous_close=-0.1,
+    )
+    bar.validate()
+    assert bar.candle_direction == -1
 
 
 def test_provisional_bar_requires_provider_observation_time() -> None:

@@ -1908,7 +1908,6 @@ class SQLiteMarketDataStore:
                        count(bar.trading_day) FILTER (WHERE bar.volume_contracts = 0),
                        count(bar.trading_day) FILTER (
                            WHERE bar.volume_contracts < 0
-                              OR bar.open < 0 OR bar.high < 0 OR bar.low < 0 OR bar.close < 0
                               OR bar.high < max(bar.open, bar.close, bar.low)
                               OR bar.low > min(bar.open, bar.close, bar.high)
                        ),

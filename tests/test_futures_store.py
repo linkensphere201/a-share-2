@@ -422,6 +422,40 @@ def test_futures_integrity_cli_fails_only_for_structural_errors() -> None:
     assert raised.value.code == 2
 
 
+def test_futures_integrity_accepts_negative_tas_spread_prices() -> None:
+    product, contract, _series = _catalog()
+    tas_product = replace(
+        product,
+        symbol="FUTPROD:INE:SCTAS",
+        product_code="SCTAS",
+        exchange=FuturesExchange.INE,
+    )
+    tas_contract = replace(
+        contract,
+        symbol="FUT:INE:SCTAS:202510",
+        provider_symbol="SCTAS2510.INE",
+        product_symbol=tas_product.symbol,
+        exchange=FuturesExchange.INE,
+    )
+    tas_bar = replace(
+        _bar(date(2026, 8, 20)),
+        symbol=tas_contract.symbol,
+        open=0.1,
+        high=0.1,
+        low=-0.1,
+        close=-0.1,
+        previous_close=-0.1,
+    )
+    with SQLiteMarketDataStore(":memory:") as store:
+        store.upsert_futures_catalog(
+            "tushare-futures", [tas_product], [tas_contract], []
+        )
+        store.upsert_futures_daily_bars("tushare-futures", [tas_bar])
+        report = store.audit_futures_integrity()
+    assert report["products"][0]["invalid_bar_rows"] == 0
+    assert report["summary"]["structural_errors"] == 0
+
+
 def test_continuous_fused_read_projects_the_mapped_contract_provisional_bar() -> None:
     product, contract, series = _catalog()
     prior_day = date(2026, 8, 19)

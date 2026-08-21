@@ -244,7 +244,6 @@ class FuturesDailyBar:
         if self.volume_contracts < 0:
             raise ValueError("futures daily volume must be non-negative contracts")
         for name, value in (
-            ("previous close", self.previous_close),
             ("settlement", self.settlement),
             ("previous settlement", self.previous_settlement),
             ("amount", self.amount),
@@ -253,6 +252,8 @@ class FuturesDailyBar:
         ):
             if value is not None and (not isfinite(value) or value < 0):
                 raise ValueError(f"futures daily {name} must be finite and non-negative")
+        if self.previous_close is not None and not isfinite(self.previous_close):
+            raise ValueError("futures daily previous close must be finite")
         if self.open_interest_change_contracts is not None and not isfinite(
             self.open_interest_change_contracts
         ):
