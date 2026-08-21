@@ -848,6 +848,30 @@ def test_empty_mapping_window_removes_suffix_and_records_empty_receipt() -> None
         assert (receipt.status, receipt.row_count) == ("empty", 0)
 
 
+def test_unchanged_mapping_window_does_not_mark_series_dirty() -> None:
+    product, contract, series = _catalog()
+    day = date(2026, 8, 20)
+    mapping = FuturesRollMapping(
+        series.symbol, series.provider_symbol, day,
+        contract.symbol, contract.provider_symbol,
+    )
+    with SQLiteMarketDataStore(":memory:") as store:
+        store.upsert_futures_catalog(
+            "tushare-futures", [product], [contract], [series]
+        )
+        store.replace_futures_roll_mapping_window(
+            "tushare-futures", "SHFE", series.symbol, day, day, [mapping]
+        )
+        store._connection.execute("DELETE FROM futures_continuous_dirty_series")
+        store._connection.commit()
+
+        store.replace_futures_roll_mapping_window(
+            "tushare-futures", "SHFE", series.symbol, day, day, [mapping]
+        )
+
+        assert store.get_futures_continuous_dirty_state(series.symbol) is None
+
+
 def test_large_mapping_window_is_written_in_atomic_bounded_batches() -> None:
     product, contract, series = _catalog()
     first_day = date(2018, 1, 1)
