@@ -1412,7 +1412,14 @@ export function ChartCanvas({
 
   const showRangeMeasurement = () => {
     if (!rangeSelection) return
-    setMeasurement(createRangeMeasurement(rangeSelection.first, rangeSelection.last, rangeSelection.count))
+    const rollEventCount = renderedBarListRef.current.filter(item => (
+      item.trade_date >= rangeSelection.first.trade_date
+      && item.trade_date <= rangeSelection.last.trade_date
+      && item.roll_event
+    )).length
+    setMeasurement(createRangeMeasurement(
+      rangeSelection.first, rangeSelection.last, rangeSelection.count, rollEventCount,
+    ))
     setRangeSelection(undefined)
     setSelectionBox(undefined)
     setOverlayRevision(value => value + 1)
@@ -2490,8 +2497,12 @@ function MeasurementOverlay({
   measurement: RangeMeasurement
   geometry: MeasurementGeometry
 }) {
-  const tone = measurement.changePercent >= 0 ? 'rise' : 'fall'
-  const strokeTone = measurement.changePercent >= 0 ? 'measurement-rise' : 'measurement-fall'
+  const tone = measurement.comparable
+    ? measurement.changePercent >= 0 ? 'rise' : 'fall'
+    : undefined
+  const strokeTone = measurement.comparable
+    ? measurement.changePercent >= 0 ? 'measurement-rise' : 'measurement-fall'
+    : 'measurement-roll'
   const horizontalLabelX = (geometry.startX + geometry.endX) / 2
   const horizontalLabelY = clamp(geometry.startY - 7, 12, geometry.height - 6)
   return (
@@ -2510,7 +2521,9 @@ function MeasurementOverlay({
       <div className="chart-measurement-readout" style={{ left: geometry.labelLeft, top: geometry.labelTop }}>
         <span><small>{measurement.from}</small><b>开 {formatPrice(measurement.open)}</b></span>
         <span><small>{measurement.to}</small><b>收 {formatPrice(measurement.close)}</b></span>
-        <strong className={tone}>涨跌 {formatChangePercent(measurement.changePercent)}</strong>
+        {measurement.comparable
+          ? <strong className={tone}>涨跌 {formatChangePercent(measurement.changePercent)}</strong>
+          : <strong className="roll-warning">跨 {measurement.rollEventCount} 次换月 · 区间涨跌不可比</strong>}
       </div>
     </div>
   )
@@ -2533,6 +2546,7 @@ function ChartReadout({ value, instrumentName, futures }: {
       {value.bar_state === 'intraday'
         ? <span className={value.stale ? 'live-badge stale' : 'live-badge'}>{value.stale ? '盘中延迟' : '盘中'}</span>
         : futures && <span className="final-badge">正式</span>}
+      {futures && value.roll_event && <span className="roll-badge">换月</span>}
       <span>{value.trade_date}</span>
       <span>开 <b>{formatPrice(value.open)}</b></span>
       <span>高 <b>{formatPrice(value.high)}</b></span>

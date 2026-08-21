@@ -926,6 +926,12 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .chart-readout .live-badge { color: #71c69a; background: #173226; padding: 1px 4px; border-radius: 2px; }
 .chart-readout .live-badge.stale { color: #e1b66d; background: #342916; }
 .chart-readout .final-badge { color: #86a4c4; background: #182532; padding: 1px 4px; border-radius: 2px; }
+.chart-readout .roll-badge { color: #d6aa61; background: #302718; padding: 1px 4px; border-radius: 2px; }
+.measurement-triangle.measurement-roll { stroke: #c4934d; }
+.chart-measurement-readout .roll-warning { color: #d6aa61; }
+.chart-readout .roll-badge { color: #d6aa61; background: #302718; padding: 1px 4px; border-radius: 2px; }
+.measurement-triangle.measurement-roll { stroke: #c4934d; }
+.chart-measurement-readout .roll-warning { color: #d6aa61; }
 .chart-readout .rise { color: #ef5350; }
 .chart-readout .fall { color: #26a269; }
 .chart-readout .ma5-value { color: #e5b85c; }

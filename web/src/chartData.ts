@@ -32,6 +32,8 @@ export type RangeMeasurement = {
   open: number
   close: number
   changePercent: number
+  rollEventCount: number
+  comparable: boolean
   elapsedDays: number
   kLineCount: number
 }
@@ -161,6 +163,7 @@ export function aggregateBars(bars: DailyBar[], bucket: number): RenderBar[] {
       low: Math.min(...group.map(item => item.low)),
       close: last.close,
       volume: group.reduce((sum, item) => sum + item.volume, 0),
+      ...(group.some(item => item.roll_event) ? { roll_event: true } : {}),
       source: first.source === last.source ? first.source : 'mixed',
     })
   }
@@ -253,6 +256,7 @@ export function detectPriceGaps(bars: DailyBar[]): PriceGap[] {
   for (let index = 1; index < bars.length; index += 1) {
     const previous = bars[index - 1]
     const current = bars[index]
+    if (current.roll_event) continue
     let gap: PriceGap | undefined
     if (current.low > previous.high) {
       gap = { direction: 'up', previousDate: previous.trade_date, startDate: current.trade_date, lower: previous.high, upper: current.low }
@@ -262,6 +266,7 @@ export function detectPriceGaps(bars: DailyBar[]): PriceGap[] {
     if (!gap) continue
     for (let fillIndex = index + 1; fillIndex < bars.length; fillIndex += 1) {
       const candidate = bars[fillIndex]
+      if (candidate.roll_event) break
       const filled = gap.direction === 'up' ? candidate.low <= gap.lower : candidate.high >= gap.upper
       if (filled) {
         gap.fillDate = candidate.trade_date
@@ -281,6 +286,7 @@ export function createRangeMeasurement(
   first: DailyBar & { period_start?: string },
   last: DailyBar,
   kLineCount: number,
+  rollEventCount = 0,
 ): RangeMeasurement {
   const from = first.period_start ?? first.trade_date
   return {
@@ -291,6 +297,8 @@ export function createRangeMeasurement(
     open: first.open,
     close: last.close,
     changePercent: calculateChangePercent(last.close, first.open) ?? 0,
+    rollEventCount,
+    comparable: rollEventCount === 0,
     elapsedDays: calendarDaysBetween(from, last.trade_date),
     kLineCount,
   }

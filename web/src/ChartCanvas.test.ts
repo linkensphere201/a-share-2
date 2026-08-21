@@ -256,6 +256,20 @@ describe('market annotations', () => {
     ])[0].fillDate).toBeUndefined()
   })
 
+  it('does not classify continuous roll substitutions as ordinary gaps or fills', () => {
+    const before = bar('2026-08-01', 10, 10, 8, 9)
+    const roll = { ...bar('2026-08-02', 20, 21, 19, 20), roll_event: true }
+    expect(detectPriceGaps([before, roll])).toEqual([])
+
+    const openGap = detectPriceGaps([
+      before,
+      bar('2026-08-02', 12, 13, 12, 12.5),
+      roll,
+      bar('2026-08-04', 9, 10, 8, 9),
+    ])[0]
+    expect(openGap.fillDate).toBeUndefined()
+  })
+
   it('limits the overlay to the latest four unfilled gaps', () => {
     const gaps: PriceGap[] = Array.from({ length: 6 }, (_, index) => ({
       direction: 'up' as const,
@@ -318,8 +332,22 @@ describe('selected range measurement', () => {
       open: 10,
       close: 12,
       changePercent: 20,
+      rollEventCount: 0,
+      comparable: true,
       elapsedDays: 30,
       kLineCount: 23,
+    })
+  })
+
+  it('marks a range crossing continuous-contract rolls as non-comparable', () => {
+    const first: DailyBar = {
+      trade_date: '2026-07-01', open: 10, high: 11, low: 9, close: 10.5, volume: 100, source: 'test',
+    }
+    const last: DailyBar = {
+      trade_date: '2026-07-31', open: 12, high: 13, low: 11, close: 12.5, volume: 100, source: 'test',
+    }
+    expect(createRangeMeasurement(first, last, 23, 1)).toMatchObject({
+      rollEventCount: 1, comparable: false,
     })
   })
 })

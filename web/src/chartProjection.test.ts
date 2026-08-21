@@ -43,6 +43,8 @@ describe('chart projections', () => {
       open: 10,
       close: 12,
       changePercent: 20,
+      rollEventCount: 0,
+      comparable: true,
       elapsedDays: 2,
       kLineCount: 3,
     }, chart, candles, { clientWidth: 400, clientHeight: 200 } as HTMLDivElement)
