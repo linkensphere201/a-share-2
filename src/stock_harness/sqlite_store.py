@@ -1722,6 +1722,226 @@ class SQLiteMarketDataStore:
             for row in rows
         ]
 
+    def audit_futures_integrity(self) -> dict[str, object]:
+        """Return aggregate futures integrity evidence without scanning rows in Python."""
+        self._require_futures_storage()
+        with self._lock:
+            product_rows = self._connection.execute(
+                """
+                SELECT product.exchange, product.product_code,
+                       count(DISTINCT contract.instrument_id) AS contracts,
+                       count(DISTINCT CASE WHEN bar.trading_day IS NOT NULL
+                                          THEN contract.instrument_id END) AS covered_contracts,
+                       count(bar.trading_day) AS daily_rows,
+                       min(bar.trading_day), max(bar.trading_day),
+                       count(bar.trading_day) FILTER (WHERE bar.settlement IS NULL),
+                       count(bar.trading_day) FILTER (
+                           WHERE bar.open_interest_contracts IS NULL
+                       ),
+                       count(bar.trading_day) FILTER (WHERE bar.volume_contracts = 0),
+                       count(bar.trading_day) FILTER (
+                           WHERE bar.volume_contracts < 0
+                              OR bar.open < 0 OR bar.high < 0 OR bar.low < 0 OR bar.close < 0
+                              OR bar.high < max(bar.open, bar.close, bar.low)
+                              OR bar.low > min(bar.open, bar.close, bar.high)
+                       ),
+                       count(DISTINCT contract.instrument_id) FILTER (
+                           WHERE contract.trading_unit != product.trading_unit
+                              OR contract.quote_unit != product.quote_unit
+                              OR contract.multiplier IS NOT product.multiplier
+                              OR contract.per_unit IS NOT product.per_unit
+                       )
+                FROM futures_products AS product
+                JOIN futures_contracts AS contract
+                  ON contract.product_instrument_id = product.instrument_id
+                LEFT JOIN futures_daily_bars AS bar
+                  ON bar.instrument_id = contract.instrument_id
+                GROUP BY product.exchange, product.product_code
+                ORDER BY product.exchange, product.product_code
+                """
+            ).fetchall()
+            missing_rows = self._connection.execute(
+                """
+                SELECT product.exchange, product.product_code, count(*)
+                FROM futures_sync_states AS state
+                JOIN instruments AS instrument ON instrument.symbol = state.identity
+                JOIN futures_contracts AS contract
+                  ON contract.instrument_id = instrument.instrument_id
+                JOIN futures_products AS product
+                  ON product.instrument_id = contract.product_instrument_id
+                JOIN futures_exchange_calendar AS calendar
+                  ON calendar.source_id = state.source_id
+                 AND calendar.exchange = product.exchange
+                 AND calendar.is_open = 1
+                 AND calendar.calendar_date BETWEEN max(state.covered_from, contract.listed_on)
+                                                AND min(state.covered_through, contract.last_trading_date)
+                LEFT JOIN futures_daily_bars AS bar
+                  ON bar.instrument_id = contract.instrument_id
+                 AND bar.trading_day = calendar.calendar_date
+                WHERE state.dataset = 'daily' AND bar.trading_day IS NULL
+                GROUP BY product.exchange, product.product_code
+                """
+            ).fetchall()
+            duplicate_rows = int(self._connection.execute(
+                """
+                SELECT count(*) FROM (
+                    SELECT instrument_id, trading_day
+                    FROM futures_daily_bars
+                    GROUP BY instrument_id, trading_day HAVING count(*) > 1
+                )
+                """
+            ).fetchone()[0])
+            continuous = self._connection.execute(
+                """
+                SELECT count(*),
+                       count(*) FILTER (WHERE EXISTS (
+                           SELECT 1 FROM futures_roll_mappings AS mapping
+                           WHERE mapping.series_instrument_id = series.instrument_id
+                       )),
+                       count(*) FILTER (WHERE EXISTS (
+                           SELECT 1 FROM futures_daily_bars AS bar
+                           WHERE bar.instrument_id = series.instrument_id
+                       )),
+                       (SELECT count(*) FROM futures_roll_mappings),
+                       count(*) FILTER (WHERE EXISTS (
+                           SELECT 1 FROM futures_continuous_dirty_series AS dirty
+                           WHERE dirty.series_instrument_id = series.instrument_id
+                       )),
+                       count(*) FILTER (WHERE EXISTS (
+                           SELECT 1
+                           FROM futures_roll_mappings AS mapping
+                           JOIN futures_contracts AS contract
+                             ON contract.instrument_id = mapping.contract_instrument_id
+                           WHERE mapping.series_instrument_id = series.instrument_id
+                             AND (mapping.effective_from < contract.listed_on
+                               OR mapping.effective_from > contract.last_trading_date)
+                       )),
+                       count(*) FILTER (WHERE EXISTS (
+                           SELECT 1 FROM futures_daily_bars AS bar
+                           WHERE bar.instrument_id = series.instrument_id
+                             AND bar.mapped_contract_instrument_id IS NULL
+                       )),
+                       (SELECT count(*)
+                        FROM futures_daily_bars AS bar
+                        JOIN futures_continuous_series AS selected
+                          ON selected.instrument_id = bar.instrument_id
+                        WHERE bar.roll_event = 1)
+                FROM futures_continuous_series AS series
+                """
+            ).fetchone()
+            latest_mapping = self._connection.execute(
+                """
+                SELECT series_symbol.exchange, count(*)
+                FROM (
+                    SELECT series.instrument_id, product.exchange,
+                           max(mapping.effective_from) AS mapping_day,
+                           (SELECT max(calendar.calendar_date)
+                            FROM futures_exchange_calendar AS calendar
+                            WHERE calendar.exchange = product.exchange
+                              AND calendar.is_open = 1) AS latest_open_day
+                    FROM futures_continuous_series AS series
+                    JOIN futures_products AS product
+                      ON product.instrument_id = series.product_instrument_id
+                    LEFT JOIN futures_roll_mappings AS mapping
+                      ON mapping.series_instrument_id = series.instrument_id
+                    GROUP BY series.instrument_id
+                ) AS series_symbol
+                WHERE mapping_day IS NOT NULL AND mapping_day < latest_open_day
+                GROUP BY series_symbol.exchange
+                """
+            ).fetchall()
+            roll_jump = self._connection.execute(
+                """
+                WITH ordered AS (
+                    SELECT bar.instrument_id, bar.trading_day, bar.close, bar.roll_event,
+                           lag(bar.close) OVER (
+                               PARTITION BY bar.instrument_id ORDER BY bar.trading_day
+                           ) AS prior_close
+                    FROM futures_daily_bars AS bar
+                    JOIN futures_continuous_series AS series
+                      ON series.instrument_id = bar.instrument_id
+                )
+                SELECT count(*) FILTER (WHERE roll_event = 1),
+                       max(CASE WHEN roll_event = 1 AND prior_close > 0
+                                THEN abs(close / prior_close - 1.0) END)
+                FROM ordered
+                """
+            ).fetchone()
+            receipt_rows = self._connection.execute(
+                """
+                SELECT status, count(*) FROM futures_update_receipts
+                GROUP BY status ORDER BY status
+                """
+            ).fetchall()
+        missing_by_product = {
+            (str(row[0]), str(row[1])): int(row[2]) for row in missing_rows
+        }
+        products = [
+            {
+                "exchange": str(row[0]),
+                "product_code": str(row[1]),
+                "contracts": int(row[2]),
+                "contracts_with_rows": int(row[3]),
+                "contracts_without_rows": int(row[2]) - int(row[3]),
+                "daily_rows": int(row[4]),
+                "first_trading_day": _date_from_key(int(row[5])) if row[5] else None,
+                "last_trading_day": _date_from_key(int(row[6])) if row[6] else None,
+                "missing_settlement_rows": int(row[7]),
+                "missing_open_interest_rows": int(row[8]),
+                "zero_volume_rows": int(row[9]),
+                "invalid_bar_rows": int(row[10]),
+                "unit_mismatch_contracts": int(row[11]),
+                "missing_covered_open_days": missing_by_product.get(
+                    (str(row[0]), str(row[1])), 0
+                ),
+            }
+            for row in product_rows
+        ]
+        structural_errors = (
+            duplicate_rows
+            + sum(
+                item["invalid_bar_rows"]
+                + item["unit_mismatch_contracts"]
+                + item["missing_covered_open_days"]
+                for item in products
+            )
+            + int(continuous[5] or 0)
+            + int(continuous[6] or 0)
+        )
+        return {
+            "schema_version": "futures-integrity-v1",
+            "summary": {
+                "products": len(products),
+                "contracts": sum(item["contracts"] for item in products),
+                "contracts_with_rows": sum(item["contracts_with_rows"] for item in products),
+                "daily_rows": sum(item["daily_rows"] for item in products),
+                "duplicate_daily_keys": duplicate_rows,
+                "structural_errors": structural_errors,
+            },
+            "products": products,
+            "continuous": {
+                "series": int(continuous[0] or 0),
+                "series_with_mappings": int(continuous[1] or 0),
+                "series_without_mappings": int(continuous[0] or 0) - int(continuous[1] or 0),
+                "series_with_rows": int(continuous[2] or 0),
+                "mapping_rows": int(continuous[3] or 0),
+                "dirty_series": int(continuous[4] or 0),
+                "mapping_lifecycle_violations": int(continuous[5] or 0),
+                "continuous_series_with_unmapped_rows": int(continuous[6] or 0),
+                "roll_event_rows": int(continuous[7] or 0),
+                "stale_mapping_series_by_exchange": {
+                    str(row[0]): int(row[1]) for row in latest_mapping
+                },
+                "roll_jumps": int(roll_jump[0] or 0),
+                "maximum_absolute_roll_return": (
+                    float(roll_jump[1]) if roll_jump[1] is not None else None
+                ),
+            },
+            "receipt_status_counts": {
+                str(row[0]): int(row[1]) for row in receipt_rows
+            },
+        }
+
     def persist_futures_continuous_build(
         self,
         source: str,

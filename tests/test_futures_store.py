@@ -340,6 +340,43 @@ def test_canonical_daily_takes_over_without_deleting_provisional_audit() -> None
         assert audit[0]["close"] == 104
 
 
+def test_futures_integrity_audit_separates_backlog_from_structural_errors() -> None:
+    product, contract, series = _catalog()
+    day = date(2026, 8, 20)
+    with SQLiteMarketDataStore(":memory:") as store:
+        store.upsert_futures_catalog(
+            "tushare-futures", [product], [contract], [series]
+        )
+        store.upsert_futures_calendar("tushare-futures", [
+            FuturesCalendarDay(FuturesExchange.SHFE, day, True, date(2026, 8, 19))
+        ])
+        empty = store.audit_futures_integrity()
+        assert empty["summary"]["contracts_with_rows"] == 0
+        assert empty["products"][0]["contracts_without_rows"] == 1
+        assert empty["summary"]["structural_errors"] == 0
+
+        store.upsert_futures_daily_bars("tushare-futures", [_bar(day)])
+        store.checkpoint_futures_sync(
+            "tushare-futures", "daily", FuturesExchange.SHFE.value,
+            contract.symbol, day, day, 1,
+        )
+        store.upsert_futures_roll_mappings("tushare-futures", [
+            FuturesRollMapping(
+                series.symbol, series.provider_symbol, day,
+                contract.symbol, contract.provider_symbol,
+            )
+        ])
+        report = store.audit_futures_integrity()
+    assert report["summary"]["contracts_with_rows"] == 1
+    assert report["summary"]["daily_rows"] == 1
+    assert report["products"][0]["missing_covered_open_days"] == 0
+    assert report["products"][0]["invalid_bar_rows"] == 0
+    assert report["products"][0]["unit_mismatch_contracts"] == 0
+    assert report["continuous"]["series_with_mappings"] == 1
+    assert report["continuous"]["series_without_mappings"] == 0
+    assert report["summary"]["structural_errors"] == 0
+
+
 def test_continuous_fused_read_projects_the_mapped_contract_provisional_bar() -> None:
     product, contract, series = _catalog()
     prior_day = date(2026, 8, 19)

@@ -130,6 +130,13 @@ def main() -> None:
         "--output", type=Path,
         default=Path("data/reports/futures-provisional-takeover.json"),
     )
+    futures_audit = subparsers.add_parser(
+        "audit-futures-store",
+        help="Write aggregate futures coverage, integrity, unit, and roll evidence",
+    )
+    futures_audit.add_argument(
+        "--output", type=Path, default=Path("data/reports/futures-integrity.json")
+    )
 
     backfill = subparsers.add_parser("backfill-stocks", help="Resume full-market stock daily backfill")
     backfill.add_argument("--years", type=int, default=30)
@@ -405,6 +412,21 @@ def main() -> None:
             f"futures_takeover_audit output={args.output} "
             f"start={args.start_date} end={args.end_date} rows={len(report.results)} "
             + " ".join(f"{key}={value}" for key, value in counts.items())
+        )
+        return
+    if args.command == "audit-futures-store":
+        with _open_store(settings) as store:
+            report = store.audit_futures_integrity()
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(
+            json.dumps(report, ensure_ascii=False, indent=2, default=str) + "\n",
+            encoding="utf-8",
+        )
+        summary = report["summary"]
+        print(
+            f"futures_integrity output={args.output} products={summary['products']} "
+            f"contracts={summary['contracts']} rows={summary['daily_rows']} "
+            f"structural_errors={summary['structural_errors']}"
         )
         return
     if args.command == "validate-date":
