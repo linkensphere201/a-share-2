@@ -236,6 +236,7 @@ class FuturesDailyBar:
     provider_time: datetime | None = None
     mapped_contract_symbol: str | None = None
     roll_event: bool = False
+    stale: bool = False
 
     def validate(self) -> None:
         _require_symbol(self.symbol, "futures daily bar")

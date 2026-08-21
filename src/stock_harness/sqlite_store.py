@@ -181,6 +181,7 @@ def _futures_daily_row(
         ),
         mapped_contract_symbol=str(row[16]) if row[16] is not None else None,
         roll_event=bool(row[17]),
+        stale=bool(row[19]) if len(row) > 19 else False,
     )
 
 
@@ -1252,7 +1253,7 @@ class SQLiteMarketDataStore:
                        bar.open, bar.high, bar.low, bar.close, bar.previous_close,
                        NULL, bar.previous_settlement, bar.volume_contracts,
                        NULL, bar.open_interest_contracts, NULL, NULL,
-                       source.code, NULL, 0, bar.provider_time
+                       source.code, NULL, 0, bar.provider_time, bar.stale
                 FROM futures_provisional_daily_bars AS bar
                 JOIN instruments AS instrument USING (instrument_id)
                 JOIN sources AS source USING (source_id)

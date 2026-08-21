@@ -9,6 +9,7 @@ export function buildWorkspaceContext(
   now = new Date(),
 ) {
   const chartSymbols = new Set<string>()
+  const chartInstruments = new Map<string, Instrument>()
   const windows = group.windows.map(window => {
     const base = {
       id: window.id,
@@ -20,6 +21,7 @@ export function buildWorkspaceContext(
     }
     if (window.type === 'chart') {
       chartSymbols.add(window.instrument.symbol)
+      chartInstruments.set(window.instrument.symbol, window.instrument)
       return {
         ...base,
         instrument: instrumentReference(window.instrument),
@@ -58,7 +60,7 @@ export function buildWorkspaceContext(
     })),
     drawings_by_symbol: Object.fromEntries([...chartSymbols].map(symbol => [
       symbol,
-      loadSymbolDrawings(symbol).map(drawing => ({
+      loadSymbolDrawings(drawingTarget(chartInstruments.get(symbol), symbol)).map(drawing => ({
         id: drawing.id,
         kind: drawing.kind,
         symbol: drawing.symbol,
@@ -87,5 +89,26 @@ export async function publishWorkspaceContext(
 }
 
 function instrumentReference(instrument: Instrument) {
-  return { symbol: instrument.symbol, name: instrument.name, kind: instrument.kind }
+  return {
+    symbol: instrument.symbol,
+    name: instrument.name,
+    kind: instrument.kind,
+    exchange: instrument.exchange,
+    product_code: instrument.product_code,
+    lifecycle_status: instrument.lifecycle_status,
+    contract_month: instrument.contract_month,
+    series_kind: instrument.series_kind,
+    series_variant: instrument.series_variant,
+    price_basis: instrument.price_basis,
+    rule_version: instrument.rule_version,
+  }
+}
+
+function drawingTarget(instrument: Instrument | undefined, symbol: string) {
+  return instrument ? {
+    symbol,
+    instrumentKind: instrument.kind,
+    priceBasis: instrument.price_basis,
+    ruleVersion: instrument.rule_version,
+  } : symbol
 }

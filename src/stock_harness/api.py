@@ -888,6 +888,7 @@ def create_app(
                             "intraday"
                             if row.state is FuturesBarState.PROVISIONAL else "final"
                         ),
+                        "stale": row.stale,
                         "provider_time": (
                             row.provider_time.isoformat() if row.provider_time else None
                         ),

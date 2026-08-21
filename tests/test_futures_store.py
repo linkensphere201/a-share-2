@@ -448,6 +448,10 @@ def test_daily_bars_api_serves_exact_futures_ohlcv_and_evidence() -> None:
         store.upsert_futures_catalog(
             "tushare-futures", [product], [contract], [series]
         )
+        store.upsert_futures_roll_mappings("tushare-futures", [FuturesRollMapping(
+            series.symbol, series.provider_symbol, current_day,
+            contract.symbol, contract.provider_symbol,
+        )])
         store.upsert_futures_daily_bars("tushare-futures", [
             _bar(prior_day),
             replace(
@@ -468,6 +472,30 @@ def test_daily_bars_api_serves_exact_futures_ohlcv_and_evidence() -> None:
             real = client.get(f"/api/instruments/{contract.symbol}/daily-bars")
             continuous = client.get(f"/api/instruments/{series.symbol}/daily-bars")
             detail = client.get(f"/api/instruments/{series.symbol}")
+            published = client.post("/api/workspace-context", json={
+                "schema_version": "1.0",
+                "published_at": "2026-08-20T14:30:00+08:00",
+                "active_group_id": "futures-group",
+                "active_group_name": "Futures",
+                "focused_window_id": "chart-futures",
+                "referenced_symbols": [series.symbol],
+                "windows": [{
+                    "id": "chart-futures", "type": "chart", "title": "Copper",
+                    "mode": "detached", "focused": True, "maximized": False,
+                    "instrument": {
+                        "symbol": series.symbol, "name": series.display_name,
+                        "kind": "futures-continuous", "exchange": "SHFE",
+                        "price_basis": "raw", "rule_version": series.rule_version,
+                    },
+                    "chart": {
+                        "range": "3Y", "coordinate_mode": "normal",
+                        "visible_start": None, "visible_end": None,
+                        "volume_visible": True, "indicator": "macd",
+                    },
+                }],
+                "attachments": [], "drawings_by_symbol": {},
+            })
+            workspace = client.get("/api/workspace-context")
 
         assert real.status_code == continuous.status_code == detail.status_code == 200
         real_items = real.json()["items"]
@@ -475,10 +503,21 @@ def test_daily_bars_api_serves_exact_futures_ohlcv_and_evidence() -> None:
         assert real_items[0]["settlement"] == 101
         assert real_items[0]["open_interest_change"] == 12
         assert real_items[1]["provider_time"] == observed.isoformat()
+        assert real_items[1]["stale"] is False
         continuous_item = continuous.json()["items"][0]
         assert continuous.json()["symbol"] == series.symbol
         assert continuous_item["mapped_contract_symbol"] == contract.symbol
         assert continuous_item["volume"] == 1234
+        assert published.status_code == 202
+        workspace_chart = workspace.json()["windows"][0]
+        assert workspace_chart["instrument"]["symbol"] == series.symbol
+        assert workspace_chart["instrument"]["price_basis"] == "raw"
+        latest = workspace_chart["latest_data_state"]
+        assert latest["effective"]["bar_state"] == "provisional"
+        assert latest["effective"]["mapped_contract_symbol"] == contract.symbol
+        assert latest["effective"]["provider_time"] == observed.isoformat()
+        assert latest["effective"]["stale"] is False
+        assert latest["latest_final"]["trade_date"] == prior_day.isoformat()
 
 
 def test_custom_group_preserves_ordered_mixed_futures_members_and_tags() -> None:

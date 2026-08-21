@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from threading import Lock
 from typing import Annotated, Literal
 
@@ -20,6 +20,14 @@ class WorkspaceInstrumentInput(BaseModel):
     symbol: str = Field(min_length=1, max_length=200)
     name: str = Field(min_length=1, max_length=200)
     kind: str = Field(min_length=1, max_length=40)
+    exchange: str | None = Field(default=None, max_length=20)
+    product_code: str | None = Field(default=None, max_length=40)
+    lifecycle_status: str | None = Field(default=None, max_length=40)
+    contract_month: str | None = Field(default=None, max_length=20)
+    series_kind: str | None = Field(default=None, max_length=40)
+    series_variant: str | None = Field(default=None, max_length=80)
+    price_basis: str | None = Field(default=None, max_length=40)
+    rule_version: str | None = Field(default=None, max_length=100)
 
 
 class WorkspaceChartViewInput(BaseModel):
@@ -143,7 +151,22 @@ class WorkspaceContextService:
             instrument = window.get("instrument")
             if not isinstance(instrument, dict):
                 continue
-            symbol = str(instrument.get("symbol", "")).upper()
+            requested_symbol = str(instrument.get("symbol", ""))
+            summary = store.get_instrument_summary(requested_symbol) or {}
+            symbol = str(summary.get("symbol") or requested_symbol.upper())
+            if str(summary.get("kind", "")).startswith("futures-"):
+                instrument.update({
+                    key: summary.get(key)
+                    for key in (
+                        "symbol", "name", "kind", "exchange", "product_code",
+                        "lifecycle_status", "contract_month", "series_kind",
+                        "series_variant", "price_basis", "rule_version",
+                    )
+                })
+                window["latest_data_state"] = self._futures_latest_state(
+                    store, symbol
+                )
+                continue
             final_date = store.get_latest_daily_bar_date(symbol)
             final = None
             if final_date is not None:
@@ -180,3 +203,50 @@ class WorkspaceContextService:
             }
         snapshot["latest_state_observed_at"] = datetime.now(UTC).isoformat()
         return snapshot
+
+    def _futures_latest_state(
+        self, store: SQLiteMarketDataStore, symbol: str
+    ) -> dict[str, object]:
+        final_date = store.get_latest_daily_bar_date(symbol)
+        today = date.today()
+        start_date = final_date or (today - timedelta(days=10))
+        end_date = max(today, start_date)
+        rows = store.list_fused_futures_daily_bars(symbol, start_date, end_date)
+        final = next((item for item in reversed(rows) if item.state.value == "final"), None)
+        provisional = next(
+            (item for item in reversed(rows) if item.state.value == "provisional"),
+            None,
+        )
+
+        def payload(row) -> dict[str, object] | None:
+            if row is None:
+                return None
+            return {
+                "trade_date": row.trading_day.isoformat(),
+                "close": row.close,
+                "volume": row.volume_contracts,
+                "amount": row.amount,
+                "settlement": row.settlement,
+                "previous_settlement": row.previous_settlement,
+                "open_interest": row.open_interest_contracts,
+                "open_interest_change": row.open_interest_change_contracts,
+                "mapped_contract_symbol": row.mapped_contract_symbol,
+                "source": row.source,
+                "bar_state": row.state.value,
+                "stale": row.stale,
+                "provider_time": (
+                    row.provider_time.isoformat() if row.provider_time else None
+                ),
+            }
+
+        final_payload = payload(final)
+        provisional_payload = payload(provisional)
+        return {
+            "effective": provisional_payload or final_payload,
+            "latest_final": final_payload,
+            "provisional": provisional_payload,
+            "precedence": (
+                "provisional_after_latest_final"
+                if provisional_payload else "latest_final"
+            ),
+        }

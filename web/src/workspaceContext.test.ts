@@ -72,4 +72,47 @@ describe('active workspace context', () => {
     }))
     expect(JSON.parse(fetchMock.mock.calls[0][1].body).active_group_id).toBe(group.id)
   })
+
+  it('publishes exact continuous futures identity and identity-owned drawings', () => {
+    const group = createDefaultWorkspace().groups[0]
+    const chart = group.windows.find(window => window.type === 'chart')
+    if (!chart || chart.type !== 'chart') throw new Error('expected chart')
+    chart.instrument = {
+      symbol: 'FUTCONT:SHFE:CU:MAIN:raw',
+      name: 'Copper main',
+      kind: 'futures-continuous',
+      exchange: 'SHFE',
+      product_code: 'CU',
+      series_kind: 'main',
+      series_variant: 'MAIN',
+      price_basis: 'raw',
+      rule_version: 'mapping-v1',
+      rows: 20,
+    }
+    saveTrendLine(createTrendLine({
+      symbol: chart.instrument.symbol,
+      instrumentKind: chart.instrument.kind,
+      priceBasis: chart.instrument.price_basis,
+      ruleVersion: chart.instrument.rule_version,
+    }, [
+      { date: '2026-07-01', price: 100, snap: 'low' },
+      { date: '2026-08-01', price: 110, snap: 'high' },
+    ], 'normal', new Date('2026-08-06T00:00:00Z'), () => 'futures-line'))
+
+    const context = buildWorkspaceContext(group)
+    const publishedChart = context.windows.find(window => window.type === 'chart')
+
+    expect(publishedChart).toMatchObject({
+      instrument: {
+        symbol: chart.instrument.symbol,
+        kind: 'futures-continuous',
+        exchange: 'SHFE',
+        product_code: 'CU',
+        price_basis: 'raw',
+        rule_version: 'mapping-v1',
+      },
+    })
+    expect(context.referenced_symbols).toContain(chart.instrument.symbol)
+    expect(context.drawings_by_symbol[chart.instrument.symbol][0].id).toBe('futures-line')
+  })
 })
