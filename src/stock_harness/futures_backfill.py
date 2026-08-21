@@ -7,6 +7,7 @@ from datetime import date, timedelta
 from hashlib import sha256
 import json
 import logging
+import time
 from collections.abc import Sequence
 
 from stock_harness.futures_provider import TushareFuturesProvider
@@ -46,8 +47,15 @@ def run_futures_backfill(
     as_of = as_of or end_date
     errors: list[str] = []
     discovered = skipped = completed = changed = mappings_written = processed = 0
+    started = time.perf_counter()
+    selected_exchanges = tuple(dict.fromkeys(exchanges))
+    LOGGER.info(
+        "futures_backfill_started exchanges=%d start=%s end=%s max_contracts=%s",
+        len(selected_exchanges), start_date, end_date, max_contracts,
+    )
 
-    for exchange in tuple(dict.fromkeys(exchanges)):
+    for exchange in selected_exchanges:
+        exchange_started = time.perf_counter()
         try:
             catalog = provider.discover_exchange(exchange, as_of)
             store.upsert_futures_catalog(
@@ -67,6 +75,11 @@ def run_futures_backfill(
             continue
 
         discovered += len(catalog.contracts)
+        LOGGER.info(
+            "futures_backfill_exchange_catalog_ready exchange=%s products=%d contracts=%d series=%d calendar_rows=%d",
+            exchange.value, len(catalog.products), len(catalog.contracts),
+            len(catalog.continuous_series), len(calendar),
+        )
         for contract in catalog.contracts:
             desired_start = max(start_date, contract.listed_on)
             desired_end = min(end_date, contract.last_trading_date)
@@ -105,13 +118,17 @@ def run_futures_backfill(
                     completed += 1
                     changed += stats
                 except Exception as error:
-                    LOGGER.exception(
-                        "futures_backfill_contract_failed exchange=%s symbol=%s start=%s end=%s",
-                        exchange.value, contract.symbol, window_start, window_end,
-                    )
                     errors.append(
                         f"{contract.symbol} {window_start}..{window_end}: {error}"
                     )
+                    _log_bounded_failure(
+                        len(errors), "contract", exchange, contract.symbol, error
+                    )
+            if processed and processed % 100 == 0:
+                LOGGER.info(
+                    "futures_backfill_progress processed_contracts=%d completed_windows=%d changed_rows=%d errors=%d",
+                    processed, completed, changed, len(errors),
+                )
 
         for series in catalog.continuous_series:
             try:
@@ -124,14 +141,18 @@ def run_futures_backfill(
                 )
                 mappings_written += len(mappings)
             except Exception as error:
-                LOGGER.exception(
-                    "futures_backfill_mapping_failed exchange=%s symbol=%s",
-                    exchange.value, series.symbol,
-                )
                 errors.append(f"{series.symbol} mapping: {error}")
+                _log_bounded_failure(
+                    len(errors), "mapping", exchange, series.symbol, error
+                )
+        LOGGER.info(
+            "futures_backfill_exchange_completed exchange=%s processed_contracts=%d changed_rows=%d mappings=%d errors=%d duration_ms=%.3f",
+            exchange.value, processed, changed, mappings_written, len(errors),
+            (time.perf_counter() - exchange_started) * 1000,
+        )
 
-    return FuturesBackfillResult(
-        exchanges=len(tuple(dict.fromkeys(exchanges))),
+    result = FuturesBackfillResult(
+        exchanges=len(selected_exchanges),
         contracts_discovered=discovered,
         contracts_skipped=skipped,
         contract_windows_completed=completed,
@@ -139,6 +160,26 @@ def run_futures_backfill(
         mappings_written=mappings_written,
         errors=tuple(errors),
         coverage=tuple(store.list_futures_coverage()),
+    )
+    LOGGER.info(
+        "futures_backfill_completed exchanges=%d processed_contracts=%d completed_windows=%d changed_rows=%d mappings=%d errors=%d duration_ms=%.3f",
+        result.exchanges, processed, completed, changed, mappings_written, len(errors),
+        (time.perf_counter() - started) * 1000,
+    )
+    return result
+
+
+def _log_bounded_failure(
+    count: int,
+    operation: str,
+    exchange: FuturesExchange,
+    symbol: str,
+    error: Exception,
+) -> None:
+    log = LOGGER.warning if count <= 10 or count % 100 == 0 else LOGGER.debug
+    log(
+        "futures_backfill_item_failed operation=%s exchange=%s symbol=%s error_type=%s error_count=%d",
+        operation, exchange.value, symbol, type(error).__name__, count,
     )
 
 

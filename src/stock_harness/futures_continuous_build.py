@@ -47,9 +47,13 @@ def build_futures_continuous_series(
     ]
     if max_series is not None:
         candidates = candidates[:max_series]
+    LOGGER.info(
+        "futures_continuous_build_started series=%d start=%s end=%s force=%s",
+        len(candidates), start_date, end_date, force,
+    )
     completed = clean = unmapped = rows_written = rolls_written = warnings = 0
     errors: list[str] = []
-    for series in candidates:
+    for index, series in enumerate(candidates, start=1):
         existing = store.get_futures_continuous_build_status(series.symbol)
         dirty = store.get_futures_continuous_dirty_state(series.symbol)
         if not force and existing is not None and dirty is None:
@@ -87,9 +91,19 @@ def build_futures_continuous_series(
             rolls_written += int(result["rolls"])
             warnings += int(result["warnings"])
         except Exception as exc:
-            LOGGER.exception("futures_continuous_build_failed symbol=%s", series.symbol)
+            log = LOGGER.warning if len(errors) < 10 or (len(errors) + 1) % 50 == 0 else LOGGER.debug
+            log(
+                "futures_continuous_build_failed symbol=%s error_type=%s error_count=%d",
+                series.symbol, type(exc).__name__, len(errors) + 1,
+            )
             errors.append(f"{series.symbol}: {type(exc).__name__}: {exc}")
-    return FuturesContinuousBuildResult(
+        if index % 25 == 0 or index == len(candidates):
+            LOGGER.info(
+                "futures_continuous_build_progress processed=%d total=%d completed=%d clean=%d unmapped=%d rows=%d errors=%d",
+                index, len(candidates), completed, clean, unmapped, rows_written,
+                len(errors),
+            )
+    result = FuturesContinuousBuildResult(
         selected_series=len(candidates),
         completed_series=completed,
         skipped_clean_series=clean,
@@ -99,3 +113,11 @@ def build_futures_continuous_series(
         warning_count=warnings,
         errors=tuple(errors),
     )
+    LOGGER.info(
+        "futures_continuous_build_completed selected=%d completed=%d clean=%d unmapped=%d rows=%d rolls=%d warnings=%d errors=%d",
+        result.selected_series, result.completed_series,
+        result.skipped_clean_series, result.skipped_unmapped_series,
+        result.rows_written, result.roll_events_written,
+        result.warning_count, len(result.errors),
+    )
+    return result

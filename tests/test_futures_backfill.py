@@ -1,4 +1,5 @@
 from datetime import date
+import logging
 
 from stock_harness.futures_backfill import run_futures_backfill
 from stock_harness.futures_provider import FuturesCatalog
@@ -124,6 +125,20 @@ def test_failed_contract_window_does_not_advance_cursor_or_remove_history() -> N
         assert len(store.list_futures_daily_bars(
             contract.symbol, date(2026, 8, 18), date(2026, 8, 20)
         )) == 1
+
+
+def test_backfill_logs_bounded_structure_without_provider_error_text(caplog) -> None:
+    provider = _Provider(fail_daily=True)
+    with SQLiteMarketDataStore(":memory:") as store, caplog.at_level(logging.INFO):
+        run_futures_backfill(
+            provider, store, [FuturesExchange.SHFE],
+            date(2026, 8, 18), date(2026, 8, 20),
+        )
+    assert "futures_backfill_started" in caplog.text
+    assert "futures_backfill_item_failed" in caplog.text
+    assert "error_type=RuntimeError" in caplog.text
+    assert "daily unavailable" not in caplog.text
+    assert "futures_backfill_completed" in caplog.text
 
 
 def test_futures_increment_refreshes_correction_window_and_missing_tail() -> None:

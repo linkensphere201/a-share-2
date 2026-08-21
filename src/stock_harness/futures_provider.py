@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import time
+import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -27,6 +28,9 @@ from stock_harness.models import (
     canonical_futures_product_symbol,
 )
 from stock_harness.tushare_provider import TushareHttpClient
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 FUTURES_BASIC_FIELDS = (
@@ -295,9 +299,20 @@ class TushareFuturesProvider:
         attempts = self.settings.retries + 1
         for attempt in range(attempts):
             self._wait_for_rate_limit()
+            started = time.perf_counter()
             try:
-                return getattr(self._client, method_name)(**kwargs)
-            except Exception:
+                result = getattr(self._client, method_name)(**kwargs)
+                LOGGER.debug(
+                    "futures_provider_call_completed method=%s attempt=%d duration_ms=%.3f",
+                    method_name, attempt + 1, (time.perf_counter() - started) * 1000,
+                )
+                return result
+            except Exception as exc:
+                LOGGER.debug(
+                    "futures_provider_call_failed method=%s attempt=%d duration_ms=%.3f error_type=%s",
+                    method_name, attempt + 1, (time.perf_counter() - started) * 1000,
+                    type(exc).__name__,
+                )
                 if attempt + 1 >= attempts:
                     raise
                 time.sleep(
