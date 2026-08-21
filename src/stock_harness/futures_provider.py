@@ -53,6 +53,7 @@ class FuturesCatalog:
 
 @dataclass(frozen=True, slots=True)
 class FuturesDailyRowRejection:
+    symbol: str
     trading_day: date
     reason_code: str
 
@@ -81,6 +82,7 @@ class TushareFuturesProvider:
             else 0.0
         )
         self._last_request_at: float | None = None
+        self._mapping_day_cache: dict[date, tuple[Any, ...]] = {}
 
     def discover_exchange(
         self,
@@ -253,31 +255,10 @@ class TushareFuturesProvider:
                 trading_day = _required_date(row, "trade_date")
                 if not window_start <= trading_day <= window_end:
                     raise ValueError("fut_daily returned a date outside the requested window")
-                try:
-                    bar = FuturesDailyBar(
-                        symbol=contract.symbol,
-                        trading_day=trading_day,
-                        provider_date=trading_day,
-                        open=_number(row, "open"),
-                        high=_number(row, "high"),
-                        low=_number(row, "low"),
-                        close=_number(row, "close"),
-                        previous_close=_optional_float(row, "pre_close"),
-                        settlement=_optional_float(row, "settle"),
-                        previous_settlement=_optional_float(row, "pre_settle"),
-                        volume_contracts=int(round(_number(row, "vol"))),
-                        # Tushare documents futures amount in ten-thousand CNY.
-                        amount=_scaled_optional(row, "amount", 10_000),
-                        open_interest_contracts=_optional_float(row, "oi"),
-                        open_interest_change_contracts=_optional_float(row, "oi_chg"),
-                        delivery_settlement=_optional_float(row, "delv_settle"),
-                        source=self.code,
-                        state=FuturesBarState.FINAL,
-                    )
-                    bar.validate()
-                except (TypeError, ValueError):
+                bar = self._parse_daily_bar(contract, row, trading_day)
+                if bar is None:
                     rejections.append(FuturesDailyRowRejection(
-                        trading_day, "invalid-daily-bar"
+                        contract.symbol, trading_day, "invalid-daily-bar"
                     ))
                     continue
                 _insert_unique(bars, trading_day, bar, "fut_daily")
@@ -291,6 +272,82 @@ class TushareFuturesProvider:
         return FuturesDailyFetchResult(
             tuple(bars[key] for key in sorted(bars)), tuple(rejections)
         )
+
+    def fetch_exchange_daily(
+        self,
+        contracts: Sequence[FuturesContract],
+        exchange: FuturesExchange,
+        trading_day: date,
+    ) -> FuturesDailyFetchResult:
+        by_provider = {
+            item.provider_symbol.upper(): item
+            for item in contracts if item.exchange is exchange
+        }
+        rows = self._rows(self._call(
+            "fut_daily",
+            trade_date=_compact_date(trading_day),
+            exchange=exchange.value,
+            fields=FUTURES_DAILY_FIELDS,
+        ))
+        bars: dict[str, FuturesDailyBar] = {}
+        rejections: list[FuturesDailyRowRejection] = []
+        for row in rows:
+            provider_symbol = _text(row, "ts_code").upper()
+            contract = by_provider.get(provider_symbol)
+            if contract is None:
+                raise ValueError(
+                    f"fut_daily references unknown {exchange.value} contract"
+                )
+            row_day = _required_date(row, "trade_date")
+            if row_day != trading_day:
+                raise ValueError("fut_daily returned an unexpected batch date")
+            bar = self._parse_daily_bar(contract, row, row_day)
+            if bar is None:
+                rejections.append(FuturesDailyRowRejection(
+                    contract.symbol, row_day, "invalid-daily-bar"
+                ))
+                continue
+            _insert_unique(bars, contract.symbol, bar, "fut_daily exchange batch")
+        if rejections:
+            LOGGER.warning(
+                "futures_provider_exchange_daily_rows_rejected exchange=%s date=%s count=%d",
+                exchange.value, trading_day, len(rejections),
+            )
+        return FuturesDailyFetchResult(
+            tuple(bars[key] for key in sorted(bars)), tuple(rejections)
+        )
+
+    def _parse_daily_bar(
+        self,
+        contract: FuturesContract,
+        row: Any,
+        trading_day: date,
+    ) -> FuturesDailyBar | None:
+        try:
+            bar = FuturesDailyBar(
+                symbol=contract.symbol,
+                trading_day=trading_day,
+                provider_date=trading_day,
+                open=_number(row, "open"),
+                high=_number(row, "high"),
+                low=_number(row, "low"),
+                close=_number(row, "close"),
+                previous_close=_optional_float(row, "pre_close"),
+                settlement=_optional_float(row, "settle"),
+                previous_settlement=_optional_float(row, "pre_settle"),
+                volume_contracts=int(round(_number(row, "vol"))),
+                # Tushare documents futures amount in ten-thousand CNY.
+                amount=_scaled_optional(row, "amount", 10_000),
+                open_interest_contracts=_optional_float(row, "oi"),
+                open_interest_change_contracts=_optional_float(row, "oi_chg"),
+                delivery_settlement=_optional_float(row, "delv_settle"),
+                source=self.code,
+                state=FuturesBarState.FINAL,
+            )
+            bar.validate()
+            return bar
+        except (TypeError, ValueError):
+            return None
 
     def fetch_roll_mappings(
         self,
@@ -331,6 +388,49 @@ class TushareFuturesProvider:
                 )
                 mapping.validate()
                 _insert_unique(mappings, effective_from, mapping, "fut_mapping")
+        return tuple(mappings[key] for key in sorted(mappings))
+
+    def fetch_roll_mappings_for_dates(
+        self,
+        series: Sequence[FuturesContinuousSeries],
+        contracts: Sequence[FuturesContract],
+        trading_days: Sequence[date],
+    ) -> tuple[FuturesRollMapping, ...]:
+        by_series = {item.provider_symbol.upper(): item for item in series}
+        by_contract = {item.provider_symbol.upper(): item for item in contracts}
+        mappings: dict[tuple[str, date], FuturesRollMapping] = {}
+        for trading_day in sorted(set(trading_days)):
+            rows = self._mapping_day_cache.get(trading_day)
+            if rows is None:
+                rows = tuple(self._rows(self._call(
+                    "fut_mapping",
+                    trade_date=_compact_date(trading_day),
+                    fields="ts_code,trade_date,mapping_ts_code",
+                )))
+                self._mapping_day_cache[trading_day] = rows
+            for row in rows:
+                provider_series = _text(row, "ts_code").upper()
+                selected_series = by_series.get(provider_series)
+                if selected_series is None:
+                    continue
+                effective_from = _required_date(row, "trade_date")
+                if effective_from != trading_day:
+                    raise ValueError("fut_mapping returned an unexpected batch date")
+                mapped_provider = _text(row, "mapping_ts_code").upper()
+                contract = by_contract.get(mapped_provider)
+                if contract is None:
+                    raise ValueError(
+                        f"fut_mapping references unknown real contract: {mapped_provider}"
+                    )
+                mapping = FuturesRollMapping(
+                    selected_series.symbol, provider_series, effective_from,
+                    contract.symbol, mapped_provider,
+                )
+                mapping.validate()
+                _insert_unique(
+                    mappings, (selected_series.symbol, effective_from), mapping,
+                    "fut_mapping daily batch",
+                )
         return tuple(mappings[key] for key in sorted(mappings))
 
     def _call(self, method_name: str, **kwargs: object) -> Any:

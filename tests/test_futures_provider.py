@@ -51,7 +51,8 @@ class _Client:
 
     def fut_daily(self, **kwargs):
         return [{
-            "ts_code": kwargs["ts_code"], "trade_date": "20260820",
+            "ts_code": kwargs.get("ts_code", "CU2609.SHF"),
+            "trade_date": kwargs.get("trade_date", "20260820"),
             "pre_close": 99, "pre_settle": 100, "open": 101,
             "high": 104, "low": 98, "close": 103, "settle": 102,
             "change1": 3, "change2": 2, "vol": 12345.0,
@@ -61,7 +62,8 @@ class _Client:
 
     def fut_mapping(self, **kwargs):
         return [{
-            "ts_code": kwargs["ts_code"], "trade_date": "20260820",
+            "ts_code": kwargs.get("ts_code", "CU.SHF"),
+            "trade_date": kwargs.get("trade_date", "20260820"),
             "mapping_ts_code": "CU2609.SHF",
         }]
 
@@ -159,10 +161,26 @@ def test_rejects_only_invalid_daily_rows_without_losing_valid_history(caplog) ->
     assert [item.trading_day for item in result.rejections] == [
         date(2026, 8, 19), date(2026, 8, 18),
     ]
+    assert {item.symbol for item in result.rejections} == {contract.symbol}
     assert {item.reason_code for item in result.rejections} == {"invalid-daily-bar"}
     assert "futures_provider_daily_rows_rejected" in caplog.text
     assert "count=2" in caplog.text
     assert "empty field" not in caplog.text
+
+
+def test_fetches_one_exchange_daily_batch_with_canonical_contract_identity() -> None:
+    provider = TushareFuturesProvider(_settings(), _Client())
+    contract = provider.discover_exchange(
+        FuturesExchange.SHFE, date(2026, 8, 20)
+    ).contracts[0]
+
+    result = provider.fetch_exchange_daily(
+        [contract], FuturesExchange.SHFE, date(2026, 8, 20)
+    )
+
+    assert len(result.bars) == 1
+    assert result.bars[0].symbol == contract.symbol
+    assert result.rejections == ()
 
 
 def test_resolves_roll_mapping_to_known_canonical_real_contract() -> None:
@@ -175,6 +193,31 @@ def test_resolves_roll_mapping_to_known_canonical_real_contract() -> None:
     assert mapping.series_symbol == catalog.continuous_series[0].symbol
     assert mapping.contract_symbol == catalog.contracts[0].symbol
     assert mapping.effective_from == date(2026, 8, 20)
+
+
+def test_batches_mapping_dates_once_and_filters_to_selected_series() -> None:
+    class MappingBatchClient(_Client):
+        def __init__(self):
+            self.mapping_calls = []
+
+        def fut_mapping(self, **kwargs):
+            self.mapping_calls.append(kwargs)
+            return super().fut_mapping(**kwargs)
+
+    client = MappingBatchClient()
+    provider = TushareFuturesProvider(_settings(), client)
+    catalog = provider.discover_exchange(FuturesExchange.SHFE, date(2026, 8, 20))
+    first = provider.fetch_roll_mappings_for_dates(
+        catalog.continuous_series, catalog.contracts, [date(2026, 8, 20)]
+    )
+    second = provider.fetch_roll_mappings_for_dates(
+        catalog.continuous_series, catalog.contracts, [date(2026, 8, 20)]
+    )
+
+    assert first == second
+    assert len(first) == 1
+    assert len(client.mapping_calls) == 1
+    assert client.mapping_calls[0]["trade_date"] == "20260820"
 
 
 def test_rejects_mapping_to_an_undiscovered_contract() -> None:

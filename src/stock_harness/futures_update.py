@@ -13,8 +13,11 @@ from stock_harness.futures_backfill import (
     fetch_futures_daily_result,
     persist_futures_daily_batches,
 )
-from stock_harness.futures_provider import TushareFuturesProvider
-from stock_harness.models import FuturesExchange
+from stock_harness.futures_provider import (
+    FuturesDailyFetchResult,
+    TushareFuturesProvider,
+)
+from stock_harness.models import FuturesContract, FuturesExchange
 from stock_harness.sqlite_store import SQLiteMarketDataStore
 
 
@@ -30,6 +33,13 @@ class FuturesIncrementResult:
     mappings_written: int
     rejected_daily_rows: int
     errors: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _DailyPlan:
+    contract: FuturesContract
+    start_date: date
+    end_date: date
 
 
 def run_futures_increment(
@@ -90,6 +100,7 @@ def run_futures_increment(
             else open_days[0] if correction_window_trading_days > 0 else open_days[-1]
         )
 
+        plans: list[_DailyPlan] = []
         for contract in catalog.contracts:
             fetch_end = min(completed_through, contract.last_trading_date)
             if fetch_end < correction_start or fetch_end < contract.listed_on:
@@ -112,42 +123,72 @@ def run_futures_increment(
                 )
             if fetch_start > fetch_end:
                 continue
+            plans.append(_DailyPlan(contract, fetch_start, fetch_end))
+
+        batch_fetch = getattr(provider, "fetch_exchange_daily", None)
+        if batch_fetch is not None:
+            batch_result = _run_batched_daily_increment(
+                provider, store, exchange, catalog.contracts, plans,
+                open_days, errors,
+            )
+            updated += batch_result[0]
+            changed += batch_result[1]
+            rejected_daily_rows += batch_result[2]
+        else:
+            for plan in plans:
+                try:
+                    fetch = fetch_futures_daily_result(
+                        provider, plan.contract, plan.start_date, plan.end_date
+                    )
+                    changed += _persist_daily_plan(
+                        provider, store, exchange, plan, fetch
+                    )
+                    rejected_daily_rows += len(fetch.rejections)
+                    updated += 1
+                except Exception as error:
+                    errors.append(
+                        f"{plan.contract.symbol} final increment: {type(error).__name__}"
+                    )
+                    _log_bounded_failure(
+                        len(errors), "contract", exchange,
+                        plan.contract.symbol, error,
+                    )
+
+        mapping_batch = getattr(provider, "fetch_roll_mappings_for_dates", None)
+        mappings_by_series: dict[str, list] | None = None
+        if mapping_batch is not None:
             try:
-                fetch = fetch_futures_daily_result(
-                    provider, contract, fetch_start, fetch_end
+                batch_mappings = mapping_batch(
+                    catalog.continuous_series, catalog.contracts,
+                    [
+                        day for day in open_days
+                        if correction_start <= day <= completed_through
+                    ],
                 )
-                bars = fetch.bars
-                rejected_daily_rows += len(fetch.rejections)
-                changed += persist_futures_daily_batches(provider.code, store, bars)
-                store.checkpoint_futures_sync(
-                    provider.code, "daily", exchange.value, contract.symbol,
-                    fetch_start, fetch_end, len(bars),
-                )
-                store.record_futures_update_receipt(
-                    provider.code, "daily", contract.symbol, fetch_end,
-                    len(bars), futures_daily_digest(bars),
-                    (
-                        "partial" if fetch.rejections else
-                        "complete" if bars else "empty"
-                    ),
-                    (
-                        f"rejected_rows={len(fetch.rejections)}"
-                        if fetch.rejections else ""
-                    ),
-                )
-                updated += 1
+                mappings_by_series = {
+                    series.symbol: [] for series in catalog.continuous_series
+                }
+                for mapping in batch_mappings:
+                    mappings_by_series[mapping.series_symbol].append(mapping)
             except Exception as error:
                 errors.append(
-                    f"{contract.symbol} final increment: {type(error).__name__}"
+                    f"{exchange.value} mapping batch: {type(error).__name__}"
                 )
                 _log_bounded_failure(
-                    len(errors), "contract", exchange, contract.symbol, error
+                    len(errors), "mapping-batch", exchange,
+                    exchange.value, error,
                 )
+                mappings_by_series = None
 
         for series in catalog.continuous_series:
             try:
-                mappings = provider.fetch_roll_mappings(
-                    series, catalog.contracts, correction_start, completed_through
+                mappings = (
+                    tuple(mappings_by_series[series.symbol])
+                    if mappings_by_series is not None
+                    else provider.fetch_roll_mappings(
+                        series, catalog.contracts,
+                        correction_start, completed_through,
+                    )
                 )
                 store.replace_futures_roll_mapping_window(
                     provider.code, exchange.value, series.symbol,
@@ -175,6 +216,92 @@ def run_futures_increment(
         result.rejected_daily_rows, len(result.errors),
     )
     return result
+
+
+def _run_batched_daily_increment(
+    provider: TushareFuturesProvider,
+    store: SQLiteMarketDataStore,
+    exchange: FuturesExchange,
+    contracts: Sequence[FuturesContract],
+    plans: Sequence[_DailyPlan],
+    open_days: Sequence[date],
+    errors: list[str],
+) -> tuple[int, int, int]:
+    if not plans:
+        return 0, 0, 0
+    bars_by_symbol = {plan.contract.symbol: [] for plan in plans}
+    rejections_by_symbol = {plan.contract.symbol: [] for plan in plans}
+    failed_symbols: set[str] = set()
+    fetch_exchange_daily = provider.fetch_exchange_daily
+    for trading_day in open_days:
+        selected = {
+            plan.contract.symbol for plan in plans
+            if plan.start_date <= trading_day <= plan.end_date
+        }
+        if not selected:
+            continue
+        try:
+            fetched = fetch_exchange_daily(contracts, exchange, trading_day)
+        except Exception as error:
+            failed_symbols.update(selected)
+            errors.append(
+                f"{exchange.value} {trading_day} daily batch: {type(error).__name__}"
+            )
+            _log_bounded_failure(
+                len(errors), "daily-batch", exchange,
+                trading_day.isoformat(), error,
+            )
+            continue
+        for bar in fetched.bars:
+            if bar.symbol in selected:
+                bars_by_symbol[bar.symbol].append(bar)
+        for rejection in fetched.rejections:
+            if rejection.symbol in selected:
+                rejections_by_symbol[rejection.symbol].append(rejection)
+
+    updated = changed = rejected = 0
+    for plan in plans:
+        symbol = plan.contract.symbol
+        if symbol in failed_symbols:
+            continue
+        fetch = FuturesDailyFetchResult(
+            tuple(bars_by_symbol[symbol]),
+            tuple(rejections_by_symbol[symbol]),
+        )
+        try:
+            changed += _persist_daily_plan(
+                provider, store, exchange, plan, fetch
+            )
+            rejected += len(fetch.rejections)
+            updated += 1
+        except Exception as error:
+            errors.append(f"{symbol} final increment: {type(error).__name__}")
+            _log_bounded_failure(
+                len(errors), "contract", exchange, symbol, error
+            )
+    return updated, changed, rejected
+
+
+def _persist_daily_plan(
+    provider: TushareFuturesProvider,
+    store: SQLiteMarketDataStore,
+    exchange: FuturesExchange,
+    plan: _DailyPlan,
+    fetch: FuturesDailyFetchResult,
+) -> int:
+    bars = fetch.bars
+    changed = persist_futures_daily_batches(provider.code, store, bars)
+    store.checkpoint_futures_sync(
+        provider.code, "daily", exchange.value, plan.contract.symbol,
+        plan.start_date, plan.end_date, len(bars),
+    )
+    store.record_futures_update_receipt(
+        provider.code, "daily", plan.contract.symbol, plan.end_date,
+        len(bars), futures_daily_digest(bars),
+        "partial" if fetch.rejections else "complete" if bars else "empty",
+        f"rejected_rows={len(fetch.rejections)}" if fetch.rejections else "",
+    )
+    return changed
 
 
 def _log_bounded_failure(

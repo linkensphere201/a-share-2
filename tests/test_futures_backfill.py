@@ -91,7 +91,33 @@ class _RejectingProvider(_Provider):
     def fetch_contract_daily_result(self, contract, start_date, end_date):
         return FuturesDailyFetchResult(
             self.fetch_contract_daily(contract, start_date, end_date),
-            (FuturesDailyRowRejection(date(2026, 8, 19), "invalid-daily-bar"),),
+            (FuturesDailyRowRejection(
+                contract.symbol, date(2026, 8, 19), "invalid-daily-bar"
+            ),),
+        )
+
+
+class _BatchProvider(_Provider):
+    def __init__(self) -> None:
+        super().__init__()
+        self.batch_calls = []
+        self.mapping_batch_calls = []
+
+    def fetch_exchange_daily(self, contracts, exchange, trading_day):
+        self.batch_calls.append((exchange, trading_day))
+        contract = contracts[0]
+        return FuturesDailyFetchResult((_bar(contract, trading_day),), ())
+
+    def fetch_roll_mappings_for_dates(self, series, contracts, trading_days):
+        self.mapping_batch_calls.append(tuple(trading_days))
+        contract = contracts[0]
+        selected = series[0]
+        return tuple(
+            FuturesRollMapping(
+                selected.symbol, selected.provider_symbol, trading_day,
+                contract.symbol, contract.provider_symbol,
+            )
+            for trading_day in trading_days
         )
 
 
@@ -212,6 +238,31 @@ def test_futures_increment_refreshes_correction_window_and_missing_tail() -> Non
             provider.code, "daily", "SHFE", contract.symbol
         )
         assert state.covered_through == date(2026, 8, 20)
+
+
+def test_futures_increment_batches_recent_days_by_exchange() -> None:
+    provider = _BatchProvider()
+    contract = provider.catalog.contracts[0]
+    with SQLiteMarketDataStore(":memory:") as store:
+        result = run_futures_increment(
+            provider, store, [FuturesExchange.SHFE], date(2026, 8, 20), 2
+        )
+        rows = store.list_futures_daily_bars(
+            contract.symbol, date(2026, 8, 18), date(2026, 8, 20)
+        )
+
+    assert provider.daily_calls == []
+    assert provider.batch_calls == [
+        (FuturesExchange.SHFE, date(2026, 8, 19)),
+        (FuturesExchange.SHFE, date(2026, 8, 20)),
+    ]
+    assert provider.mapping_batch_calls == [(
+        date(2026, 8, 19), date(2026, 8, 20),
+    )]
+    assert result.contracts_checked == 1
+    assert result.contracts_updated == 1
+    assert result.rows_changed == 2
+    assert len(rows) == 2
 
 
 def test_zero_correction_window_skips_already_completed_contract() -> None:
