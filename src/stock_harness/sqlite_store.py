@@ -958,6 +958,37 @@ class SQLiteMarketDataStore:
             ).fetchall()
         return [_futures_daily_row(row, FuturesBarState.FINAL) for row in rows]
 
+    def get_latest_futures_daily_bar_before(
+        self,
+        symbol: str,
+        before_date: date,
+    ) -> FuturesDailyBar | None:
+        self._require_futures_storage()
+        with self._lock:
+            row = self._connection.execute(
+                """
+                SELECT instrument.symbol, bar.trading_day, bar.provider_date,
+                       bar.open, bar.high, bar.low, bar.close, bar.previous_close,
+                       bar.settlement, bar.previous_settlement, bar.volume_contracts,
+                       bar.amount_cny, bar.open_interest_contracts,
+                       bar.open_interest_change_contracts, bar.delivery_settlement,
+                       source.code, mapped.symbol, bar.roll_event
+                FROM futures_daily_bars AS bar
+                JOIN instruments AS instrument USING (instrument_id)
+                JOIN sources AS source USING (source_id)
+                LEFT JOIN instruments AS mapped
+                  ON mapped.instrument_id = bar.mapped_contract_instrument_id
+                WHERE instrument.symbol = ? AND bar.trading_day < ?
+                ORDER BY bar.trading_day DESC
+                LIMIT 1
+                """,
+                (symbol, _date_key(before_date)),
+            ).fetchone()
+        return (
+            _futures_daily_row(row, FuturesBarState.FINAL)
+            if row is not None else None
+        )
+
     def upsert_futures_calendar(
         self,
         source: str,
@@ -1135,6 +1166,57 @@ class SQLiteMarketDataStore:
                 ORDER BY mapping.effective_from
                 """,
                 (series_symbol, _date_key(start_date), _date_key(end_date)),
+            ).fetchall()
+        return [
+            FuturesRollMapping(
+                series_symbol=str(row[0]), series_provider_symbol=str(row[1]),
+                effective_from=_date_from_key(int(row[2])),
+                contract_symbol=str(row[3]), contract_provider_symbol=str(row[4]),
+            )
+            for row in rows
+        ]
+
+    def list_futures_roll_mappings_for_build(
+        self,
+        series_symbol: str,
+        start_date: date,
+        end_date: date,
+    ) -> list[FuturesRollMapping]:
+        """Return an interval plus the latest mapping effective before it."""
+        self._require_futures_storage()
+        if start_date > end_date:
+            return []
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT series.symbol, series_meta.provider_symbol,
+                       mapping.effective_from, contract.symbol,
+                       contract_meta.provider_symbol
+                FROM futures_roll_mappings AS mapping
+                JOIN instruments AS series
+                  ON series.instrument_id = mapping.series_instrument_id
+                JOIN futures_continuous_series AS series_meta
+                  ON series_meta.instrument_id = series.instrument_id
+                JOIN instruments AS contract
+                  ON contract.instrument_id = mapping.contract_instrument_id
+                JOIN futures_contracts AS contract_meta
+                  ON contract_meta.instrument_id = contract.instrument_id
+                WHERE series.symbol = ?
+                  AND (
+                    mapping.effective_from BETWEEN ? AND ?
+                    OR mapping.effective_from = (
+                      SELECT max(prior.effective_from)
+                      FROM futures_roll_mappings AS prior
+                      WHERE prior.series_instrument_id = mapping.series_instrument_id
+                        AND prior.effective_from < ?
+                    )
+                  )
+                ORDER BY mapping.effective_from
+                """,
+                (
+                    series_symbol, _date_key(start_date), _date_key(end_date),
+                    _date_key(start_date),
+                ),
             ).fetchall()
         return [
             FuturesRollMapping(

@@ -99,3 +99,51 @@ def test_skips_unmapped_series_without_failing_other_work():
         )
     assert result.skipped_unmapped_series == 1
     assert result.errors == ()
+
+
+def test_raw_suffix_build_reads_only_prior_context_and_dirty_window(monkeypatch):
+    product, first, second, series = _fixture()
+    first_day, prior_day = date(2026, 8, 18), date(2026, 8, 19)
+    roll_day, next_day = date(2026, 8, 20), date(2026, 8, 21)
+    mappings = [
+        FuturesRollMapping(series.symbol, series.provider_symbol, first_day,
+                           first.symbol, first.provider_symbol),
+        FuturesRollMapping(series.symbol, series.provider_symbol, roll_day,
+                           second.symbol, second.provider_symbol),
+    ]
+    with SQLiteMarketDataStore(":memory:") as store:
+        store.upsert_futures_catalog(
+            "tushare-futures", [product], [first, second], [series]
+        )
+        store.upsert_futures_roll_mappings("tushare-futures", mappings)
+        store.upsert_futures_daily_bars("tushare-futures", [
+            _bar(first.symbol, first_day, 99),
+            _bar(first.symbol, prior_day, 100),
+            _bar(first.symbol, roll_day, 101),
+            _bar(second.symbol, roll_day, 105),
+            _bar(second.symbol, next_day, 106),
+        ])
+        build_futures_continuous_series(
+            store, "tushare-futures", first_day, next_day
+        )
+        store.upsert_futures_daily_bars("tushare-futures", [
+            _bar(second.symbol, roll_day, 108)
+        ])
+
+        reads = []
+        original = store.list_futures_daily_bars
+
+        def tracked(symbol, start_date, end_date):
+            reads.append((symbol, start_date, end_date))
+            return original(symbol, start_date, end_date)
+
+        monkeypatch.setattr(store, "list_futures_daily_bars", tracked)
+        result = build_futures_continuous_series(
+            store, "tushare-futures", first_day, next_day
+        )
+        rows = original(series.symbol, first_day, next_day)
+
+    assert result.rows_written == 2
+    assert reads
+    assert all(start == prior_day for _symbol, start, _end in reads)
+    assert rows[-2].roll_event is True

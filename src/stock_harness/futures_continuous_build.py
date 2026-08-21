@@ -59,7 +59,25 @@ def build_futures_continuous_series(
         if not force and existing is not None and dirty is None:
             clean += 1
             continue
-        mappings = store.list_futures_roll_mappings(series.symbol, start_date, end_date)
+        rebuilt_from = None
+        materialize_from = None
+        input_start = start_date
+        if (
+            not force
+            and existing is not None
+            and dirty is not None
+            and series.price_basis is FuturesPriceBasis.RAW
+        ):
+            rebuilt_from = max(start_date, dirty["dirty_from"])
+            materialize_from = rebuilt_from
+            prior = store.get_latest_futures_daily_bar_before(
+                series.symbol, rebuilt_from
+            )
+            if prior is not None:
+                input_start = prior.trading_day
+        mappings = store.list_futures_roll_mappings_for_build(
+            series.symbol, input_start, end_date
+        )
         if not mappings:
             unmapped += 1
             continue
@@ -67,18 +85,8 @@ def build_futures_continuous_series(
             contract_bars = []
             for symbol in sorted({item.contract_symbol for item in mappings}):
                 contract_bars.extend(
-                    store.list_futures_daily_bars(symbol, start_date, end_date)
+                    store.list_futures_daily_bars(symbol, input_start, end_date)
                 )
-            rebuilt_from = None
-            materialize_from = None
-            if (
-                not force
-                and existing is not None
-                and dirty is not None
-                and series.price_basis is FuturesPriceBasis.RAW
-            ):
-                rebuilt_from = max(start_date, dirty["dirty_from"])
-                materialize_from = rebuilt_from
             build = materialize_continuous(
                 series, mappings, contract_bars,
                 start_date=materialize_from, end_date=end_date,
