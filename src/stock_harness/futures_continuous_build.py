@@ -104,7 +104,7 @@ def build_futures_continuous_series(
                 "futures_continuous_build_failed symbol=%s error_type=%s error_count=%d",
                 series.symbol, type(exc).__name__, len(errors) + 1,
             )
-            errors.append(f"{series.symbol}: {type(exc).__name__}: {exc}")
+            errors.append(f"{series.symbol}: {type(exc).__name__}")
         if index % 25 == 0 or index == len(candidates):
             LOGGER.info(
                 "futures_continuous_build_progress processed=%d total=%d completed=%d clean=%d unmapped=%d rows=%d errors=%d",

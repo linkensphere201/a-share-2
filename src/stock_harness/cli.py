@@ -51,6 +51,11 @@ def _open_store(settings: RuntimeSettings) -> SQLiteMarketDataStore:
     )
 
 
+def _exit_if_errors(errors: tuple[str, ...]) -> None:
+    if errors:
+        raise SystemExit(2)
+
+
 def _catalog_entries(
     provider: TushareDailyProvider, scope: str, observed_on: date
 ):
@@ -375,6 +380,7 @@ def main() -> None:
             )
             store.checkpoint("PASSIVE")
         print(json.dumps(asdict(result), ensure_ascii=False, default=str, indent=2))
+        _exit_if_errors(result.errors)
         return
     if args.command == "validate-futures":
         providers = []
@@ -455,6 +461,7 @@ def main() -> None:
             )
             store.checkpoint("PASSIVE")
         print(json.dumps(asdict(result), ensure_ascii=False, default=str, indent=2))
+        _exit_if_errors(result.errors)
         return
     if args.command == "validate-date":
         providers = []

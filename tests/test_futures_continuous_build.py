@@ -101,6 +101,34 @@ def test_skips_unmapped_series_without_failing_other_work():
     assert result.errors == ()
 
 
+def test_build_failure_result_omits_exception_text(monkeypatch, caplog):
+    product, first, second, series = _fixture()
+    day = date(2026, 8, 20)
+    mapping = FuturesRollMapping(
+        series.symbol, series.provider_symbol, day,
+        first.symbol, first.provider_symbol,
+    )
+    with SQLiteMarketDataStore(":memory:") as store:
+        store.upsert_futures_catalog(
+            "tushare-futures", [product], [first, second], [series]
+        )
+        store.upsert_futures_roll_mappings("tushare-futures", [mapping])
+        store.upsert_futures_daily_bars(
+            "tushare-futures", [_bar(first.symbol, day, 100)]
+        )
+
+        def fail(*args, **kwargs):
+            raise RuntimeError("token=must-not-escape")
+
+        monkeypatch.setattr(store, "persist_futures_continuous_build", fail)
+        result = build_futures_continuous_series(
+            store, "tushare-futures", day, day
+        )
+
+    assert result.errors == (f"{series.symbol}: RuntimeError",)
+    assert "must-not-escape" not in caplog.text
+
+
 def test_raw_suffix_build_reads_only_prior_context_and_dirty_window(monkeypatch):
     product, first, second, series = _fixture()
     first_day, prior_day = date(2026, 8, 18), date(2026, 8, 19)

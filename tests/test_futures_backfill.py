@@ -1,6 +1,8 @@
 from datetime import date
 import logging
 
+import pytest
+
 from stock_harness.futures_backfill import run_futures_backfill
 from stock_harness.futures_provider import FuturesCatalog
 from stock_harness.futures_provider import (
@@ -8,6 +10,7 @@ from stock_harness.futures_provider import (
     FuturesDailyRowRejection,
 )
 from stock_harness.futures_update import run_futures_increment
+from stock_harness.cli import _exit_if_errors
 from stock_harness.models import (
     FuturesBarState,
     FuturesCalendarDay,
@@ -315,3 +318,10 @@ def test_zero_correction_window_skips_already_completed_contract() -> None:
         )
         assert provider.daily_calls == []
         assert result.contracts_updated == 0
+
+
+def test_futures_cli_exits_nonzero_only_for_unisolated_errors() -> None:
+    _exit_if_errors(())
+    with pytest.raises(SystemExit) as raised:
+        _exit_if_errors(("FUT:SHFE:CU:202609: RuntimeError",))
+    assert raised.value.code == 2
