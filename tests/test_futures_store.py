@@ -8,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from stock_harness.api import create_app
+from stock_harness.cli import _exit_if_structural_errors
 from stock_harness.futures_continuous import materialize_raw_continuous
 from stock_harness.models import (
     FuturesContinuousSeries,
@@ -412,6 +413,13 @@ def test_futures_integrity_audit_separates_backlog_from_structural_errors() -> N
     assert report["continuous"]["series_with_mappings"] == 1
     assert report["continuous"]["series_without_mappings"] == 0
     assert report["summary"]["structural_errors"] == 0
+
+
+def test_futures_integrity_cli_fails_only_for_structural_errors() -> None:
+    _exit_if_structural_errors(0)
+    with pytest.raises(SystemExit) as raised:
+        _exit_if_structural_errors(1)
+    assert raised.value.code == 2
 
 
 def test_continuous_fused_read_projects_the_mapped_contract_provisional_bar() -> None:

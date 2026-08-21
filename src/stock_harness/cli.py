@@ -56,6 +56,11 @@ def _exit_if_errors(errors: tuple[str, ...]) -> None:
         raise SystemExit(2)
 
 
+def _exit_if_structural_errors(count: int) -> None:
+    if count > 0:
+        raise SystemExit(2)
+
+
 def _catalog_entries(
     provider: TushareDailyProvider, scope: str, observed_on: date
 ):
@@ -447,6 +452,7 @@ def main() -> None:
             f"contracts={summary['contracts']} rows={summary['daily_rows']} "
             f"structural_errors={summary['structural_errors']}"
         )
+        _exit_if_structural_errors(summary["structural_errors"])
         return
     if args.command == "build-futures-continuous":
         selected = tuple(FuturesExchange(value) for value in (args.exchange or ()))

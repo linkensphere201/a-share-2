@@ -54,8 +54,20 @@ try {
     }
 
     $integrityOutput = Join-Path $root "data\reports\futures-integrity-acceptance.json"
-    Invoke-NativeCheck "store-integrity" {
+    try {
         & $python -m stock_harness.cli audit-futures-store --output $integrityOutput
+        $integrityExitCode = $LASTEXITCODE
+        $integrity = Get-Content -LiteralPath $integrityOutput -Raw | ConvertFrom-Json
+        $structuralErrors = [int]$integrity.summary.structural_errors
+        if (($integrityExitCode -eq 0) -and ($structuralErrors -eq 0)) {
+            Add-Check "store-integrity" "passed" "exit_code=0; structural_errors=0"
+        }
+        else {
+            Add-Check "store-integrity" "failed" "exit_code=$integrityExitCode; structural_errors=$structuralErrors"
+        }
+    }
+    catch {
+        Add-Check "store-integrity" "failed" $_.Exception.GetType().Name
     }
 
     if ($BaseUrl) {
