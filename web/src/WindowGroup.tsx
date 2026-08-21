@@ -2,7 +2,7 @@ import type { ChartIndicator, VisibleRange } from './ChartCanvas'
 import { ChartWindow } from './InstrumentWindow'
 import { InstrumentListWindow } from './InstrumentListWindow'
 import { SplitLayout } from './SplitLayout'
-import type { Instrument, ListColumnKey, WindowGroupState } from './workspace'
+import type { ChartPaneRatios, Instrument, ListColumnKey, WindowGroupState } from './workspace'
 import type { ThemeDefinition } from './themeStore'
 import type { TradingSystemWindowStates } from './tradingSystems'
 
@@ -21,6 +21,9 @@ type WindowGroupProps = {
   onVisibleRangeChange: (id: string, value: VisibleRange) => void
   onVolumeVisibleChange: (id: string, visible: boolean) => void
   onIndicatorChange: (id: string, indicator: ChartIndicator) => void
+  onSettlementVisibleChange: (id: string, visible: boolean) => void
+  onOpenInterestVisibleChange: (id: string, visible: boolean) => void
+  onPaneRatiosChange: (id: string, ratios: ChartPaneRatios) => void
   onTradingSystemsChange: (id: string, systems: TradingSystemWindowStates) => void
   onTradingSystemRecalculate: (id: string, systemId: string) => void
   onReferencedSymbolsChange: (id: string, symbols: string[]) => void
@@ -41,6 +44,9 @@ export function WindowGroup({
   onVisibleRangeChange,
   onVolumeVisibleChange,
   onIndicatorChange,
+  onSettlementVisibleChange,
+  onOpenInterestVisibleChange,
+  onPaneRatiosChange,
   onTradingSystemsChange,
   onTradingSystemRecalculate,
   onReferencedSymbolsChange,
@@ -89,6 +95,9 @@ export function WindowGroup({
         onVisibleRangeChange={value => onVisibleRangeChange(item.id, value)}
         onVolumeVisibleChange={visible => onVolumeVisibleChange(item.id, visible)}
         onIndicatorChange={indicator => onIndicatorChange(item.id, indicator)}
+        onSettlementVisibleChange={visible => onSettlementVisibleChange(item.id, visible)}
+        onOpenInterestVisibleChange={visible => onOpenInterestVisibleChange(item.id, visible)}
+        onPaneRatiosChange={ratios => onPaneRatiosChange(item.id, ratios)}
         onTradingSystemsChange={systems => onTradingSystemsChange(item.id, systems)}
         onTradingSystemRecalculate={systemId => onTradingSystemRecalculate(item.id, systemId)}
       />

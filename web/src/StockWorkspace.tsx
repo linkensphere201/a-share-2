@@ -26,6 +26,7 @@ import {
   loadWorkspace,
   saveWorkspace,
   type ChartWindowState,
+  type ChartPaneRatios,
   type Instrument,
   type InstrumentListWindowState,
   type ListColumnKey,
@@ -218,6 +219,26 @@ export function StockWorkspace() {
   const handleIndicator = useCallback((id: string, indicator: ChartWindowState['chart']['indicator']) => {
     updateWindow(id, item => item.type === 'chart'
       ? { ...item, chart: { ...item.chart, indicator } }
+      : item)
+  }, [updateWindow])
+
+  const handleSettlementVisible = useCallback((id: string, settlementVisible: boolean) => {
+    updateWindow(id, item => item.type === 'chart'
+      ? { ...item, chart: { ...item.chart, settlementVisible } }
+      : item)
+  }, [updateWindow])
+
+  const handleOpenInterestVisible = useCallback((id: string, openInterestVisible: boolean) => {
+    updateWindow(id, item => item.type === 'chart'
+      ? { ...item, chart: { ...item.chart, openInterestVisible } }
+      : item)
+  }, [updateWindow])
+
+  const handlePaneRatios = useCallback((id: string, paneRatios: ChartPaneRatios) => {
+    updateWindow(id, item => item.type === 'chart'
+      ? samePaneRatios(item.chart.paneRatios, paneRatios)
+        ? item
+        : { ...item, chart: { ...item.chart, paneRatios } }
       : item)
   }, [updateWindow])
 
@@ -434,6 +455,20 @@ export function StockWorkspace() {
                   chart: { ...item.chart, indicator: item.chart.indicator === 'macd' ? 'none' : 'macd' },
                 }))}
               ><Activity size={12}/>MACD</button>
+              {(activeChart.instrument.kind === 'futures-contract' || activeChart.instrument.kind === 'futures-continuous') && <>
+                <button
+                  className={activeChart.chart.settlementVisible ? 'active' : ''}
+                  title={activeChart.chart.settlementVisible ? '隐藏结算价线' : '显示结算价线'}
+                  aria-pressed={activeChart.chart.settlementVisible}
+                  onClick={() => handleSettlementVisible(activeChart.id, !activeChart.chart.settlementVisible)}
+                >结算</button>
+                <button
+                  className={activeChart.chart.openInterestVisible ? 'active' : ''}
+                  title={activeChart.chart.openInterestVisible ? '隐藏持仓量' : '显示持仓量'}
+                  aria-pressed={activeChart.chart.openInterestVisible}
+                  onClick={() => handleOpenInterestVisible(activeChart.id, !activeChart.chart.openInterestVisible)}
+                >持仓</button>
+              </>}
             </div>
             <span className="ma ma-short">MA 5</span><span className="ma ma-mid">MA 20</span><span className="ma ma-long">MA 60</span>
           </>}
@@ -461,6 +496,9 @@ export function StockWorkspace() {
           onVisibleRangeChange={handleVisibleRange}
           onVolumeVisibleChange={handleVolumeVisible}
           onIndicatorChange={handleIndicator}
+          onSettlementVisibleChange={handleSettlementVisible}
+          onOpenInterestVisibleChange={handleOpenInterestVisible}
+          onPaneRatiosChange={handlePaneRatios}
           onTradingSystemsChange={handleTradingSystems}
           onTradingSystemRecalculate={handleTradingSystemRecalculate}
           onReferencedSymbolsChange={updateReferencedSymbols}
@@ -521,4 +559,11 @@ function applyListSelection(group: WindowGroupState, sourceId: string, instrumen
       return item
     }),
   }
+}
+
+function samePaneRatios(left: ChartPaneRatios | undefined, right: ChartPaneRatios): boolean {
+  return left?.price === right.price
+    && left.volume === right.volume
+    && left.macd === right.macd
+    && left.openInterest === right.openInterest
 }

@@ -3,7 +3,7 @@ import { Maximize2, Minimize2, Pencil, X } from 'lucide-react'
 import { ChartCanvas, type ChartIndicator, type GeneratedBreakoutState, type VisibleRange } from './ChartCanvas'
 import { TradingSystemControls } from './TradingSystemControls'
 import { TrendReviewPanel } from './TrendReviewPanel'
-import type { ChartWindowState } from './workspace'
+import type { ChartPaneRatios, ChartWindowState } from './workspace'
 import type { TradingSystemWindowStates } from './tradingSystems'
 import { normalizeTrendTradingSystemSettings } from './tradingSystems'
 import type { ThemeDefinition } from './themeStore'
@@ -24,6 +24,9 @@ type InstrumentWindowProps = {
   onVisibleRangeChange: (value: VisibleRange) => void
   onVolumeVisibleChange: (visible: boolean) => void
   onIndicatorChange: (indicator: ChartIndicator) => void
+  onSettlementVisibleChange: (visible: boolean) => void
+  onOpenInterestVisibleChange: (visible: boolean) => void
+  onPaneRatiosChange: (ratios: ChartPaneRatios) => void
   onTradingSystemsChange: (systems: TradingSystemWindowStates) => void
   onTradingSystemRecalculate: (systemId: string) => void
 }
@@ -42,6 +45,9 @@ export function ChartWindow({
   onVisibleRangeChange,
   onVolumeVisibleChange,
   onIndicatorChange,
+  onSettlementVisibleChange,
+  onOpenInterestVisibleChange,
+  onPaneRatiosChange,
   onTradingSystemsChange,
   onTradingSystemRecalculate,
 }: InstrumentWindowProps) {
@@ -102,11 +108,17 @@ export function ChartWindow({
           priceMode={chart.priceMode}
           volumeVisible={chart.volumeVisible}
           indicator={chart.indicator}
+          settlementVisible={chart.settlementVisible}
+          openInterestVisible={chart.openInterestVisible}
+          paneRatios={chart.paneRatios}
           initialVisibleRange={chart.visibleRange}
           onCoverageChange={onCoverageChange}
           onVisibleRangeChange={onVisibleRangeChange}
           onVolumeVisibleChange={onVolumeVisibleChange}
           onIndicatorChange={onIndicatorChange}
+          onSettlementVisibleChange={onSettlementVisibleChange}
+          onOpenInterestVisibleChange={onOpenInterestVisibleChange}
+          onPaneRatiosChange={onPaneRatiosChange}
           trendAnalysisEnabled={chart.tradingSystems.trend.enabled}
           showTentativePivots={Boolean(chart.tradingSystems.trend.settings.showTentativePivots)}
           shortTrendLinesVisible={chart.tradingSystems.trend.layers['short-trend-lines'] !== false}

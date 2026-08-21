@@ -183,6 +183,17 @@ describe('chart level of detail', () => {
     ])
   })
 
+  it('retains ending futures settlement and open interest in LOD bars', () => {
+    const result = aggregateBars([
+      { ...bars[0], settlement: 11.2, open_interest: 1000 },
+      { ...bars[1], settlement: 12.8, open_interest: 1200, open_interest_change: 200 },
+    ], 2)[0]
+    expect(result).toMatchObject({
+      open: 10, high: 14, low: 9, close: 13, volume: 300,
+      settlement: 12.8, open_interest: 1200, open_interest_change: 200,
+    })
+  })
+
   it('uses power-of-two buckets only when density exceeds the viewport', () => {
     expect(chooseLodBucket(800, 800)).toBe(1)
     expect(chooseLodBucket(5_457, 800)).toBe(8)

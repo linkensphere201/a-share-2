@@ -52,9 +52,19 @@ export type ChartViewState = {
   priceMode: PriceMode
   volumeVisible: boolean
   indicator: ChartIndicator
+  settlementVisible: boolean
+  openInterestVisible: boolean
+  paneRatios?: ChartPaneRatios
   visibleRange?: VisibleRange
   seriesMode?: 'line' | 'candles'
   tradingSystems: TradingSystemWindowStates
+}
+
+export type ChartPaneRatios = {
+  price: number
+  volume?: number
+  macd?: number
+  openInterest?: number
 }
 
 export type ChartWindowState = {
@@ -156,7 +166,7 @@ export function createWindowGroup(
     title: nextTitle(),
     mode,
     instrument: { ...fallbackInstrument },
-    chart: { range: '3Y', priceMode: 'normal', volumeVisible: true, indicator: 'macd', tradingSystems: createTradingSystemWindowStates() },
+    chart: { range: '3Y', priceMode: 'normal', volumeVisible: true, indicator: 'macd', settlementVisible: false, openInterestVisible: false, tradingSystems: createTradingSystemWindowStates() },
   })
   const list = (): InstrumentListWindowState => ({
     id: createId('list'),
@@ -229,7 +239,7 @@ export function createDefaultWorkspace(): WorkspaceState {
     title: '表2',
     mode: 'attached',
     instrument: fallbackInstrument,
-    chart: { range: '3Y', priceMode: 'normal', volumeVisible: true, indicator: 'macd', tradingSystems: createTradingSystemWindowStates() },
+    chart: { range: '3Y', priceMode: 'normal', volumeVisible: true, indicator: 'macd', settlementVisible: false, openInterestVisible: false, tradingSystems: createTradingSystemWindowStates() },
   }
   const group = createGroup('group-primary', '默认窗口组', [listWindow, chartWindow], chartWindow.id, [{
     id: 'attachment-primary',
@@ -400,6 +410,9 @@ function normalizeChartWindow(value: unknown): ChartWindowState | undefined {
       priceMode: value.chart.priceMode,
       volumeVisible: value.chart.volumeVisible !== false,
       indicator: value.chart.indicator === 'none' ? 'none' : 'macd',
+      settlementVisible: value.chart.settlementVisible === true,
+      openInterestVisible: value.chart.openInterestVisible === true,
+      paneRatios: normalizePaneRatios(value.chart.paneRatios),
       visibleRange: normalizeVisibleRange(value.chart.visibleRange),
       seriesMode: value.chart.seriesMode === 'line' ? 'line' : value.chart.seriesMode === 'candles' ? 'candles' : undefined,
       tradingSystems: normalizeTradingSystemWindowStates(value.chart.tradingSystems),
@@ -468,10 +481,21 @@ function migrateLegacyWindow(value: unknown): ChartWindowState | undefined {
       priceMode: legacy.priceMode,
       volumeVisible: true,
       indicator: 'macd',
+      settlementVisible: false,
+      openInterestVisible: false,
       visibleRange: normalizeVisibleRange(legacy.visibleRange),
       tradingSystems: createTradingSystemWindowStates(),
     },
   }
+}
+
+function normalizePaneRatios(value: unknown): ChartPaneRatios | undefined {
+  if (!isRecord(value) || typeof value.price !== 'number' || value.price <= 0) return undefined
+  const optional = (key: 'volume' | 'macd' | 'openInterest') => {
+    const item = value[key]
+    return typeof item === 'number' && item > 0 ? item : undefined
+  }
+  return { price: value.price, volume: optional('volume'), macd: optional('macd'), openInterest: optional('openInterest') }
 }
 
 function groupIdOrFallback(groups: WindowGroupState[], value: unknown): string {

@@ -90,6 +90,26 @@ describe('workspace persistence', () => {
     ]))
   })
 
+  it('persists futures settlement, open-interest, and pane ratio state', () => {
+    const state = createDefaultWorkspace()
+    const chart = state.groups[0].windows.find(item => item.type === 'chart')!
+    if (chart.type !== 'chart') throw new Error('expected chart')
+    chart.chart.settlementVisible = true
+    chart.chart.openInterestVisible = true
+    chart.chart.paneRatios = { price: 0.55, volume: 0.15, macd: 0.12, openInterest: 0.18 }
+
+    saveWorkspace(state)
+    const restored = loadWorkspace().groups[0].windows.find(item => item.type === 'chart')
+
+    expect(restored).toMatchObject({
+      chart: {
+        settlementVisible: true,
+        openInterestVisible: true,
+        paneRatios: chart.chart.paneRatios,
+      },
+    })
+  })
+
   it('derives and deduplicates every active group window reference', () => {
     const state = createDefaultWorkspace()
     const group = state.groups[0]
@@ -238,7 +258,7 @@ describe('workspace persistence', () => {
       title: '表3',
       mode: 'detached',
       instrument: instrument('510300.SH'),
-      chart: { range: '1Y', priceMode: 'normal', volumeVisible: true, indicator: 'macd', tradingSystems: createTradingSystemWindowStates() },
+      chart: { range: '1Y', priceMode: 'normal', volumeVisible: true, indicator: 'macd', settlementVisible: false, openInterestVisible: false, tradingSystems: createTradingSystemWindowStates() },
     })
     window.localStorage.setItem(workspaceStorageKey, JSON.stringify(state))
 

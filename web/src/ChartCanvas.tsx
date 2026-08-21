@@ -75,6 +75,7 @@ import {
   type LineData,
   type Time,
 } from 'lightweight-charts'
+import type { ChartPaneRatios } from './workspace'
 
 export type ChartRange = '1M' | '1Y' | '3Y' | '10Y' | 'ALL'
 export type PriceMode = 'normal' | 'log'
@@ -142,11 +143,17 @@ type ChartCanvasProps = {
   priceMode: PriceMode
   volumeVisible: boolean
   indicator: ChartIndicator
+  settlementVisible: boolean
+  openInterestVisible: boolean
+  paneRatios?: ChartPaneRatios
   initialVisibleRange?: VisibleRange
   onCoverageChange?: (bars: number, first?: string, last?: string) => void
   onVisibleRangeChange?: (value: VisibleRange) => void
   onVolumeVisibleChange?: (visible: boolean) => void
   onIndicatorChange?: (indicator: ChartIndicator) => void
+  onSettlementVisibleChange?: (visible: boolean) => void
+  onOpenInterestVisibleChange?: (visible: boolean) => void
+  onPaneRatiosChange?: (ratios: ChartPaneRatios) => void
   trendAnalysisEnabled?: boolean
   showTentativePivots?: boolean
   shortTrendLinesVisible?: boolean
@@ -208,11 +215,17 @@ export function ChartCanvas({
   priceMode,
   volumeVisible,
   indicator,
+  settlementVisible,
+  openInterestVisible,
+  paneRatios,
   initialVisibleRange,
   onCoverageChange,
   onVisibleRangeChange,
   onVolumeVisibleChange,
   onIndicatorChange,
+  onSettlementVisibleChange,
+  onOpenInterestVisibleChange,
+  onPaneRatiosChange,
   trendAnalysisEnabled = false,
   showTentativePivots = true,
   shortTrendLinesVisible = true,
@@ -232,6 +245,7 @@ export function ChartCanvas({
   const chartRef = useRef<IChartApi | null>(null)
   const candleRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
   const closeLineRef = useRef<ISeriesApi<'Line'> | null>(null)
+  const settlementLineRef = useRef<ISeriesApi<'Line'> | null>(null)
   const volumeRef = useRef<ISeriesApi<'Histogram'> | null>(null)
   const volumePaneRef = useRef<IPaneApi<Time> | null>(null)
   const ma5Ref = useRef<ISeriesApi<'Line'> | null>(null)
@@ -241,6 +255,8 @@ export function ChartCanvas({
   const macdDeaRef = useRef<ISeriesApi<'Line'> | null>(null)
   const macdHistogramRef = useRef<ISeriesApi<'Histogram'> | null>(null)
   const macdPaneRef = useRef<IPaneApi<Time> | null>(null)
+  const openInterestRef = useRef<ISeriesApi<'Histogram'> | null>(null)
+  const openInterestPaneRef = useRef<IPaneApi<Time> | null>(null)
   const barsRef = useRef<DailyBar[]>([])
   const previousCloseByDateRef = useRef<Map<string, number>>(new Map())
   const renderedBarsRef = useRef<Map<string, RenderBar>>(new Map())
@@ -258,6 +274,7 @@ export function ChartCanvas({
   const timeAxisPointerActiveRef = useRef(false)
   const coverageCallbackRef = useRef(onCoverageChange)
   const visibleRangeCallbackRef = useRef(onVisibleRangeChange)
+  const paneRatiosCallbackRef = useRef(onPaneRatiosChange)
   const emittedVisibleRangeRef = useRef<VisibleRange | undefined>(undefined)
   const priceModeRef = useRef(priceMode)
   const pendingViewportRef = useRef<ViewportSnapshot | undefined>(undefined)
@@ -298,6 +315,7 @@ export function ChartCanvas({
 
   useEffect(() => { coverageCallbackRef.current = onCoverageChange }, [onCoverageChange])
   useEffect(() => { visibleRangeCallbackRef.current = onVisibleRangeChange }, [onVisibleRangeChange])
+  useEffect(() => { paneRatiosCallbackRef.current = onPaneRatiosChange }, [onPaneRatiosChange])
   useEffect(() => {
     if (!trendIsolation) return
     setDrawingTool('browse')
@@ -404,6 +422,10 @@ export function ChartCanvas({
   }, [lineOnly])
 
   useEffect(() => {
+    settlementLineRef.current?.applyOptions({ visible: settlementVisible && !lineOnly })
+  }, [lineOnly, settlementVisible])
+
+  useEffect(() => {
     if (!hostRef.current) return
     const chart = createChart(hostRef.current, {
       autoSize: true,
@@ -455,6 +477,12 @@ export function ChartCanvas({
       priceLineVisible: true,
       lastValueVisible: true,
       visible: lineOnly,
+      ...compactCrosshairMarkerOptions,
+    })
+    const settlementLine = chart.addSeries(LineSeries, {
+      title: '', color: '#d49a45', lineWidth: 1,
+      priceLineVisible: false, lastValueVisible: false,
+      visible: settlementVisible && !lineOnly,
       ...compactCrosshairMarkerOptions,
     })
     const ma5 = chart.addSeries(LineSeries, { color: '#e5b85c', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, ...compactCrosshairMarkerOptions })
@@ -563,6 +591,7 @@ export function ChartCanvas({
     chartRef.current = chart
     candleRef.current = candles
     closeLineRef.current = closeLine
+    settlementLineRef.current = settlementLine
     ma5Ref.current = ma5
     ma20Ref.current = ma20
     ma60Ref.current = ma60
@@ -575,6 +604,7 @@ export function ChartCanvas({
       chart.remove()
       chartRef.current = null
       closeLineRef.current = null
+      settlementLineRef.current = null
     }
   }, [])
 
@@ -593,7 +623,10 @@ export function ChartCanvas({
     }, pane.paneIndex())
     volumePaneRef.current = pane
     volumeRef.current = volume
-    const paneObserver = new ResizeObserver(() => setOverlayRevision(value => value + 1))
+    const paneObserver = new ResizeObserver(() => {
+      setOverlayRevision(value => value + 1)
+      emitPaneRatios(chart, pane, macdPaneRef.current, openInterestPaneRef.current, paneRatiosCallbackRef.current)
+    })
     const paneElement = pane.getHTMLElement()
     if (paneElement) paneObserver.observe(paneElement)
     applyVolumeSeries(renderedBarListRef.current, previousCloseByDateRef.current, volume)
@@ -650,7 +683,10 @@ export function ChartCanvas({
     macdHistogramRef.current = histogram
     macdDifRef.current = dif
     macdDeaRef.current = dea
-    const paneObserver = new ResizeObserver(() => setOverlayRevision(value => value + 1))
+    const paneObserver = new ResizeObserver(() => {
+      setOverlayRevision(value => value + 1)
+      emitPaneRatios(chart, volumePaneRef.current, pane, openInterestPaneRef.current, paneRatiosCallbackRef.current)
+    })
     const paneElement = pane.getHTMLElement()
     if (paneElement) paneObserver.observe(paneElement)
     setPaneStretchFactors(chart)
@@ -674,6 +710,47 @@ export function ChartCanvas({
       setOverlayRevision(value => value + 1)
     }
   }, [indicator, lineOnly])
+
+  useEffect(() => {
+    const chart = chartRef.current
+    if (!chart || !openInterestVisible || lineOnly) {
+      if (chart) setPaneStretchFactors(chart)
+      return
+    }
+    const pane = chart.addPane(true)
+    const series = chart.addSeries(HistogramSeries, {
+      title: '', priceFormat: { type: 'volume' },
+      priceLineVisible: false, lastValueVisible: false,
+    }, pane.paneIndex())
+    openInterestPaneRef.current = pane
+    openInterestRef.current = series
+    const paneObserver = new ResizeObserver(() => {
+      setOverlayRevision(value => value + 1)
+      emitPaneRatios(chart, volumePaneRef.current, macdPaneRef.current, pane, paneRatiosCallbackRef.current)
+    })
+    const paneElement = pane.getHTMLElement()
+    if (paneElement) paneObserver.observe(paneElement)
+    applyOpenInterestSeries(renderedBarListRef.current, series)
+    setPaneStretchFactors(chart)
+    setOverlayRevision(value => value + 1)
+    return () => {
+      openInterestRef.current = null
+      openInterestPaneRef.current = null
+      paneObserver.disconnect()
+      if (chartRef.current !== chart) return
+      chart.removeSeries(series)
+      const paneIndex = chart.panes().indexOf(pane)
+      if (paneIndex >= 0) chart.removePane(paneIndex)
+      setPaneStretchFactors(chart)
+      setOverlayRevision(value => value + 1)
+    }
+  }, [lineOnly, openInterestVisible])
+
+  useEffect(() => {
+    const chart = chartRef.current
+    if (!chart || !paneRatios) return
+    applyPaneRatios(chart, paneRatios, volumePaneRef.current, macdPaneRef.current, openInterestPaneRef.current)
+  }, [indicator, openInterestVisible, paneRatios, volumeVisible])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -886,7 +963,13 @@ export function ChartCanvas({
         time: item.trade_date,
         value: item.close,
       } satisfies LineData<Time>)))
+      settlementLineRef.current?.setData(renderedBars.flatMap(item => item.settlement == null
+        ? []
+        : [{ time: item.trade_date, value: item.settlement } satisfies LineData<Time>]))
       volumeRef.current?.setData(volumes)
+      openInterestRef.current?.setData(renderedBars.flatMap(item => item.open_interest == null
+        ? []
+        : [{ time: item.trade_date, value: item.open_interest, color: '#4f91b8aa' } satisfies HistogramData<Time>]))
       ma5Ref.current?.setData(averages.ma5.filter(item => times.has(String(item.time))))
       ma20Ref.current?.setData(averages.ma20.filter(item => times.has(String(item.time))))
       ma60Ref.current?.setData(averages.ma60.filter(item => times.has(String(item.time))))
@@ -1372,6 +1455,7 @@ export function ChartCanvas({
     : undefined
   const volumePaneTop = projectPaneTop(chartRef.current, volumePaneRef.current)
   const macdPaneTop = projectPaneTop(chartRef.current, macdPaneRef.current)
+  const openInterestPaneTop = projectPaneTop(chartRef.current, openInterestPaneRef.current)
   const generatedPivots = projectGeneratedPivots(
     trendAnalysis,
     chartRef.current,
@@ -1635,6 +1719,7 @@ export function ChartCanvas({
       />}
       {volumePaneTop !== undefined && <PaneHeader kind="volume" top={volumePaneTop} onHide={() => onVolumeVisibleChange?.(false)}/>}
       {macdPaneTop !== undefined && <PaneHeader kind="macd" top={macdPaneTop} onHide={() => onIndicatorChange?.('none')}/>}
+      {openInterestPaneTop !== undefined && <PaneHeader kind="open-interest" top={openInterestPaneTop} onHide={() => onOpenInterestVisibleChange?.(false)}/>}
       {selectionBox && <div className="chart-range-selection" style={selectionBox}/>}
       {rangeSelection && (
         <div
@@ -1661,13 +1746,15 @@ export function ChartCanvas({
   )
 }
 
-function PaneHeader({ kind, top, onHide }: { kind: 'volume' | 'macd'; top: number; onHide: () => void }) {
-  const label = kind === 'volume' ? '成交量' : 'MACD'
+function PaneHeader({ kind, top, onHide }: { kind: 'volume' | 'macd' | 'open-interest'; top: number; onHide: () => void }) {
+  const label = kind === 'volume' ? '成交量' : kind === 'macd' ? 'MACD' : '持仓量'
   return (
     <div className={`chart-pane-header chart-pane-header-${kind}`} style={{ top: top + 2 }} onPointerDown={event => event.stopPropagation()}>
       {kind === 'volume'
         ? <span className="chart-pane-title">VOL</span>
-        : <div className="macd-legend" aria-label="MACD 图例">
+        : kind === 'open-interest'
+          ? <span className="chart-pane-title">OI</span>
+          : <div className="macd-legend" aria-label="MACD 图例">
             <span>MACD</span><i className="macd-dif"/>DIF<i className="macd-dea"/>DEA<i className="macd-bars"/>柱
           </div>}
       <button title={`隐藏${label}栏`} aria-label={`隐藏${label}栏`} onClick={onHide}><EyeOff size={11}/></button>
@@ -2496,9 +2583,53 @@ function applyVolumeSeries(
   })))
 }
 
+function applyOpenInterestSeries(
+  bars: RenderBar[],
+  series: ISeriesApi<'Histogram'>,
+) {
+  series.setData(bars.flatMap(item => item.open_interest == null
+    ? []
+    : [{ time: item.trade_date, value: item.open_interest, color: '#4f91b8aa' }]))
+}
+
 function setPaneStretchFactors(chart: IChartApi) {
   chart.panes()[0]?.setStretchFactor(3)
   chart.panes().slice(1).forEach(pane => pane.setStretchFactor(1))
+}
+
+function applyPaneRatios(
+  chart: IChartApi,
+  ratios: ChartPaneRatios,
+  volume: IPaneApi<Time> | null,
+  macd: IPaneApi<Time> | null,
+  openInterest: IPaneApi<Time> | null,
+) {
+  chart.panes()[0]?.setStretchFactor(ratios.price)
+  if (volume && ratios.volume) volume.setStretchFactor(ratios.volume)
+  if (macd && ratios.macd) macd.setStretchFactor(ratios.macd)
+  if (openInterest && ratios.openInterest) openInterest.setStretchFactor(ratios.openInterest)
+}
+
+function emitPaneRatios(
+  chart: IChartApi,
+  volume: IPaneApi<Time> | null,
+  macd: IPaneApi<Time> | null,
+  openInterest: IPaneApi<Time> | null,
+  callback?: (ratios: ChartPaneRatios) => void,
+) {
+  if (!callback) return
+  const panes = chart.panes()
+  const total = panes.reduce((sum, pane) => sum + pane.getHeight(), 0)
+  if (total <= 0) return
+  const ratio = (pane: IPaneApi<Time> | undefined | null) => pane
+    ? Math.round((pane.getHeight() / total) * 1000) / 1000
+    : undefined
+  callback({
+    price: ratio(panes[0]) ?? 1,
+    volume: ratio(volume),
+    macd: ratio(macd),
+    openInterest: ratio(openInterest),
+  })
 }
 
 function captureViewport(chart: IChartApi | null, dataCount: number): ViewportSnapshot | undefined {
