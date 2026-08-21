@@ -146,6 +146,8 @@ their protocol task immediately while any abandoned local HTTP read remains boun
 
 Committed examples live in `config/providers.example.yaml` and `config/storage.example.yaml`. Local `*.local.yaml` files are ignored. Provider credentials are loaded from the configured environment variable first, then from the configured ignored `.env` file; token values are never written to logs or configuration output.
 
+Daily-frequency domestic-futures configuration, initial history, startup updates, storage budgeting, backup/recovery, and troubleshooting are documented in [`docs/futures-operations.md`](docs/futures-operations.md). Futures remain opt-in through the parent `providers.futures.enabled` switch; do not enable product night sessions without reviewing current exchange rules.
+
 Probe the configured Tushare account:
 
 ```powershell
