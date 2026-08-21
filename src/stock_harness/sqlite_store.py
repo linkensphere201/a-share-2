@@ -3493,11 +3493,13 @@ class SQLiteMarketDataStore:
         spec.validate()
         review_id = str(uuid4())
         now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
-        symbol = spec.symbol.strip().upper()
         with self._lock, self._transaction():
-            instrument_ids = self._instrument_ids({symbol})
-            if symbol not in instrument_ids:
-                raise ValueError(f"trend review references unknown instrument: {symbol}")
+            identity = self._canonical_instrument_identity(spec.symbol)
+            if identity is None:
+                raise ValueError(
+                    f"trend review references unknown instrument: {spec.symbol.strip()}"
+                )
+            symbol, instrument_id = identity
             self._connection.execute(
                 """
                 INSERT INTO trend_review_cases(
@@ -3510,7 +3512,7 @@ class SQLiteMarketDataStore:
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
                 """,
                 (
-                    review_id, instrument_ids[symbol], "1.0", spec.dataset_version.strip(),
+                    review_id, instrument_id, "1.0", spec.dataset_version.strip(),
                     spec.timeframe, spec.horizon, _date_key(spec.interval_start),
                     _date_key(spec.interval_end), _date_key(spec.as_of_date),
                     spec.input_digest, spec.algorithm_version.strip(), spec.config_version.strip(),
@@ -3624,12 +3626,13 @@ class SQLiteMarketDataStore:
     ) -> AnalysisRunRecord:
         spec.validate()
         now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
-        normalized_symbol = spec.symbol.strip().upper()
         with self._lock, self._transaction():
-            instrument_ids = self._instrument_ids({normalized_symbol})
-            if normalized_symbol not in instrument_ids:
-                raise ValueError(f"analysis references unknown instrument: {normalized_symbol}")
-            instrument_id = instrument_ids[normalized_symbol]
+            instrument = self._canonical_instrument_identity(spec.symbol)
+            if instrument is None:
+                raise ValueError(
+                    f"analysis references unknown instrument: {spec.symbol.strip()}"
+                )
+            normalized_symbol, instrument_id = instrument
             identity = (
                 instrument_id,
                 spec.system_id.strip(),
@@ -3709,11 +3712,13 @@ class SQLiteMarketDataStore:
     ) -> int:
         target.validate()
         now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
-        symbol = target.symbol.strip().upper()
         with self._lock, self._transaction():
-            instrument_ids = self._instrument_ids({symbol})
-            if symbol not in instrument_ids:
-                raise ValueError(f"analysis target references unknown instrument: {symbol}")
+            instrument = self._canonical_instrument_identity(target.symbol)
+            if instrument is None:
+                raise ValueError(
+                    f"analysis target references unknown instrument: {target.symbol.strip()}"
+                )
+            symbol, instrument_id = instrument
             target_id = int(self._connection.execute(
                 """
                 INSERT INTO generated_analysis_targets(
@@ -3729,7 +3734,7 @@ class SQLiteMarketDataStore:
                 RETURNING target_id
                 """,
                 (
-                    instrument_ids[symbol], target.system_id.strip(),
+                    instrument_id, target.system_id.strip(),
                     target.timeframe.strip(), target.algorithm_version.strip(),
                     target.config_version.strip(),
                     json.dumps(target.settings, sort_keys=True, separators=(",", ":")),
@@ -5922,6 +5927,15 @@ class SQLiteMarketDataStore:
             ).fetchall()
             result.update((str(row[0]), int(row[1])) for row in rows)
         return result
+
+    def _canonical_instrument_identity(self, symbol: str) -> tuple[str, int] | None:
+        row = self._connection.execute(
+            "SELECT symbol, instrument_id FROM instruments WHERE symbol = ? COLLATE NOCASE",
+            (symbol.strip(),),
+        ).fetchone()
+        if row is None:
+            return None
+        return str(row[0]), int(row[1])
 
     def _instrument_names(self, symbols: set[str]) -> dict[str, str]:
         result: dict[str, str] = {}

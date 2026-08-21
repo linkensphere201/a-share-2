@@ -13,6 +13,7 @@ from stock_harness.models import (
     FuturesCalendarDay,
     FuturesDailyBar,
     FuturesExchange,
+    FuturesPriceBasis,
     InstrumentKind,
     ProvisionalDailyBar,
     StockTradeStatus,
@@ -214,6 +215,14 @@ class AnalysisInputService:
             InstrumentKind.FUTURES_CONTRACT,
             InstrumentKind.FUTURES_CONTINUOUS,
         }
+        if kind is InstrumentKind.FUTURES_PRODUCT:
+            raise ValueError("futures product catalog nodes are not analyzable")
+        if kind is InstrumentKind.FUTURES_CONTINUOUS:
+            supported_bases = {item.value for item in FuturesPriceBasis}
+            if summary.get("price_basis") not in supported_bases:
+                raise ValueError("continuous futures analysis requires a supported price basis")
+            if not summary.get("rule_version"):
+                raise ValueError("continuous futures analysis requires a rule version")
         fused_futures: list[FuturesDailyBar] = []
         if futures_kind:
             start_date = as_of_date - timedelta(days=read_limit * 3 + 60)

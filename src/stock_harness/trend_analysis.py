@@ -54,7 +54,7 @@ from stock_harness.trend_context import (
 )
 
 
-ALGORITHM_VERSION = "trend-causal-replay-v17"
+ALGORITHM_VERSION = "trend-causal-replay-v18"
 LOGGER = logging.getLogger(__name__)
 
 
@@ -524,7 +524,25 @@ def _generated_items(
             ),
         ),
     )
-    items: list[GeneratedAnalysisItem] = []
+    items: list[GeneratedAnalysisItem] = [GeneratedAnalysisItem(
+        item_id="analysis-input-capabilities",
+        item_type=GeneratedItemType.EVIDENCE,
+        payload={
+            "kind": "analysis-input-capabilities",
+            "instrument": asdict(analysis_input.instrument),
+            "price_basis": analysis_input.price_basis,
+            "volume_semantics": analysis_input.volume_semantics,
+            "input_mode": analysis_input.mode.value,
+            "roll_event_periods": sum(
+                item.contains_roll_event for item in analysis_input.bars
+            ),
+            "mapped_contracts": sorted({
+                symbol
+                for item in analysis_input.bars
+                for symbol in item.mapped_contracts
+            }),
+        },
+    )]
     long_bars = analysis_input.bars[-horizons.long:]
     long_pivots = ()
     pivots_by_horizon = {}

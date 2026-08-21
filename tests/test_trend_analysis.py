@@ -5,6 +5,16 @@ from stock_harness.models import (
     AdjustmentFactor,
     BoardMembership,
     DailyBar,
+    FuturesBarState,
+    FuturesCalendarDay,
+    FuturesContinuousSeries,
+    FuturesContract,
+    FuturesDailyBar,
+    FuturesExchange,
+    FuturesLifecycleStatus,
+    FuturesPriceBasis,
+    FuturesProduct,
+    FuturesSeriesKind,
     Instrument,
     InstrumentKind,
 )
@@ -29,6 +39,54 @@ def _store() -> tuple[SQLiteMarketDataStore, list[date]]:
     ])
     store.upsert_trading_dates("tushare", days)
     return store, days
+
+
+def _futures_store() -> tuple[
+    SQLiteMarketDataStore, FuturesContract, tuple[FuturesContinuousSeries, ...], list[date]
+]:
+    store = SQLiteMarketDataStore(":memory:")
+    product = FuturesProduct(
+        "FUTPROD:SHFE:CU", "CU", "Copper", FuturesExchange.SHFE,
+        None, 5, "contract", "CNY/tonne",
+    )
+    contract = FuturesContract(
+        "FUT:SHFE:CU:202609", "CU2609.SHF", product.symbol, "Copper 2609",
+        FuturesExchange.SHFE, "202609", date(2025, 9, 16), date(2026, 9, 15),
+        date(2026, 9, 18), None, 5, "contract", "CNY/tonne",
+        FuturesLifecycleStatus.TRADING,
+    )
+    series = tuple(
+        FuturesContinuousSeries(
+            f"FUTCONT:SHFE:CU:{variant}:{basis.value}", provider_symbol,
+            product.symbol, f"Copper {basis.value}", FuturesExchange.SHFE,
+            FuturesSeriesKind.MAIN, variant, basis, "mapping-v1",
+        )
+        for basis, variant, provider_symbol in (
+            (FuturesPriceBasis.RAW, "MAIN", "CU.SHF"),
+            (FuturesPriceBasis.BACKWARD_RATIO, "RATIO", "CU.RATIO.SHF"),
+            (FuturesPriceBasis.BACKWARD_ADDITIVE, "ADDITIVE", "CU.ADD.SHF"),
+        )
+    )
+    store.upsert_futures_catalog(
+        "tushare-futures", [product], [contract], list(series)
+    )
+    start = date(2026, 7, 1)
+    days = [start + timedelta(days=index) for index in range(24)]
+    closes = [10, 9, 8, 9, 10, 11, 10, 9, 8, 9, 10, 11] * 2
+    store.upsert_futures_calendar("tushare-futures", [
+        FuturesCalendarDay(FuturesExchange.SHFE, day, True, None) for day in days
+    ])
+    rows = []
+    for symbol in (contract.symbol, *(item.symbol for item in series)):
+        rows.extend(FuturesDailyBar(
+            symbol, day, day, close, close + 0.2, close - 0.2, close,
+            close - 0.1, close, close - 0.1, 100 + index,
+            10_000 + index, 1_000 + index, 1, None, "tushare-futures",
+            FuturesBarState.FINAL,
+            mapped_contract_symbol=(contract.symbol if symbol != contract.symbol else None),
+        ) for index, (day, close) in enumerate(zip(days, closes)))
+    store.upsert_futures_daily_bars("tushare-futures", rows)
+    return store, contract, series, days
 
 
 def test_explicit_recalculate_registers_and_persists_only_requested_timeframes():
@@ -57,7 +115,7 @@ def test_explicit_recalculate_registers_and_persists_only_requested_timeframes()
             if item["item_id"] == "key-level-volume-profile-evidence"
         )
         assert "not exact position cost" in evidence["payload"]["uncertainty"]
-        assert results[0]["algorithm_version"] == "trend-causal-replay-v17"
+        assert results[0]["algorithm_version"] == "trend-causal-replay-v18"
         pattern_items = [
             item for item in results[0]["items"] if item["item_type"] == "pattern"
         ]
@@ -88,6 +146,42 @@ def test_explicit_recalculate_registers_and_persists_only_requested_timeframes()
             "000001.SZ", "trend", "monthly"
         ) is None
         assert store.claim_generated_analysis_targets() == []
+    finally:
+        store.close()
+
+
+def test_real_and_supported_continuous_futures_run_full_analysis_and_review():
+    store, contract, series, days = _futures_store()
+    try:
+        service = TrendAnalysisService(store)
+        for symbol in (contract.symbol, *(item.symbol for item in series)):
+            result = service.recalculate(
+                symbol, [AnalysisTimeframe.DAILY], AnalysisHorizons(6, 12, 20),
+                config_version="futures-v1", include_preview=False,
+                as_of_date=days[-1],
+            )[0]
+            item_types = {item["item_type"] for item in result["items"]}
+            assert {"anchor", "line", "zone", "pattern", "evidence"} <= item_types
+            capabilities = next(
+                item["payload"] for item in result["items"]
+                if item["item_id"] == "analysis-input-capabilities"
+            )
+            assert capabilities["instrument"]["kind"].startswith("futures-")
+            assert capabilities["volume_semantics"] == "contracts"
+            assert capabilities["mapped_contracts"] == (
+                [contract.symbol] if symbol != contract.symbol else []
+            )
+
+        snapshot = service.build_review_snapshot(
+            series[-1].symbol, AnalysisTimeframe.DAILY, AnalysisHorizons(6, 12, 20),
+            as_of_date=days[-1], config_version="futures-review-v1",
+        )
+        assert snapshot["run_id"].startswith("review-")
+        assert snapshot["status"] == "succeeded"
+        assert any(item["item_type"] == "pattern" for item in snapshot["items"])
+        assert store.get_latest_generated_analysis_run(
+            series[-1].symbol, "trend", "daily"
+        )["run_id"] != snapshot["run_id"]
     finally:
         store.close()
 
