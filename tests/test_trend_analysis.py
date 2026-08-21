@@ -1,6 +1,7 @@
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from stock_harness.analysis_inputs import AnalysisHorizons, AnalysisTimeframe
+from stock_harness.analysis_results import AnalysisNamespace
 from stock_harness.models import (
     AdjustmentFactor,
     BoardMembership,
@@ -14,6 +15,7 @@ from stock_harness.models import (
     FuturesLifecycleStatus,
     FuturesPriceBasis,
     FuturesProduct,
+    FuturesRollMapping,
     FuturesSeriesKind,
     Instrument,
     InstrumentKind,
@@ -277,6 +279,83 @@ def test_adjusted_continuous_roll_retains_price_history_with_explicit_qualificat
         assert qualification["excluded_prefix_bars"] == 0
         assert qualification["eligible_start_date"] == days[0].isoformat()
         assert qualification["excluded_roll_volume_dates"] == [roll_day.isoformat()]
+    finally:
+        store.close()
+
+
+def test_futures_preview_becomes_separate_official_run_after_canonical_takeover():
+    store, contract, series, days = _futures_store()
+    raw = next(item for item in series if item.price_basis is FuturesPriceBasis.RAW)
+    current = days[-1] + timedelta(days=1)
+    observed = datetime(2026, 7, 25, 6, 30, tzinfo=timezone.utc)
+    provisional = FuturesDailyBar(
+        contract.symbol, current, current, 11, 11.5, 10.8, 11.3,
+        10.9, None, 10.8, 321, None, 1_234, None, None,
+        "akshare-futures-zh-spot", FuturesBarState.PROVISIONAL,
+        provider_time=observed,
+    )
+    try:
+        store.upsert_futures_roll_mappings("tushare-futures", [FuturesRollMapping(
+            raw.symbol, raw.provider_symbol, current,
+            contract.symbol, contract.provider_symbol,
+        )])
+        store.upsert_futures_calendar("tushare-futures", [
+            FuturesCalendarDay(FuturesExchange.SHFE, current, True, days[-1])
+        ])
+        store.upsert_futures_provisional_daily_bars(
+            provisional.source, [provisional], observed
+        )
+        service = TrendAnalysisService(store)
+        preview = service.recalculate(
+            raw.symbol, [AnalysisTimeframe.DAILY], AnalysisHorizons(6, 12, 20),
+            config_version="futures-takeover-v1", include_preview=True,
+            as_of_date=current,
+        )[0]
+
+        assert preview["source_observed_at_ms"] == int(observed.timestamp() * 1000)
+        assert preview["expires_at_ms"] is not None
+        persisted_preview = store.get_latest_generated_analysis_run(
+            raw.symbol, "trend", "daily", AnalysisNamespace.PREVIEW
+        )
+        assert persisted_preview is not None
+        assert persisted_preview["run_id"] == preview["run_id"]
+        assert store.get_latest_generated_analysis_run(
+            raw.symbol, "trend", "daily", AnalysisNamespace.OFFICIAL
+        ) is None
+
+        canonical_contract = FuturesDailyBar(
+            contract.symbol, current, current, 11, 11.4, 10.7, 11.2,
+            10.9, 11.1, 10.8, 333, 12_000, 1_250, 16, None,
+            "tushare-futures", FuturesBarState.FINAL,
+        )
+        canonical_continuous = FuturesDailyBar(
+            raw.symbol, current, current, 11, 11.4, 10.7, 11.2,
+            10.9, 11.1, 10.8, 333, 12_000, 1_250, 16, None,
+            "tushare-futures", FuturesBarState.FINAL,
+            mapped_contract_symbol=contract.symbol,
+        )
+        store.upsert_futures_daily_bars(
+            "tushare-futures", [canonical_contract, canonical_continuous]
+        )
+        official = service.recalculate(
+            raw.symbol, [AnalysisTimeframe.DAILY], AnalysisHorizons(6, 12, 20),
+            config_version="futures-takeover-v1", include_preview=True,
+            as_of_date=current,
+        )[0]
+
+        assert official["source_observed_at_ms"] is None
+        assert official["expires_at_ms"] is None
+        assert official["run_id"] != preview["run_id"]
+        assert official["input_digest"] != preview["input_digest"]
+        assert store.get_latest_generated_analysis_run(
+            raw.symbol, "trend", "daily", AnalysisNamespace.PREVIEW
+        )["run_id"] == preview["run_id"]
+        assert store.get_latest_generated_analysis_run(
+            raw.symbol, "trend", "daily", AnalysisNamespace.OFFICIAL
+        )["run_id"] == official["run_id"]
+        assert store.list_futures_provisional_audit(contract.symbol)[0][
+            "takeover_state"
+        ] == "canonical-taken-over"
     finally:
         store.close()
 
