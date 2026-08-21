@@ -151,11 +151,15 @@ def test_rejects_only_invalid_daily_rows_without_losing_valid_history(caplog) ->
         FuturesExchange.SHFE, date(2026, 8, 20),
     ).contracts[0]
     with caplog.at_level("WARNING"):
-        bars = provider.fetch_contract_daily(
+        result = provider.fetch_contract_daily_result(
             contract, date(2026, 8, 18), date(2026, 8, 20),
         )
 
-    assert [bar.trading_day for bar in bars] == [date(2026, 8, 20)]
+    assert [bar.trading_day for bar in result.bars] == [date(2026, 8, 20)]
+    assert [item.trading_day for item in result.rejections] == [
+        date(2026, 8, 19), date(2026, 8, 18),
+    ]
+    assert {item.reason_code for item in result.rejections} == {"invalid-daily-bar"}
     assert "futures_provider_daily_rows_rejected" in caplog.text
     assert "count=2" in caplog.text
     assert "empty field" not in caplog.text

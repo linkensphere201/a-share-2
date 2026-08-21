@@ -10,8 +10,11 @@ import logging
 import time
 from collections.abc import Sequence
 
-from stock_harness.futures_provider import TushareFuturesProvider
-from stock_harness.models import FuturesDailyBar, FuturesExchange
+from stock_harness.futures_provider import (
+    FuturesDailyFetchResult,
+    TushareFuturesProvider,
+)
+from stock_harness.models import FuturesContract, FuturesDailyBar, FuturesExchange
 from stock_harness.sqlite_store import SQLiteMarketDataStore
 
 
@@ -26,6 +29,7 @@ class FuturesBackfillResult:
     contract_windows_completed: int
     daily_rows_changed: int
     mappings_written: int
+    rejected_daily_rows: int
     errors: tuple[str, ...]
     coverage: tuple[dict[str, object], ...]
 
@@ -47,6 +51,7 @@ def run_futures_backfill(
     as_of = as_of or end_date
     errors: list[str] = []
     discovered = skipped = completed = changed = mappings_written = processed = 0
+    rejected_daily_rows = 0
     started = time.perf_counter()
     selected_exchanges = tuple(dict.fromkeys(exchanges))
     LOGGER.info(
@@ -102,9 +107,11 @@ def run_futures_backfill(
             processed += 1
             for window_start, window_end in windows:
                 try:
-                    bars = provider.fetch_contract_daily(
-                        contract, window_start, window_end
+                    fetch = fetch_futures_daily_result(
+                        provider, contract, window_start, window_end
                     )
+                    bars = fetch.bars
+                    rejected_daily_rows += len(fetch.rejections)
                     stats = persist_futures_daily_batches(provider.code, store, bars)
                     store.checkpoint_futures_sync(
                         provider.code, "daily", exchange.value, contract.symbol,
@@ -113,7 +120,14 @@ def run_futures_backfill(
                     store.record_futures_update_receipt(
                         provider.code, "daily", contract.symbol, window_end,
                         len(bars), futures_daily_digest(bars),
-                        "complete" if bars else "empty",
+                        (
+                            "partial" if fetch.rejections else
+                            "complete" if bars else "empty"
+                        ),
+                        (
+                            f"rejected_rows={len(fetch.rejections)}"
+                            if fetch.rejections else ""
+                        ),
                     )
                     completed += 1
                     changed += stats
@@ -158,15 +172,31 @@ def run_futures_backfill(
         contract_windows_completed=completed,
         daily_rows_changed=changed,
         mappings_written=mappings_written,
+        rejected_daily_rows=rejected_daily_rows,
         errors=tuple(errors),
         coverage=tuple(store.list_futures_coverage()),
     )
     LOGGER.info(
-        "futures_backfill_completed exchanges=%d processed_contracts=%d completed_windows=%d changed_rows=%d mappings=%d errors=%d duration_ms=%.3f",
-        result.exchanges, processed, completed, changed, mappings_written, len(errors),
+        "futures_backfill_completed exchanges=%d processed_contracts=%d completed_windows=%d changed_rows=%d mappings=%d rejected_rows=%d errors=%d duration_ms=%.3f",
+        result.exchanges, processed, completed, changed, mappings_written,
+        rejected_daily_rows, len(errors),
         (time.perf_counter() - started) * 1000,
     )
     return result
+
+
+def fetch_futures_daily_result(
+    provider: TushareFuturesProvider,
+    contract: FuturesContract,
+    start_date: date,
+    end_date: date,
+) -> FuturesDailyFetchResult:
+    fetch_result = getattr(provider, "fetch_contract_daily_result", None)
+    if fetch_result is not None:
+        return fetch_result(contract, start_date, end_date)
+    return FuturesDailyFetchResult(
+        tuple(provider.fetch_contract_daily(contract, start_date, end_date)), ()
+    )
 
 
 def _log_bounded_failure(

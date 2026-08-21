@@ -169,14 +169,20 @@ class IncrementalUpdater:
                     errors.extend(
                         f"futures: {item}" for item in futures_result.errors
                     )
+                    if futures_result.rejected_daily_rows:
+                        errors.append(
+                            "futures: rejected_daily_rows="
+                            f"{futures_result.rejected_daily_rows}"
+                        )
                     LOGGER.info(
                         "futures_auto_update_complete exchanges=%d contracts_checked=%d "
-                        "contracts_updated=%d rows_changed=%d mappings=%d errors=%d",
+                        "contracts_updated=%d rows_changed=%d mappings=%d rejected_rows=%d errors=%d",
                         futures_result.exchanges,
                         futures_result.contracts_checked,
                         futures_result.contracts_updated,
                         futures_result.rows_changed,
                         futures_result.mappings_written,
+                        futures_result.rejected_daily_rows,
                         len(futures_result.errors),
                     )
                 except Exception as exc:

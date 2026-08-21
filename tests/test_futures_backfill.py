@@ -3,6 +3,10 @@ import logging
 
 from stock_harness.futures_backfill import run_futures_backfill
 from stock_harness.futures_provider import FuturesCatalog
+from stock_harness.futures_provider import (
+    FuturesDailyFetchResult,
+    FuturesDailyRowRejection,
+)
 from stock_harness.futures_update import run_futures_increment
 from stock_harness.models import (
     FuturesBarState,
@@ -83,6 +87,14 @@ class _Provider:
         ),)
 
 
+class _RejectingProvider(_Provider):
+    def fetch_contract_daily_result(self, contract, start_date, end_date):
+        return FuturesDailyFetchResult(
+            self.fetch_contract_daily(contract, start_date, end_date),
+            (FuturesDailyRowRejection(date(2026, 8, 19), "invalid-daily-bar"),),
+        )
+
+
 def test_futures_backfill_is_lifecycle_bounded_and_resumable() -> None:
     provider = _Provider()
     with SQLiteMarketDataStore(":memory:") as store:
@@ -125,6 +137,25 @@ def test_failed_contract_window_does_not_advance_cursor_or_remove_history() -> N
         assert len(store.list_futures_daily_bars(
             contract.symbol, date(2026, 8, 18), date(2026, 8, 20)
         )) == 1
+
+
+def test_rejected_daily_rows_are_persisted_as_partial_quality_evidence() -> None:
+    provider = _RejectingProvider()
+    contract = provider.catalog.contracts[0]
+    with SQLiteMarketDataStore(":memory:") as store:
+        result = run_futures_backfill(
+            provider, store, [FuturesExchange.SHFE],
+            date(2026, 8, 18), date(2026, 8, 20),
+        )
+        receipt = store.get_futures_update_receipt(
+            provider.code, "daily", contract.symbol, date(2026, 8, 20)
+        )
+        audit = store.audit_futures_integrity()
+
+    assert result.rejected_daily_rows == 1
+    assert receipt is not None
+    assert (receipt.status, receipt.message) == ("partial", "rejected_rows=1")
+    assert audit["receipt_status_counts"]["partial"] == 1
 
 
 def test_backfill_logs_bounded_structure_without_provider_error_text(caplog) -> None:

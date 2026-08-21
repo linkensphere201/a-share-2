@@ -51,6 +51,18 @@ class FuturesCatalog:
     continuous_series: tuple[FuturesContinuousSeries, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class FuturesDailyRowRejection:
+    trading_day: date
+    reason_code: str
+
+
+@dataclass(frozen=True, slots=True)
+class FuturesDailyFetchResult:
+    bars: tuple[FuturesDailyBar, ...]
+    rejections: tuple[FuturesDailyRowRejection, ...]
+
+
 class TushareFuturesProvider:
     code = "tushare-futures"
 
@@ -212,10 +224,20 @@ class TushareFuturesProvider:
         start_date: date,
         end_date: date,
     ) -> tuple[FuturesDailyBar, ...]:
+        return self.fetch_contract_daily_result(
+            contract, start_date, end_date
+        ).bars
+
+    def fetch_contract_daily_result(
+        self,
+        contract: FuturesContract,
+        start_date: date,
+        end_date: date,
+    ) -> FuturesDailyFetchResult:
         if start_date > end_date:
-            return ()
+            return FuturesDailyFetchResult((), ())
         bars: dict[date, FuturesDailyBar] = {}
-        rejected_dates: list[date] = []
+        rejections: list[FuturesDailyRowRejection] = []
         for window_start, window_end in _date_windows(start_date, end_date, 1_800):
             rows = self._rows(self._call(
                 "fut_daily",
@@ -254,16 +276,21 @@ class TushareFuturesProvider:
                     )
                     bar.validate()
                 except (TypeError, ValueError):
-                    rejected_dates.append(trading_day)
+                    rejections.append(FuturesDailyRowRejection(
+                        trading_day, "invalid-daily-bar"
+                    ))
                     continue
                 _insert_unique(bars, trading_day, bar, "fut_daily")
-        if rejected_dates:
+        if rejections:
             LOGGER.warning(
                 "futures_provider_daily_rows_rejected symbol=%s count=%d first_date=%s last_date=%s",
-                contract.symbol, len(rejected_dates), min(rejected_dates),
-                max(rejected_dates),
+                contract.symbol, len(rejections),
+                min(item.trading_day for item in rejections),
+                max(item.trading_day for item in rejections),
             )
-        return tuple(bars[key] for key in sorted(bars))
+        return FuturesDailyFetchResult(
+            tuple(bars[key] for key in sorted(bars)), tuple(rejections)
+        )
 
     def fetch_roll_mappings(
         self,

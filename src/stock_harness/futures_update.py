@@ -10,6 +10,7 @@ from collections.abc import Sequence
 from stock_harness.futures_backfill import (
     futures_calendar_digest,
     futures_daily_digest,
+    fetch_futures_daily_result,
     persist_futures_daily_batches,
 )
 from stock_harness.futures_provider import TushareFuturesProvider
@@ -27,6 +28,7 @@ class FuturesIncrementResult:
     contracts_updated: int
     rows_changed: int
     mappings_written: int
+    rejected_daily_rows: int
     errors: tuple[str, ...]
 
 
@@ -42,6 +44,7 @@ def run_futures_increment(
     selected = tuple(dict.fromkeys(exchanges))
     errors: list[str] = []
     checked = updated = changed = mappings_written = 0
+    rejected_daily_rows = 0
     calendar_start = completed_through - timedelta(
         days=max(31, correction_window_trading_days * 3 + 14)
     )
@@ -110,7 +113,11 @@ def run_futures_increment(
             if fetch_start > fetch_end:
                 continue
             try:
-                bars = provider.fetch_contract_daily(contract, fetch_start, fetch_end)
+                fetch = fetch_futures_daily_result(
+                    provider, contract, fetch_start, fetch_end
+                )
+                bars = fetch.bars
+                rejected_daily_rows += len(fetch.rejections)
                 changed += persist_futures_daily_batches(provider.code, store, bars)
                 store.checkpoint_futures_sync(
                     provider.code, "daily", exchange.value, contract.symbol,
@@ -119,7 +126,14 @@ def run_futures_increment(
                 store.record_futures_update_receipt(
                     provider.code, "daily", contract.symbol, fetch_end,
                     len(bars), futures_daily_digest(bars),
-                    "complete" if bars else "empty",
+                    (
+                        "partial" if fetch.rejections else
+                        "complete" if bars else "empty"
+                    ),
+                    (
+                        f"rejected_rows={len(fetch.rejections)}"
+                        if fetch.rejections else ""
+                    ),
                 )
                 updated += 1
             except Exception as error:
@@ -151,12 +165,14 @@ def run_futures_increment(
     result = FuturesIncrementResult(
         exchanges=len(selected), contracts_checked=checked,
         contracts_updated=updated, rows_changed=changed,
-        mappings_written=mappings_written, errors=tuple(errors),
+        mappings_written=mappings_written,
+        rejected_daily_rows=rejected_daily_rows, errors=tuple(errors),
     )
     LOGGER.info(
-        "futures_increment_completed exchanges=%d contracts_checked=%d contracts_updated=%d rows_changed=%d mappings=%d errors=%d",
+        "futures_increment_completed exchanges=%d contracts_checked=%d contracts_updated=%d rows_changed=%d mappings=%d rejected_rows=%d errors=%d",
         result.exchanges, result.contracts_checked, result.contracts_updated,
-        result.rows_changed, result.mappings_written, len(result.errors),
+        result.rows_changed, result.mappings_written,
+        result.rejected_daily_rows, len(result.errors),
     )
     return result
 
