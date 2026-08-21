@@ -812,6 +812,12 @@ def test_empty_mapping_window_removes_suffix_and_records_empty_receipt() -> None
 def test_large_mapping_window_is_written_in_atomic_bounded_batches() -> None:
     product, contract, series = _catalog()
     first_day = date(2018, 1, 1)
+    contract = replace(
+        contract,
+        listed_on=first_day,
+        last_trading_date=first_day + timedelta(days=2_000),
+        delivery_date=first_day + timedelta(days=2_001),
+    )
     mappings = [
         FuturesRollMapping(
             series.symbol, series.provider_symbol, first_day + timedelta(days=offset),
@@ -833,6 +839,25 @@ def test_large_mapping_window_is_written_in_atomic_bounded_batches() -> None:
     assert len(stored) == 2_001
     assert state.last_batch_rows == 2_001
     assert receipt.row_count == 2_001
+
+
+def test_mapping_storage_rejects_dates_outside_contract_lifecycle() -> None:
+    product, contract, series = _catalog()
+    mapping = FuturesRollMapping(
+        series.symbol, series.provider_symbol, date(2027, 1, 1),
+        contract.symbol, contract.provider_symbol,
+    )
+    with SQLiteMarketDataStore(":memory:") as store:
+        store.upsert_futures_catalog(
+            "tushare-futures", [product], [contract], [series]
+        )
+        with pytest.raises(ValueError, match="exceeds contract lifecycle"):
+            store.upsert_futures_roll_mappings("tushare-futures", [mapping])
+        with pytest.raises(ValueError, match="exceeds contract lifecycle"):
+            store.replace_futures_roll_mapping_window(
+                "tushare-futures", "SHFE", series.symbol,
+                mapping.effective_from, mapping.effective_from, [mapping],
+            )
 
 
 def test_futures_coverage_reports_field_completeness() -> None:

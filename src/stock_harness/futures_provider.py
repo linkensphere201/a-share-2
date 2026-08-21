@@ -83,6 +83,7 @@ class TushareFuturesProvider:
         )
         self._last_request_at: float | None = None
         self._mapping_day_cache: dict[date, tuple[Any, ...]] = {}
+        self._daily_rejection_warning_count = 0
 
     def discover_exchange(
         self,
@@ -263,12 +264,7 @@ class TushareFuturesProvider:
                     continue
                 _insert_unique(bars, trading_day, bar, "fut_daily")
         if rejections:
-            LOGGER.warning(
-                "futures_provider_daily_rows_rejected symbol=%s count=%d first_date=%s last_date=%s",
-                contract.symbol, len(rejections),
-                min(item.trading_day for item in rejections),
-                max(item.trading_day for item in rejections),
-            )
+            self._log_daily_rejections(contract.symbol, rejections)
         return FuturesDailyFetchResult(
             tuple(bars[key] for key in sorted(bars)), tuple(rejections)
         )
@@ -379,6 +375,8 @@ class TushareFuturesProvider:
                 effective_from = _required_date(row, "trade_date")
                 if not window_start <= effective_from <= window_end:
                     raise ValueError("fut_mapping returned a date outside the requested window")
+                if not contract.listed_on <= effective_from <= contract.last_trading_date:
+                    continue
                 mapping = FuturesRollMapping(
                     series_symbol=series.symbol,
                     series_provider_symbol=provider_series,
@@ -422,6 +420,8 @@ class TushareFuturesProvider:
                     raise ValueError(
                         f"fut_mapping references unknown real contract: {mapped_provider}"
                     )
+                if not contract.listed_on <= effective_from <= contract.last_trading_date:
+                    continue
                 mapping = FuturesRollMapping(
                     selected_series.symbol, provider_series, effective_from,
                     contract.symbol, mapped_provider,
@@ -432,6 +432,24 @@ class TushareFuturesProvider:
                     "fut_mapping daily batch",
                 )
         return tuple(mappings[key] for key in sorted(mappings))
+
+    def _log_daily_rejections(
+        self,
+        symbol: str,
+        rejections: Sequence[FuturesDailyRowRejection],
+    ) -> None:
+        self._daily_rejection_warning_count += 1
+        if self._daily_rejection_warning_count <= 20:
+            LOGGER.warning(
+                "futures_provider_daily_rows_rejected symbol=%s count=%d first_date=%s last_date=%s",
+                symbol, len(rejections),
+                min(item.trading_day for item in rejections),
+                max(item.trading_day for item in rejections),
+            )
+        elif self._daily_rejection_warning_count == 21:
+            LOGGER.warning(
+                "futures_provider_daily_rows_rejected_suppressed limit=20"
+            )
 
     def _call(self, method_name: str, **kwargs: object) -> Any:
         attempts = self.settings.retries + 1

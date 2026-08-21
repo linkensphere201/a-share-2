@@ -1115,6 +1115,19 @@ class SQLiteMarketDataStore:
                     sorted(symbols),
                 )
             }
+            contract_lifecycles = {
+                str(row[0]): (int(row[1]), int(row[2]))
+                for row in self._connection.execute(
+                    """
+                    SELECT instrument.symbol, contract.listed_on,
+                           contract.last_trading_date
+                    FROM futures_contracts AS contract
+                    JOIN instruments AS instrument USING (instrument_id)
+                    WHERE instrument.symbol IN (
+                    """ + ",".join("?" for _ in symbols) + ")",
+                    sorted(symbols),
+                )
+            }
             if any(
                 series_provider_symbols.get(item.series_symbol)
                 != item.series_provider_symbol
@@ -1123,6 +1136,14 @@ class SQLiteMarketDataStore:
                 for item in mappings
             ):
                 raise ValueError("futures mapping Provider identity mismatch")
+            if any(
+                item.contract_symbol not in contract_lifecycles
+                or not contract_lifecycles[item.contract_symbol][0]
+                <= _date_key(item.effective_from)
+                <= contract_lifecycles[item.contract_symbol][1]
+                for item in mappings
+            ):
+                raise ValueError("futures mapping date exceeds contract lifecycle")
             source_id = self._source_id(source)
             self._connection.executemany(
                 """
@@ -1680,6 +1701,21 @@ class SQLiteMarketDataStore:
                     [ids[item] for item in mapping_contract_symbols],
                 )
             } if mappings else {}
+            contract_lifecycles = {
+                str(row[0]): (int(row[1]), int(row[2]))
+                for row in self._connection.execute(
+                    """
+                    SELECT instrument.symbol, contract.listed_on,
+                           contract.last_trading_date
+                    FROM futures_contracts AS contract
+                    JOIN instruments AS instrument USING (instrument_id)
+                    WHERE contract.instrument_id IN (
+                    """
+                    + ",".join("?" for _ in mapping_contract_symbols)
+                    + ")",
+                    [ids[item] for item in mapping_contract_symbols],
+                )
+            } if mappings else {}
             if any(
                 str(series_row[0]) != item.series_provider_symbol
                 or contract_provider_symbols.get(item.contract_symbol)
@@ -1687,6 +1723,14 @@ class SQLiteMarketDataStore:
                 for item in mappings
             ):
                 raise ValueError("futures mapping Provider identity mismatch")
+            if any(
+                item.contract_symbol not in contract_lifecycles
+                or not contract_lifecycles[item.contract_symbol][0]
+                <= _date_key(item.effective_from)
+                <= contract_lifecycles[item.contract_symbol][1]
+                for item in mappings
+            ):
+                raise ValueError("futures mapping date exceeds contract lifecycle")
             self._connection.execute(
                 """
                 DELETE FROM futures_roll_mappings

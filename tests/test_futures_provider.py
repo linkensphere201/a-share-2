@@ -195,6 +195,42 @@ def test_resolves_roll_mapping_to_known_canonical_real_contract() -> None:
     assert mapping.effective_from == date(2026, 8, 20)
 
 
+def test_ignores_roll_mapping_outside_contract_lifecycle() -> None:
+    class InvalidLifecycleMappingClient(_Client):
+        def fut_mapping(self, **kwargs):
+            rows = super().fut_mapping(**kwargs)
+            rows[0]["trade_date"] = "20270920"
+            return rows
+
+    provider = TushareFuturesProvider(_settings(), InvalidLifecycleMappingClient())
+    catalog = provider.discover_exchange(FuturesExchange.SHFE, date(2026, 8, 20))
+    assert provider.fetch_roll_mappings(
+        catalog.continuous_series[0], catalog.contracts,
+        date(2027, 9, 1), date(2027, 9, 30),
+    ) == ()
+
+
+def test_bounds_repeated_daily_rejection_warnings(caplog) -> None:
+    class InvalidDailyClient(_Client):
+        def fut_daily(self, **kwargs):
+            row = super().fut_daily(**kwargs)[0]
+            row["open"] = None
+            return [row]
+
+    provider = TushareFuturesProvider(_settings(), InvalidDailyClient())
+    contract = provider.discover_exchange(
+        FuturesExchange.SHFE, date(2026, 8, 20),
+    ).contracts[0]
+    with caplog.at_level("WARNING"):
+        for _ in range(25):
+            provider.fetch_contract_daily_result(
+                contract, date(2026, 8, 20), date(2026, 8, 20),
+            )
+
+    assert caplog.text.count("futures_provider_daily_rows_rejected symbol=") == 20
+    assert caplog.text.count("futures_provider_daily_rows_rejected_suppressed") == 1
+
+
 def test_batches_mapping_dates_once_and_filters_to_selected_series() -> None:
     class MappingBatchClient(_Client):
         def __init__(self):
@@ -279,7 +315,7 @@ def test_long_daily_and_mapping_ranges_are_split_below_provider_row_limits() -> 
     assert len(client.daily_calls) == 3
     assert len(client.mapping_calls) == 3
     assert len(bars) == 3
-    assert len(mappings) == 3
+    assert mappings == ()
     assert all(
         (date.fromisoformat(end_date[:4] + "-" + end_date[4:6] + "-" + end_date[6:])
          - date.fromisoformat(start_date[:4] + "-" + start_date[4:6] + "-" + start_date[6:])).days < 1800
