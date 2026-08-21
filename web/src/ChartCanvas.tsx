@@ -20,6 +20,7 @@ import { barsInRenderPeriod, chooseAnchor, extendLineToBounds, orientTrendLineAn
 import type { ThemeDefinition } from './themeStore'
 import { loadTrendAnalysis, type TrendAnalysisRun } from './trendAnalysisClient'
 import { refreshLatestDailyBar, type LatestDailyRefreshFeedback } from './latestDailyRefreshClient'
+import { useIntradayDailyPolling } from './useIntradayDailyPolling'
 import {
   reviewGeometryHandles,
   updateReviewGeometryHandle,
@@ -48,8 +49,6 @@ import {
   detectPriceGaps,
   latestReadout,
   mergeProvisionalBar,
-  millisecondsUntilMarketSession,
-  millisecondsUntilNextMarketDay,
   movingAverage,
   previousCloseByDate,
   remapLogicalRange,
@@ -333,7 +332,6 @@ export function ChartCanvas({
   const [editingAnchor, setEditingAnchor] = useState<{ drawingId: string; anchorIndex: 0 | 1 }>()
   const [toolbarCollapsed, setToolbarCollapsed] = useState(persistedToolbarCollapsed)
   const [overlayRevision, setOverlayRevision] = useState(0)
-  const liveFailureCountRef = useRef(0)
   const initialTheme = useRef(theme).current
   const manualRefreshControllerRef = useRef<AbortController | undefined>(undefined)
   const manualRefreshFeedbackTimerRef = useRef(0)
@@ -967,62 +965,15 @@ export function ChartCanvas({
       })
   }, [symbol, replaceBars, showManualRefreshFeedback])
 
-  useEffect(() => {
-    if (asOfDate) return
-    let stopped = false
-    let timer = 0
-    let controller: AbortController | undefined
-    const schedule = (delay: number) => {
-      timer = window.setTimeout(refresh, delay)
-    }
-    const refresh = () => {
-      if (stopped) return
-      const delayUntilSession = millisecondsUntilMarketSession(new Date())
-      if (delayUntilSession > 0) {
-        schedule(delayUntilSession)
-        return
-      }
-      const params = new URLSearchParams({ symbol })
-      controller = new AbortController()
-      fetch(`/api/intraday-bars?${params}`, { signal: controller.signal })
-        .then(response => {
-          if (!response.ok) throw new Error(`HTTP ${response.status}`)
-          return response.json() as Promise<{
-            items: DailyBar[]
-            status: { state: string }
-          }>
-        })
-        .then(body => {
-          if (stopped) return
-          const live = body.items[0]
-          if (live) {
-            const next = mergeProvisionalBar(barsRef.current, live)
-            if (next !== barsRef.current) replaceBars(next, true)
-          }
-          if (liveFailureCountRef.current > 0) {
-            logInfo('intraday', '盘中行情读取恢复', { symbol })
-            liveFailureCountRef.current = 0
-          }
-          schedule(body.status.state === 'market_closed'
-            ? millisecondsUntilNextMarketDay(new Date())
-            : 30_000)
-        })
-        .catch(error => {
-          if (stopped) return
-          liveFailureCountRef.current += 1
-          if (liveFailureCountRef.current === 1 || liveFailureCountRef.current % 10 === 0) {
-            logWarning('intraday', '读取盘中临时日K失败，保留现有图表', { symbol, error })
-          }
-          schedule(30_000)
-        })
-    }
-    schedule(0)
-    return () => {
-      stopped = true
-      window.clearTimeout(timer)
-      controller?.abort()
-    }
-  }, [symbol, asOfDate, replaceBars])
+  const applyPolledBar = useCallback((live: DailyBar) => {
+    const next = mergeProvisionalBar(barsRef.current, live)
+    if (next !== barsRef.current) replaceBars(next, true)
+  }, [replaceBars])
+  useIntradayDailyPolling({
+    symbol,
+    disabled: Boolean(asOfDate),
+    onBar: applyPolledBar,
+  })
 
   useEffect(() => {
     applyBucketRef.current = (bucket, preserve) => {

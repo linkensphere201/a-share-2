@@ -872,6 +872,38 @@ def test_unchanged_mapping_window_does_not_mark_series_dirty() -> None:
         assert store.get_futures_continuous_dirty_state(series.symbol) is None
 
 
+def test_mapping_window_idempotence_does_not_depend_on_input_order() -> None:
+    product, contract, series = _catalog()
+    first_day, second_day = date(2026, 8, 19), date(2026, 8, 20)
+    mappings = [
+        FuturesRollMapping(
+            series.symbol, series.provider_symbol, day,
+            contract.symbol, contract.provider_symbol,
+        )
+        for day in (first_day, second_day)
+    ]
+    with SQLiteMarketDataStore(":memory:") as store:
+        store.upsert_futures_catalog(
+            "tushare-futures", [product], [contract], [series]
+        )
+        store.replace_futures_roll_mapping_window(
+            "tushare-futures", "SHFE", series.symbol,
+            first_day, second_day, mappings,
+        )
+        store._connection.execute("DELETE FROM futures_continuous_dirty_series")
+        store._connection.commit()
+
+        store.replace_futures_roll_mapping_window(
+            "tushare-futures", "SHFE", series.symbol,
+            first_day, second_day, list(reversed(mappings)),
+        )
+
+        assert store.get_futures_continuous_dirty_state(series.symbol) is None
+        assert store.list_futures_roll_mappings(
+            series.symbol, first_day, second_day
+        ) == mappings
+
+
 def test_large_mapping_window_is_written_in_atomic_bounded_batches() -> None:
     product, contract, series = _catalog()
     first_day = date(2018, 1, 1)

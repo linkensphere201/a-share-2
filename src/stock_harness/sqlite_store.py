@@ -56,6 +56,11 @@ from stock_harness.custom_index import (
     normalize_members,
 )
 from stock_harness.futures_continuous import FuturesContinuousBuild
+from stock_harness.futures_mapping import (
+    FuturesContractMappingIdentity,
+    normalize_futures_mappings,
+    validate_futures_mapping_identities,
+)
 from stock_harness.analysis_results import (
     AnalysisNamespace,
     AnalysisRunRecord,
@@ -1073,6 +1078,7 @@ class SQLiteMarketDataStore:
         mappings: Sequence[FuturesRollMapping],
     ) -> int:
         self._require_futures_storage()
+        mappings = normalize_futures_mappings(mappings)
         if len(mappings) > 2_000:
             raise ValueError("futures mapping batch exceeds 2000 rows")
         for item in mappings:
@@ -1103,23 +1109,16 @@ class SQLiteMarketDataStore:
                     sorted(symbols),
                 )
             }
-            contract_provider_symbols = {
-                str(row[0]): str(row[1])
-                for row in self._connection.execute(
-                    """
-                    SELECT instrument.symbol, contract.provider_symbol
-                    FROM futures_contracts AS contract
-                    JOIN instruments AS instrument USING (instrument_id)
-                    WHERE instrument.symbol IN (
-                    """ + ",".join("?" for _ in symbols) + ")",
-                    sorted(symbols),
+            contract_identities = {
+                str(row[0]): FuturesContractMappingIdentity(
+                    provider_symbol=str(row[1]),
+                    listed_on=_date_from_key(int(row[2])),
+                    last_trading_date=_date_from_key(int(row[3])),
                 )
-            }
-            contract_lifecycles = {
-                str(row[0]): (int(row[1]), int(row[2]))
                 for row in self._connection.execute(
                     """
-                    SELECT instrument.symbol, contract.listed_on,
+                    SELECT instrument.symbol, contract.provider_symbol,
+                           contract.listed_on,
                            contract.last_trading_date
                     FROM futures_contracts AS contract
                     JOIN instruments AS instrument USING (instrument_id)
@@ -1128,22 +1127,9 @@ class SQLiteMarketDataStore:
                     sorted(symbols),
                 )
             }
-            if any(
-                series_provider_symbols.get(item.series_symbol)
-                != item.series_provider_symbol
-                or contract_provider_symbols.get(item.contract_symbol)
-                != item.contract_provider_symbol
-                for item in mappings
-            ):
-                raise ValueError("futures mapping Provider identity mismatch")
-            if any(
-                item.contract_symbol not in contract_lifecycles
-                or not contract_lifecycles[item.contract_symbol][0]
-                <= _date_key(item.effective_from)
-                <= contract_lifecycles[item.contract_symbol][1]
-                for item in mappings
-            ):
-                raise ValueError("futures mapping date exceeds contract lifecycle")
+            validate_futures_mapping_identities(
+                mappings, series_provider_symbols, contract_identities
+            )
             source_id = self._source_id(source)
             self._connection.executemany(
                 """
@@ -1644,6 +1630,7 @@ class SQLiteMarketDataStore:
     ) -> tuple[FuturesSyncState, FuturesUpdateReceipt]:
         self._require_futures_storage()
         _require_sync_text(scope, "scope")
+        mappings = normalize_futures_mappings(mappings)
         if start_date > end_date:
             raise ValueError("futures mapping window start must not exceed end")
         if len(mappings) > 20_000:
@@ -1687,25 +1674,16 @@ class SQLiteMarketDataStore:
             mapping_contract_symbols = sorted({
                 item.contract_symbol for item in mappings
             })
-            contract_provider_symbols = {
-                str(row[0]): str(row[1])
-                for row in self._connection.execute(
-                    """
-                    SELECT instrument.symbol, contract.provider_symbol
-                    FROM futures_contracts AS contract
-                    JOIN instruments AS instrument USING (instrument_id)
-                    WHERE contract.instrument_id IN (
-                    """
-                    + ",".join("?" for _ in mapping_contract_symbols)
-                    + ")",
-                    [ids[item] for item in mapping_contract_symbols],
+            contract_identities = {
+                str(row[0]): FuturesContractMappingIdentity(
+                    provider_symbol=str(row[1]),
+                    listed_on=_date_from_key(int(row[2])),
+                    last_trading_date=_date_from_key(int(row[3])),
                 )
-            } if mappings else {}
-            contract_lifecycles = {
-                str(row[0]): (int(row[1]), int(row[2]))
                 for row in self._connection.execute(
                     """
-                    SELECT instrument.symbol, contract.listed_on,
+                    SELECT instrument.symbol, contract.provider_symbol,
+                           contract.listed_on,
                            contract.last_trading_date
                     FROM futures_contracts AS contract
                     JOIN instruments AS instrument USING (instrument_id)
@@ -1716,21 +1694,11 @@ class SQLiteMarketDataStore:
                     [ids[item] for item in mapping_contract_symbols],
                 )
             } if mappings else {}
-            if any(
-                str(series_row[0]) != item.series_provider_symbol
-                or contract_provider_symbols.get(item.contract_symbol)
-                != item.contract_provider_symbol
-                for item in mappings
-            ):
-                raise ValueError("futures mapping Provider identity mismatch")
-            if any(
-                item.contract_symbol not in contract_lifecycles
-                or not contract_lifecycles[item.contract_symbol][0]
-                <= _date_key(item.effective_from)
-                <= contract_lifecycles[item.contract_symbol][1]
-                for item in mappings
-            ):
-                raise ValueError("futures mapping date exceeds contract lifecycle")
+            validate_futures_mapping_identities(
+                mappings,
+                {series_symbol: str(series_row[0])},
+                contract_identities,
+            )
             current_mappings = self._connection.execute(
                 """
                 SELECT effective_from, contract_instrument_id

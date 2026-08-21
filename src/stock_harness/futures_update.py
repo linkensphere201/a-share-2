@@ -9,10 +9,11 @@ from collections.abc import Sequence
 
 from stock_harness.futures_backfill import (
     FUTURES_CALENDAR_LOOKAHEAD_DAYS,
-    futures_calendar_digest,
-    futures_daily_digest,
     fetch_futures_daily_result,
-    persist_futures_daily_batches,
+)
+from stock_harness.futures_daily_persistence import (
+    futures_calendar_digest,
+    persist_futures_daily_result,
 )
 from stock_harness.futures_provider import (
     FuturesDailyFetchResult,
@@ -298,19 +299,15 @@ def _persist_daily_plan(
     plan: _DailyPlan,
     fetch: FuturesDailyFetchResult,
 ) -> int:
-    bars = fetch.bars
-    changed = persist_futures_daily_batches(provider.code, store, bars)
-    store.checkpoint_futures_sync(
-        provider.code, "daily", exchange.value, plan.contract.symbol,
-        plan.start_date, plan.end_date, len(bars),
+    return persist_futures_daily_result(
+        provider.code,
+        store,
+        exchange,
+        plan.contract,
+        plan.start_date,
+        plan.end_date,
+        fetch,
     )
-    store.record_futures_update_receipt(
-        provider.code, "daily", plan.contract.symbol, plan.end_date,
-        len(bars), futures_daily_digest(bars),
-        "partial" if fetch.rejections else "complete" if bars else "empty",
-        f"rejected_rows={len(fetch.rejections)}" if fetch.rejections else "",
-    )
-    return changed
 
 
 def _log_bounded_failure(

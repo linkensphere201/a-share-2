@@ -208,6 +208,31 @@ def test_rejected_daily_rows_are_persisted_as_partial_quality_evidence() -> None
     assert audit["receipt_status_counts"]["partial"] == 1
 
 
+def test_partial_backfill_resumes_from_first_rejected_date() -> None:
+    provider = _RejectingProvider()
+    contract = provider.catalog.contracts[0]
+    with SQLiteMarketDataStore(":memory:") as store:
+        run_futures_backfill(
+            provider, store, [FuturesExchange.SHFE],
+            date(2026, 8, 18), date(2026, 8, 20),
+        )
+        state = store.get_futures_sync_state(
+            provider.code, "daily", "SHFE", contract.symbol
+        )
+        assert state is not None
+        assert state.covered_through == date(2026, 8, 18)
+
+        run_futures_backfill(
+            provider, store, [FuturesExchange.SHFE],
+            date(2026, 8, 18), date(2026, 8, 20),
+        )
+
+    assert provider.daily_calls == [
+        (date(2026, 8, 18), date(2026, 8, 20)),
+        (date(2026, 8, 19), date(2026, 8, 20)),
+    ]
+
+
 def test_backfill_logs_bounded_structure_without_provider_error_text(caplog) -> None:
     provider = _Provider(fail_daily=True)
     with SQLiteMarketDataStore(":memory:") as store, caplog.at_level(logging.INFO):
@@ -340,6 +365,36 @@ def test_zero_correction_window_skips_already_completed_contract() -> None:
         )
         assert provider.daily_calls == []
         assert result.contracts_updated == 0
+
+
+def test_zero_correction_window_retries_a_rejected_trading_day() -> None:
+    class RejectRequestedDayProvider(_Provider):
+        def fetch_contract_daily_result(self, contract, start_date, end_date):
+            self.daily_calls.append((start_date, end_date))
+            return FuturesDailyFetchResult(
+                (),
+                (FuturesDailyRowRejection(
+                    contract.symbol, end_date, "invalid-daily-bar"
+                ),),
+            )
+
+    provider = RejectRequestedDayProvider()
+    contract = provider.catalog.contracts[0]
+    with SQLiteMarketDataStore(":memory:") as store:
+        for _ in range(2):
+            result = run_futures_increment(
+                provider, store, [FuturesExchange.SHFE],
+                date(2026, 8, 20), 0,
+            )
+            assert result.rejected_daily_rows == 1
+        assert store.get_futures_sync_state(
+            provider.code, "daily", "SHFE", contract.symbol
+        ) is None
+
+    assert provider.daily_calls == [
+        (date(2026, 8, 20), date(2026, 8, 20)),
+        (date(2026, 8, 20), date(2026, 8, 20)),
+    ]
 
 
 def test_futures_cli_exits_nonzero_only_for_unisolated_errors() -> None:

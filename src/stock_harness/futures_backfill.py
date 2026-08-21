@@ -4,17 +4,19 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, timedelta
-from hashlib import sha256
-import json
 import logging
 import time
 from collections.abc import Sequence
 
+from stock_harness.futures_daily_persistence import (
+    futures_calendar_digest,
+    persist_futures_daily_result,
+)
 from stock_harness.futures_provider import (
     FuturesDailyFetchResult,
     TushareFuturesProvider,
 )
-from stock_harness.models import FuturesContract, FuturesDailyBar, FuturesExchange
+from stock_harness.models import FuturesContract, FuturesExchange
 from stock_harness.sqlite_store import SQLiteMarketDataStore
 
 
@@ -119,24 +121,15 @@ def run_futures_backfill(
                     fetch = fetch_futures_daily_result(
                         provider, contract, window_start, window_end
                     )
-                    bars = fetch.bars
                     rejected_daily_rows += len(fetch.rejections)
-                    stats = persist_futures_daily_batches(provider.code, store, bars)
-                    store.checkpoint_futures_sync(
-                        provider.code, "daily", exchange.value, contract.symbol,
-                        window_start, window_end, len(bars),
-                    )
-                    store.record_futures_update_receipt(
-                        provider.code, "daily", contract.symbol, window_end,
-                        len(bars), futures_daily_digest(bars),
-                        (
-                            "partial" if fetch.rejections else
-                            "complete" if bars else "empty"
-                        ),
-                        (
-                            f"rejected_rows={len(fetch.rejections)}"
-                            if fetch.rejections else ""
-                        ),
+                    stats = persist_futures_daily_result(
+                        provider.code,
+                        store,
+                        exchange,
+                        contract,
+                        window_start,
+                        window_end,
+                        fetch,
                     )
                     completed += 1
                     changed += stats
@@ -239,37 +232,3 @@ def _missing_windows(
     if desired_end > covered_through:
         windows.append((max(desired_start, covered_through + timedelta(days=1)), desired_end))
     return tuple((start, end) for start, end in windows if start <= end)
-
-
-def persist_futures_daily_batches(
-    source: str,
-    store: SQLiteMarketDataStore,
-    bars: Sequence[FuturesDailyBar],
-) -> int:
-    changed = 0
-    for offset in range(0, len(bars), 2_000):
-        changed += store.upsert_futures_daily_bars(
-            source, bars[offset:offset + 2_000]
-        ).changed
-    return changed
-
-
-def futures_daily_digest(bars: Sequence[FuturesDailyBar]) -> bytes:
-    payload = [
-        [item.symbol, item.trading_day.isoformat(), item.open, item.high,
-         item.low, item.close, item.volume_contracts, item.settlement,
-         item.open_interest_contracts]
-        for item in sorted(bars, key=lambda value: (value.symbol, value.trading_day))
-    ]
-    return _digest(payload)
-
-
-def futures_calendar_digest(days: Sequence[object]) -> bytes:
-    payload = [repr(item) for item in days]
-    return _digest(payload)
-
-
-def _digest(payload: object) -> bytes:
-    return sha256(
-        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).digest()
