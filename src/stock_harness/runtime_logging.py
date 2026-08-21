@@ -68,7 +68,7 @@ class RuntimeEventHandler(logging.Handler):
 EVENT_BUFFER = RuntimeEventBuffer()
 
 
-def configure_runtime_logging(log_dir: Path, level: int = logging.INFO) -> Path:
+def configure_runtime_logging(log_dir: Path, level: int = logging.INFO) -> Path | None:
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / "stock-harness.log"
     root = logging.getLogger()
@@ -77,15 +77,31 @@ def configure_runtime_logging(log_dir: Path, level: int = logging.INFO) -> Path:
         "%(asctime)s %(levelname)s %(threadName)s %(name)s %(message)s"
     )
     if not any(getattr(handler, "_stock_harness_file", False) for handler in root.handlers):
-        file_handler = RotatingFileHandler(
-            log_path, maxBytes=5 * 1024 * 1024, backupCount=5, encoding="utf-8"
-        )
-        file_handler.setFormatter(formatter)
-        file_handler._stock_harness_file = True  # type: ignore[attr-defined]
-        root.addHandler(file_handler)
+        file_handler = None
+        for candidate in (log_path, log_dir / "stock-harness-fallback.log"):
+            try:
+                file_handler = RotatingFileHandler(
+                    candidate, maxBytes=5 * 1024 * 1024,
+                    backupCount=5, encoding="utf-8",
+                )
+                log_path = candidate
+                break
+            except OSError:
+                continue
+        if file_handler is not None:
+            file_handler.setFormatter(formatter)
+            file_handler._stock_harness_file = True  # type: ignore[attr-defined]
+            root.addHandler(file_handler)
+        else:
+            log_path = None
     if not any(isinstance(handler, RuntimeEventHandler) for handler in root.handlers):
         root.addHandler(RuntimeEventHandler(EVENT_BUFFER))
-    logging.getLogger(__name__).info("runtime_logging_ready path=%s", log_path)
+    if log_path is None:
+        EVENT_BUFFER.append(
+            "WARNING", "backend", __name__, "runtime_file_logging_unavailable"
+        )
+    else:
+        logging.getLogger(__name__).info("runtime_logging_ready path=%s", log_path)
     return log_path
 
 
