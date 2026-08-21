@@ -12,23 +12,28 @@ vi.mock('./ChartCanvas', () => ({
     symbol,
     volumeVisible,
     indicator,
+    toolbarCollapsed,
     initialVisibleRange,
     onVisibleRangeChange,
     onVolumeVisibleChange,
     onIndicatorChange,
+    onToolbarCollapsedChange,
   }: {
     symbol: string
     volumeVisible: boolean
     indicator: 'macd' | 'none'
+    toolbarCollapsed?: boolean
     initialVisibleRange?: { from: string; to: string }
     onVisibleRangeChange: (value: { from: string; to: string }) => void
     onVolumeVisibleChange: (visible: boolean) => void
     onIndicatorChange: (indicator: 'macd' | 'none') => void
+    onToolbarCollapsedChange: (collapsed: boolean) => void
   }) => <div data-testid="chart-canvas" data-visible-from={initialVisibleRange?.from} data-visible-to={initialVisibleRange?.to}>
     {symbol}
     <button aria-label="模拟缩放图表" onClick={() => onVisibleRangeChange({ from: '2025-04-01', to: '2026-08-05' })}/>
     {volumeVisible && <button aria-label="隐藏成交量栏" onClick={() => onVolumeVisibleChange(false)}/>}
     {indicator === 'macd' && <button aria-label="隐藏MACD栏" onClick={() => onIndicatorChange('none')}/>}
+    <button aria-label="模拟切换画线工具栏" onClick={() => onToolbarCollapsedChange(!toolbarCollapsed)}/>
   </div>,
 }))
 
@@ -197,6 +202,23 @@ describe('StockWorkspace', () => {
     await user.click(screen.getByRole('button', { name: '删除 沪深300ETF' }))
     await user.click(screen.getByRole('button', { name: '保存并退出' }))
     expect(screen.getByTestId('chart-canvas').textContent).toBe('BK1128.DC')
+  })
+
+  it('persists the per-window drawing toolbar collapsed state', async () => {
+    vi.stubGlobal('fetch', emptyFetch())
+    const user = userEvent.setup()
+    const first = render(<App />)
+
+    await user.click(screen.getByRole('button', { name: '模拟切换画线工具栏' }))
+    await waitFor(() => {
+      const state = JSON.parse(window.localStorage.getItem(workspaceStorageKey) ?? '{}')
+      expect(state.groups[0].windows[1].chart.drawingToolbarCollapsed).toBe(true)
+    })
+
+    first.unmount()
+    render(<App />)
+    const state = JSON.parse(window.localStorage.getItem(workspaceStorageKey) ?? '{}')
+    expect(state.groups[0].windows[1].chart.drawingToolbarCollapsed).toBe(true)
   })
 
   it('routes an exact continuous futures selection into an attached chart', async () => {

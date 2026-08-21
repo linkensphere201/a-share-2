@@ -56,6 +56,7 @@ export type ChartViewState = {
   indicator: ChartIndicator
   settlementVisible: boolean
   openInterestVisible: boolean
+  drawingToolbarCollapsed: boolean
   paneRatios?: ChartPaneRatios
   visibleRange?: VisibleRange
   seriesMode?: 'line' | 'candles'
@@ -168,7 +169,7 @@ export function createWindowGroup(
     title: nextTitle(),
     mode,
     instrument: { ...fallbackInstrument },
-    chart: { range: '3Y', priceMode: 'normal', volumeVisible: true, indicator: 'macd', settlementVisible: false, openInterestVisible: false, tradingSystems: createTradingSystemWindowStates() },
+    chart: { range: '3Y', priceMode: 'normal', volumeVisible: true, indicator: 'macd', settlementVisible: false, openInterestVisible: false, drawingToolbarCollapsed: false, tradingSystems: createTradingSystemWindowStates() },
   })
   const list = (): InstrumentListWindowState => ({
     id: createId('list'),
@@ -241,7 +242,7 @@ export function createDefaultWorkspace(): WorkspaceState {
     title: '表2',
     mode: 'attached',
     instrument: fallbackInstrument,
-    chart: { range: '3Y', priceMode: 'normal', volumeVisible: true, indicator: 'macd', settlementVisible: false, openInterestVisible: false, tradingSystems: createTradingSystemWindowStates() },
+    chart: { range: '3Y', priceMode: 'normal', volumeVisible: true, indicator: 'macd', settlementVisible: false, openInterestVisible: false, drawingToolbarCollapsed: false, tradingSystems: createTradingSystemWindowStates() },
   }
   const group = createGroup('group-primary', '默认窗口组', [listWindow, chartWindow], chartWindow.id, [{
     id: 'attachment-primary',
@@ -414,6 +415,7 @@ function normalizeChartWindow(value: unknown): ChartWindowState | undefined {
       indicator: value.chart.indicator === 'none' ? 'none' : 'macd',
       settlementVisible: value.chart.settlementVisible === true,
       openInterestVisible: value.chart.openInterestVisible === true,
+      drawingToolbarCollapsed: value.chart.drawingToolbarCollapsed === true,
       paneRatios: normalizePaneRatios(value.chart.paneRatios),
       visibleRange: normalizeVisibleRange(value.chart.visibleRange),
       seriesMode: value.chart.seriesMode === 'line' ? 'line' : value.chart.seriesMode === 'candles' ? 'candles' : undefined,
@@ -485,6 +487,7 @@ function migrateLegacyWindow(value: unknown): ChartWindowState | undefined {
       indicator: 'macd',
       settlementVisible: false,
       openInterestVisible: false,
+      drawingToolbarCollapsed: false,
       visibleRange: normalizeVisibleRange(legacy.visibleRange),
       tradingSystems: createTradingSystemWindowStates(),
     },

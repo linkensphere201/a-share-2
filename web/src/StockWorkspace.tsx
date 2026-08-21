@@ -242,6 +242,12 @@ export function StockWorkspace() {
       : item)
   }, [updateWindow])
 
+  const handleToolbarCollapsed = useCallback((id: string, drawingToolbarCollapsed: boolean) => {
+    updateWindow(id, item => item.type === 'chart'
+      ? { ...item, chart: { ...item.chart, drawingToolbarCollapsed } }
+      : item)
+  }, [updateWindow])
+
   const handleTradingSystems = useCallback((id: string, tradingSystems: TradingSystemWindowStates) => {
     updateWindow(id, item => item.type === 'chart'
       ? { ...item, chart: { ...item.chart, tradingSystems } }
@@ -499,6 +505,7 @@ export function StockWorkspace() {
           onSettlementVisibleChange={handleSettlementVisible}
           onOpenInterestVisibleChange={handleOpenInterestVisible}
           onPaneRatiosChange={handlePaneRatios}
+          onToolbarCollapsedChange={handleToolbarCollapsed}
           onTradingSystemsChange={handleTradingSystems}
           onTradingSystemRecalculate={handleTradingSystemRecalculate}
           onReferencedSymbolsChange={updateReferencedSymbols}

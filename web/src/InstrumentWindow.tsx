@@ -27,6 +27,7 @@ type InstrumentWindowProps = {
   onSettlementVisibleChange: (visible: boolean) => void
   onOpenInterestVisibleChange: (visible: boolean) => void
   onPaneRatiosChange: (ratios: ChartPaneRatios) => void
+  onToolbarCollapsedChange: (collapsed: boolean) => void
   onTradingSystemsChange: (systems: TradingSystemWindowStates) => void
   onTradingSystemRecalculate: (systemId: string) => void
 }
@@ -48,6 +49,7 @@ export function ChartWindow({
   onSettlementVisibleChange,
   onOpenInterestVisibleChange,
   onPaneRatiosChange,
+  onToolbarCollapsedChange,
   onTradingSystemsChange,
   onTradingSystemRecalculate,
 }: InstrumentWindowProps) {
@@ -114,6 +116,7 @@ export function ChartWindow({
           settlementVisible={chart.settlementVisible}
           openInterestVisible={chart.openInterestVisible}
           paneRatios={chart.paneRatios}
+          toolbarCollapsed={chart.drawingToolbarCollapsed}
           initialVisibleRange={chart.visibleRange}
           onCoverageChange={onCoverageChange}
           onVisibleRangeChange={onVisibleRangeChange}
@@ -122,6 +125,7 @@ export function ChartWindow({
           onSettlementVisibleChange={onSettlementVisibleChange}
           onOpenInterestVisibleChange={onOpenInterestVisibleChange}
           onPaneRatiosChange={onPaneRatiosChange}
+          onToolbarCollapsedChange={onToolbarCollapsedChange}
           trendAnalysisEnabled={chart.tradingSystems.trend.enabled}
           showTentativePivots={Boolean(chart.tradingSystems.trend.settings.showTentativePivots)}
           shortTrendLinesVisible={chart.tradingSystems.trend.layers['short-trend-lines'] !== false}

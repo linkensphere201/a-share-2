@@ -24,6 +24,7 @@ type WindowGroupProps = {
   onSettlementVisibleChange: (id: string, visible: boolean) => void
   onOpenInterestVisibleChange: (id: string, visible: boolean) => void
   onPaneRatiosChange: (id: string, ratios: ChartPaneRatios) => void
+  onToolbarCollapsedChange: (id: string, collapsed: boolean) => void
   onTradingSystemsChange: (id: string, systems: TradingSystemWindowStates) => void
   onTradingSystemRecalculate: (id: string, systemId: string) => void
   onReferencedSymbolsChange: (id: string, symbols: string[]) => void
@@ -47,6 +48,7 @@ export function WindowGroup({
   onSettlementVisibleChange,
   onOpenInterestVisibleChange,
   onPaneRatiosChange,
+  onToolbarCollapsedChange,
   onTradingSystemsChange,
   onTradingSystemRecalculate,
   onReferencedSymbolsChange,
@@ -98,6 +100,7 @@ export function WindowGroup({
         onSettlementVisibleChange={visible => onSettlementVisibleChange(item.id, visible)}
         onOpenInterestVisibleChange={visible => onOpenInterestVisibleChange(item.id, visible)}
         onPaneRatiosChange={ratios => onPaneRatiosChange(item.id, ratios)}
+        onToolbarCollapsedChange={collapsed => onToolbarCollapsedChange(item.id, collapsed)}
         onTradingSystemsChange={systems => onTradingSystemsChange(item.id, systems)}
         onTradingSystemRecalculate={systemId => onTradingSystemRecalculate(item.id, systemId)}
       />

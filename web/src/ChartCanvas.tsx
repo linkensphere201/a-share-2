@@ -154,6 +154,7 @@ type ChartCanvasProps = {
   settlementVisible: boolean
   openInterestVisible: boolean
   paneRatios?: ChartPaneRatios
+  toolbarCollapsed?: boolean
   initialVisibleRange?: VisibleRange
   onCoverageChange?: (bars: number, first?: string, last?: string) => void
   onVisibleRangeChange?: (value: VisibleRange) => void
@@ -162,6 +163,7 @@ type ChartCanvasProps = {
   onSettlementVisibleChange?: (visible: boolean) => void
   onOpenInterestVisibleChange?: (visible: boolean) => void
   onPaneRatiosChange?: (ratios: ChartPaneRatios) => void
+  onToolbarCollapsedChange?: (collapsed: boolean) => void
   trendAnalysisEnabled?: boolean
   showTentativePivots?: boolean
   shortTrendLinesVisible?: boolean
@@ -241,6 +243,7 @@ export function ChartCanvas({
   settlementVisible,
   openInterestVisible,
   paneRatios,
+  toolbarCollapsed: persistedToolbarCollapsed = false,
   initialVisibleRange,
   onCoverageChange,
   onVisibleRangeChange,
@@ -249,6 +252,7 @@ export function ChartCanvas({
   onSettlementVisibleChange,
   onOpenInterestVisibleChange,
   onPaneRatiosChange,
+  onToolbarCollapsedChange,
   trendAnalysisEnabled = false,
   showTentativePivots = true,
   shortTrendLinesVisible = true,
@@ -327,7 +331,7 @@ export function ChartCanvas({
   const [drawingManagerOpen, setDrawingManagerOpen] = useState(false)
   const [movingDrawingId, setMovingDrawingId] = useState<string>()
   const [editingAnchor, setEditingAnchor] = useState<{ drawingId: string; anchorIndex: 0 | 1 }>()
-  const [toolbarCollapsed, setToolbarCollapsed] = useState(false)
+  const [toolbarCollapsed, setToolbarCollapsed] = useState(persistedToolbarCollapsed)
   const [overlayRevision, setOverlayRevision] = useState(0)
   const liveFailureCountRef = useRef(0)
   const initialTheme = useRef(theme).current
@@ -353,6 +357,7 @@ export function ChartCanvas({
   useEffect(() => { coverageCallbackRef.current = onCoverageChange }, [onCoverageChange])
   useEffect(() => { visibleRangeCallbackRef.current = onVisibleRangeChange }, [onVisibleRangeChange])
   useEffect(() => { paneRatiosCallbackRef.current = onPaneRatiosChange }, [onPaneRatiosChange])
+  useEffect(() => setToolbarCollapsed(persistedToolbarCollapsed), [persistedToolbarCollapsed])
   useEffect(() => {
     if (!trendIsolation) return
     setDrawingTool('browse')
@@ -1737,7 +1742,9 @@ export function ChartCanvas({
           onClick={() => {
             setToolbarCollapsed(value => {
               if (!value) setDrawingManagerOpen(false)
-              return !value
+              const next = !value
+              onToolbarCollapsedChange?.(next)
+              return next
             })
           }}
         >{toolbarCollapsed ? <ChevronLeft size={13}/> : <ChevronRight size={13}/>}</button>
