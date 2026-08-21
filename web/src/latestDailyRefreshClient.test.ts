@@ -128,6 +128,27 @@ it('reports a closed futures session without starting the stock final-update pat
   expect(result).toMatchObject({ feedback: 'skipped', warning: false, items: [] })
 })
 
+it('distinguishes a missing futures calendar from an unresolved contract', async () => {
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(response({
+      items: [], status: { state: 'disabled' },
+      futures: {
+        mode: 'provisional', state: 'skipped', skip_reason: 'calendar-unavailable',
+      },
+    }))
+    .mockResolvedValueOnce(response({ items: [] }))
+  vi.stubGlobal('fetch', fetchMock)
+
+  const result = await refreshLatestDailyBar(
+    'FUT:SHFE:CU:202609', new Date('2026-08-21T13:30:00+08:00'),
+  )
+
+  expect(result).toMatchObject({
+    feedback: 'skipped', warning: true,
+    message: '\u671f\u8d27\u4ea4\u6613\u65e5\u5386\u5c1a\u672a\u5c31\u7eea\uff0c\u5df2\u4fdd\u7559\u73b0\u6709\u6570\u636e',
+  })
+})
+
 it('reports canonical takeover when a successful futures refresh is suppressed by final data', async () => {
   const fetchMock = vi.fn()
     .mockResolvedValueOnce(response({

@@ -187,7 +187,9 @@ def test_stale_futures_quote_is_persisted_and_reported_without_dropping_the_bar(
 def test_futures_sessions_assign_night_observations_to_next_open_day() -> None:
     friday = date(2026, 8, 21)
     monday = date(2026, 8, 24)
-    next_open = lambda value: monday if value >= friday else friday
+    next_open = lambda value: next(
+        (item for item in (friday, monday) if item >= value), None
+    )
     observed = datetime(2026, 8, 21, 21, 30, tzinfo=CHINA_TIME)
     assert futures_session_trading_day(
         FuturesExchange.SHFE, observed, next_open
@@ -195,6 +197,11 @@ def test_futures_sessions_assign_night_observations_to_next_open_day() -> None:
     assert futures_session_trading_day(
         FuturesExchange.CFFEX, observed, next_open
     ) is None
+    assert futures_session_trading_day(
+        FuturesExchange.SHFE,
+        datetime(2026, 8, 24, 0, 30, tzinfo=CHINA_TIME),
+        next_open,
+    ) == monday
 
 
 def test_product_session_uses_wildcard_day_and_exact_cross_midnight_night() -> None:
@@ -202,7 +209,9 @@ def test_product_session_uses_wildcard_day_and_exact_cross_midnight_night() -> N
     settings = _settings()
     friday = date(2026, 8, 21)
     monday = date(2026, 8, 24)
-    next_open = lambda value: monday if value >= friday else friday
+    next_open = lambda value: next(
+        (item for item in (friday, monday) if item >= value), None
+    )
 
     assert futures_contract_session_trading_day(
         contract,
@@ -215,6 +224,12 @@ def test_product_session_uses_wildcard_day_and_exact_cross_midnight_night() -> N
         datetime(2026, 8, 21, 0, 30, tzinfo=CHINA_TIME),
         next_open,
         settings.session_rules,
+    ) == friday
+    assert futures_contract_session_trading_day(
+        contract,
+        datetime(2026, 8, 21, 21, 30, tzinfo=CHINA_TIME),
+        next_open,
+        settings.session_rules,
     ) == monday
     assert futures_contract_session_trading_day(
         contract,
@@ -222,6 +237,23 @@ def test_product_session_uses_wildcard_day_and_exact_cross_midnight_night() -> N
         next_open,
         settings.session_rules,
     ) is None
+
+
+def test_active_reference_reports_missing_exchange_calendar() -> None:
+    product, contract, series = _catalog()
+    with SQLiteMarketDataStore(":memory:") as store:
+        store.upsert_futures_catalog(
+            "tushare-futures", [product], [contract], [series]
+        )
+        service = FuturesProvisionalService(_settings(), store, _Monitor())
+
+        result = service.refresh_once(
+            datetime(2026, 8, 20, 14, 0, tzinfo=CHINA_TIME),
+            references=[contract.symbol],
+        )
+
+    assert result["state"] == "skipped"
+    assert result["skip_reason"] == "calendar-unavailable"
 
 
 def test_product_without_configured_night_session_is_closed() -> None:

@@ -146,15 +146,35 @@ class FuturesProvisionalService:
         trading_days: dict[str, date] = {}
         active_exchanges = 0
         resolved_candidates = 0
+        requested_exchanges = {
+            exchange for item in active_references
+            if (exchange := _canonical_reference_exchange(item)) is not None
+        }
+        calendar_unavailable = False
         for exchange in FuturesExchange:
-            trading_day = futures_session_trading_day(
-                exchange,
-                now,
-                lambda value, exchange=exchange: self.store.next_futures_open_day(
+            calendar_lookup_succeeded = False
+
+            def next_open_day(value: date, exchange=exchange) -> date | None:
+                nonlocal calendar_lookup_succeeded
+                result = self.store.next_futures_open_day(
                     self.canonical_source, exchange, value
-                ),
+                )
+                calendar_lookup_succeeded = result is not None
+                return result
+
+            trading_day = futures_session_trading_day(
+                exchange, now, next_open_day,
             )
             if trading_day is None:
+                generic_session_active = futures_session_trading_day(
+                    exchange, now, lambda value: value
+                ) is not None
+                if (
+                    exchange in requested_exchanges
+                    and generic_session_active
+                    and not calendar_lookup_succeeded
+                ):
+                    calendar_unavailable = True
                 continue
             active_exchanges += 1
             exchange_resolution = self.store.resolve_futures_contract_references(
@@ -168,12 +188,7 @@ class FuturesProvisionalService:
                     continue
                 resolved_candidates += 1
                 contract_trading_day = futures_contract_session_trading_day(
-                    contract,
-                    now,
-                    lambda value, exchange=exchange: self.store.next_futures_open_day(
-                        self.canonical_source, exchange, value
-                    ),
-                    self.settings.session_rules,
+                    contract, now, next_open_day, self.settings.session_rules,
                 )
                 if contract_trading_day is not None:
                     contracts_by_symbol[contract.symbol] = contract
@@ -197,6 +212,7 @@ class FuturesProvisionalService:
         if not contracts_by_symbol:
             reason = (
                 "mapping-ambiguous" if ambiguous else
+                "calendar-unavailable" if calendar_unavailable else
                 "market-closed" if active_exchanges == 0 or resolved_candidates else
                 "unresolved"
             )
@@ -434,7 +450,14 @@ def futures_session_trading_day(
         trading_day = next_open_day(calendar_day)
         return trading_day if trading_day == calendar_day else None
     night_active = current_time >= time(21, 0) or current_time <= time(2, 30)
-    return next_open_day(calendar_day) if night_active else None
+    if not night_active:
+        return None
+    lookup_day = (
+        calendar_day + timedelta(days=1)
+        if current_time >= time(21, 0)
+        else calendar_day
+    )
+    return next_open_day(lookup_day)
 
 
 def futures_contract_session_trading_day(
@@ -473,7 +496,12 @@ def futures_contract_session_trading_day(
         trading_day = next_open_day(calendar_day)
         return trading_day if trading_day == calendar_day else None
     if _inside_windows(current_time, night_windows):
-        trading_day = next_open_day(calendar_day)
+        lookup_day = (
+            calendar_day + timedelta(days=1)
+            if current_time >= time(18, 0)
+            else calendar_day
+        )
+        trading_day = next_open_day(lookup_day)
         if trading_day is None or (trading_day - calendar_day).days > 3:
             return None
         return trading_day
@@ -491,3 +519,13 @@ def _inside_windows(current: time, windows: tuple[FuturesSessionWindow, ...]) ->
 
 def _china_time(value: datetime) -> datetime:
     return value.replace(tzinfo=CHINA_TIME) if value.tzinfo is None else value.astimezone(CHINA_TIME)
+
+
+def _canonical_reference_exchange(value: str) -> FuturesExchange | None:
+    parts = value.strip().upper().split(":")
+    if len(parts) < 3 or parts[0] not in {"FUT", "FUTCONT"}:
+        return None
+    try:
+        return FuturesExchange(parts[1])
+    except ValueError:
+        return None

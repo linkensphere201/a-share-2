@@ -173,6 +173,7 @@ function isFuturesSymbol(symbol: string): boolean {
 }
 
 function skipReasonMessage(reason?: string | null): string {
+  if (reason === 'calendar-unavailable') return '\u671f\u8d27\u4ea4\u6613\u65e5\u5386\u5c1a\u672a\u5c31\u7eea\uff0c\u5df2\u4fdd\u7559\u73b0\u6709\u6570\u636e'
   if (reason === 'mapping-ambiguous') return '主力连续映射存在歧义，未覆盖现有数据'
   if (reason === 'unresolved') return '未解析到可刷新的期货合约，已保留现有数据'
   if (reason === 'disabled') return '期货盘中行情未启用'
