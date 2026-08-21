@@ -60,7 +60,7 @@ For a consistent manual backup, close StockHarness, verify no backfill process i
 
 Schema migration is automatic and idempotent. A failed or newer-than-supported futures schema disables futures storage while preserving existing stock tables. Keep the failed database intact, collect `%LOCALAPPDATA%\StockHarness\logs\stock-harness.log`, and restore from a verified copy only after preserving the current file under a different name. Recovery must never delete the only database copy.
 
-Backfill recovery is a normal rerun of the same command and date range. Continuous-build recovery is also a rerun: completed clean series skip, dirty raw series rebuild a bounded suffix, and adjusted series rebuild fully.
+Backfill recovery is a normal rerun of the same command and date range. Continuous-build recovery is also a rerun: completed clean series skip, dirty raw series rebuild a bounded suffix, and adjusted series rebuild fully. Both commands preserve completed writes and print a structured summary, but return exit code 2 when unisolated item errors remain; durable rejected-row evidence is a reviewed partial receipt and does not by itself make the command fail.
 
 ## Troubleshooting
 
