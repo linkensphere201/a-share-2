@@ -130,6 +130,17 @@ class _BatchProvider(_Provider):
         )
 
 
+class _RejectingBatchProvider(_BatchProvider):
+    def fetch_exchange_daily(self, contracts, exchange, trading_day):
+        result = super().fetch_exchange_daily(contracts, exchange, trading_day)
+        return FuturesDailyFetchResult(
+            result.bars,
+            (FuturesDailyRowRejection(
+                contracts[0].symbol, trading_day, "invalid-daily-bar"
+            ),),
+        )
+
+
 def test_futures_backfill_is_lifecycle_bounded_and_resumable() -> None:
     provider = _Provider()
     with SQLiteMarketDataStore(":memory:") as store:
@@ -299,6 +310,17 @@ def test_futures_increment_batches_recent_days_by_exchange() -> None:
     assert result.contracts_updated == 1
     assert result.rows_changed == 2
     assert len(rows) == 2
+
+
+def test_futures_increment_logs_one_rejection_summary(caplog) -> None:
+    provider = _RejectingBatchProvider()
+    with SQLiteMarketDataStore(":memory:") as store, caplog.at_level("WARNING"):
+        result = run_futures_increment(
+            provider, store, [FuturesExchange.SHFE], date(2026, 8, 20), 2
+        )
+
+    assert result.rejected_daily_rows == 2
+    assert caplog.text.count("futures_increment_rows_rejected") == 1
 
 
 def test_zero_correction_window_skips_already_completed_contract() -> None:

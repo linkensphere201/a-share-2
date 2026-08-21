@@ -219,6 +219,11 @@ def run_futures_increment(
         result.rows_changed, result.mappings_written,
         result.rejected_daily_rows, len(result.errors),
     )
+    if result.rejected_daily_rows:
+        LOGGER.warning(
+            "futures_increment_rows_rejected count=%d",
+            result.rejected_daily_rows,
+        )
     return result
 
 

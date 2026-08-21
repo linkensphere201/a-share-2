@@ -104,12 +104,17 @@ def _bar(
 def test_new_store_applies_ready_futures_schema() -> None:
     with SQLiteMarketDataStore(":memory:") as store:
         assert store.futures_storage_status() == {
-            "ready": True, "schema_version": 2, "error": None,
+            "ready": True, "schema_version": 3, "error": None,
         }
         table = store._connection.execute(
             "SELECT name FROM sqlite_master WHERE name = 'futures_contracts'"
         ).fetchone()
         assert table is not None
+        index = store._connection.execute(
+            "SELECT name FROM sqlite_master "
+            "WHERE type = 'index' AND name = 'futures_roll_mapping_series_date'"
+        ).fetchone()
+        assert index is not None
 
 
 def test_futures_catalog_upsert_is_idempotent_and_preserves_relations() -> None:
@@ -247,7 +252,7 @@ def test_newer_futures_schema_is_not_downgraded(tmp_path: Path) -> None:
         pass
     connection = sqlite3.connect(path)
     connection.execute(
-        "INSERT INTO futures_schema_metadata VALUES (3, 'ready', 1)"
+        "INSERT INTO futures_schema_metadata VALUES (4, 'ready', 1)"
     )
     connection.commit()
     connection.close()
@@ -261,7 +266,7 @@ def test_newer_futures_schema_is_not_downgraded(tmp_path: Path) -> None:
         versions = reopened._connection.execute(
             "SELECT schema_version FROM futures_schema_metadata ORDER BY schema_version"
         ).fetchall()
-        assert [int(item[0]) for item in versions] == [2, 3]
+        assert [int(item[0]) for item in versions] == [3, 4]
 
 
 def test_final_daily_storage_is_idempotent_and_preserves_futures_fields() -> None:

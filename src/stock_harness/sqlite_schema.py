@@ -725,7 +725,7 @@ BEGIN
 END;
 """
 
-FUTURES_SCHEMA_VERSION = 2
+FUTURES_SCHEMA_VERSION = 3
 
 FUTURES_SCHEMA = """
 CREATE TABLE IF NOT EXISTS futures_products (
@@ -896,6 +896,9 @@ CREATE TABLE IF NOT EXISTS futures_roll_mappings (
 
 CREATE INDEX IF NOT EXISTS futures_roll_mapping_contract
 ON futures_roll_mappings(contract_instrument_id, effective_from);
+
+CREATE INDEX IF NOT EXISTS futures_roll_mapping_series_date
+ON futures_roll_mappings(series_instrument_id, effective_from);
 
 CREATE TABLE IF NOT EXISTS futures_provisional_daily_bars (
     instrument_id INTEGER NOT NULL,

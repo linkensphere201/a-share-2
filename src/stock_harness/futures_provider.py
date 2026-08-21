@@ -287,13 +287,13 @@ class TushareFuturesProvider:
         ))
         bars: dict[str, FuturesDailyBar] = {}
         rejections: list[FuturesDailyRowRejection] = []
+        ignored_rows = 0
         for row in rows:
             provider_symbol = _text(row, "ts_code").upper()
             contract = by_provider.get(provider_symbol)
             if contract is None:
-                raise ValueError(
-                    f"fut_daily references unknown {exchange.value} contract"
-                )
+                ignored_rows += 1
+                continue
             row_day = _required_date(row, "trade_date")
             if row_day != trading_day:
                 raise ValueError("fut_daily returned an unexpected batch date")
@@ -305,9 +305,14 @@ class TushareFuturesProvider:
                 continue
             _insert_unique(bars, contract.symbol, bar, "fut_daily exchange batch")
         if rejections:
-            LOGGER.warning(
+            LOGGER.debug(
                 "futures_provider_exchange_daily_rows_rejected exchange=%s date=%s count=%d",
                 exchange.value, trading_day, len(rejections),
+            )
+        if ignored_rows:
+            LOGGER.info(
+                "futures_provider_exchange_daily_rows_ignored exchange=%s date=%s count=%d",
+                exchange.value, trading_day, ignored_rows,
             )
         return FuturesDailyFetchResult(
             tuple(bars[key] for key in sorted(bars)), tuple(rejections)

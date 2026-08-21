@@ -183,6 +183,26 @@ def test_fetches_one_exchange_daily_batch_with_canonical_contract_identity() -> 
     assert result.rejections == ()
 
 
+def test_exchange_daily_batch_ignores_continuous_provider_rows() -> None:
+    class MixedIdentityClient(_Client):
+        def fut_daily(self, **kwargs):
+            real = super().fut_daily(**kwargs)[0]
+            continuous = {**real, "ts_code": "CU.SHF"}
+            return [continuous, real]
+
+    provider = TushareFuturesProvider(_settings(), MixedIdentityClient())
+    contract = provider.discover_exchange(
+        FuturesExchange.SHFE, date(2026, 8, 20)
+    ).contracts[0]
+
+    result = provider.fetch_exchange_daily(
+        [contract], FuturesExchange.SHFE, date(2026, 8, 20)
+    )
+
+    assert [item.symbol for item in result.bars] == [contract.symbol]
+    assert result.rejections == ()
+
+
 def test_resolves_roll_mapping_to_known_canonical_real_contract() -> None:
     provider = TushareFuturesProvider(_settings(), _Client())
     catalog = provider.discover_exchange(FuturesExchange.SHFE, date(2026, 8, 20))
