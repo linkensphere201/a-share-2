@@ -697,13 +697,40 @@ def test_futures_coverage_reports_field_completeness() -> None:
         )
         store.upsert_futures_daily_bars(
             "tushare-futures",
-            [replace(_bar(day), settlement=None, open_interest_contracts=None)],
+            [
+                replace(_bar(day), settlement=None, open_interest_contracts=None),
+                replace(
+                    _bar(day), symbol=series.symbol,
+                    mapped_contract_symbol=contract.symbol, roll_event=True,
+                ),
+            ],
         )
-        coverage = store.list_futures_coverage()[0]
-        assert coverage["symbol"] == contract.symbol
-        assert coverage["rows"] == 1
-        assert coverage["missing_settlement_rows"] == 1
-        assert coverage["missing_open_interest_rows"] == 1
+        coverage = store.list_futures_coverage(kind=None)
+        contract_coverage = next(
+            item for item in coverage if item["symbol"] == contract.symbol
+        )
+        continuous_coverage = next(
+            item for item in coverage if item["symbol"] == series.symbol
+        )
+        assert contract_coverage["rows"] == 1
+        assert contract_coverage["missing_settlement_rows"] == 1
+        assert contract_coverage["missing_open_interest_rows"] == 1
+        assert continuous_coverage["kind"] == "futures-continuous"
+        assert continuous_coverage["price_basis"] == "raw"
+        assert continuous_coverage["mapped_rows"] == 1
+        assert continuous_coverage["roll_event_rows"] == 1
+
+        with TestClient(create_app(store)) as client:
+            response = client.get("/api/futures/coverage", params={"limit": 1})
+            filtered = client.get(
+                "/api/futures/coverage",
+                params={"kind": "futures-continuous", "limit": 10},
+            )
+        assert response.status_code == 200
+        assert response.json()["has_more"] is True
+        assert response.json()["next_offset"] == 1
+        assert filtered.status_code == 200
+        assert [item["symbol"] for item in filtered.json()["items"]] == [series.symbol]
 
 
 def test_continuous_build_persists_roll_evidence_and_rebuilds_dirty_suffix() -> None:

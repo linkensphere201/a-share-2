@@ -1591,40 +1591,101 @@ class SQLiteMarketDataStore:
             raise RuntimeError("futures mapping checkpoint transaction was incomplete")
         return state, receipt
 
-    def list_futures_coverage(self) -> list[dict[str, object]]:
+    def list_futures_coverage(
+        self,
+        *,
+        kind: InstrumentKind | None = InstrumentKind.FUTURES_CONTRACT,
+        limit: int = 5_000,
+        offset: int = 0,
+    ) -> list[dict[str, object]]:
         self._require_futures_storage()
+        if kind not in {
+            None,
+            InstrumentKind.FUTURES_CONTRACT,
+            InstrumentKind.FUTURES_CONTINUOUS,
+        }:
+            raise ValueError("futures coverage kind must be contract or continuous")
+        if not 1 <= limit <= 5_000 or offset < 0:
+            raise ValueError("invalid futures coverage pagination")
         with self._lock:
             rows = self._connection.execute(
                 """
-                SELECT instrument.symbol, instrument.name, instrument.exchange,
-                       product.product_code, contract.lifecycle_status,
-                       min(bar.trading_day), max(bar.trading_day), count(bar.trading_day),
-                       count(bar.trading_day) FILTER (WHERE bar.settlement IS NULL),
-                       count(bar.trading_day) FILTER (WHERE bar.open_interest_contracts IS NULL)
-                FROM futures_contracts AS contract
-                JOIN instruments AS instrument USING (instrument_id)
-                JOIN futures_products AS product
-                  ON product.instrument_id = contract.product_instrument_id
-                LEFT JOIN futures_daily_bars AS bar USING (instrument_id)
-                GROUP BY contract.instrument_id
-                ORDER BY instrument.exchange, product.product_code,
-                         contract.contract_month
-                """
+                SELECT * FROM (
+                    SELECT instrument.symbol, instrument.name, instrument.exchange,
+                           product.product_code, 'futures-contract' AS kind,
+                           contract.lifecycle_status, contract.contract_month,
+                           NULL AS price_basis, NULL AS rule_version,
+                           min(bar.trading_day) AS first_day,
+                           max(bar.trading_day) AS last_day,
+                           count(bar.trading_day) AS rows,
+                           count(bar.trading_day) FILTER (
+                               WHERE bar.settlement IS NULL
+                           ) AS missing_settlement_rows,
+                           count(bar.trading_day) FILTER (
+                               WHERE bar.open_interest_contracts IS NULL
+                           ) AS missing_open_interest_rows,
+                           0 AS mapped_rows, 0 AS roll_event_rows
+                    FROM futures_contracts AS contract
+                    JOIN instruments AS instrument USING (instrument_id)
+                    JOIN futures_products AS product
+                      ON product.instrument_id = contract.product_instrument_id
+                    LEFT JOIN futures_daily_bars AS bar USING (instrument_id)
+                    GROUP BY contract.instrument_id
+                    UNION ALL
+                    SELECT instrument.symbol, instrument.name, instrument.exchange,
+                           product.product_code, 'futures-continuous' AS kind,
+                           NULL AS lifecycle_status, NULL AS contract_month,
+                           series.price_basis, series.rule_version,
+                           min(bar.trading_day), max(bar.trading_day),
+                           count(bar.trading_day),
+                           count(bar.trading_day) FILTER (
+                               WHERE bar.settlement IS NULL
+                           ),
+                           count(bar.trading_day) FILTER (
+                               WHERE bar.open_interest_contracts IS NULL
+                           ),
+                           count(bar.trading_day) FILTER (
+                               WHERE bar.mapped_contract_instrument_id IS NOT NULL
+                           ),
+                           count(bar.trading_day) FILTER (WHERE bar.roll_event = 1)
+                    FROM futures_continuous_series AS series
+                    JOIN instruments AS instrument USING (instrument_id)
+                    JOIN futures_products AS product
+                      ON product.instrument_id = series.product_instrument_id
+                    LEFT JOIN futures_daily_bars AS bar USING (instrument_id)
+                    GROUP BY series.instrument_id
+                ) AS coverage
+                WHERE (? IS NULL OR coverage.kind = ?)
+                ORDER BY exchange, product_code, kind, symbol
+                LIMIT ? OFFSET ?
+                """,
+                (
+                    kind.value if kind is not None else None,
+                    kind.value if kind is not None else None,
+                    limit,
+                    offset,
+                ),
             ).fetchall()
         return [
             {
                 "symbol": str(row[0]), "name": str(row[1]),
                 "exchange": str(row[2]), "product_code": str(row[3]),
-                "lifecycle_status": str(row[4]),
+                "kind": str(row[4]),
+                "lifecycle_status": str(row[5]) if row[5] is not None else None,
+                "contract_month": str(row[6]) if row[6] is not None else None,
+                "price_basis": str(row[7]) if row[7] is not None else None,
+                "rule_version": str(row[8]) if row[8] is not None else None,
                 "first_trading_day": (
-                    _date_from_key(int(row[5])) if row[5] is not None else None
+                    _date_from_key(int(row[9])) if row[9] is not None else None
                 ),
                 "last_trading_day": (
-                    _date_from_key(int(row[6])) if row[6] is not None else None
+                    _date_from_key(int(row[10])) if row[10] is not None else None
                 ),
-                "rows": int(row[7]),
-                "missing_settlement_rows": int(row[8]),
-                "missing_open_interest_rows": int(row[9]),
+                "rows": int(row[11]),
+                "missing_settlement_rows": int(row[12]),
+                "missing_open_interest_rows": int(row[13]),
+                "mapped_rows": int(row[14]),
+                "roll_event_rows": int(row[15]),
             }
             for row in rows
         ]

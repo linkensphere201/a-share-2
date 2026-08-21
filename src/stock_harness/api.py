@@ -667,6 +667,25 @@ def create_app(
             ],
         }
 
+    @app.get("/api/futures/coverage")
+    def futures_coverage(
+        request: Request,
+        kind: Literal["futures-contract", "futures-continuous"] | None = None,
+        limit: int = Query(default=100, ge=1, le=500),
+        offset: int = Query(default=0, ge=0),
+    ) -> dict[str, object]:
+        selected_kind = InstrumentKind(kind) if kind is not None else None
+        rows = _store(request).list_futures_coverage(
+            kind=selected_kind, limit=limit + 1, offset=offset
+        )
+        return {
+            "items": rows[:limit],
+            "limit": limit,
+            "offset": offset,
+            "has_more": len(rows) > limit,
+            "next_offset": offset + min(limit, len(rows)),
+        }
+
     @app.get("/api/custom-groups")
     def custom_groups(request: Request, query: str = "") -> dict[str, object]:
         return {"items": _store(request).list_custom_groups(query)}
