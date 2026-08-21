@@ -912,6 +912,7 @@ class SQLiteMarketDataStore:
                 ),
             )
             changed = self._connection.total_changes - before
+            before_takeover = self._connection.total_changes
             self._connection.execute(
                 """
                 UPDATE futures_provisional_daily_bars
@@ -925,7 +926,12 @@ class SQLiteMarketDataStore:
                 """,
                 (now_ms,),
             )
+            takeover_count = self._connection.total_changes - before_takeover
         elapsed_ms = (time.perf_counter() - started) * 1000
+        if takeover_count:
+            LOGGER.info(
+                "futures_canonical_takeover_completed rows=%d", takeover_count
+            )
         return WriteStats(len(bars), changed, len(bars) - changed, elapsed_ms)
 
     def list_futures_daily_bars(

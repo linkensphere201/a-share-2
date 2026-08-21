@@ -305,7 +305,7 @@ def test_calendar_and_roll_mapping_round_trip() -> None:
         assert store.list_futures_roll_mappings(series.symbol, day, day) == [mapping]
 
 
-def test_canonical_daily_takes_over_without_deleting_provisional_audit() -> None:
+def test_canonical_daily_takes_over_without_deleting_provisional_audit(caplog) -> None:
     product, contract, series = _catalog()
     prior_day = date(2026, 8, 19)
     current_day = date(2026, 8, 20)
@@ -330,7 +330,8 @@ def test_canonical_daily_takes_over_without_deleting_provisional_audit() -> None
         ]
 
         final = _bar(current_day, close=103)
-        store.upsert_futures_daily_bars("tushare-futures", [final])
+        with caplog.at_level("INFO"):
+            store.upsert_futures_daily_bars("tushare-futures", [final])
         fused = store.list_fused_futures_daily_bars(
             contract.symbol, prior_day, current_day
         )
@@ -338,6 +339,7 @@ def test_canonical_daily_takes_over_without_deleting_provisional_audit() -> None
         assert fused == [_bar(prior_day), final]
         assert audit[0]["takeover_state"] == "canonical-taken-over"
         assert audit[0]["close"] == 104
+        assert "futures_canonical_takeover_completed rows=1" in caplog.text
 
 
 def test_futures_integrity_audit_separates_backlog_from_structural_errors() -> None:
