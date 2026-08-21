@@ -6,8 +6,10 @@ import {
   createTrendLine,
   deleteTrendLine,
   drawingIdentityKey,
+  listDrawingMigrationCandidates,
   loadSymbolDrawings,
   saveTrendLine,
+  resolveDrawingMigration,
   subscribeSymbolDrawings,
   type TrendLineAnchor,
 } from './drawingStore'
@@ -106,6 +108,63 @@ describe('symbol drawing repository', () => {
     expect(drawingIdentityKey(raw)).not.toBe(drawingIdentityKey(upgraded))
   })
 
+  it('migrates drawings only across an explicitly accepted same-basis rule change', () => {
+    const oldTarget = {
+      symbol: 'FUTCONT:SHFE:CU:MAIN:raw',
+      instrumentKind: 'futures-continuous',
+      priceBasis: 'raw',
+      ruleVersion: 'mapping-v1',
+    }
+    const currentTarget = { ...oldTarget, ruleVersion: 'mapping-v2' }
+    saveTrendLine(createTrendLine(oldTarget, [
+      { date: '2026-07-01', price: 78_000, snap: 'low' },
+      { date: '2026-07-31', price: 81_000, snap: 'high' },
+    ], 'normal', new Date('2026-08-05T00:00:00Z'), () => 'old-rule-line'))
+
+    const candidate = listDrawingMigrationCandidates(currentTarget)[0]
+    expect(candidate).toMatchObject({
+      kind: 'same-basis-rule-change', canMigrate: true, drawingCount: 1,
+      sourceRuleVersion: 'mapping-v1',
+    })
+    resolveDrawingMigration(
+      currentTarget, candidate.id, 'migrate', window.localStorage,
+      new Date('2026-08-06T00:00:00Z'),
+    )
+
+    expect(loadSymbolDrawings(currentTarget)[0]).toMatchObject({
+      identityKey: drawingIdentityKey(currentTarget),
+      priceBasis: 'raw', ruleVersion: 'mapping-v2',
+      anchors: loadSymbolDrawings(oldTarget)[0].anchors,
+    })
+    expect(loadSymbolDrawings(oldTarget)).toHaveLength(1)
+    expect(listDrawingMigrationCandidates(currentTarget)).toEqual([])
+  })
+
+  it('rejects price-basis migration and records an explicit isolation decision', () => {
+    const raw = {
+      symbol: 'FUTCONT:SHFE:CU:MAIN:raw', instrumentKind: 'futures-continuous',
+      priceBasis: 'raw', ruleVersion: 'mapping-v1',
+    }
+    const adjusted = {
+      symbol: 'FUTCONT:SHFE:CU:MAIN:backward-ratio', instrumentKind: 'futures-continuous',
+      priceBasis: 'backward-ratio', ruleVersion: 'mapping-v1',
+    }
+    saveTrendLine(createTrendLine(raw, [
+      { date: '2026-07-01', price: 78_000, snap: 'low' },
+      { date: '2026-07-31', price: 81_000, snap: 'high' },
+    ], 'normal'))
+    const candidate = listDrawingMigrationCandidates(adjusted)[0]
+    expect(candidate).toMatchObject({ kind: 'different-price-basis', canMigrate: false })
+    expect(() => resolveDrawingMigration(adjusted, candidate.id, 'migrate')).toThrow(
+      'identical price basis',
+    )
+
+    resolveDrawingMigration(adjusted, candidate.id, 'reject')
+    expect(loadSymbolDrawings(adjusted)).toEqual([])
+    expect(loadSymbolDrawings(raw)).toHaveLength(1)
+    expect(listDrawingMigrationCandidates(adjusted)).toEqual([])
+  })
+
   it('quarantines legacy futures drawings instead of attaching them implicitly', () => {
     const legacy = {
       ...createTrendLine('FUTCONT:SHFE:CU:MAIN:raw', [
@@ -119,12 +178,16 @@ describe('symbol drawing repository', () => {
       symbols: { 'FUTCONT:SHFE:CU:MAIN:raw': [legacy] },
     }))
 
-    expect(loadSymbolDrawings({
+    const target = {
       symbol: 'FUTCONT:SHFE:CU:MAIN:raw',
       instrumentKind: 'futures-continuous',
       priceBasis: 'raw',
       ruleVersion: 'tushare-fut-mapping-v1',
-    })).toEqual([])
+    }
+    expect(loadSymbolDrawings(target)).toEqual([])
+    expect(listDrawingMigrationCandidates(target)[0]).toMatchObject({
+      kind: 'legacy-unknown', canMigrate: false, drawingCount: 1,
+    })
     const migrated = JSON.parse(window.localStorage.getItem('stock-harness.drawings.v2') ?? '{}')
     expect(migrated.legacyFutures['FUTCONT:SHFE:CU:MAIN:raw']).toHaveLength(1)
   })

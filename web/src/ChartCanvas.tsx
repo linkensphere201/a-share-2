@@ -5,13 +5,16 @@ import {
   createTrendLine,
   deleteTrendLine,
   drawingIdentityKey,
+  listDrawingMigrationCandidates,
   loadSymbolDrawings,
+  resolveDrawingMigration,
   saveTrendLine,
   subscribeSymbolDrawings,
   type TrendLineAnchor,
   type TrendLineDash,
   type TrendLineDrawing,
   type DrawingTarget,
+  type DrawingMigrationCandidate,
 } from './drawingStore'
 import { barsInRenderPeriod, chooseAnchor, extendLineToBounds, orientTrendLineAnchors, replaceTrendLineAnchor, translateTrendLineAnchors, type LineGeometry, type TrendLineOrientation } from './trendLines'
 import type { ThemeDefinition } from './themeStore'
@@ -314,6 +317,11 @@ export function ChartCanvas({
   const [drawings, setDrawings] = useState<TrendLineDrawing[]>(() => (
     loadSymbolDrawings({ symbol, instrumentKind, priceBasis, ruleVersion })
   ))
+  const [drawingMigrationCandidates, setDrawingMigrationCandidates] = useState<
+    DrawingMigrationCandidate[]
+  >(() => listDrawingMigrationCandidates({
+    symbol, instrumentKind, priceBasis, ruleVersion,
+  }))
   const [drawingDraft, setDrawingDraft] = useState<[TrendLineAnchor, TrendLineAnchor]>()
   const [selectedDrawingId, setSelectedDrawingId] = useState<string>()
   const [drawingManagerOpen, setDrawingManagerOpen] = useState(false)
@@ -401,7 +409,10 @@ export function ChartCanvas({
   }, [symbol, instrumentKind, priceBasis, ruleVersion])
 
   useEffect(() => {
-    const reload = () => setDrawings(loadSymbolDrawings(drawingTarget))
+    const reload = () => {
+      setDrawings(loadSymbolDrawings(drawingTarget))
+      setDrawingMigrationCandidates(listDrawingMigrationCandidates(drawingTarget))
+    }
     reload()
     setSelectedDrawingId(undefined)
     setDrawingDraft(undefined)
@@ -414,6 +425,22 @@ export function ChartCanvas({
     setDrawingManagerOpen(false)
     return subscribeSymbolDrawings(drawingTarget, reload)
   }, [drawingTargetKey])
+
+  const resolveMigration = (
+    candidateId: string,
+    action: 'migrate' | 'reject',
+  ) => {
+    try {
+      resolveDrawingMigration(drawingTarget, candidateId, action)
+      setDrawings(loadSymbolDrawings(drawingTarget))
+      setDrawingMigrationCandidates(listDrawingMigrationCandidates(drawingTarget))
+      logInfo('drawing', action === 'migrate' ? '期货趋势线迁移完成' : '期货趋势线已保持隔离', {
+        symbol, candidateId,
+      })
+    } catch (error) {
+      logWarning('drawing', '期货趋势线迁移处理失败', { symbol, candidateId, action, error })
+    }
+  }
 
   const replaceBars = useCallback((next: DailyBar[], preserveView = false) => {
     if (preserveView) {
@@ -1718,11 +1745,13 @@ export function ChartCanvas({
       {drawingManagerOpen && (
         <TrendLineManager
           drawings={drawings}
+          migrationCandidates={drawingMigrationCandidates}
           selectedId={selectedDrawingId}
           onSelect={setSelectedDrawingId}
           onDashChange={(id, dash) => updateDrawingStyle(id, { dash })}
           onColorChange={(id, color) => updateDrawingStyle(id, { color })}
           onVisibilityChange={toggleDrawingVisibility}
+          onResolveMigration={resolveMigration}
           onClose={() => setDrawingManagerOpen(false)}
         />
       )}
@@ -1824,25 +1853,36 @@ function PaneHeader({ kind, top, onHide }: { kind: 'volume' | 'macd' | 'open-int
 
 function TrendLineManager({
   drawings,
+  migrationCandidates,
   selectedId,
   onSelect,
   onDashChange,
   onColorChange,
   onVisibilityChange,
+  onResolveMigration,
   onClose,
 }: {
   drawings: TrendLineDrawing[]
+  migrationCandidates: DrawingMigrationCandidate[]
   selectedId?: string
   onSelect: (id: string) => void
   onDashChange: (id: string, dash: TrendLineDash) => void
   onColorChange: (id: string, color: string) => void
   onVisibilityChange: (id: string) => void
+  onResolveMigration: (candidateId: string, action: 'migrate' | 'reject') => void
   onClose: () => void
 }) {
   const selected = drawings.find(drawing => drawing.id === selectedId)
   return (
     <div className="trend-line-manager" onPointerDown={event => event.stopPropagation()}>
       <header><strong>趋势线</strong><span>{drawings.length}</span><button title="关闭趋势线管理" aria-label="关闭趋势线管理" onClick={onClose}><X size={12}/></button></header>
+      {migrationCandidates.length > 0 && <div className="trend-line-migrations">
+        {migrationCandidates.map(candidate => <div key={candidate.id}>
+          <span>{migrationCandidateLabel(candidate)}<small>{candidate.drawingCount} 条趋势线</small></span>
+          {candidate.canMigrate && <button onClick={() => onResolveMigration(candidate.id, 'migrate')}>迁移</button>}
+          <button onClick={() => onResolveMigration(candidate.id, 'reject')}>保持隔离</button>
+        </div>)}
+      </div>}
       <div className="trend-line-list">
         {drawings.length === 0 && <span className="trend-line-empty">暂无趋势线</span>}
         {drawings.map((drawing, index) => (
@@ -1883,6 +1923,14 @@ function TrendLineManager({
       )}
     </div>
   )
+}
+
+function migrationCandidateLabel(candidate: DrawingMigrationCandidate): string {
+  if (candidate.kind === 'legacy-unknown') return '旧版期货线（基准未知）'
+  if (candidate.kind === 'different-price-basis') {
+    return `不兼容价格基准：${candidate.sourcePriceBasis ?? '未知'}`
+  }
+  return `旧规则：${candidate.sourceRuleVersion ?? '未知'}`
 }
 
 function TrendLineOverlay({

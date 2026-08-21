@@ -10,6 +10,17 @@ export type DrawingTarget = {
   ruleVersion?: string | null
 }
 
+export type DrawingMigrationCandidate = {
+  id: string
+  sourceIdentityKey?: string
+  sourceSymbol: string
+  sourcePriceBasis?: string
+  sourceRuleVersion?: string
+  drawingCount: number
+  kind: 'same-basis-rule-change' | 'different-price-basis' | 'legacy-unknown'
+  canMigrate: boolean
+}
+
 export type TrendLineAnchor = {
   date: string
   price: number
@@ -42,6 +53,7 @@ type DrawingStoreState = {
   version: 2
   identities: Record<string, TrendLineDrawing[]>
   legacyFutures: Record<string, unknown[]>
+  rejectedMigrations: Record<string, string[]>
 }
 
 const drawingStorageKey = 'stock-harness.drawings.v2'
@@ -75,6 +87,56 @@ export function loadSymbolDrawings(
 ): TrendLineDrawing[] {
   const key = drawingIdentityKey(target)
   return key ? readState(storage).identities[key]?.map(cloneDrawing) ?? [] : []
+}
+
+export function listDrawingMigrationCandidates(
+  target: DrawingTarget,
+  storage: Storage = window.localStorage,
+): DrawingMigrationCandidate[] {
+  const targetKey = drawingIdentityKey(target)
+  if (!targetKey || target.instrumentKind !== 'futures-continuous') return []
+  const state = readState(storage)
+  const rejected = new Set(state.rejectedMigrations[targetKey] ?? [])
+  return drawingMigrationCandidates(target, state).filter(item => !rejected.has(item.id))
+}
+
+export function resolveDrawingMigration(
+  target: DrawingTarget,
+  candidateId: string,
+  action: 'migrate' | 'reject',
+  storage: Storage = window.localStorage,
+  now = new Date(),
+  createId: () => string = () => crypto.randomUUID(),
+): void {
+  const targetKey = drawingIdentityKey(target)
+  if (!targetKey) throw new Error('continuous futures drawing identity is incomplete')
+  const state = readState(storage)
+  const candidate = drawingMigrationCandidates(target, state)
+    .find(item => item.id === candidateId)
+  if (!candidate) throw new Error('drawing migration candidate not found')
+  if (action === 'migrate') {
+    if (!candidate.canMigrate || !candidate.sourceIdentityKey) {
+      throw new Error('drawing migration requires an identical price basis')
+    }
+    const existing = state.identities[targetKey] ?? []
+    const existingIds = new Set(existing.map(item => item.id))
+    const migrated = (state.identities[candidate.sourceIdentityKey] ?? []).map(item => ({
+      ...cloneDrawing(item),
+      id: existingIds.has(item.id) ? createId() : item.id,
+      symbol: target.symbol,
+      identityKey: targetKey,
+      instrumentKind: target.instrumentKind,
+      priceBasis: target.priceBasis ?? undefined,
+      ruleVersion: target.ruleVersion ?? undefined,
+      updatedAt: now.toISOString(),
+    }))
+    state.identities[targetKey] = [...existing.map(cloneDrawing), ...migrated]
+  }
+  const rejected = new Set(state.rejectedMigrations[targetKey] ?? [])
+  rejected.add(candidateId)
+  state.rejectedMigrations[targetKey] = [...rejected]
+  writeState(state, storage)
+  notify(targetKey)
 }
 
 export function saveTrendLine(
@@ -187,6 +249,13 @@ function readState(storage: Storage): DrawingStoreState {
             Object.entries(parsed.legacyFutures).filter(([, value]) => Array.isArray(value)),
           ) as Record<string, unknown[]>
           : {},
+        rejectedMigrations: isObject(parsed.rejectedMigrations)
+          ? Object.fromEntries(Object.entries(parsed.rejectedMigrations).flatMap(
+            ([key, value]) => Array.isArray(value)
+              ? [[key, value.filter(item => typeof item === 'string')]]
+              : [],
+          )) as Record<string, string[]>
+          : {},
       }
     }
   } catch {
@@ -214,6 +283,44 @@ function migrateLegacyState(storage: Storage): DrawingStoreState {
     return emptyState()
   }
   return state
+}
+
+function drawingMigrationCandidates(
+  target: DrawingTarget,
+  state: DrawingStoreState,
+): DrawingMigrationCandidate[] {
+  const targetKey = drawingIdentityKey(target)
+  if (!targetKey || target.instrumentKind !== 'futures-continuous') return []
+  const family = continuousFamily(target.symbol)
+  const candidates: DrawingMigrationCandidate[] = []
+  for (const [identityKey, drawings] of Object.entries(state.identities)) {
+    if (identityKey === targetKey || drawings.length === 0) continue
+    const source = drawings[0]
+    if (source.instrumentKind !== 'futures-continuous'
+      || continuousFamily(source.symbol) !== family) continue
+    const sameBasis = source.priceBasis === target.priceBasis
+    candidates.push({
+      id: `identity:${identityKey}`,
+      sourceIdentityKey: identityKey,
+      sourceSymbol: source.symbol,
+      sourcePriceBasis: source.priceBasis,
+      sourceRuleVersion: source.ruleVersion,
+      drawingCount: drawings.length,
+      kind: sameBasis ? 'same-basis-rule-change' : 'different-price-basis',
+      canMigrate: sameBasis,
+    })
+  }
+  for (const [symbol, drawings] of Object.entries(state.legacyFutures)) {
+    if (continuousFamily(symbol) !== family || drawings.length === 0) continue
+    candidates.push({
+      id: `legacy:${symbol}`,
+      sourceSymbol: symbol,
+      drawingCount: drawings.length,
+      kind: 'legacy-unknown',
+      canMigrate: false,
+    })
+  }
+  return candidates.sort((left, right) => left.id.localeCompare(right.id))
 }
 
 function normalizeDrawing(value: unknown, identityKey: string): TrendLineDrawing | undefined {
@@ -296,13 +403,20 @@ function normalizeTarget(target: DrawingTarget | string): DrawingTarget {
   return typeof target === 'string' ? { symbol: target } : target
 }
 
+function continuousFamily(symbol: string): string {
+  const parts = symbol.split(':')
+  return parts.length >= 5 && parts[0].toUpperCase() === 'FUTCONT'
+    ? parts.slice(0, -1).join(':').toUpperCase()
+    : symbol.toUpperCase()
+}
+
 function isFuturesSymbol(symbol: string): boolean {
   const normalized = symbol.toUpperCase()
   return normalized.startsWith('FUT:') || normalized.startsWith('FUTCONT:')
 }
 
 function emptyState(): DrawingStoreState {
-  return { version: 2, identities: {}, legacyFutures: {} }
+  return { version: 2, identities: {}, legacyFutures: {}, rejectedMigrations: {} }
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
