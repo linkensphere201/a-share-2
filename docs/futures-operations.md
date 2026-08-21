@@ -75,4 +75,6 @@ Backfill recovery is a normal rerun of the same command and date range. Continuo
 | Slow suffix rebuild | `futures_continuous_build_*` duration logs | Confirm current code uses bounded predecessor context and that no competing backfill runs |
 | Futures unavailable after migration | `futures_storage_status`, migration error type | Keep stock mode operational, preserve DB/logs, and use a compatible application build |
 
+Futures Provider failures expose only operation, canonical identity, bounded counts, and exception type in logs, CLI result summaries, and health status. Provider exception text, response bodies, credentials, arguments, and stack traces are not operational evidence and are intentionally omitted.
+
 Generated validation and integrity reports stay under ignored `data/reports`. They are local operational evidence and must not be committed with credentials or market data.
