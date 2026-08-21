@@ -4,12 +4,14 @@ import { logInfo, logWarning } from './eventLogger'
 import {
   createTrendLine,
   deleteTrendLine,
+  drawingIdentityKey,
   loadSymbolDrawings,
   saveTrendLine,
   subscribeSymbolDrawings,
   type TrendLineAnchor,
   type TrendLineDash,
   type TrendLineDrawing,
+  type DrawingTarget,
 } from './drawingStore'
 import { barsInRenderPeriod, chooseAnchor, extendLineToBounds, orientTrendLineAnchors, replaceTrendLineAnchor, translateTrendLineAnchors, type LineGeometry, type TrendLineOrientation } from './trendLines'
 import type { ThemeDefinition } from './themeStore'
@@ -138,6 +140,8 @@ type ChartCanvasProps = {
   focused: boolean
   instrumentName?: string
   instrumentKind?: string
+  priceBasis?: string | null
+  ruleVersion?: string | null
   lineOnly?: boolean
   theme: ThemeDefinition
   range: ChartRange
@@ -223,6 +227,8 @@ export function ChartCanvas({
   focused,
   instrumentName,
   instrumentKind,
+  priceBasis,
+  ruleVersion,
   lineOnly = false,
   theme,
   range,
@@ -301,7 +307,13 @@ export function ChartCanvas({
   const [rangeSelection, setRangeSelection] = useState<RangeSelection>()
   const [measurement, setMeasurement] = useState<RangeMeasurement>()
   const [drawingTool, setDrawingTool] = useState<'browse' | 'trend-line' | 'move'>('browse')
-  const [drawings, setDrawings] = useState<TrendLineDrawing[]>(() => loadSymbolDrawings(symbol))
+  const [drawingTarget, setDrawingTarget] = useState<DrawingTarget>(() => ({
+    symbol, instrumentKind, priceBasis, ruleVersion,
+  }))
+  const drawingTargetKey = drawingIdentityKey(drawingTarget)
+  const [drawings, setDrawings] = useState<TrendLineDrawing[]>(() => (
+    loadSymbolDrawings({ symbol, instrumentKind, priceBasis, ruleVersion })
+  ))
   const [drawingDraft, setDrawingDraft] = useState<[TrendLineAnchor, TrendLineAnchor]>()
   const [selectedDrawingId, setSelectedDrawingId] = useState<string>()
   const [drawingManagerOpen, setDrawingManagerOpen] = useState(false)
@@ -385,7 +397,11 @@ export function ChartCanvas({
   }, [symbol, trendAnalysisEnabled, trendAnalysisOverride])
 
   useEffect(() => {
-    const reload = () => setDrawings(loadSymbolDrawings(symbol))
+    setDrawingTarget({ symbol, instrumentKind, priceBasis, ruleVersion })
+  }, [symbol, instrumentKind, priceBasis, ruleVersion])
+
+  useEffect(() => {
+    const reload = () => setDrawings(loadSymbolDrawings(drawingTarget))
     reload()
     setSelectedDrawingId(undefined)
     setDrawingDraft(undefined)
@@ -396,8 +412,8 @@ export function ChartCanvas({
     setEditingAnchor(undefined)
     setDrawingTool('browse')
     setDrawingManagerOpen(false)
-    return subscribeSymbolDrawings(symbol, reload)
-  }, [symbol])
+    return subscribeSymbolDrawings(drawingTarget, reload)
+  }, [drawingTargetKey])
 
   const replaceBars = useCallback((next: DailyBar[], preserveView = false) => {
     if (preserveView) {
@@ -782,9 +798,22 @@ export function ChartCanvas({
     fetch(dailyBarsUrl(symbol, asOfDate), { signal: controller.signal })
       .then(response => {
         if (!response.ok) throw new Error(`HTTP ${response.status}`)
-        return response.json() as Promise<{ items: DailyBar[] }>
+        return response.json() as Promise<{
+          items: DailyBar[]
+          instrument_kind?: string
+          price_basis?: string | null
+          rule_version?: string | null
+        }>
       })
       .then(body => {
+        if (body.instrument_kind) {
+          setDrawingTarget({
+            symbol,
+            instrumentKind: body.instrument_kind,
+            priceBasis: body.price_basis,
+            ruleVersion: body.rule_version,
+          })
+        }
         replaceBars(body.items)
         setState('ready')
         const finalItems = body.items.filter(item => item.bar_state !== 'intraday')
@@ -1223,7 +1252,7 @@ export function ChartCanvas({
     setDrawingTool('browse')
     if (!anchor || Math.hypot(point.x - drag.startX, point.y - drag.startY) < 6) return
     try {
-      const drawing = createTrendLine(symbol, [drag.start, anchor], priceMode)
+      const drawing = createTrendLine(drawingTarget, [drag.start, anchor], priceMode)
       saveTrendLine(drawing)
       setSelectedDrawingId(drawing.id)
       logInfo('drawing', '趋势线已保存', { symbol, drawingId: drawing.id })
@@ -1432,7 +1461,7 @@ export function ChartCanvas({
 
   const removeSelectedDrawing = () => {
     if (!selectedDrawingId) return
-    deleteTrendLine(symbol, selectedDrawingId)
+    deleteTrendLine(drawingTarget, selectedDrawingId)
     logInfo('drawing', '趋势线已删除', { symbol, drawingId: selectedDrawingId })
     setSelectedDrawingId(undefined)
   }
@@ -1637,6 +1666,7 @@ export function ChartCanvas({
           title="绘制趋势线"
           aria-label="绘制趋势线"
           aria-pressed={drawingTool === 'trend-line'}
+          disabled={!drawingTargetKey}
           onClick={() => {
             setDrawingTool('trend-line')
             setSelectedDrawingId(undefined)

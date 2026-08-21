@@ -3,6 +3,13 @@ import type { PriceMode } from './ChartCanvas'
 export type TrendLineSnap = 'free' | 'high' | 'low'
 export type TrendLineDash = 'solid' | 'dotted' | 'dashed' | 'long-dashed' | 'dash-dot'
 
+export type DrawingTarget = {
+  symbol: string
+  instrumentKind?: string
+  priceBasis?: string | null
+  ruleVersion?: string | null
+}
+
 export type TrendLineAnchor = {
   date: string
   price: number
@@ -19,6 +26,10 @@ export type TrendLineDrawing = {
   id: string
   kind: 'trend-line'
   symbol: string
+  identityKey: string
+  instrumentKind?: string
+  priceBasis?: string
+  ruleVersion?: string
   anchors: [TrendLineAnchor, TrendLineAnchor]
   coordinateMode: PriceMode
   style: TrendLineStyle
@@ -28,11 +39,13 @@ export type TrendLineDrawing = {
 }
 
 type DrawingStoreState = {
-  version: 1
-  symbols: Record<string, TrendLineDrawing[]>
+  version: 2
+  identities: Record<string, TrendLineDrawing[]>
+  legacyFutures: Record<string, unknown[]>
 }
 
-const drawingStorageKey = 'stock-harness.drawings.v1'
+const drawingStorageKey = 'stock-harness.drawings.v2'
+const legacyDrawingStorageKey = 'stock-harness.drawings.v1'
 const drawingChangeEvent = 'stock-harness:drawings-changed'
 
 export const defaultTrendLineStyle: TrendLineStyle = {
@@ -41,38 +54,70 @@ export const defaultTrendLineStyle: TrendLineStyle = {
   dash: 'dashed',
 }
 
-export function loadSymbolDrawings(symbol: string, storage: Storage = window.localStorage): TrendLineDrawing[] {
-  return readState(storage).symbols[symbol]?.map(cloneDrawing) ?? []
+export function drawingIdentityKey(target: DrawingTarget | string): string | undefined {
+  const resolved = normalizeTarget(target)
+  if (resolved.instrumentKind === 'futures-continuous') {
+    if (!resolved.priceBasis || !resolved.ruleVersion) return undefined
+    return [
+      'futures-continuous', resolved.symbol,
+      resolved.priceBasis, resolved.ruleVersion,
+    ].map(encodeURIComponent).join('|')
+  }
+  if (resolved.instrumentKind === 'futures-contract') {
+    return ['futures-contract', resolved.symbol].map(encodeURIComponent).join('|')
+  }
+  return resolved.symbol
 }
 
-export function saveTrendLine(drawing: TrendLineDrawing, storage: Storage = window.localStorage): void {
+export function loadSymbolDrawings(
+  target: DrawingTarget | string,
+  storage: Storage = window.localStorage,
+): TrendLineDrawing[] {
+  const key = drawingIdentityKey(target)
+  return key ? readState(storage).identities[key]?.map(cloneDrawing) ?? [] : []
+}
+
+export function saveTrendLine(
+  drawing: TrendLineDrawing,
+  storage: Storage = window.localStorage,
+): void {
   const state = readState(storage)
-  const current = state.symbols[drawing.symbol] ?? []
+  const current = state.identities[drawing.identityKey] ?? []
   const index = current.findIndex(item => item.id === drawing.id)
   const next = current.map(cloneDrawing)
   if (index >= 0) next[index] = cloneDrawing(drawing)
   else next.push(cloneDrawing(drawing))
-  state.symbols[drawing.symbol] = next
+  state.identities[drawing.identityKey] = next
   writeState(state, storage)
-  notify(drawing.symbol)
+  notify(drawing.identityKey)
 }
 
-export function deleteTrendLine(symbol: string, id: string, storage: Storage = window.localStorage): void {
+export function deleteTrendLine(
+  target: DrawingTarget | string,
+  id: string,
+  storage: Storage = window.localStorage,
+): void {
+  const key = drawingIdentityKey(target)
+  if (!key) return
   const state = readState(storage)
-  const next = (state.symbols[symbol] ?? []).filter(item => item.id !== id)
-  if (next.length === (state.symbols[symbol] ?? []).length) return
-  if (next.length > 0) state.symbols[symbol] = next
-  else delete state.symbols[symbol]
+  const next = (state.identities[key] ?? []).filter(item => item.id !== id)
+  if (next.length === (state.identities[key] ?? []).length) return
+  if (next.length > 0) state.identities[key] = next
+  else delete state.identities[key]
   writeState(state, storage)
-  notify(symbol)
+  notify(key)
 }
 
-export function subscribeSymbolDrawings(symbol: string, listener: () => void): () => void {
+export function subscribeSymbolDrawings(
+  target: DrawingTarget | string,
+  listener: () => void,
+): () => void {
+  const key = drawingIdentityKey(target)
   const onCustomChange = (event: Event) => {
-    if ((event as CustomEvent<{ symbol?: string }>).detail?.symbol === symbol) listener()
+    if (key && (event as CustomEvent<{ identityKey?: string }>).detail?.identityKey === key) listener()
   }
   const onStorageChange = (event: StorageEvent) => {
-    if (event.key === drawingStorageKey) listener()
+    if (key && event.key === drawingStorageKey) listener()
   }
   window.addEventListener(drawingChangeEvent, onCustomChange)
   window.addEventListener('storage', onStorageChange)
@@ -95,17 +140,24 @@ export function subscribeDrawingStore(listener: () => void): () => void {
 }
 
 export function createTrendLine(
-  symbol: string,
+  target: DrawingTarget | string,
   anchors: [TrendLineAnchor, TrendLineAnchor],
   coordinateMode: PriceMode,
   now = new Date(),
   createId: () => string = () => crypto.randomUUID(),
 ): TrendLineDrawing {
+  const resolved = normalizeTarget(target)
+  const identityKey = drawingIdentityKey(resolved)
+  if (!identityKey) throw new Error('continuous futures drawing identity is incomplete')
   const timestamp = now.toISOString()
   return {
     id: createId(),
     kind: 'trend-line',
-    symbol,
+    symbol: resolved.symbol,
+    identityKey,
+    instrumentKind: resolved.instrumentKind,
+    priceBasis: resolved.priceBasis ?? undefined,
+    ruleVersion: resolved.ruleVersion ?? undefined,
     anchors,
     coordinateMode,
     style: { ...defaultTrendLineStyle },
@@ -116,24 +168,74 @@ export function createTrendLine(
 }
 
 function readState(storage: Storage): DrawingStoreState {
+  const raw = storage.getItem(drawingStorageKey)
+  if (raw === null) return migrateLegacyState(storage)
   try {
-    const parsed = JSON.parse(storage.getItem(drawingStorageKey) ?? '') as unknown
-    if (!isObject(parsed) || parsed.version !== 1 || !isObject(parsed.symbols)) return emptyState()
-    const symbols: Record<string, TrendLineDrawing[]> = {}
-    for (const [symbol, value] of Object.entries(parsed.symbols)) {
-      if (!Array.isArray(value)) continue
-      const drawings = value.map(item => normalizeDrawing(item, symbol)).filter(isDefined)
-      if (drawings.length > 0) symbols[symbol] = drawings
+    const parsed = JSON.parse(raw) as unknown
+    if (isObject(parsed) && parsed.version === 2 && isObject(parsed.identities)) {
+      const identities: Record<string, TrendLineDrawing[]> = {}
+      for (const [key, value] of Object.entries(parsed.identities)) {
+        if (!Array.isArray(value)) continue
+        const drawings = value.map(item => normalizeDrawing(item, key)).filter(isDefined)
+        if (drawings.length > 0) identities[key] = drawings
+      }
+      return {
+        version: 2,
+        identities,
+        legacyFutures: isObject(parsed.legacyFutures)
+          ? Object.fromEntries(
+            Object.entries(parsed.legacyFutures).filter(([, value]) => Array.isArray(value)),
+          ) as Record<string, unknown[]>
+          : {},
+      }
     }
-    return { version: 1, symbols }
   } catch {
     return emptyState()
   }
+  return emptyState()
 }
 
-function normalizeDrawing(value: unknown, symbol: string): TrendLineDrawing | undefined {
-  if (!isObject(value) || value.kind !== 'trend-line' || value.symbol !== symbol) return undefined
-  if (typeof value.id !== 'string' || !Array.isArray(value.anchors) || value.anchors.length !== 2) return undefined
+function migrateLegacyState(storage: Storage): DrawingStoreState {
+  const state = emptyState()
+  try {
+    const parsed = JSON.parse(storage.getItem(legacyDrawingStorageKey) ?? '') as unknown
+    if (!isObject(parsed) || parsed.version !== 1 || !isObject(parsed.symbols)) return state
+    for (const [symbol, value] of Object.entries(parsed.symbols)) {
+      if (!Array.isArray(value)) continue
+      if (isFuturesSymbol(symbol)) {
+        state.legacyFutures[symbol] = value
+        continue
+      }
+      const drawings = value.map(item => normalizeLegacyDrawing(item, symbol)).filter(isDefined)
+      if (drawings.length > 0) state.identities[symbol] = drawings
+    }
+    writeState(state, storage)
+  } catch {
+    return emptyState()
+  }
+  return state
+}
+
+function normalizeDrawing(value: unknown, identityKey: string): TrendLineDrawing | undefined {
+  if (!isObject(value) || value.identityKey !== identityKey || typeof value.symbol !== 'string') return undefined
+  return normalizeDrawingFields(value, value.symbol, identityKey)
+}
+
+function normalizeLegacyDrawing(
+  value: unknown,
+  symbol: string,
+): TrendLineDrawing | undefined {
+  if (!isObject(value) || value.symbol !== symbol) return undefined
+  return normalizeDrawingFields(value, symbol, symbol)
+}
+
+function normalizeDrawingFields(
+  value: Record<string, unknown>,
+  symbol: string,
+  identityKey: string,
+): TrendLineDrawing | undefined {
+  if (value.kind !== 'trend-line' || typeof value.id !== 'string'
+    || !Array.isArray(value.anchors) || value.anchors.length !== 2) return undefined
   const first = normalizeAnchor(value.anchors[0])
   const second = normalizeAnchor(value.anchors[1])
   if (!first || !second) return undefined
@@ -142,6 +244,10 @@ function normalizeDrawing(value: unknown, symbol: string): TrendLineDrawing | un
     id: value.id,
     kind: 'trend-line',
     symbol,
+    identityKey,
+    instrumentKind: typeof value.instrumentKind === 'string' ? value.instrumentKind : undefined,
+    priceBasis: typeof value.priceBasis === 'string' ? value.priceBasis : undefined,
+    ruleVersion: typeof value.ruleVersion === 'string' ? value.ruleVersion : undefined,
     anchors: [first, second],
     coordinateMode: value.coordinateMode === 'log' ? 'log' : 'normal',
     style: {
@@ -174,8 +280,8 @@ function writeState(state: DrawingStoreState, storage: Storage): void {
   storage.setItem(drawingStorageKey, JSON.stringify(state))
 }
 
-function notify(symbol: string): void {
-  window.dispatchEvent(new CustomEvent(drawingChangeEvent, { detail: { symbol } }))
+function notify(identityKey: string): void {
+  window.dispatchEvent(new CustomEvent(drawingChangeEvent, { detail: { identityKey } }))
 }
 
 function cloneDrawing(drawing: TrendLineDrawing): TrendLineDrawing {
@@ -186,8 +292,17 @@ function cloneDrawing(drawing: TrendLineDrawing): TrendLineDrawing {
   }
 }
 
+function normalizeTarget(target: DrawingTarget | string): DrawingTarget {
+  return typeof target === 'string' ? { symbol: target } : target
+}
+
+function isFuturesSymbol(symbol: string): boolean {
+  const normalized = symbol.toUpperCase()
+  return normalized.startsWith('FUT:') || normalized.startsWith('FUTCONT:')
+}
+
 function emptyState(): DrawingStoreState {
-  return { version: 1, symbols: {} }
+  return { version: 2, identities: {}, legacyFutures: {} }
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

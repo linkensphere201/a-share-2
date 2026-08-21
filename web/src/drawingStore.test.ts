@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   createTrendLine,
   deleteTrendLine,
+  drawingIdentityKey,
   loadSymbolDrawings,
   saveTrendLine,
   subscribeSymbolDrawings,
@@ -77,6 +78,65 @@ describe('symbol drawing repository', () => {
       visible: false,
       style: { color: '#57a7d9', dash: 'dash-dot' },
     })
+  })
+
+  it('isolates continuous futures drawings by price basis and rule version', () => {
+    const raw = {
+      symbol: 'FUTCONT:SHFE:CU:MAIN:raw',
+      instrumentKind: 'futures-continuous',
+      priceBasis: 'raw',
+      ruleVersion: 'tushare-fut-mapping-v1',
+    }
+    const adjusted = {
+      ...raw,
+      symbol: 'FUTCONT:SHFE:CU:MAIN:backward-ratio',
+      priceBasis: 'backward-ratio',
+    }
+    const upgraded = { ...raw, ruleVersion: 'tushare-fut-mapping-v2' }
+    const drawing = createTrendLine(raw, [
+      { date: '2026-07-01', price: 78_000, snap: 'low' },
+      { date: '2026-07-31', price: 81_000, snap: 'high' },
+    ], 'normal', new Date('2026-08-05T00:00:00Z'), () => 'cu-line')
+    saveTrendLine(drawing)
+
+    expect(loadSymbolDrawings(raw)).toEqual([drawing])
+    expect(loadSymbolDrawings(adjusted)).toEqual([])
+    expect(loadSymbolDrawings(upgraded)).toEqual([])
+    expect(drawingIdentityKey(raw)).not.toBe(drawingIdentityKey(upgraded))
+  })
+
+  it('quarantines legacy futures drawings instead of attaching them implicitly', () => {
+    const legacy = {
+      ...createTrendLine('FUTCONT:SHFE:CU:MAIN:raw', [
+        { date: '2026-07-01', price: 78_000, snap: 'low' },
+        { date: '2026-07-31', price: 81_000, snap: 'high' },
+      ], 'normal', new Date('2026-08-05T00:00:00Z'), () => 'legacy-line'),
+    }
+    delete (legacy as Partial<typeof legacy>).identityKey
+    window.localStorage.setItem('stock-harness.drawings.v1', JSON.stringify({
+      version: 1,
+      symbols: { 'FUTCONT:SHFE:CU:MAIN:raw': [legacy] },
+    }))
+
+    expect(loadSymbolDrawings({
+      symbol: 'FUTCONT:SHFE:CU:MAIN:raw',
+      instrumentKind: 'futures-continuous',
+      priceBasis: 'raw',
+      ruleVersion: 'tushare-fut-mapping-v1',
+    })).toEqual([])
+    const migrated = JSON.parse(window.localStorage.getItem('stock-harness.drawings.v2') ?? '{}')
+    expect(migrated.legacyFutures['FUTCONT:SHFE:CU:MAIN:raw']).toHaveLength(1)
+  })
+
+  it('rejects continuous drawing creation until the full identity is known', () => {
+    expect(() => createTrendLine({
+      symbol: 'FUTCONT:SHFE:CU:MAIN:raw',
+      instrumentKind: 'futures-continuous',
+      priceBasis: 'raw',
+    }, [
+      { date: '2026-07-01', price: 78_000, snap: 'low' },
+      { date: '2026-07-31', price: 81_000, snap: 'high' },
+    ], 'normal')).toThrow('identity is incomplete')
   })
 })
 

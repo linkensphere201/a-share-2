@@ -4981,8 +4981,10 @@ class SQLiteMarketDataStore:
             "(SELECT lifecycle_status FROM futures_contracts WHERE instrument_id = selected.instrument_id), "
             "(SELECT contract_month FROM futures_contracts WHERE instrument_id = selected.instrument_id), "
             "(SELECT series_kind FROM futures_continuous_series WHERE instrument_id = selected.instrument_id), "
-            "(SELECT series_variant FROM futures_continuous_series WHERE instrument_id = selected.instrument_id)"
-            if self._futures_storage_ready else "NULL, NULL, NULL, NULL, NULL"
+            "(SELECT series_variant FROM futures_continuous_series WHERE instrument_id = selected.instrument_id), "
+            "(SELECT price_basis FROM futures_continuous_series WHERE instrument_id = selected.instrument_id), "
+            "(SELECT rule_version FROM futures_continuous_series WHERE instrument_id = selected.instrument_id)"
+            if self._futures_storage_ready else "NULL, NULL, NULL, NULL, NULL, NULL, NULL"
         )
         clauses: list[str] = []
         parameters: list[object] = []
@@ -5124,8 +5126,10 @@ class SQLiteMarketDataStore:
             "(SELECT lifecycle_status FROM futures_contracts WHERE instrument_id = instrument.instrument_id), "
             "(SELECT contract_month FROM futures_contracts WHERE instrument_id = instrument.instrument_id), "
             "(SELECT series_kind FROM futures_continuous_series WHERE instrument_id = instrument.instrument_id), "
-            "(SELECT series_variant FROM futures_continuous_series WHERE instrument_id = instrument.instrument_id)"
-            if self._futures_storage_ready else "NULL, NULL, NULL, NULL, NULL"
+            "(SELECT series_variant FROM futures_continuous_series WHERE instrument_id = instrument.instrument_id), "
+            "(SELECT price_basis FROM futures_continuous_series WHERE instrument_id = instrument.instrument_id), "
+            "(SELECT rule_version FROM futures_continuous_series WHERE instrument_id = instrument.instrument_id)"
+            if self._futures_storage_ready else "NULL, NULL, NULL, NULL, NULL, NULL, NULL"
         )
         with self._lock:
             row = self._connection.execute(

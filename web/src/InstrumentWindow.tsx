@@ -103,6 +103,8 @@ export function ChartWindow({
           focused={focused}
           instrumentName={instrument.name}
           instrumentKind={instrument.kind}
+          priceBasis={instrument.price_basis}
+          ruleVersion={instrument.rule_version}
           lineOnly={instrument.kind === 'custom-index' && chart.seriesMode === 'line'}
           theme={theme}
           range={chart.range}

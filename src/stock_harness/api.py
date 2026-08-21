@@ -848,6 +848,8 @@ def create_app(
             return {
                 "symbol": normalized,
                 "instrument_kind": instrument["kind"],
+                "price_basis": instrument.get("price_basis"),
+                "rule_version": instrument.get("rule_version"),
                 "items": [
                     {
                         "trade_date": row.trading_day,

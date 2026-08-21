@@ -126,7 +126,17 @@ def test_futures_catalog_upsert_is_idempotent_and_preserves_relations() -> None:
         assert store.list_futures_contracts() == [contract]
         assert store.list_futures_products() == [product]
         assert store.get_instrument_summary(contract.symbol)["classification_label"] == "期货合约"
-        assert store.get_instrument_summary(series.symbol)["classification_label"] == "期货连续"
+        continuous_summary = store.get_instrument_summary(series.symbol)
+        assert continuous_summary["classification_label"] == "期货连续"
+        assert continuous_summary["price_basis"] == "raw"
+        assert continuous_summary["rule_version"] == "tushare-fut-mapping-v1"
+        with TestClient(create_app(store)) as client:
+            payload = client.get(
+                f"/api/instruments/{series.symbol}/daily-bars"
+            ).json()
+        assert payload["instrument_kind"] == "futures-continuous"
+        assert payload["price_basis"] == "raw"
+        assert payload["rule_version"] == "tushare-fut-mapping-v1"
         counts = store._connection.execute(
             """
             SELECT
@@ -186,6 +196,8 @@ def test_futures_search_filters_metadata_coverage_and_pinyin() -> None:
         assert [item["symbol"] for item in main] == [series.symbol]
         assert main[0]["series_kind"] == "main"
         assert main[0]["series_variant"] == "MAIN"
+        assert main[0]["price_basis"] == "raw"
+        assert main[0]["rule_version"] == "tushare-fut-mapping-v1"
         assert [item["symbol"] for item in pinyin] == [series.symbol]
 
 

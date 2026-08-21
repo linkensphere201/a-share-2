@@ -34,6 +34,8 @@ export type Instrument = {
   contract_month?: string | null
   series_kind?: string | null
   series_variant?: string | null
+  price_basis?: string | null
+  rule_version?: string | null
   first_trade_date?: string
   last_trade_date?: string
   rows: number
