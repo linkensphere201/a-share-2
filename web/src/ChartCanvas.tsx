@@ -14,7 +14,7 @@ import {
 import { barsInRenderPeriod, chooseAnchor, extendLineToBounds, orientTrendLineAnchors, replaceTrendLineAnchor, translateTrendLineAnchors, type LineGeometry, type TrendLineOrientation } from './trendLines'
 import type { ThemeDefinition } from './themeStore'
 import { loadTrendAnalysis, type TrendAnalysisRun } from './trendAnalysisClient'
-import { refreshLatestDailyBar } from './latestDailyRefreshClient'
+import { refreshLatestDailyBar, type LatestDailyRefreshFeedback } from './latestDailyRefreshClient'
 import {
   reviewGeometryHandles,
   updateReviewGeometryHandle,
@@ -301,7 +301,10 @@ export function ChartCanvas({
   const manualRefreshFeedbackTimerRef = useRef(0)
   const manualRefreshWarningAtRef = useRef(0)
   const [manualRefreshing, setManualRefreshing] = useState(false)
-  const [manualRefreshFeedback, setManualRefreshFeedback] = useState<'success' | 'warning'>()
+  const [manualRefreshFeedback, setManualRefreshFeedback] = useState<{
+    kind: LatestDailyRefreshFeedback
+    message: string
+  }>()
   const [trendAnalysis, setTrendAnalysis] = useState<TrendAnalysisRun | null>(null)
   const [trendAnalysisPreview, setTrendAnalysisPreview] = useState(false)
 
@@ -815,9 +818,12 @@ export function ChartCanvas({
     return () => window.removeEventListener('stock-harness:latest-daily-refreshed', onRefreshed)
   }, [symbol, asOfDate, replaceBars])
 
-  const showManualRefreshFeedback = useCallback((value: 'success' | 'warning') => {
+  const showManualRefreshFeedback = useCallback((
+    kind: LatestDailyRefreshFeedback,
+    message: string,
+  ) => {
     window.clearTimeout(manualRefreshFeedbackTimerRef.current)
-    setManualRefreshFeedback(value)
+    setManualRefreshFeedback({ kind, message })
     manualRefreshFeedbackTimerRef.current = window.setTimeout(
       () => setManualRefreshFeedback(undefined),
       3_000,
@@ -845,20 +851,24 @@ export function ChartCanvas({
             finalItems.at(-1)?.trade_date,
           )
         }
-        showManualRefreshFeedback(result.warning ? 'warning' : 'success')
+        showManualRefreshFeedback(result.feedback, result.message)
         const details = {
           symbol, mode: result.mode, state: result.status,
           rowsChanged: result.rowsChanged, error: result.error,
         }
         if (result.warning) {
-          logWarning('daily-refresh', '最新日线刷新完成但存在警告，保留可用图表数据', details)
+          const now = Date.now()
+          if (now - manualRefreshWarningAtRef.current >= 60_000) {
+            manualRefreshWarningAtRef.current = now
+            logWarning('daily-refresh', '最新日线刷新完成但存在警告，保留可用图表数据', details)
+          }
         } else {
           logInfo('daily-refresh', '最新日线刷新完成', details)
         }
       })
       .catch(error => {
         if ((error as Error).name !== 'AbortError') {
-          showManualRefreshFeedback('warning')
+          showManualRefreshFeedback('fallback', '刷新失败，已保留现有图表数据')
           const now = Date.now()
           if (now - manualRefreshWarningAtRef.current >= 60_000) {
             manualRefreshWarningAtRef.current = now
@@ -1584,22 +1594,18 @@ export function ChartCanvas({
       <div className={toolbarCollapsed ? 'chart-drawing-toolbar collapsed' : 'chart-drawing-toolbar'} onPointerDown={event => event.stopPropagation()}>
         <div className="chart-drawing-toolbar-actions" aria-hidden={toolbarCollapsed}>
         <button
-          className={manualRefreshing ? 'refreshing' : manualRefreshFeedback ?? ''}
+          className={manualRefreshing ? 'refreshing' : manualRefreshFeedback?.kind ?? ''}
           title={manualRefreshing
             ? '正在刷新当前标的当日数据'
-            : manualRefreshFeedback === 'success'
-              ? '当日数据刷新完成'
-              : manualRefreshFeedback === 'warning'
-                ? '未获得新当日数据，已保留现有数据'
-                : '刷新当日标的'}
+            : manualRefreshFeedback?.message ?? '刷新当日标的'}
           aria-label="刷新当日标的"
           disabled={manualRefreshing || Boolean(asOfDate)}
           onClick={refreshIntradayNow}
         >{manualRefreshing
           ? <RefreshCw size={13}/>
-          : manualRefreshFeedback === 'success'
+          : manualRefreshFeedback?.kind === 'success' || manualRefreshFeedback?.kind === 'canonical'
           ? <Check size={13}/>
-          : manualRefreshFeedback === 'warning'
+          : manualRefreshFeedback
             ? <AlertTriangle size={13}/>
             : <RefreshCw size={13}/>}</button>
         <button

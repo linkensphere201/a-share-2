@@ -9,6 +9,7 @@ it('publishes refreshed bars before starting trend recalculation', async () => {
     order.push('refresh')
     return {
       mode: 'provisional' as const, items: [], warning: false, status: 'ready',
+      feedback: 'success' as const, message: 'refreshed',
     }
   })
   const onRefresh = vi.fn(() => order.push('publish'))
@@ -53,6 +54,7 @@ it('does not hide an analysis failure behind a successful refresh', async () => 
     {
       refresh: vi.fn().mockResolvedValue({
         mode: 'canonical', items: [], warning: false, status: 'ready',
+        feedback: 'canonical', message: 'canonical',
       }),
       recalculate: vi.fn().mockRejectedValue(analysisError),
     },
@@ -74,6 +76,7 @@ it('does not report a publication callback failure as a provider refresh failure
     {
       refresh: vi.fn().mockResolvedValue({
         mode: 'canonical', items: [], warning: false, status: 'ready',
+        feedback: 'canonical', message: 'canonical',
       }),
       recalculate,
     },

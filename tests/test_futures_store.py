@@ -328,6 +328,57 @@ def test_canonical_daily_takes_over_without_deleting_provisional_audit() -> None
         assert audit[0]["close"] == 104
 
 
+def test_continuous_fused_read_projects_the_mapped_contract_provisional_bar() -> None:
+    product, contract, series = _catalog()
+    prior_day = date(2026, 8, 19)
+    current_day = date(2026, 8, 20)
+    observed = datetime(2026, 8, 20, 14, 30, tzinfo=CHINA_TIME)
+    mapping = FuturesRollMapping(
+        series.symbol, series.provider_symbol, current_day,
+        contract.symbol, contract.provider_symbol,
+    )
+    with SQLiteMarketDataStore(":memory:") as store:
+        store.upsert_futures_catalog(
+            "tushare-futures", [product], [contract], [series]
+        )
+        store.upsert_futures_roll_mappings("tushare-futures", [mapping])
+        store.upsert_futures_daily_bars("tushare-futures", [
+            replace(
+                _bar(prior_day), symbol=series.symbol,
+                mapped_contract_symbol=contract.symbol,
+            )
+        ])
+        store.upsert_futures_provisional_daily_bars(
+            "akshare-futures-zh-spot",
+            [_bar(
+                current_day, FuturesBarState.PROVISIONAL,
+                "akshare-futures-zh-spot", 104, observed,
+            )],
+            observed,
+        )
+
+        fused = store.list_fused_futures_daily_bars(
+            series.symbol, prior_day, current_day
+        )
+
+        assert [item.state for item in fused] == [
+            FuturesBarState.FINAL, FuturesBarState.PROVISIONAL,
+        ]
+        assert fused[-1].symbol == series.symbol
+        assert fused[-1].mapped_contract_symbol == contract.symbol
+        assert fused[-1].close == 104
+
+        store.upsert_futures_daily_bars("tushare-futures", [
+            replace(
+                _bar(current_day, close=103), symbol=series.symbol,
+                mapped_contract_symbol=contract.symbol,
+            )
+        ])
+        assert [item.state for item in store.list_fused_futures_daily_bars(
+            series.symbol, prior_day, current_day
+        )] == [FuturesBarState.FINAL, FuturesBarState.FINAL]
+
+
 def test_market_snapshots_fuse_futures_provisional_and_canonical_metrics() -> None:
     product, contract, series = _catalog()
     prior_day = date(2026, 8, 19)

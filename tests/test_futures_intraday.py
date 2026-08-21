@@ -83,6 +83,7 @@ class _Monitor:
         self.provider = _Provider()
         self.requests = []
         self.fail = False
+        self.stale_by = timedelta(0)
 
     def fetch(self, contracts, expected_trading_day, observed_at=None):
         self.requests.append((tuple(item.symbol for item in contracts), expected_trading_day))
@@ -92,7 +93,8 @@ class _Monitor:
         return (FuturesDailyBar(
             contract.symbol, expected_trading_day, expected_trading_day,
             100, 103, 99, 102, 98, None, 99, 1234, None, 4321, None,
-            None, self.provider.code, FuturesBarState.PROVISIONAL, observed_at,
+            None, self.provider.code, FuturesBarState.PROVISIONAL,
+            observed_at - self.stale_by,
         ),)
 
 
@@ -133,6 +135,7 @@ def test_active_workspace_references_resolve_to_bounded_real_contracts() -> None
         service.subscribe("group-1", [series.symbol, "600519.SH"])
         result = service.refresh_once(datetime(2026, 8, 20, 10, 0, tzinfo=CHINA_TIME))
         assert result["state"] == "ready"
+        assert result["received_count"] == 1
         assert result["unresolved_count"] == 1
         assert monitor.requests == [((contract.symbol,), day)]
         fused = store.list_fused_futures_daily_bars(contract.symbol, day, day)
@@ -151,6 +154,32 @@ def test_active_workspace_references_resolve_to_bounded_real_contracts() -> None
         closed = service.refresh_once(datetime(2026, 8, 20, 18, 0, tzinfo=CHINA_TIME))
         assert closed["skip_reason"] == "market-closed"
         assert len(monitor.requests) == 2
+
+
+def test_stale_futures_quote_is_persisted_and_reported_without_dropping_the_bar() -> None:
+    product, contract, series = _catalog()
+    day = date(2026, 8, 20)
+    monitor = _Monitor()
+    monitor.stale_by = timedelta(minutes=5)
+    with SQLiteMarketDataStore(":memory:") as store:
+        store.upsert_futures_catalog(
+            "tushare-futures", [product], [contract], [series]
+        )
+        store.upsert_futures_calendar("tushare-futures", [
+            FuturesCalendarDay(FuturesExchange.SHFE, day, True, date(2026, 8, 19))
+        ])
+        service = FuturesProvisionalService(_settings(), store, monitor)
+
+        result = service.refresh_once(
+            datetime(2026, 8, 20, 10, 0, tzinfo=CHINA_TIME),
+            references=[contract.symbol],
+        )
+
+        assert result["state"] == "stale"
+        assert result["received_count"] == 1
+        assert result["stale_count"] == 1
+        assert store.list_futures_provisional_audit(contract.symbol)[0]["stale"] is True
+        assert len(store.list_fused_futures_daily_bars(contract.symbol, day, day)) == 1
 
 
 def test_futures_sessions_assign_night_observations_to_next_open_day() -> None:

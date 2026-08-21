@@ -564,6 +564,18 @@ def create_app(
                     "state": final_status.get("state", "queued"),
                     "final_update": final_status,
                 }
+            if futures_symbols:
+                log_payload = {
+                    "state": futures_status.get("state"),
+                    "mode": futures_status.get("mode"),
+                    "references": len(futures_symbols),
+                    "received": futures_status.get(
+                        "received_count", futures_status.get("received", 0)
+                    ),
+                    "stale": futures_status.get("stale_count", 0),
+                    "skip_reason": futures_status.get("skip_reason"),
+                }
+                LOGGER.info("futures_manual_refresh_completed %s", log_payload)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return {

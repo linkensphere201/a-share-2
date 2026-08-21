@@ -581,6 +581,10 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .chart-drawing-toolbar button.refreshing svg { animation: chart-refresh-spin .8s linear infinite; }
 .chart-drawing-toolbar button.success { color: #62bb8c; }
 .chart-drawing-toolbar button.warning { color: #d8aa5d; }
+.chart-drawing-toolbar button.canonical { color: #62bb8c; }
+.chart-drawing-toolbar button.stale,
+.chart-drawing-toolbar button.fallback { color: #d8aa5d; }
+.chart-drawing-toolbar button.skipped { color: var(--text-muted); }
 @keyframes chart-refresh-spin { to { transform: rotate(360deg); } }
 .trading-system-controls {
   position: absolute;

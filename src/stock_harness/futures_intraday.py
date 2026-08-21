@@ -31,6 +31,8 @@ class FuturesProvisionalStatus:
     contract_count: int = 0
     unresolved_count: int = 0
     ambiguous_count: int = 0
+    received_count: int = 0
+    stale_count: int = 0
     last_attempt_at: datetime | None = None
     last_success_at: datetime | None = None
     last_error: str | None = None
@@ -212,8 +214,11 @@ class FuturesProvisionalService:
             raise ValueError("resolved futures contracts exceed configured maximum")
 
         received = 0
+        stale_contracts: set[str] = set()
+        requested_contracts = set(contracts_by_symbol)
         try:
             with self._lock:
+                previous_success_at = self._status.last_success_at
                 self._status = FuturesProvisionalStatus(
                     state="refreshing", group_id=group_id,
                     reference_count=len(active_references),
@@ -221,6 +226,7 @@ class FuturesProvisionalService:
                     unresolved_count=sum(value is None for value in resolved.values()),
                     ambiguous_count=len(ambiguous),
                     last_attempt_at=now,
+                    last_success_at=previous_success_at,
                 )
             grouped: dict[date, list[FuturesContract]] = {}
             for symbol, contract in contracts_by_symbol.items():
@@ -233,18 +239,25 @@ class FuturesProvisionalService:
                     and (now - _china_time(item.provider_time)).total_seconds()
                     > self.settings.stale_after_seconds
                 ]
+                stale_contracts.update(stale_symbols)
                 self.store.upsert_futures_provisional_daily_bars(
                     self.monitor.provider.code, bars, now, stale_symbols
                 )
                 received += len(bars)
             with self._lock:
                 self._status = FuturesProvisionalStatus(
-                    state="ready", group_id=group_id,
+                    state="stale" if stale_contracts else (
+                        "empty" if received == 0 else
+                        "partial" if received < len(requested_contracts) else "ready"
+                    ), group_id=group_id,
                     reference_count=len(active_references),
                     contract_count=len(contracts_by_symbol),
                     unresolved_count=sum(value is None for value in resolved.values()),
                     ambiguous_count=len(ambiguous),
-                    last_attempt_at=now, last_success_at=now,
+                    received_count=received,
+                    stale_count=len(stale_contracts),
+                    last_attempt_at=now,
+                    last_success_at=now if received else previous_success_at,
                 )
         except Exception as error:
             try:
@@ -267,7 +280,9 @@ class FuturesProvisionalService:
                     contract_count=len(contracts_by_symbol),
                     unresolved_count=sum(value is None for value in resolved.values()),
                     ambiguous_count=len(ambiguous),
-                    last_attempt_at=now, last_error=str(error),
+                    stale_count=len(contracts_by_symbol),
+                    last_attempt_at=now, last_success_at=previous_success_at,
+                    last_error=str(error),
                 )
         result = self.status()
         result.update({

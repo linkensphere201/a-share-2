@@ -57,3 +57,94 @@ it('waits for a post-close update and returns a warning without hiding bars', as
   })
   expect(result.items).toHaveLength(1)
 })
+
+it('lets the backend apply futures sessions and reloads the fused provisional bar', async () => {
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(response({
+      items: [], status: { state: 'disabled' },
+      futures: { mode: 'provisional', state: 'ready', received_count: 1 },
+    }))
+    .mockResolvedValueOnce(response({ items: [
+      { trade_date: '2026-08-20', close: 100, bar_state: 'final' },
+      { trade_date: '2026-08-21', close: 102, bar_state: 'intraday' },
+    ] }))
+  vi.stubGlobal('fetch', fetchMock)
+
+  const result = await refreshLatestDailyBar(
+    'FUT:SHFE:CU:202609', new Date('2026-08-21T21:30:00+08:00'),
+  )
+
+  expect(fetchMock.mock.calls[0][0]).toBe('/api/intraday/refresh')
+  expect(result).toMatchObject({
+    mode: 'provisional', feedback: 'success', warning: false,
+  })
+  expect(result.items).toEqual([
+    expect.objectContaining({ trade_date: '2026-08-21', bar_state: 'intraday' }),
+  ])
+})
+
+it('keeps the last futures bar and reports a provider fallback', async () => {
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(response({
+      items: [], status: { state: 'disabled' },
+      futures: {
+        mode: 'provisional', state: 'error', last_error: 'spot unavailable',
+      },
+    }))
+    .mockResolvedValueOnce(response({ items: [
+      { trade_date: '2026-08-21', close: 101, bar_state: 'intraday', stale: true },
+    ] }))
+  vi.stubGlobal('fetch', fetchMock)
+
+  const result = await refreshLatestDailyBar(
+    'FUTCONT:SHFE:CU:MAIN:raw', new Date('2026-08-21T10:30:00+08:00'),
+  )
+
+  expect(result).toMatchObject({
+    mode: 'provisional', feedback: 'fallback', warning: true,
+    error: 'spot unavailable',
+  })
+  expect(result.items).toHaveLength(1)
+})
+
+it('reports a closed futures session without starting the stock final-update path', async () => {
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(response({
+      items: [], status: { state: 'disabled' },
+      futures: {
+        mode: 'provisional', state: 'skipped', skip_reason: 'market-closed',
+      },
+    }))
+    .mockResolvedValueOnce(response({ items: [
+      { trade_date: '2026-08-20', close: 100, bar_state: 'final' },
+    ] }))
+  vi.stubGlobal('fetch', fetchMock)
+
+  const result = await refreshLatestDailyBar(
+    'FUT:SHFE:CU:202609', new Date('2026-08-21T16:00:00+08:00'),
+  )
+
+  expect(fetchMock.mock.calls[0][0]).toBe('/api/intraday/refresh')
+  expect(result).toMatchObject({ feedback: 'skipped', warning: false, items: [] })
+})
+
+it('reports canonical takeover when a successful futures refresh is suppressed by final data', async () => {
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(response({
+      items: [], status: { state: 'disabled' },
+      futures: { mode: 'provisional', state: 'ready', received_count: 1 },
+    }))
+    .mockResolvedValueOnce(response({ items: [
+      { trade_date: '2026-08-21', close: 103, bar_state: 'final' },
+    ] }))
+  vi.stubGlobal('fetch', fetchMock)
+
+  const result = await refreshLatestDailyBar(
+    'FUTCONT:SHFE:CU:MAIN:raw', new Date('2026-08-21T14:00:00+08:00'),
+  )
+
+  expect(result).toMatchObject({
+    mode: 'canonical', feedback: 'canonical', warning: false,
+  })
+  expect(result.items).toHaveLength(1)
+})

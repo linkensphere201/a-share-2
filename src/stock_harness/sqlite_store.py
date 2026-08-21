@@ -8,6 +8,7 @@ import time
 import json
 import logging
 import hashlib
+from dataclasses import replace
 from uuid import uuid4
 from contextlib import AbstractContextManager
 from collections.abc import Sequence
@@ -1205,6 +1206,45 @@ class SQLiteMarketDataStore:
     ) -> list[FuturesDailyBar]:
         final = self.list_futures_daily_bars(symbol, start_date, end_date)
         latest_final = final[-1].trading_day if final else None
+        instrument = self.get_instrument_summary(symbol)
+        if instrument and instrument["kind"] == InstrumentKind.FUTURES_CONTINUOUS.value:
+            with self._lock:
+                mapping = self._connection.execute(
+                    """
+                    SELECT contract.symbol
+                    FROM futures_roll_mappings AS roll
+                    JOIN instruments AS series
+                      ON series.instrument_id = roll.series_instrument_id
+                    JOIN instruments AS contract
+                      ON contract.instrument_id = roll.contract_instrument_id
+                    WHERE series.symbol = ? AND roll.effective_from <= ?
+                    ORDER BY roll.effective_from DESC, roll.updated_at_ms DESC
+                    LIMIT 1
+                    """,
+                    (symbol, _date_key(end_date)),
+                ).fetchone()
+            if mapping is None:
+                return final
+            mapped_symbol = str(mapping[0])
+            mapped_rows = self.list_fused_futures_daily_bars(
+                mapped_symbol, start_date, end_date
+            )
+            provisional = next(
+                (
+                    item for item in reversed(mapped_rows)
+                    if item.state is FuturesBarState.PROVISIONAL
+                    and (latest_final is None or item.trading_day > latest_final)
+                ),
+                None,
+            )
+            if provisional is not None:
+                final.append(replace(
+                    provisional,
+                    symbol=symbol,
+                    mapped_contract_symbol=mapped_symbol,
+                    roll_event=False,
+                ))
+            return final
         with self._lock:
             row = self._connection.execute(
                 """
