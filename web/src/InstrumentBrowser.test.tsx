@@ -42,6 +42,12 @@ describe('InstrumentBrowser', () => {
       placeholder="搜索"
     />)
     await user.click(screen.getByRole('tab', { name: '期货' }))
+    expect((screen.getByRole('combobox', { name: '期货类型' }) as HTMLSelectElement).value).toBe('futures-contract')
+    expect((screen.getByRole('combobox', { name: '期货合约状态' }) as HTMLSelectElement).value).toBe('trading')
+    await waitFor(() => expect(requests.some(url =>
+      url.includes('classification=futures-contract')
+      && url.includes('futures_lifecycle=trading')
+    )).toBe(true))
     await user.selectOptions(screen.getByRole('combobox', { name: '期货类型' }), 'futures-contract')
     await user.selectOptions(screen.getByRole('combobox', { name: '期货交易所' }), 'SHFE')
     await user.selectOptions(screen.getByRole('combobox', { name: '期货品种' }), 'CU')
