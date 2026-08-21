@@ -148,6 +148,8 @@ Committed examples live in `config/providers.example.yaml` and `config/storage.e
 
 Daily-frequency domestic-futures usage is documented in [`docs/futures-user-guide.md`](docs/futures-user-guide.md); configuration, initial history, startup updates, storage budgeting, backup/recovery, and troubleshooting are in [`docs/futures-operations.md`](docs/futures-operations.md). Futures remain opt-in through the parent `providers.futures.enabled` switch; do not enable product night sessions without reviewing current exchange rules.
 
+Use [`scripts/run_futures_acceptance.ps1`](scripts/run_futures_acceptance.ps1) with [`docs/futures-acceptance-checklist.md`](docs/futures-acceptance-checklist.md) for progressive automated and manual M6 acceptance. The generated report never declares M6 complete on automated checks alone.
+
 Probe the configured Tushare account:
 
 ```powershell
