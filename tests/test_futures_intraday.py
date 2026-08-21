@@ -147,6 +147,8 @@ def test_active_workspace_references_resolve_to_bounded_real_contracts() -> None
             datetime(2026, 8, 20, 10, 1, tzinfo=CHINA_TIME)
         )
         assert failed["state"] == "error"
+        assert failed["last_error"] == "RuntimeError"
+        assert "spot unavailable" not in str(failed)
         audit = store.list_futures_provisional_audit(contract.symbol)
         assert audit[-1]["stale"] is True
         assert len(store.list_fused_futures_daily_bars(contract.symbol, day, day)) == 1

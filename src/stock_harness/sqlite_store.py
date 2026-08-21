@@ -328,10 +328,9 @@ class SQLiteMarketDataStore:
                 self._futures_storage_ready = False
                 self._futures_storage_error = " ".join(str(error).split())[:500]
                 LOGGER.error(
-                    "futures_schema_migration_failed version=%s error=%s",
+                    "futures_schema_migration_failed version=%s error_type=%s",
                     _FUTURES_SCHEMA_VERSION,
-                    self._futures_storage_error,
-                    exc_info=True,
+                    type(error).__name__,
                 )
 
     def _require_futures_storage(self) -> None:

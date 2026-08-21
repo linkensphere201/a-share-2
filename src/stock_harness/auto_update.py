@@ -180,8 +180,11 @@ class IncrementalUpdater:
                         len(futures_result.errors),
                     )
                 except Exception as exc:
-                    LOGGER.exception("futures_auto_update_failed")
-                    errors.append(f"futures: {exc}")
+                    LOGGER.error(
+                        "futures_auto_update_failed error_type=%s",
+                        type(exc).__name__,
+                    )
+                    errors.append(f"futures: {type(exc).__name__}")
             store.checkpoint("PASSIVE")
         return UpdateResult(
             len(trading_dates), checked, written, changed,

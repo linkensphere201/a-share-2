@@ -141,6 +141,21 @@ def test_backfill_logs_bounded_structure_without_provider_error_text(caplog) -> 
     assert "futures_backfill_completed" in caplog.text
 
 
+def test_increment_logs_bounded_structure_without_provider_error_text(caplog) -> None:
+    provider = _Provider(fail_daily=True)
+    with SQLiteMarketDataStore(":memory:") as store, caplog.at_level(logging.INFO):
+        result = run_futures_increment(
+            provider, store, [FuturesExchange.SHFE], date(2026, 8, 20), 2
+        )
+    assert result.errors[0] == "FUT:SHFE:CU:202609 final increment: RuntimeError"
+    assert all("daily unavailable" not in item for item in result.errors)
+    assert "futures_increment_started" in caplog.text
+    assert "futures_increment_item_failed" in caplog.text
+    assert "error_type=RuntimeError" in caplog.text
+    assert "daily unavailable" not in caplog.text
+    assert "futures_increment_completed" in caplog.text
+
+
 def test_futures_increment_refreshes_correction_window_and_missing_tail() -> None:
     provider = _Provider()
     contract = provider.catalog.contracts[0]

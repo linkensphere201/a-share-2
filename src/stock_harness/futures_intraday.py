@@ -264,14 +264,14 @@ class FuturesProvisionalService:
                 self.store.mark_futures_provisional_stale(
                     self.monitor.provider.code, tuple(contracts_by_symbol)
                 )
-            except Exception:
+            except Exception as stale_error:
                 LOGGER.warning(
-                    "futures_provisional_stale_mark_failed contracts=%d",
-                    len(contracts_by_symbol), exc_info=True,
+                    "futures_provisional_stale_mark_failed contracts=%d error_type=%s",
+                    len(contracts_by_symbol), type(stale_error).__name__,
                 )
             LOGGER.debug(
-                "futures_provisional_refresh_failed contracts=%d manual=%s error=%s",
-                len(contracts_by_symbol), manual, error,
+                "futures_provisional_refresh_failed contracts=%d manual=%s error_type=%s",
+                len(contracts_by_symbol), manual, type(error).__name__,
             )
             with self._lock:
                 self._status = FuturesProvisionalStatus(
@@ -282,7 +282,7 @@ class FuturesProvisionalService:
                     ambiguous_count=len(ambiguous),
                     stale_count=len(contracts_by_symbol),
                     last_attempt_at=now, last_success_at=previous_success_at,
-                    last_error=str(error),
+                    last_error=type(error).__name__,
                 )
         result = self.status()
         result.update({
@@ -319,7 +319,10 @@ class FuturesProvisionalService:
                 })
             reported = self.main_contract_reporter.report(tuple(continuous.values()))
         except Exception as error:
-            LOGGER.debug("futures_main_contract_evidence_unavailable error=%s", error)
+            LOGGER.debug(
+                "futures_main_contract_evidence_unavailable error_type=%s",
+                type(error).__name__,
+            )
             ambiguous = {
                 reference: evidence
                 for reference, contract in continuous.items()

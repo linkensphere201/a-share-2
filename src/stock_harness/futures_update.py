@@ -45,6 +45,10 @@ def run_futures_increment(
     calendar_start = completed_through - timedelta(
         days=max(31, correction_window_trading_days * 3 + 14)
     )
+    LOGGER.info(
+        "futures_increment_started exchanges=%d completed_through=%s correction_days=%d",
+        len(selected), completed_through, correction_window_trading_days,
+    )
 
     for exchange in selected:
         try:
@@ -61,8 +65,12 @@ def run_futures_increment(
                 "complete" if calendar else "empty",
             )
         except Exception as error:
-            LOGGER.exception("futures_increment_exchange_failed exchange=%s", exchange.value)
-            errors.append(f"{exchange.value} catalog/calendar: {error}")
+            errors.append(
+                f"{exchange.value} catalog/calendar: {type(error).__name__}"
+            )
+            _log_bounded_failure(
+                len(errors), "exchange", exchange, exchange.value, error
+            )
             continue
 
         open_days = sorted(
@@ -115,11 +123,12 @@ def run_futures_increment(
                 )
                 updated += 1
             except Exception as error:
-                LOGGER.exception(
-                    "futures_increment_contract_failed exchange=%s symbol=%s",
-                    exchange.value, contract.symbol,
+                errors.append(
+                    f"{contract.symbol} final increment: {type(error).__name__}"
                 )
-                errors.append(f"{contract.symbol} final increment: {error}")
+                _log_bounded_failure(
+                    len(errors), "contract", exchange, contract.symbol, error
+                )
 
         for series in catalog.continuous_series:
             try:
@@ -132,14 +141,35 @@ def run_futures_increment(
                 )
                 mappings_written += len(mappings)
             except Exception as error:
-                LOGGER.exception(
-                    "futures_increment_mapping_failed exchange=%s symbol=%s",
-                    exchange.value, series.symbol,
+                errors.append(
+                    f"{series.symbol} mapping increment: {type(error).__name__}"
                 )
-                errors.append(f"{series.symbol} mapping increment: {error}")
+                _log_bounded_failure(
+                    len(errors), "mapping", exchange, series.symbol, error
+                )
 
-    return FuturesIncrementResult(
+    result = FuturesIncrementResult(
         exchanges=len(selected), contracts_checked=checked,
         contracts_updated=updated, rows_changed=changed,
         mappings_written=mappings_written, errors=tuple(errors),
+    )
+    LOGGER.info(
+        "futures_increment_completed exchanges=%d contracts_checked=%d contracts_updated=%d rows_changed=%d mappings=%d errors=%d",
+        result.exchanges, result.contracts_checked, result.contracts_updated,
+        result.rows_changed, result.mappings_written, len(result.errors),
+    )
+    return result
+
+
+def _log_bounded_failure(
+    count: int,
+    operation: str,
+    exchange: FuturesExchange,
+    symbol: str,
+    error: Exception,
+) -> None:
+    log = LOGGER.warning if count <= 10 or count % 100 == 0 else LOGGER.debug
+    log(
+        "futures_increment_item_failed operation=%s exchange=%s symbol=%s error_type=%s error_count=%d",
+        operation, exchange.value, symbol, type(error).__name__, count,
     )
