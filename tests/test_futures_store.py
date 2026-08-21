@@ -342,6 +342,40 @@ def test_canonical_daily_takes_over_without_deleting_provisional_audit(caplog) -
         assert "futures_canonical_takeover_completed rows=1" in caplog.text
 
 
+def test_provisional_futures_bar_survives_restart_and_later_canonical_takeover(
+    tmp_path: Path,
+) -> None:
+    product, contract, series = _catalog()
+    day = date(2026, 8, 20)
+    observed = datetime(2026, 8, 20, 14, 30, tzinfo=CHINA_TIME)
+    provisional = _bar(
+        day, FuturesBarState.PROVISIONAL,
+        "akshare-futures-zh-spot", 104, observed,
+    )
+    path = tmp_path / "futures-restart.sqlite"
+
+    with SQLiteMarketDataStore(path) as store:
+        store.upsert_futures_catalog(
+            "tushare-futures", [product], [contract], [series]
+        )
+        store.upsert_futures_provisional_daily_bars(
+            provisional.source, [provisional], observed
+        )
+
+    with SQLiteMarketDataStore(path) as reopened:
+        restored = reopened.list_fused_futures_daily_bars(
+            contract.symbol, day, day
+        )
+        assert restored == [provisional]
+        final = _bar(day, close=103)
+        reopened.upsert_futures_daily_bars("tushare-futures", [final])
+        assert reopened.list_fused_futures_daily_bars(
+            contract.symbol, day, day
+        ) == [final]
+        audit = reopened.list_futures_provisional_audit(contract.symbol)
+        assert audit[0]["takeover_state"] == "canonical-taken-over"
+
+
 def test_futures_integrity_audit_separates_backlog_from_structural_errors() -> None:
     product, contract, series = _catalog()
     day = date(2026, 8, 20)
