@@ -941,6 +941,12 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .chart-readout .ma5-value { color: #e5b85c; }
 .chart-readout .ma20-value { color: #57a7d9; }
 .chart-readout .ma60-value { color: #b984cc; }
+@container (max-width: 760px) {
+  .chart-readout.futures .futures-detail,
+  .chart-readout.futures .ma5-value,
+  .chart-readout.futures .ma20-value,
+  .chart-readout.futures .ma60-value { display: none; }
+}
 @container (max-width: 520px) {
   .chart-readout { display: none; }
 }

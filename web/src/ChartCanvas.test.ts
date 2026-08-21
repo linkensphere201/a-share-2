@@ -4,6 +4,7 @@ import {
   chartLayoutOptions,
   compactCrosshairMarkerOptions,
   dailyBarsUrl,
+  paneInteractionOptions,
 } from './ChartCanvas'
 import {
   aggregateBars,
@@ -46,6 +47,15 @@ describe('chart layout', () => {
     expect(compactCrosshairMarkerOptions).toEqual({
       crosshairMarkerRadius: 2,
       crosshairMarkerBorderWidth: 1,
+    })
+  })
+
+  it('disables pane separator hover and resize when the chart window is unfocused', () => {
+    expect(paneInteractionOptions('#333', '#4b84c6', false)).toEqual({
+      separatorColor: '#333', separatorHoverColor: '#333', enableResize: false,
+    })
+    expect(paneInteractionOptions('#333', '#4b84c6', true)).toEqual({
+      separatorColor: '#333', separatorHoverColor: '#4b84c6', enableResize: true,
     })
   })
 })

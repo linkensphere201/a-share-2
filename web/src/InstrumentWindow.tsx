@@ -100,6 +100,7 @@ export function ChartWindow({
         />
         <ChartCanvas
           symbol={instrument.symbol}
+          focused={focused}
           instrumentName={instrument.name}
           instrumentKind={instrument.kind}
           lineOnly={instrument.kind === 'custom-index' && chart.seriesMode === 'line'}

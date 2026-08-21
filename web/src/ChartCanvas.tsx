@@ -135,6 +135,7 @@ type ProjectedReviewGeometryHandle = TrendReviewGeometryHandle & { x: number; y:
 
 type ChartCanvasProps = {
   symbol: string
+  focused: boolean
   instrumentName?: string
   instrumentKind?: string
   lineOnly?: boolean
@@ -200,6 +201,18 @@ export const compactCrosshairMarkerOptions = {
   crosshairMarkerBorderWidth: 1,
 } as const
 
+export function paneInteractionOptions(
+  borderColor: string,
+  accentColor: string,
+  focused: boolean,
+) {
+  return {
+    separatorColor: borderColor,
+    separatorHoverColor: focused ? accentColor : borderColor,
+    enableResize: focused,
+  }
+}
+
 export function dailyBarsUrl(symbol: string, asOfDate?: string): string {
   const base = `/api/instruments/${encodeURIComponent(symbol)}/daily-bars`
   return asOfDate ? `${base}?end_date=${encodeURIComponent(asOfDate)}` : base
@@ -207,6 +220,7 @@ export function dailyBarsUrl(symbol: string, asOfDate?: string): string {
 
 export function ChartCanvas({
   symbol,
+  focused,
   instrumentName,
   instrumentKind,
   lineOnly = false,
@@ -402,7 +416,7 @@ export function ChartCanvas({
         ...chartLayoutOptions,
         background: { type: ColorType.Solid, color: theme.colors.chartBackground },
         textColor: theme.colors.text,
-        panes: { separatorColor: theme.colors.border, separatorHoverColor: theme.colors.accent },
+        panes: paneInteractionOptions(theme.colors.border, theme.colors.accent, focused),
       },
       grid: {
         vertLines: { color: theme.colors.chartGrid },
@@ -417,7 +431,7 @@ export function ChartCanvas({
       timeScale: { borderColor: theme.colors.border },
     })
     closeLineRef.current?.applyOptions({ color: theme.colors.accent })
-  }, [theme])
+  }, [theme, focused])
 
   useEffect(() => {
     candleRef.current?.applyOptions({ visible: !lineOnly })
@@ -438,8 +452,11 @@ export function ChartCanvas({
         textColor: initialTheme.colors.text,
         panes: {
           ...chartLayoutOptions.panes,
-          separatorColor: initialTheme.colors.border,
-          separatorHoverColor: initialTheme.colors.accent,
+          ...paneInteractionOptions(
+            initialTheme.colors.border,
+            initialTheme.colors.accent,
+            focused,
+          ),
         },
       },
       grid: {
@@ -2547,7 +2564,7 @@ function ChartReadout({ value, instrumentName, futures }: {
     ? undefined
     : value.changePercent >= 0 ? 'rise' : 'fall'
   return (
-    <div className="chart-readout">
+    <div className={futures ? 'chart-readout futures' : 'chart-readout'}>
       {futures && instrumentName && <span>{instrumentName}</span>}
       {value.bar_state === 'intraday'
         ? <span className={value.stale ? 'live-badge stale' : 'live-badge'}>{value.stale ? '盘中延迟' : '盘中'}</span>
@@ -2559,13 +2576,13 @@ function ChartReadout({ value, instrumentName, futures }: {
       <span>低 <b>{formatPrice(value.low)}</b></span>
       <span>收 <b className={candleTone}>{formatPrice(value.close)}</b></span>
       <span>{futures ? '结算涨跌' : '涨跌'} <b className={changeTone}>{formatChangePercent(value.changePercent)}</b></span>
-      {futures && value.previous_settlement != null && <span>昨结 <b>{formatPrice(value.previous_settlement)}</b></span>}
-      {futures && value.settlement != null && <span>结算 <b>{formatPrice(value.settlement)}</b></span>}
+      {futures && value.previous_settlement != null && <span className="futures-detail">昨结 <b>{formatPrice(value.previous_settlement)}</b></span>}
+      {futures && value.settlement != null && <span className="futures-detail">结算 <b>{formatPrice(value.settlement)}</b></span>}
       <span>量 <b>{formatVolume(value.volume)}</b></span>
-      {futures && value.amount != null && <span>额 <b>{formatVolume(value.amount)}</b></span>}
-      {futures && value.open_interest != null && <span>持仓 <b>{formatVolume(value.open_interest)}</b></span>}
-      {futures && value.open_interest_change != null && <span>增仓 <b className={value.open_interest_change >= 0 ? 'rise' : 'fall'}>{formatSignedVolume(value.open_interest_change)}</b></span>}
-      {futures && value.mapped_contract_symbol && <span>映射 <b>{value.mapped_contract_symbol}</b></span>}
+      {futures && value.amount != null && <span className="futures-detail">额 <b>{formatVolume(value.amount)}</b></span>}
+      {futures && value.open_interest != null && <span className="futures-detail">持仓 <b>{formatVolume(value.open_interest)}</b></span>}
+      {futures && value.open_interest_change != null && <span className="futures-detail">增仓 <b className={value.open_interest_change >= 0 ? 'rise' : 'fall'}>{formatSignedVolume(value.open_interest_change)}</b></span>}
+      {futures && value.mapped_contract_symbol && <span className="futures-detail">映射 <b>{value.mapped_contract_symbol}</b></span>}
       {value.ma5 !== undefined && <span className="ma5-value">MA5 {formatPrice(value.ma5)}</span>}
       {value.ma20 !== undefined && <span className="ma20-value">MA20 {formatPrice(value.ma20)}</span>}
       {value.ma60 !== undefined && <span className="ma60-value">MA60 {formatPrice(value.ma60)}</span>}
