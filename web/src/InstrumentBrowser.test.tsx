@@ -62,6 +62,32 @@ describe('InstrumentBrowser', () => {
     )).toBe(true))
   })
 
+  it('keeps futures without daily history visible but unavailable', async () => {
+    const emptyContract = {
+      symbol: 'FUT:CZCE:ZC:202709', name: '动力煤2709', kind: 'futures-contract',
+      exchange: 'CZCE', rows: 0, product_code: 'ZC', lifecycle_status: 'trading',
+    }
+    vi.stubGlobal('fetch', vi.fn((input: string | URL | Request) => Promise.resolve({
+      ok: true,
+      json: async () => String(input) === '/api/futures/search-facets'
+        ? { exchanges: ['CZCE'], products: [] }
+        : { items: [emptyContract], has_more: false, next_offset: 1 },
+    })))
+    const user = userEvent.setup()
+
+    render(<InstrumentBrowser
+      selectedSymbols={new Set()}
+      onSelect={() => undefined}
+      searchLabel="搜索标的"
+      placeholder="搜索"
+    />)
+    await user.click(screen.getByRole('tab', { name: '期货' }))
+
+    const result = await screen.findByRole('button', { name: /动力煤2709/ })
+    expect((result as HTMLButtonElement).disabled).toBe(true)
+    expect(result.getAttribute('title')).toBe('暂无日线数据，暂不可加入窗口')
+  })
+
   it('browses a classified board list without requiring a keyword', async () => {
     const concept = {
       symbol: 'BK0475.DC', name: '半导体', kind: 'sector', exchange: 'DC', rows: 1000,

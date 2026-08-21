@@ -183,12 +183,19 @@ export function InstrumentBrowser({
       {loading && results.length === 0 && <div className="instrument-editor-empty">正在加载标的</div>}
       {!loading && failed && <div className="instrument-editor-empty error">标的加载失败</div>}
       {!loading && !failed && results.length === 0 && <div className="instrument-editor-empty">没有匹配标的</div>}
-      {results.map(item => <button
-        key={item.symbol}
-        disabled={selectedSymbols.has(item.symbol) || item.kind === 'futures-product'}
-        title={item.kind === 'futures-product' ? '品种目录不可直接加入窗口，请选择真实或连续合约' : undefined}
-        onClick={() => onSelect(item)}
-      >
+      {results.map(item => {
+        const noDailyHistory = (
+          item.kind === 'futures-contract' || item.kind === 'futures-continuous'
+        ) && item.rows <= 0
+        const unavailableReason = item.kind === 'futures-product'
+          ? '品种目录不可直接加入窗口，请选择真实或连续合约'
+          : noDailyHistory ? '暂无日线数据，暂不可加入窗口' : undefined
+        return <button
+          key={item.symbol}
+          disabled={selectedSymbols.has(item.symbol) || item.kind === 'futures-product' || noDailyHistory}
+          title={unavailableReason}
+          onClick={() => onSelect(item)}
+        >
         <span className="instrument-result-identity">
           <strong>{item.name}</strong>
           <small>{instrumentSecondaryLabel(item)}</small>
@@ -198,7 +205,8 @@ export function InstrumentBrowser({
           <small>{item.source_label ?? instrumentSourceLabel(item)}</small>
         </span>
         <Plus size={14}/>
-      </button>)}
+        </button>
+      })}
       {hasMore && <button className="instrument-browser-more" disabled={loading} onClick={loadMore}>
         {loading ? '加载中' : '加载更多'}
       </button>}
