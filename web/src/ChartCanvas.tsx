@@ -565,6 +565,10 @@ export function ChartCanvas({
         : { count: visibleBars, low, high }
       const resolvedBars = visibleBars ?? stats.count
       const resolvedWidth = width ?? chart.timeScale().width() ?? hostRef.current?.clientWidth ?? 1
+      const logicalRange = chart.timeScale().getVisibleLogicalRange()
+      const visibleLogicalBars = logicalRange
+        ? Math.max(1, logicalRange.to - logicalRange.from)
+        : resolvedBars
       const zeroSafeRange = priceModeRef.current === 'normal'
       chart.priceScale('right', 0).applyOptions({
         autoScale: true,
@@ -573,6 +577,7 @@ export function ChartCanvas({
           resolvedWidth,
           zeroSafeRange ? low ?? stats.low : undefined,
           zeroSafeRange ? high ?? stats.high : undefined,
+          visibleLogicalBars,
         ),
       })
       chart.panes().slice(1).forEach((_, index) => {

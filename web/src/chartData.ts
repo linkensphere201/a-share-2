@@ -212,9 +212,13 @@ export function calculatePriceScaleMargins(
   width: number,
   low?: number,
   high?: number,
+  visibleLogicalBars?: number,
 ): { top: number; bottom: number } {
   const density = Math.max(0, visibleBars) / Math.max(1, width)
-  const compression = Math.max(1, density / 0.35)
+  const whitespaceCompression = visibleBars > 0 && visibleLogicalBars !== undefined
+    ? Math.max(1, visibleLogicalBars / visibleBars)
+    : 1
+  const compression = Math.max(1, density / 0.35, whitespaceCompression)
   const occupancy = clamp(0.88 / compression ** 0.25, 0.38, 0.88)
   const totalMargin = 1 - occupancy
   let bottom = totalMargin / 2

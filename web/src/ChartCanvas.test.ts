@@ -82,6 +82,17 @@ describe('density-coupled price scale', () => {
     expect(1 - margins.top - margins.bottom).toBeCloseTo(0.38)
   })
 
+  it('shrinks a short series vertically when zooming out into surrounding whitespace', () => {
+    const fitted = calculatePriceScaleMargins(37, 800, undefined, undefined, 37)
+    const zoomedOut = calculatePriceScaleMargins(37, 800, undefined, undefined, 370)
+    const fittedOccupancy = 1 - fitted.top - fitted.bottom
+    const zoomedOutOccupancy = 1 - zoomedOut.top - zoomedOut.bottom
+
+    expect(fittedOccupancy).toBeCloseTo(0.88)
+    expect(zoomedOutOccupancy).toBeLessThan(0.51)
+    expect(zoomedOutOccupancy).toBeGreaterThanOrEqual(0.38)
+  })
+
   it('moves unsafe bottom padding above the data instead of extending a positive price scale below zero', () => {
     const margins = calculatePriceScaleMargins(5_500, 800, 0.89, 36.88)
     const dataOccupancy = 1 - margins.top - margins.bottom
