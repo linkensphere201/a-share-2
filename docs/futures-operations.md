@@ -44,7 +44,7 @@ Do not run two canonical backfills or a continuous build and canonical backfill 
 
 ## Startup Updates
 
-When futures are enabled, APP startup runs the same final-data updater as stocks. It refreshes catalog and calendars, checks the configured final-data cutoff, reads only missing tails plus the configured correction window, and updates affected mappings. A no-change run does not rewrite history.
+When futures are enabled, APP startup runs the same final-data updater as stocks. It refreshes catalog and calendars, checks the configured final-data cutoff, reads only missing tails plus the configured correction window, and updates affected mappings. Final bars are requested once per exchange and open trading day, then distributed to the applicable contract cursors. Main-contract mappings are requested once per trading day and reused across exchange passes. A failed daily batch does not advance affected cursors; a failed mapping batch falls back to the bounded per-series path. A no-change run does not rewrite history.
 
 During an open configured session, only real contracts referenced by the active window group are polled. Continuous references resolve through the current canonical mapping, references are deduplicated, and `max_contracts` bounds the request. Polling stops outside configured day/night sessions. A failed refresh retains the prior provisional row and marks it stale. A same-date Tushare final row takes precedence and retains the provisional observation only as takeover audit evidence.
 
