@@ -8,6 +8,7 @@ import logging
 from collections.abc import Sequence
 
 from stock_harness.futures_backfill import (
+    FUTURES_CALENDAR_LOOKAHEAD_DAYS,
     futures_calendar_digest,
     futures_daily_digest,
     fetch_futures_daily_result,
@@ -70,10 +71,13 @@ def run_futures_increment(
                 provider.code, catalog.products, catalog.contracts,
                 catalog.continuous_series,
             )
-            calendar = provider.calendar(exchange, calendar_start, completed_through)
+            calendar_end = completed_through + timedelta(
+                days=FUTURES_CALENDAR_LOOKAHEAD_DAYS
+            )
+            calendar = provider.calendar(exchange, calendar_start, calendar_end)
             store.upsert_futures_calendar(provider.code, calendar)
             store.record_futures_update_receipt(
-                provider.code, "calendar", exchange.value, completed_through,
+                provider.code, "calendar", exchange.value, calendar_end,
                 len(calendar), futures_calendar_digest(calendar),
                 "complete" if calendar else "empty",
             )

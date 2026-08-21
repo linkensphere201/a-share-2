@@ -58,15 +58,21 @@ class _Provider:
         self.catalog = _catalog()
         self.fail_daily = fail_daily
         self.daily_calls: list[tuple[date, date]] = []
+        self.calendar_calls: list[tuple[date, date]] = []
 
     def discover_exchange(self, exchange, as_of):
         assert exchange is FuturesExchange.SHFE
         return self.catalog
 
     def calendar(self, exchange, start_date, end_date):
+        self.calendar_calls.append((start_date, end_date))
         return tuple(
-            FuturesCalendarDay(exchange, date(2026, 8, day), True, None)
-            for day in range(18, 21)
+            FuturesCalendarDay(exchange, day, True, None)
+            for day in (
+                date(2026, 8, 18), date(2026, 8, 19),
+                date(2026, 8, 20), date(2026, 8, 24),
+            )
+            if start_date <= day <= end_date
         )
 
     def fetch_contract_daily(self, contract, start_date, end_date):
@@ -132,6 +138,10 @@ def test_futures_backfill_is_lifecycle_bounded_and_resumable() -> None:
         assert first.daily_rows_changed == 3
         assert first.mappings_written == 1
         assert first.coverage[0]["rows"] == 3
+        assert provider.calendar_calls[0][1] == date(2026, 9, 3)
+        assert store.next_futures_open_day(
+            provider.code, FuturesExchange.SHFE, date(2026, 8, 21)
+        ) == date(2026, 8, 24)
         second = run_futures_backfill(
             provider, store, [FuturesExchange.SHFE],
             date(1990, 1, 1), date(2026, 8, 20),
@@ -279,6 +289,9 @@ def test_futures_increment_batches_recent_days_by_exchange() -> None:
     assert provider.mapping_batch_calls == [(
         date(2026, 8, 19), date(2026, 8, 20),
     )]
+    assert provider.calendar_calls == [
+        (date(2026, 7, 20), date(2026, 9, 3))
+    ]
     assert result.contracts_checked == 1
     assert result.contracts_updated == 1
     assert result.rows_changed == 2

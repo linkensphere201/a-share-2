@@ -19,6 +19,7 @@ from stock_harness.sqlite_store import SQLiteMarketDataStore
 
 
 LOGGER = logging.getLogger(__name__)
+FUTURES_CALENDAR_LOOKAHEAD_DAYS = 14
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,10 +68,13 @@ def run_futures_backfill(
                 provider.code, catalog.products, catalog.contracts,
                 catalog.continuous_series,
             )
-            calendar = provider.calendar(exchange, start_date, end_date)
+            calendar_end = end_date + timedelta(
+                days=FUTURES_CALENDAR_LOOKAHEAD_DAYS
+            )
+            calendar = provider.calendar(exchange, start_date, calendar_end)
             store.upsert_futures_calendar(provider.code, calendar)
             store.record_futures_update_receipt(
-                provider.code, "calendar", exchange.value, end_date,
+                provider.code, "calendar", exchange.value, calendar_end,
                 len(calendar), futures_calendar_digest(calendar),
                 "complete" if calendar else "empty",
             )
