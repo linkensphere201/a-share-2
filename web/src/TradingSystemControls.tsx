@@ -20,7 +20,7 @@ import {
   type TradingSystemWindowState,
   type TrendTradingSystemSettings,
 } from './tradingSystems'
-import type { GeneratedBreakoutState } from './ChartCanvas'
+import type { GeneratedBreakoutState } from './generatedAnalysisProjection'
 import type { TrendAnalysisRun } from './trendAnalysisClient'
 import { readTrendEvidence } from './trendEvidence'
 

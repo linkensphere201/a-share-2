@@ -1,4 +1,4 @@
-import type { PriceMode } from './ChartCanvas'
+import type { PriceMode } from './chartTypes'
 
 export type TrendLineSnap = 'free' | 'high' | 'low'
 export type TrendLineDash = 'solid' | 'dotted' | 'dashed' | 'long-dashed' | 'dash-dot'

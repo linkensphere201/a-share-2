@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { assignGeneratedPatternLabels, projectGeneratedPatterns, projectGeneratedPivots, projectGeneratedTrendLines, projectGeneratedZones, readGeneratedBreakoutState } from './ChartCanvas'
+import { assignGeneratedPatternLabels, projectGeneratedPatterns, projectGeneratedPivots, projectGeneratedTrendLines, projectGeneratedZones, readGeneratedBreakoutState } from './generatedAnalysisProjection'
 import type { TrendAnalysisRun } from './trendAnalysisClient'
 import type { IChartApi } from 'lightweight-charts'
 

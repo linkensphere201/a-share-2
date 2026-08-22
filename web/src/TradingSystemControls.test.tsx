@@ -9,7 +9,7 @@ import {
   createTradingSystemWindowStates,
   type TradingSystemWindowState,
 } from './tradingSystems'
-import type { GeneratedBreakoutState } from './ChartCanvas'
+import type { GeneratedBreakoutState } from './generatedAnalysisProjection'
 import type { TrendAnalysisRun } from './trendAnalysisClient'
 
 afterEach(cleanup)

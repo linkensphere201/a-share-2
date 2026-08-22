@@ -1,6 +1,6 @@
 import type { DailyBar } from './chartData'
 import type { TrendLineAnchor, TrendLineSnap } from './drawingStore'
-import type { PriceMode } from './ChartCanvas'
+import type { PriceMode } from './chartTypes'
 
 export type RenderPeriod = {
   period_start: string

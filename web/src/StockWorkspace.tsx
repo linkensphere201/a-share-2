@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Activity, BarChart3, FolderKanban, Gauge, LayoutGrid, MessageSquare, Palette, PanelRightClose, RefreshCw, Settings2 } from 'lucide-react'
-import type { PriceMode, VisibleRange } from './ChartCanvas'
+import type { PriceMode, VisibleRange } from './chartTypes'
 import { InstrumentEditor } from './InstrumentEditor'
 import { CustomIndexManager } from './CustomIndexManager'
 import { DailyNote } from './DailyNote'

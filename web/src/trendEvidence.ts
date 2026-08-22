@@ -1,4 +1,4 @@
-import type { GeneratedBreakoutState } from './ChartCanvas'
+import type { GeneratedBreakoutState } from './generatedAnalysisProjection'
 import type { TrendAnalysisRun } from './trendAnalysisClient'
 
 export type TrendEvidenceView = {

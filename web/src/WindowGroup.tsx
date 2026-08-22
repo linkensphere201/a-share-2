@@ -1,4 +1,4 @@
-import type { ChartIndicator, VisibleRange } from './ChartCanvas'
+import type { ChartIndicator, VisibleRange } from './chartTypes'
 import { ChartWindow } from './InstrumentWindow'
 import { InstrumentListWindow } from './InstrumentListWindow'
 import { SplitLayout } from './SplitLayout'

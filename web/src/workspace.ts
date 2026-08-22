@@ -1,4 +1,4 @@
-import type { ChartIndicator, ChartRange, PriceMode, VisibleRange } from './ChartCanvas'
+import type { ChartIndicator, ChartRange, PriceMode, VisibleRange } from './chartTypes'
 import {
   createLayoutTree,
   parseLayoutTree,
