@@ -17,6 +17,11 @@ const run: TrendAnalysisRun = {
       second_pivot_date: '2026-07-01', second_price: 11,
       projected_price: 12, touch_count: 3, slope_per_bar: 0.1,
     },
+  }, {
+    item_id: 'short-support-event', item_type: 'evidence', parent_item_id: 'short-support', payload: {
+      kind: 'latest-structural-event-summary', event_kind: 'no-structural-change',
+      current_state: 'ready', direction: 'down', event_date: '2026-08-21', boundary_price: 12,
+    },
   }],
 }
 
@@ -24,6 +29,8 @@ describe('TrendExplanationPanel', () => {
   it('links pointer and keyboard inspection to the matching chart item', () => {
     const onHighlight = vi.fn()
     render(<TrendExplanationPanel run={run} onHighlightItemChange={onHighlight} onClose={vi.fn()}/>)
+    expect(screen.getByText('突破与破位')).toBeTruthy()
+    expect(screen.getByText('短期支撑：尚未向下破位')).toBeTruthy()
     const row = screen.getByText('短期上行支撑线').closest('article')!
 
     fireEvent.pointerEnter(row)
