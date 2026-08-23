@@ -30,7 +30,8 @@ type TradingSystemControlsProps = {
   breakoutState?: GeneratedBreakoutState
   analysisRun?: TrendAnalysisRun | null
   onChange: (state: TradingSystemWindowState) => void
-  onRecalculate: (state: TradingSystemWindowState) => void
+  recalculationState?: 'idle' | 'running' | 'failed'
+  onRecalculate: (state: TradingSystemWindowState, refreshData: boolean) => void | Promise<void>
   onReview?: () => void
 }
 
@@ -39,6 +40,7 @@ export function TradingSystemControls({
   state,
   breakoutState,
   analysisRun,
+  recalculationState = 'idle',
   onChange,
   onRecalculate,
   onReview,
@@ -77,7 +79,7 @@ export function TradingSystemControls({
     }
     onChange(next)
     setSettingsOpen(false)
-    if (recalculate) onRecalculate(next)
+    if (recalculate) void onRecalculate(next, false)
   }
 
   const restoreDefaults = () => {
@@ -110,8 +112,8 @@ export function TradingSystemControls({
           aria-label="更新测算"
           className={breakoutState ? `trend-recalculate-event ${breakoutState.state}` : ''}
           data-event-label={eventLabel}
-          disabled={!state.enabled || !supported}
-          onClick={() => onRecalculate(state)}
+          disabled={!state.enabled || !supported || recalculationState === 'running'}
+          onClick={() => void onRecalculate(state, true)}
         >
           <RefreshCw size={13}/>
           {breakoutState && <span
@@ -146,11 +148,15 @@ export function TradingSystemControls({
           disabled={!supported}
           onClick={openSettings}
         ><Settings2 size={13}/></button>
-        {state.analysisStatus !== 'current' && (
-          <span className={`trading-system-status ${state.analysisStatus}`}>
-            {state.analysisStatus === 'stale' ? '已过期' : '待测算'}
-          </span>
-        )}
+        {recalculationState === 'running'
+          ? <span className="trading-system-status running">正在测算</span>
+          : recalculationState === 'failed'
+            ? <span className="trading-system-status failed">测算失败</span>
+            : state.analysisStatus !== 'current' && (
+              <span className={`trading-system-status ${state.analysisStatus}`}>
+                {state.analysisStatus === 'stale' ? '已过期' : '待测算'}
+              </span>
+            )}
       </div>
       <button
         className="trading-system-collapse"
@@ -199,7 +205,7 @@ export function TradingSystemControls({
             <span/>
             <button onClick={() => setSettingsOpen(false)}>取消</button>
             <button onClick={() => save(false)}>保存</button>
-            <button className="primary" onClick={() => save(true)}>保存并重新测算</button>
+            <button className="primary" disabled={recalculationState === 'running'} onClick={() => save(true)}>保存并重新测算</button>
           </footer>
         </div>
       )}

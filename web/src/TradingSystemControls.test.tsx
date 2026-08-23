@@ -21,7 +21,7 @@ function Harness({
   analysisRun,
 }: {
   initial?: TradingSystemWindowState
-  onRecalculate?: (state: TradingSystemWindowState) => void
+  onRecalculate?: (state: TradingSystemWindowState, refreshData: boolean) => void
   breakoutState?: GeneratedBreakoutState
   analysisRun?: TrendAnalysisRun
 }) {
@@ -85,7 +85,28 @@ describe('TradingSystemControls', () => {
 
     const state = JSON.parse(screen.getByTestId('state').textContent ?? '{}')
     expect(state.analysisStatus).toBe('stale')
-    expect(onRecalculate).toHaveBeenCalledWith(expect.objectContaining({ analysisStatus: 'stale' }))
+    expect(onRecalculate).toHaveBeenCalledWith(
+      expect.objectContaining({ analysisStatus: 'stale', settingsRevision: 1 }),
+      false,
+    )
+  })
+
+  it('shows recalculation progress and prevents duplicate requests', () => {
+    const initial = { ...createTradingSystemWindowStates().trend, enabled: true }
+    const onRecalculate = vi.fn()
+    render(<TradingSystemControls
+      instrumentKind="stock"
+      state={initial}
+      recalculationState="running"
+      onChange={vi.fn()}
+      onRecalculate={onRecalculate}
+    />)
+
+    expect(screen.getByText('正在测算')).toBeTruthy()
+    const refresh = screen.getByRole('button', { name: '更新测算' })
+    expect(refresh).toHaveProperty('disabled', true)
+    fireEvent.click(refresh)
+    expect(onRecalculate).not.toHaveBeenCalled()
   })
 
   it('shows the latest structural event directly on the recalculate control', () => {

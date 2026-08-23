@@ -14,9 +14,10 @@ import { removeLayoutWindow, updateSplitRatio } from './layoutTree'
 import { WindowGroup } from './WindowGroup'
 import { removeWindowAttachments } from './windowAttachments'
 import { buildWorkspaceContext, publishWorkspaceContext } from './workspaceContext'
-import type { TradingSystemWindowStates } from './tradingSystems'
+import type { TradingSystemWindowState, TradingSystemWindowStates } from './tradingSystems'
 import { normalizeTrendTradingSystemSettings } from './tradingSystems'
 import { refreshThenRecalculateTrend } from './trendRefreshCoordinator'
+import { recalculateTrendAnalysis } from './trendAnalysisClient'
 import { beginTrendRequest, isCurrentTrendRequest } from './trendRequestGuard'
 import {
   chartRanges,
@@ -254,18 +255,24 @@ export function StockWorkspace() {
       : item)
   }, [updateWindow])
 
-  const handleTradingSystemRecalculate = useCallback((id: string, systemId: string) => {
+  const handleTradingSystemRecalculate = useCallback((
+    id: string,
+    systemId: string,
+    system: TradingSystemWindowState,
+    refreshData: boolean,
+  ): Promise<void> => {
     const item = activeGroup.windows.find(window => window.id === id)
-    if (item?.type !== 'chart') return
+    if (item?.type !== 'chart') return Promise.resolve()
     window.dispatchEvent(new CustomEvent('stock-harness:trading-system-recalculate', {
-      detail: { windowId: id, systemId, symbol: item.instrument.symbol },
+      detail: { windowId: id, systemId, symbol: item.instrument.symbol, refreshData },
     }))
     logInfo('trading-system', '交易体系测算请求已派发', {
       windowId: id,
       systemId,
       symbol: item.instrument.symbol,
+      refreshData,
     })
-    if (systemId !== 'trend') return
+    if (systemId !== 'trend') return Promise.resolve()
     const requestToken = beginTrendRequest(trendRequestGenerationsRef.current, {
       groupId: activeGroup.id,
       windowId: id,
@@ -284,12 +291,13 @@ export function StockWorkspace() {
         } : undefined,
       )
     }
-    const system = item.chart.tradingSystems.trend
-    void refreshThenRecalculateTrend(
-      item.instrument.symbol,
-      normalizeTrendTradingSystemSettings(system.settings),
-      system.settingsRevision,
-      {
+    const settings = normalizeTrendTradingSystemSettings(system.settings)
+    const calculation = refreshData
+      ? refreshThenRecalculateTrend(
+        item.instrument.symbol,
+        settings,
+        system.settingsRevision,
+        {
         onRefresh: result => {
           if (!requestIsCurrent()) return
           window.dispatchEvent(new CustomEvent('stock-harness:latest-daily-refreshed', {
@@ -314,8 +322,10 @@ export function StockWorkspace() {
             error: error instanceof Error ? error.message : String(error),
           })
         },
-      },
-    ).then(() => {
+        },
+      )
+      : recalculateTrendAnalysis(item.instrument.symbol, settings, system.settingsRevision)
+    return calculation.then(() => {
       if (!requestIsCurrent()) return
       updateWindow(id, window => window.type === 'chart'
         && window.instrument.symbol === requestToken.symbol ? {
@@ -351,6 +361,7 @@ export function StockWorkspace() {
         windowId: id, symbol: item.instrument.symbol,
         error: error instanceof Error ? error.message : String(error),
       })
+      throw error
     })
   }, [activeGroup, updateWindow])
 

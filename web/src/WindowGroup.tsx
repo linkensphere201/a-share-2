@@ -4,7 +4,7 @@ import { InstrumentListWindow } from './InstrumentListWindow'
 import { SplitLayout } from './SplitLayout'
 import type { ChartPaneRatios, Instrument, ListColumnKey, WindowGroupState } from './workspace'
 import type { ThemeDefinition } from './themeStore'
-import type { TradingSystemWindowStates } from './tradingSystems'
+import type { TradingSystemWindowState, TradingSystemWindowStates } from './tradingSystems'
 
 type WindowGroupProps = {
   group: WindowGroupState
@@ -26,7 +26,12 @@ type WindowGroupProps = {
   onPaneRatiosChange: (id: string, ratios: ChartPaneRatios) => void
   onToolbarCollapsedChange: (id: string, collapsed: boolean) => void
   onTradingSystemsChange: (id: string, systems: TradingSystemWindowStates) => void
-  onTradingSystemRecalculate: (id: string, systemId: string) => void
+  onTradingSystemRecalculate: (
+    id: string,
+    systemId: string,
+    state: TradingSystemWindowState,
+    refreshData: boolean,
+  ) => Promise<void>
   onReferencedSymbolsChange: (id: string, symbols: string[]) => void
 }
 
@@ -102,7 +107,9 @@ export function WindowGroup({
         onPaneRatiosChange={ratios => onPaneRatiosChange(item.id, ratios)}
         onToolbarCollapsedChange={collapsed => onToolbarCollapsedChange(item.id, collapsed)}
         onTradingSystemsChange={systems => onTradingSystemsChange(item.id, systems)}
-        onTradingSystemRecalculate={systemId => onTradingSystemRecalculate(item.id, systemId)}
+        onTradingSystemRecalculate={(systemId, state, refreshData) => (
+          onTradingSystemRecalculate(item.id, systemId, state, refreshData)
+        )}
       />
     )
   }

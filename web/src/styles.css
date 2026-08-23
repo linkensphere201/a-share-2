@@ -613,6 +613,8 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .trading-system-controls .trading-system-collapse { width: 30px; grid-template-columns: 14px 8px; }
 .trading-system-status { padding: 0 4px; color: var(--theme-muted); font-size: 8px; white-space: nowrap; }
 .trading-system-status.stale { color: #d8aa5d; }
+.trading-system-status.running { color: var(--theme-accent); }
+.trading-system-status.failed { color: #ef767a; }
 .trading-system-settings {
   position: absolute;
   z-index: 12;

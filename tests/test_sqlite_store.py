@@ -57,6 +57,34 @@ class SQLiteMarketDataStoreTests(unittest.TestCase):
         self.assertEqual([row.trade_date for row in rows], [date(2026, 7, 31), date(2026, 8, 1)])
         self.assertEqual([row.volume for row in rows], [200, 300])
 
+    def test_daily_read_hot_paths_filter_by_resolved_instrument_id(self) -> None:
+        self.store.upsert_daily_bars(
+            "tushare",
+            [
+                DailyBar("600519.SH", date(2026, 7, 30), 10, 12, 9, 11, 100),
+                DailyBar("600519.SH", date(2026, 7, 31), 11, 13, 10, 12, 200),
+            ],
+        )
+        statements: list[str] = []
+        self.store._connection.set_trace_callback(statements.append)
+        try:
+            full = self.store.get_daily_bars("600519.sh")
+            recent = self.store.get_recent_daily_bars(
+                "600519.sh", date(2026, 7, 31), 1
+            )
+        finally:
+            self.store._connection.set_trace_callback(None)
+
+        self.assertEqual([item.symbol for item in full], ["600519.SH", "600519.SH"])
+        self.assertEqual([item.trade_date for item in recent], [date(2026, 7, 31)])
+        daily_reads = [
+            statement.lower() for statement in statements
+            if "from daily_bars as bar" in statement.lower()
+        ]
+        self.assertEqual(len(daily_reads), 2)
+        self.assertTrue(all("bar.instrument_id =" in statement for statement in daily_reads))
+        self.assertTrue(all("join instruments" not in statement for statement in daily_reads))
+
     def test_provisional_daily_bars_are_isolated_persistent_and_overwritable(self) -> None:
         first = ProvisionalDailyBar(
             "600519.SH", date(2026, 8, 5), 10, 12, 9, 11, 1000, 10000,

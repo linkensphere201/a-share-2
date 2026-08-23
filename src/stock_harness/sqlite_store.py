@@ -1202,12 +1202,17 @@ class SQLiteMarketDataStore(SQLiteFuturesStoreMixin, SQLiteAnalysisStoreMixin, S
     ) -> list[StoredDailyBar]:
         with self._lock:
             instrument = self._connection.execute(
-                "SELECT kind FROM instruments WHERE symbol = ? COLLATE NOCASE",
+                "SELECT symbol, instrument_id, kind FROM instruments "
+                "WHERE symbol = ? COLLATE NOCASE",
                 (symbol.upper(),),
             ).fetchone()
-        if instrument is not None and str(instrument[0]) == InstrumentKind.CUSTOM_INDEX.value:
-            clauses = ["instrument.symbol = ? COLLATE NOCASE"]
-            parameters: list[object] = [symbol.upper()]
+        if instrument is None:
+            return []
+        canonical_symbol = str(instrument[0])
+        instrument_id = int(instrument[1])
+        if str(instrument[2]) == InstrumentKind.CUSTOM_INDEX.value:
+            clauses = ["custom.instrument_id = ?"]
+            parameters: list[object] = [instrument_id]
             if start_date is not None:
                 clauses.append("bar.trade_date >= ?")
                 parameters.append(_date_key(start_date))
@@ -1215,11 +1220,10 @@ class SQLiteMarketDataStore(SQLiteFuturesStoreMixin, SQLiteAnalysisStoreMixin, S
                 clauses.append("bar.trade_date <= ?")
                 parameters.append(_date_key(end_date))
             query = f"""
-                SELECT instrument.symbol, bar.trade_date, bar.open, bar.high,
+                SELECT bar.trade_date, bar.open, bar.high,
                        bar.low, bar.close, bar.volume, bar.updated_at_ms
                 FROM custom_index_daily_bars AS bar
                 JOIN custom_indices AS custom USING (index_id)
-                JOIN instruments AS instrument USING (instrument_id)
                 WHERE {' AND '.join(clauses)}
                 ORDER BY bar.trade_date
             """
@@ -1227,15 +1231,15 @@ class SQLiteMarketDataStore(SQLiteFuturesStoreMixin, SQLiteAnalysisStoreMixin, S
                 rows = self._connection.execute(query, parameters).fetchall()
             return [
                 StoredDailyBar(
-                    symbol=str(row[0]), trade_date=_date_from_key(int(row[1])),
-                    open=float(row[2]), high=float(row[3]), low=float(row[4]),
-                    close=float(row[5]), volume=int(row[6]), source="local_custom_index",
-                    updated_at_ms=int(row[7]),
+                    symbol=canonical_symbol, trade_date=_date_from_key(int(row[0])),
+                    open=float(row[1]), high=float(row[2]), low=float(row[3]),
+                    close=float(row[4]), volume=int(row[5]), source="local_custom_index",
+                    updated_at_ms=int(row[6]),
                 )
                 for row in rows
             ]
-        clauses = ["instrument.symbol = ?"]
-        parameters: list[object] = [symbol]
+        clauses = ["bar.instrument_id = ?"]
+        parameters = [instrument_id]
         if start_date is not None:
             clauses.append("bar.trade_date >= ?")
             parameters.append(_date_key(start_date))
@@ -1243,10 +1247,9 @@ class SQLiteMarketDataStore(SQLiteFuturesStoreMixin, SQLiteAnalysisStoreMixin, S
             clauses.append("bar.trade_date <= ?")
             parameters.append(_date_key(end_date))
         query = f"""
-            SELECT instrument.symbol, bar.trade_date, bar.open, bar.high,
+            SELECT bar.trade_date, bar.open, bar.high,
                    bar.low, bar.close, bar.volume, source.code, bar.updated_at_ms
             FROM daily_bars AS bar
-            JOIN instruments AS instrument USING (instrument_id)
             JOIN sources AS source USING (source_id)
             WHERE {' AND '.join(clauses)}
             ORDER BY bar.trade_date
@@ -1255,15 +1258,15 @@ class SQLiteMarketDataStore(SQLiteFuturesStoreMixin, SQLiteAnalysisStoreMixin, S
             rows = self._connection.execute(query, parameters).fetchall()
         return [
             StoredDailyBar(
-                symbol=row[0],
-                trade_date=_date_from_key(row[1]),
-                open=row[2],
-                high=row[3],
-                low=row[4],
-                close=row[5],
-                volume=row[6],
-                source=row[7],
-                updated_at_ms=row[8],
+                symbol=canonical_symbol,
+                trade_date=_date_from_key(row[0]),
+                open=row[1],
+                high=row[2],
+                low=row[3],
+                close=row[4],
+                volume=row[5],
+                source=row[6],
+                updated_at_ms=row[7],
             )
             for row in rows
         ]
@@ -1320,50 +1323,58 @@ class SQLiteMarketDataStore(SQLiteFuturesStoreMixin, SQLiteAnalysisStoreMixin, S
         if limit <= 0:
             raise ValueError("daily bar limit must be positive")
         normalized = symbol.upper()
-        kind = self.get_instrument_kind(normalized)
+        with self._lock:
+            instrument = self._connection.execute(
+                "SELECT symbol, instrument_id, kind FROM instruments "
+                "WHERE symbol = ? COLLATE NOCASE",
+                (normalized,),
+            ).fetchone()
+        if instrument is None:
+            return []
+        canonical_symbol = str(instrument[0])
+        instrument_id = int(instrument[1])
+        kind = InstrumentKind(str(instrument[2]))
         if kind is InstrumentKind.CUSTOM_INDEX:
             query = """
-                SELECT instrument.symbol, bar.trade_date, bar.open, bar.high,
+                SELECT bar.trade_date, bar.open, bar.high,
                        bar.low, bar.close, bar.volume, bar.updated_at_ms
                 FROM custom_index_daily_bars AS bar
                 JOIN custom_indices AS custom USING (index_id)
-                JOIN instruments AS instrument USING (instrument_id)
-                WHERE instrument.symbol = ? COLLATE NOCASE AND bar.trade_date <= ?
+                WHERE custom.instrument_id = ? AND bar.trade_date <= ?
                 ORDER BY bar.trade_date DESC LIMIT ?
             """
             with self._lock:
                 rows = self._connection.execute(
-                    query, (normalized, _date_key(end_date), limit)
+                    query, (instrument_id, _date_key(end_date), limit)
                 ).fetchall()
             result = [
                 StoredDailyBar(
-                    symbol=str(row[0]), trade_date=_date_from_key(int(row[1])),
-                    open=float(row[2]), high=float(row[3]), low=float(row[4]),
-                    close=float(row[5]), volume=int(row[6]),
-                    source="local_custom_index", updated_at_ms=int(row[7]),
+                    symbol=canonical_symbol, trade_date=_date_from_key(int(row[0])),
+                    open=float(row[1]), high=float(row[2]), low=float(row[3]),
+                    close=float(row[4]), volume=int(row[5]),
+                    source="local_custom_index", updated_at_ms=int(row[6]),
                 )
                 for row in rows
             ]
         else:
             query = """
-                SELECT instrument.symbol, bar.trade_date, bar.open, bar.high,
+                SELECT bar.trade_date, bar.open, bar.high,
                        bar.low, bar.close, bar.volume, source.code, bar.updated_at_ms
                 FROM daily_bars AS bar
-                JOIN instruments AS instrument USING (instrument_id)
                 JOIN sources AS source USING (source_id)
-                WHERE instrument.symbol = ? COLLATE NOCASE AND bar.trade_date <= ?
+                WHERE bar.instrument_id = ? AND bar.trade_date <= ?
                 ORDER BY bar.trade_date DESC LIMIT ?
             """
             with self._lock:
                 rows = self._connection.execute(
-                    query, (normalized, _date_key(end_date), limit)
+                    query, (instrument_id, _date_key(end_date), limit)
                 ).fetchall()
             result = [
                 StoredDailyBar(
-                    symbol=str(row[0]), trade_date=_date_from_key(int(row[1])),
-                    open=float(row[2]), high=float(row[3]), low=float(row[4]),
-                    close=float(row[5]), volume=int(row[6]), source=str(row[7]),
-                    updated_at_ms=int(row[8]),
+                    symbol=canonical_symbol, trade_date=_date_from_key(int(row[0])),
+                    open=float(row[1]), high=float(row[2]), low=float(row[3]),
+                    close=float(row[4]), volume=int(row[5]), source=str(row[6]),
+                    updated_at_ms=int(row[7]),
                 )
                 for row in rows
             ]

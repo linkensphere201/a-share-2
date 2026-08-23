@@ -6,7 +6,7 @@ import type { GeneratedBreakoutState } from './generatedAnalysisProjection'
 import { TradingSystemControls } from './TradingSystemControls'
 import { TrendReviewPanel } from './TrendReviewPanel'
 import type { ChartPaneRatios, ChartWindowState } from './workspace'
-import type { TradingSystemWindowStates } from './tradingSystems'
+import type { TradingSystemWindowState, TradingSystemWindowStates } from './tradingSystems'
 import { normalizeTrendTradingSystemSettings } from './tradingSystems'
 import type { ThemeDefinition } from './themeStore'
 import type { TrendAnalysisRun } from './trendAnalysisClient'
@@ -31,7 +31,11 @@ type InstrumentWindowProps = {
   onPaneRatiosChange: (ratios: ChartPaneRatios) => void
   onToolbarCollapsedChange: (collapsed: boolean) => void
   onTradingSystemsChange: (systems: TradingSystemWindowStates) => void
-  onTradingSystemRecalculate: (systemId: string) => void
+  onTradingSystemRecalculate: (
+    systemId: string,
+    state: TradingSystemWindowState,
+    refreshData: boolean,
+  ) => Promise<void>
 }
 
 export function ChartWindow({
@@ -58,6 +62,7 @@ export function ChartWindow({
   const { chart, instrument } = windowState
   const [breakoutState, setBreakoutState] = useState<GeneratedBreakoutState>()
   const [trendAnalysis, setTrendAnalysis] = useState<TrendAnalysisRun | null>(null)
+  const [trendRecalculationState, setTrendRecalculationState] = useState<'idle' | 'running' | 'failed'>('idle')
   const [reviewOpen, setReviewOpen] = useState(false)
   const [reviewContext, setReviewContext] = useState<{
     asOfDate: string
@@ -67,6 +72,7 @@ export function ChartWindow({
   useEffect(() => {
     setBreakoutState(undefined)
     setTrendAnalysis(null)
+    setTrendRecalculationState('idle')
     setReviewOpen(false)
     setReviewContext(undefined)
     setReviewGeometryTarget(undefined)
@@ -98,8 +104,17 @@ export function ChartWindow({
           state={chart.tradingSystems.trend}
           breakoutState={breakoutState}
           analysisRun={trendAnalysis}
+          recalculationState={trendRecalculationState}
           onChange={trend => onTradingSystemsChange({ ...chart.tradingSystems, trend })}
-          onRecalculate={() => onTradingSystemRecalculate('trend')}
+          onRecalculate={async (trend, refreshData) => {
+            setTrendRecalculationState('running')
+            try {
+              await onTradingSystemRecalculate('trend', trend, refreshData)
+              setTrendRecalculationState('idle')
+            } catch {
+              setTrendRecalculationState('failed')
+            }
+          }}
           onReview={() => setReviewOpen(true)}
         />
         <ChartCanvas
