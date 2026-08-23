@@ -7,6 +7,7 @@ import {
   EyeOff,
   FileSearch,
   Focus,
+  Info,
   RefreshCw,
   RotateCcw,
   Settings2,
@@ -33,6 +34,8 @@ type TradingSystemControlsProps = {
   recalculationState?: 'idle' | 'running' | 'failed'
   onRecalculate: (state: TradingSystemWindowState, refreshData: boolean) => void | Promise<void>
   onReview?: () => void
+  explanationOpen?: boolean
+  onExplanationOpenChange?: (open: boolean) => void
 }
 
 export function TradingSystemControls({
@@ -44,6 +47,8 @@ export function TradingSystemControls({
   onChange,
   onRecalculate,
   onReview,
+  explanationOpen = false,
+  onExplanationOpenChange,
 }: TradingSystemControlsProps) {
   const descriptor = tradingSystemRegistry.get('trend')!
   const supported = descriptor.supportedInstrumentKinds.includes(instrumentKind)
@@ -134,6 +139,14 @@ export function TradingSystemControls({
           className={evidenceOpen ? 'active' : ''}
           onClick={() => setEvidenceOpen(true)}
         ><FileSearch size={13}/></button>
+        <button
+          title="趋势分析结果说明"
+          aria-label="打开趋势分析结果说明"
+          disabled={!analysisRun}
+          className={explanationOpen ? 'active' : ''}
+          aria-pressed={explanationOpen}
+          onClick={() => onExplanationOpenChange?.(!explanationOpen)}
+        ><Info size={13}/></button>
         <button
           title="人工复核趋势分析"
           aria-label="打开趋势人工复核"

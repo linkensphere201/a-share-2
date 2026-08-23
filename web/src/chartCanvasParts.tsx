@@ -322,6 +322,7 @@ export function GeneratedAnalysisOverlay({
   breakoutState,
   run,
   preview,
+  highlightedItemId,
 }: {
   pivots: GeneratedPivotGeometry[]
   lines: GeneratedTrendLineGeometry[]
@@ -330,15 +331,16 @@ export function GeneratedAnalysisOverlay({
   breakoutState?: GeneratedBreakoutState
   run: TrendAnalysisRun
   preview: boolean
+  highlightedItemId?: string
 }) {
   const labeled = new Set(pivots.slice(-4).map(item => item.id))
   return (
-    <div className="chart-generated-analysis" aria-label="自动趋势分析图层">
+    <div className={highlightedItemId ? 'chart-generated-analysis has-highlight' : 'chart-generated-analysis'} aria-label="自动趋势分析图层">
       <svg width="100%" height="100%" aria-hidden="true">
         {zones.map(item => (
           <rect
             key={item.id}
-            className={`generated-price-zone ${item.kind}`}
+            className={`generated-price-zone ${item.kind}${highlightedItemId === item.id ? ' highlighted' : ''}`}
             x={0}
             y={item.y}
             width={item.width}
@@ -350,7 +352,7 @@ export function GeneratedAnalysisOverlay({
           </rect>
         ))}
         {patterns.map(item => (
-          <g key={item.id} className={`generated-pattern ${item.state} ${item.primary ? 'primary' : 'alternative'}`}>
+          <g key={item.id} className={`generated-pattern ${item.state} ${item.primary ? 'primary' : 'alternative'}${highlightedItemId === item.id ? ' highlighted' : ''}`}>
             {item.boundaries.map((boundary, index) => (
               <line
                 key={index}
@@ -378,7 +380,7 @@ export function GeneratedAnalysisOverlay({
         {lines.map(item => (
           <line
             key={item.id}
-            className={`generated-trend-line ${item.kind} ${item.horizon}`}
+            className={`generated-trend-line ${item.kind} ${item.horizon}${highlightedItemId === item.id ? ' highlighted' : ''}`}
             x1={item.line.x1}
             y1={item.line.y1}
             x2={item.line.x2}

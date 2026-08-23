@@ -62,9 +62,9 @@ export type GeneratedBreakoutState = {
   eventKind?: 'upward-breakout' | 'downward-breakdown' | 'retest' | 'false-breakout-risk' | 'no-structural-change'
 }
 
-type AnalysisItem = TrendAnalysisRun['items'][number]
+export type AnalysisItem = TrendAnalysisRun['items'][number]
 
-function coreTrendLineItems(items: AnalysisItem[]): AnalysisItem[] {
+export function selectCoreTrendLineItems(items: AnalysisItem[]): AnalysisItem[] {
   const bestByRole = new Map<string, AnalysisItem>()
   for (const item of items) {
     if (item.item_type !== 'line') continue
@@ -85,7 +85,7 @@ function coreTrendLineItems(items: AnalysisItem[]): AnalysisItem[] {
   return [...bestByRole.values()]
 }
 
-function corePatternItems(items: AnalysisItem[]): AnalysisItem[] {
+export function selectCorePatternItems(items: AnalysisItem[]): AnalysisItem[] {
   const patterns = items.filter(item => item.item_type === 'pattern')
   const horizons = new Map<string, AnalysisItem[]>()
   for (const item of patterns) {
@@ -117,6 +117,28 @@ function corePatternItems(items: AnalysisItem[]): AnalysisItem[] {
     })
     return ranked.slice(0, 1)
   })
+}
+
+export function selectCoreZoneItems(items: AnalysisItem[]): AnalysisItem[] {
+  const strongestByKind = new Map<string, AnalysisItem[]>()
+  for (const item of items) {
+    if (item.item_type !== 'zone') continue
+    const kind = item.payload.kind
+    if (kind !== 'key-level' && kind !== 'estimated-volume-at-price') continue
+    strongestByKind.set(kind, [...(strongestByKind.get(kind) ?? []), item])
+  }
+  return [...strongestByKind.values()].flatMap(candidates => (
+    [...candidates].sort((left, right) => {
+      if (right.payload.kind === 'estimated-volume-at-price') {
+        const leftShare = typeof left.payload.estimated_share === 'number' ? left.payload.estimated_share : 0
+        const rightShare = typeof right.payload.estimated_share === 'number' ? right.payload.estimated_share : 0
+        return rightShare - leftShare
+      }
+      const leftScore = typeof left.payload.score === 'number' ? left.payload.score : 0
+      const rightScore = typeof right.payload.score === 'number' ? right.payload.score : 0
+      return rightScore - leftScore
+    }).slice(0, 2)
+  ))
 }
 
 export function projectReviewGeometryHandles(
@@ -189,7 +211,7 @@ export function projectGeneratedTrendLines(
   if (!run || !chart || !priceSeries || !host) return []
   const width = chart.timeScale().width()
   const height = chart.panes()[0]?.getHeight() ?? host.clientHeight
-  return coreTrendLineItems(run.items).flatMap(item => {
+  return selectCoreTrendLineItems(run.items).flatMap(item => {
     if (item.item_type !== 'line') return []
     const kind = item.payload.kind
     const horizon = item.payload.horizon
@@ -229,7 +251,7 @@ export function projectGeneratedZones(
   if (!run || !chart || !priceSeries || !host) return []
   const width = chart.timeScale().width()
   const paneHeight = chart.panes()[0]?.getHeight() ?? host.clientHeight
-  const projected = run.items.flatMap(item => {
+  return selectCoreZoneItems(run.items).flatMap(item => {
     if (item.item_type !== 'zone') return []
     const kind = item.payload.kind
     const lower = item.payload.lower
@@ -258,17 +280,6 @@ export function projectGeneratedZones(
         : undefined,
     }]
   })
-  const strongestByKind = new Map<GeneratedZoneGeometry['kind'], GeneratedZoneGeometry[]>()
-  for (const item of projected) {
-    strongestByKind.set(item.kind, [...(strongestByKind.get(item.kind) ?? []), item])
-  }
-  return [...strongestByKind.values()].flatMap(items => (
-    [...items].sort((left, right) => (
-      right.kind === 'estimated-volume-at-price'
-        ? (right.estimatedShare ?? 0) - (left.estimatedShare ?? 0)
-        : right.score - left.score
-    )).slice(0, 2)
-  ))
 }
 
 export function projectGeneratedPatterns(
@@ -279,7 +290,7 @@ export function projectGeneratedPatterns(
 ): GeneratedPatternGeometry[] {
   if (!visible || !run || !chart || !priceSeries) return []
   const chartWidth = chart.timeScale().width()
-  const projectedPatterns = corePatternItems(run.items).flatMap(item => {
+  const projectedPatterns = selectCorePatternItems(run.items).flatMap(item => {
     if (item.item_type !== 'pattern') return []
     const displayName = item.payload.display_name
     const state = item.payload.completion_state

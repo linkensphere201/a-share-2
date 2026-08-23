@@ -167,4 +167,34 @@ describe('TradingSystemControls', () => {
     const state = JSON.parse(screen.getByTestId('state').textContent ?? '{}')
     expect(state).toMatchObject({ expanded: false, enabled: true, isolate: true })
   })
+
+  it('opens the result explanation only when analysis exists', () => {
+    const state = { ...createTradingSystemWindowStates().trend, enabled: true }
+    const onOpenChange = vi.fn()
+    const { rerender } = render(<TradingSystemControls
+      instrumentKind="stock"
+      state={state}
+      onChange={vi.fn()}
+      onRecalculate={vi.fn()}
+      onExplanationOpenChange={onOpenChange}
+    />)
+    const unavailable = screen.getByRole('button', { name: '打开趋势分析结果说明' })
+    expect(unavailable).toHaveProperty('disabled', true)
+
+    rerender(<TradingSystemControls
+      instrumentKind="stock"
+      state={state}
+      analysisRun={{
+        run_id: 'run', as_of_date: '2026-08-21', completion_state: 'complete',
+        stale: false, stale_reasons: [], warnings: [], items: [],
+      }}
+      onChange={vi.fn()}
+      onRecalculate={vi.fn()}
+      onExplanationOpenChange={onOpenChange}
+    />)
+    const available = screen.getByRole('button', { name: '打开趋势分析结果说明' })
+    expect(available).toHaveProperty('disabled', false)
+    fireEvent.click(available)
+    expect(onOpenChange).toHaveBeenCalledWith(true)
+  })
 })

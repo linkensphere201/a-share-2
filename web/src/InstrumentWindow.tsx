@@ -5,6 +5,7 @@ import type { ChartIndicator, VisibleRange } from './chartTypes'
 import type { GeneratedBreakoutState } from './generatedAnalysisProjection'
 import { TradingSystemControls } from './TradingSystemControls'
 import { TrendReviewPanel } from './TrendReviewPanel'
+import { TrendExplanationPanel } from './TrendExplanationPanel'
 import type { ChartPaneRatios, ChartWindowState } from './workspace'
 import type { TradingSystemWindowState, TradingSystemWindowStates } from './tradingSystems'
 import { normalizeTrendTradingSystemSettings } from './tradingSystems'
@@ -69,6 +70,8 @@ export function ChartWindow({
     analysis: TrendAnalysisRun
   }>()
   const [reviewGeometryTarget, setReviewGeometryTarget] = useState<TrendReviewGeometryTarget>()
+  const [explanationOpen, setExplanationOpen] = useState(false)
+  const [highlightedAnalysisItemId, setHighlightedAnalysisItemId] = useState<string>()
   useEffect(() => {
     setBreakoutState(undefined)
     setTrendAnalysis(null)
@@ -76,6 +79,8 @@ export function ChartWindow({
     setReviewOpen(false)
     setReviewContext(undefined)
     setReviewGeometryTarget(undefined)
+    setExplanationOpen(false)
+    setHighlightedAnalysisItemId(undefined)
   }, [instrument.symbol])
   return (
     <section className={focused ? 'instrument-window focused' : 'instrument-window'}>
@@ -98,7 +103,7 @@ export function ChartWindow({
           ><X size={14}/></button>
         </div>
       </header>
-      <div className="instrument-window-body" onPointerDown={onFocus}>
+      <div className={explanationOpen ? 'instrument-window-body explanation-open' : 'instrument-window-body'} onPointerDown={onFocus}>
         <TradingSystemControls
           instrumentKind={instrument.kind}
           state={chart.tradingSystems.trend}
@@ -116,6 +121,11 @@ export function ChartWindow({
             }
           }}
           onReview={() => setReviewOpen(true)}
+          explanationOpen={explanationOpen}
+          onExplanationOpenChange={open => {
+            setExplanationOpen(open)
+            if (!open) setHighlightedAnalysisItemId(undefined)
+          }}
         />
         <ChartCanvas
           symbol={instrument.symbol}
@@ -157,7 +167,16 @@ export function ChartWindow({
           reviewGeometryTarget={reviewGeometryTarget}
           onBreakoutStateChange={setBreakoutState}
           onTrendAnalysisChange={setTrendAnalysis}
+          highlightedAnalysisItemId={highlightedAnalysisItemId}
         />
+        {explanationOpen && trendAnalysis && <TrendExplanationPanel
+          run={trendAnalysis}
+          onHighlightItemChange={setHighlightedAnalysisItemId}
+          onClose={() => {
+            setExplanationOpen(false)
+            setHighlightedAnalysisItemId(undefined)
+          }}
+        />}
         {reviewOpen && <TrendReviewPanel
           symbol={instrument.symbol}
           name={instrument.name}

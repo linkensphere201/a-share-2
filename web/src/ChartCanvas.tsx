@@ -199,6 +199,7 @@ type ChartCanvasProps = {
   asOfDate?: string
   trendAnalysisOverride?: TrendAnalysisRun | null
   reviewGeometryTarget?: TrendReviewGeometryTarget
+  highlightedAnalysisItemId?: string
 }
 
 const rising = '#ef5350'
@@ -274,6 +275,7 @@ export function ChartCanvas({
   asOfDate,
   trendAnalysisOverride,
   reviewGeometryTarget,
+  highlightedAnalysisItemId,
 }: ChartCanvasProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -1751,6 +1753,7 @@ export function ChartCanvas({
           breakoutState={generatedBreakoutState}
           run={trendAnalysis}
           preview={trendAnalysisPreview}
+          highlightedItemId={highlightedAnalysisItemId}
         />
       )}
       {reviewGeometryTarget && projectedReviewGeometry.length > 0 && (
