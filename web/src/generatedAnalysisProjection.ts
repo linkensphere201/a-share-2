@@ -62,6 +62,63 @@ export type GeneratedBreakoutState = {
   eventKind?: 'upward-breakout' | 'downward-breakdown' | 'retest' | 'false-breakout-risk' | 'no-structural-change'
 }
 
+type AnalysisItem = TrendAnalysisRun['items'][number]
+
+function coreTrendLineItems(items: AnalysisItem[]): AnalysisItem[] {
+  const bestByRole = new Map<string, AnalysisItem>()
+  for (const item of items) {
+    if (item.item_type !== 'line') continue
+    const kind = item.payload.kind
+    const horizon = item.payload.horizon
+    if ((kind !== 'support' && kind !== 'resistance')
+      || (horizon !== 'short' && horizon !== 'long')) continue
+    const key = `${horizon}:${kind}`
+    const current = bestByRole.get(key)
+    const score = typeof item.payload.score === 'number' ? item.payload.score : 0
+    const currentScore = typeof current?.payload.score === 'number' ? current.payload.score : 0
+    const touches = typeof item.payload.touch_count === 'number' ? item.payload.touch_count : 0
+    const currentTouches = typeof current?.payload.touch_count === 'number' ? current.payload.touch_count : 0
+    if (!current || score > currentScore || (score === currentScore && touches > currentTouches)) {
+      bestByRole.set(key, item)
+    }
+  }
+  return [...bestByRole.values()]
+}
+
+function corePatternItems(items: AnalysisItem[]): AnalysisItem[] {
+  const patterns = items.filter(item => item.item_type === 'pattern')
+  const horizons = new Map<string, AnalysisItem[]>()
+  for (const item of patterns) {
+    const horizon = item.payload.horizon === 'long' || item.payload.horizon === 'short'
+      ? item.payload.horizon
+      : 'unspecified'
+    horizons.set(horizon, [...(horizons.get(horizon) ?? []), item])
+  }
+  return [...horizons.values()].flatMap(candidates => {
+    const active = candidates.filter(item => item.payload.completion_state !== 'invalidated')
+    const pool = active.length > 0 ? active : candidates
+    const ranked = [...pool].sort((left, right) => {
+      const primaryOrder = Number(right.payload.primary === true) - Number(left.payload.primary === true)
+      if (primaryOrder !== 0) return primaryOrder
+      const leftRank = typeof left.payload.interpretation_rank === 'number'
+        ? left.payload.interpretation_rank
+        : Number.POSITIVE_INFINITY
+      const rightRank = typeof right.payload.interpretation_rank === 'number'
+        ? right.payload.interpretation_rank
+        : Number.POSITIVE_INFINITY
+      if (leftRank !== rightRank) return leftRank - rightRank
+      const leftScore = typeof left.payload.ranking_score === 'number'
+        ? left.payload.ranking_score
+        : typeof left.payload.score === 'number' ? left.payload.score : 0
+      const rightScore = typeof right.payload.ranking_score === 'number'
+        ? right.payload.ranking_score
+        : typeof right.payload.score === 'number' ? right.payload.score : 0
+      return rightScore - leftScore
+    })
+    return ranked.slice(0, 1)
+  })
+}
+
 export function projectReviewGeometryHandles(
   target: TrendReviewGeometryTarget | undefined,
   chart: IChartApi | null,
@@ -118,7 +175,7 @@ export function projectGeneratedPivots(
     if (seen.has(key)) return false
     seen.add(key)
     return true
-  })
+  }).sort((left, right) => left.pivotDate.localeCompare(right.pivotDate)).slice(-12)
 }
 
 export function projectGeneratedTrendLines(
@@ -132,7 +189,7 @@ export function projectGeneratedTrendLines(
   if (!run || !chart || !priceSeries || !host) return []
   const width = chart.timeScale().width()
   const height = chart.panes()[0]?.getHeight() ?? host.clientHeight
-  return run.items.flatMap(item => {
+  return coreTrendLineItems(run.items).flatMap(item => {
     if (item.item_type !== 'line') return []
     const kind = item.payload.kind
     const horizon = item.payload.horizon
@@ -152,7 +209,7 @@ export function projectGeneratedTrendLines(
     if (x1 === null || x2 === null || y1 === null || y2 === null) return []
     return [{
       id: item.item_id,
-      kind,
+      kind: kind as GeneratedTrendLineGeometry['kind'],
       horizon,
       line: extendLineToBounds({ x1, y1, x2, y2 }, width, height),
       score: typeof item.payload.score === 'number' ? item.payload.score : 0,
@@ -172,7 +229,7 @@ export function projectGeneratedZones(
   if (!run || !chart || !priceSeries || !host) return []
   const width = chart.timeScale().width()
   const paneHeight = chart.panes()[0]?.getHeight() ?? host.clientHeight
-  return run.items.flatMap(item => {
+  const projected = run.items.flatMap(item => {
     if (item.item_type !== 'zone') return []
     const kind = item.payload.kind
     const lower = item.payload.lower
@@ -189,7 +246,7 @@ export function projectGeneratedZones(
     if (bottom < 0 || top > paneHeight) return []
     return [{
       id: item.item_id,
-      kind,
+      kind: kind as GeneratedZoneGeometry['kind'],
       y: top,
       height: Math.max(kind === 'key-level' ? 2 : 1, bottom - top),
       width,
@@ -201,6 +258,17 @@ export function projectGeneratedZones(
         : undefined,
     }]
   })
+  const strongestByKind = new Map<GeneratedZoneGeometry['kind'], GeneratedZoneGeometry[]>()
+  for (const item of projected) {
+    strongestByKind.set(item.kind, [...(strongestByKind.get(item.kind) ?? []), item])
+  }
+  return [...strongestByKind.values()].flatMap(items => (
+    [...items].sort((left, right) => (
+      right.kind === 'estimated-volume-at-price'
+        ? (right.estimatedShare ?? 0) - (left.estimatedShare ?? 0)
+        : right.score - left.score
+    )).slice(0, 2)
+  ))
 }
 
 export function projectGeneratedPatterns(
@@ -211,7 +279,7 @@ export function projectGeneratedPatterns(
 ): GeneratedPatternGeometry[] {
   if (!visible || !run || !chart || !priceSeries) return []
   const chartWidth = chart.timeScale().width()
-  const projectedPatterns = run.items.flatMap(item => {
+  const projectedPatterns = corePatternItems(run.items).flatMap(item => {
     if (item.item_type !== 'pattern') return []
     const displayName = item.payload.display_name
     const state = item.payload.completion_state
@@ -249,21 +317,23 @@ export function projectGeneratedPatterns(
         const y1 = priceSeries.priceToCoordinate(boundary.start_price)
         const y2 = priceSeries.priceToCoordinate(boundary.end_price)
         if (x1 === null || x2 === null || y1 === null || y2 === null) continue
-        boundaries.push(extendLineToBounds(
-          { x1, y1, x2, y2 },
-          chart.timeScale().width(),
-          chart.panes()[0]?.getHeight() ?? Math.max(y1, y2),
-        ))
+        boundaries.push({ x1, y1, x2, y2 })
       }
     }
     if (projected.length < 3 && boundaries.length === 0) return []
+    const patternXs = [
+      ...projected.map(point => point.x),
+      ...boundaries.flatMap(boundary => [boundary.x1, boundary.x2]),
+    ]
+    const patternStartX = Math.min(...patternXs)
+    const patternEndX = Math.max(...patternXs)
     return [{
       id: item.item_id,
       displayName,
       state: state as GeneratedPatternGeometry['state'],
       primary: item.payload.primary === true,
       points: projected.map(point => `${point.x},${point.y}`).join(' '),
-      neckline: { x1: first.x, y1: necklineY, x2: chart.timeScale().width(), y2: necklineY },
+      neckline: { x1: patternStartX, y1: necklineY, x2: patternEndX, y2: necklineY },
       boundaries,
       labelX: Math.max(36, Math.min(chartWidth - 36, Math.min(first.x, last.x) + Math.abs(last.x - first.x) / 2)),
       labelY: Math.max(10, Math.min(...projected.map(point => point.y), necklineY) - 5),
@@ -349,4 +419,3 @@ export function readGeneratedBreakoutState(
       : {}),
   }
 }
-

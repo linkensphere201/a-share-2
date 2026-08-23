@@ -331,7 +331,7 @@ export function GeneratedAnalysisOverlay({
   run: TrendAnalysisRun
   preview: boolean
 }) {
-  const labeled = new Set(pivots.slice(-12).map(item => item.id))
+  const labeled = new Set(pivots.slice(-4).map(item => item.id))
   return (
     <div className="chart-generated-analysis" aria-label="自动趋势分析图层">
       <svg width="100%" height="100%" aria-hidden="true">
@@ -361,14 +361,16 @@ export function GeneratedAnalysisOverlay({
                 y2={boundary.y2}
               />
             ))}
-            <polyline points={item.points}/>
-            <line
-              className="generated-pattern-neckline"
-              x1={item.neckline.x1}
-              y1={item.neckline.y1}
-              x2={item.neckline.x2}
-              y2={item.neckline.y2}
-            />
+            {item.boundaries.length === 0 && <>
+              <polyline points={item.points}/>
+              <line
+                className="generated-pattern-neckline"
+                x1={item.neckline.x1}
+                y1={item.neckline.y1}
+                x2={item.neckline.x2}
+                y2={item.neckline.y2}
+              />
+            </>}
             {item.showLabel && <text x={item.labelX} y={item.labelY}>{item.displayName}</text>}
             <title>{`${item.displayName} · ${item.state === 'forming' ? '形成中' : item.state === 'confirmed' ? '已确认' : '已失效'} · 评分 ${item.score.toFixed(2)}`}</title>
           </g>

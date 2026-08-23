@@ -33,7 +33,7 @@ const run: TrendAnalysisRun = {
     } },
     { item_id: 'double-bottom', item_type: 'pattern', payload: {
       display_name: '双底', completion_state: 'forming', neckline_price: 12,
-      primary: true, score: 0.75,
+      horizon: 'short', interpretation_rank: 1, primary: true, score: 0.75,
       pivots: [
         { pivot_date: '2026-08-01', price: 10 },
         { pivot_date: '2026-08-10', price: 12 },
@@ -96,6 +96,30 @@ describe('generated analysis overlay projection', () => {
     expect(projectGeneratedTrendLines(run, chart, series, host, false, true)).toEqual([])
   })
 
+  it('projects only the highest-scoring line for each horizon and role', () => {
+    const withCandidates: TrendAnalysisRun = {
+      ...run,
+      items: [...run.items, {
+        item_id: 'line-short-weaker', item_type: 'line', payload: {
+          kind: 'support', horizon: 'short',
+          first_pivot_date: '2026-08-01', first_price: 9,
+          second_pivot_date: '2026-08-10', second_price: 11,
+          score: 0.6, touch_count: 5,
+        },
+      }, {
+        item_id: 'line-short-resistance', item_type: 'line', payload: {
+          kind: 'resistance', horizon: 'short',
+          first_pivot_date: '2026-08-01', first_price: 12,
+          second_pivot_date: '2026-08-10', second_price: 11,
+          score: 0.7, touch_count: 2,
+        },
+      }],
+    }
+
+    expect(projectGeneratedTrendLines(withCandidates, chart, series, host, true, false).map(item => item.id))
+      .toEqual(['line-short', 'line-short-resistance'])
+  })
+
   it('projects key levels and estimated volume zones only into the price pane', () => {
     const zones = projectGeneratedZones(run, chart, series, host, true, true)
 
@@ -115,11 +139,36 @@ describe('generated analysis overlay projection', () => {
       id: 'double-bottom', displayName: '双底', state: 'forming', primary: true,
       boundaries: [],
     }))
-    expect(patterns[0].neckline).toEqual({ x1: 20, y1: 120, x2: 200, y2: 120 })
+    expect(patterns[0].neckline).toEqual({ x1: 20, y1: 120, x2: 80, y2: 120 })
     expect(projectGeneratedPatterns(run, chart, series, false)).toEqual([])
   })
 
-  it('projects and extends two-line consolidation boundaries', () => {
+  it('projects only the primary active pattern for each horizon', () => {
+    const pattern = run.items.find(item => item.item_id === 'double-bottom')!
+    const withCandidates: TrendAnalysisRun = {
+      ...run,
+      items: [
+        ...run.items,
+        { ...pattern, item_id: 'short-alternative', payload: {
+          ...pattern.payload, horizon: 'short', primary: false,
+          interpretation_rank: 2, completion_state: 'confirmed',
+        } },
+        { ...pattern, item_id: 'long-primary', payload: {
+          ...pattern.payload, horizon: 'long', primary: true,
+          interpretation_rank: 1, completion_state: 'confirmed',
+        } },
+        { ...pattern, item_id: 'long-invalidated', payload: {
+          ...pattern.payload, horizon: 'long', primary: false,
+          interpretation_rank: 2, completion_state: 'invalidated',
+        } },
+      ],
+    }
+
+    expect(projectGeneratedPatterns(withCandidates, chart, series, true).map(item => item.id))
+      .toEqual(['double-bottom', 'long-primary'])
+  })
+
+  it('keeps consolidation boundaries within the detected pattern interval', () => {
     const consolidation: TrendAnalysisRun = {
       ...run,
       items: [{
@@ -147,7 +196,7 @@ describe('generated analysis overlay projection', () => {
     const pattern = projectGeneratedPatterns(consolidation, chart, series, true)[0]
 
     expect(pattern.boundaries).toHaveLength(2)
-    expect(pattern.boundaries[0].x2).toBe(200)
+    expect(pattern.boundaries[0].x2).toBe(80)
   })
 
   it('projects all four broadening and contracting diamond segments', () => {
