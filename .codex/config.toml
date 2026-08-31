@@ -14,6 +14,9 @@ enabled_tools = [
   "get_custom_group",
   "get_daily_bars",
   "get_latest_quote",
+  "get_trend_analysis",
+  "get_ai_analysis",
+  "save_ai_analysis",
   "list_instrument_members",
   "list_symbol_boards",
 ]

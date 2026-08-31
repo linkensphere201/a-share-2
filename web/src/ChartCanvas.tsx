@@ -17,7 +17,7 @@ import {
 } from './drawingStore'
 import { barsInRenderPeriod, chooseAnchor, orientTrendLineAnchors, replaceTrendLineAnchor, translateTrendLineAnchors, type LineGeometry, type TrendLineOrientation } from './trendLines'
 import type { ThemeDefinition } from './themeStore'
-import { loadTrendAnalysis, type TrendAnalysisRun } from './trendAnalysisClient'
+import { loadTrendAnalysis, type GeneratedAnalysisItem, type TrendAnalysisRun } from './trendAnalysisClient'
 import { refreshLatestDailyBar, type LatestDailyRefreshFeedback } from './latestDailyRefreshClient'
 import { useIntradayDailyPolling } from './useIntradayDailyPolling'
 import {
@@ -200,6 +200,8 @@ type ChartCanvasProps = {
   trendAnalysisOverride?: TrendAnalysisRun | null
   reviewGeometryTarget?: TrendReviewGeometryTarget
   highlightedAnalysisItemId?: string
+  supplementalAnalysisItems?: GeneratedAnalysisItem[]
+  supplementalAnalysisOnly?: boolean
 }
 
 const rising = '#ef5350'
@@ -276,6 +278,8 @@ export function ChartCanvas({
   trendAnalysisOverride,
   reviewGeometryTarget,
   highlightedAnalysisItemId,
+  supplementalAnalysisItems = [],
+  supplementalAnalysisOnly = false,
 }: ChartCanvasProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -353,6 +357,16 @@ export function ChartCanvas({
   }>()
   const [trendAnalysis, setTrendAnalysis] = useState<TrendAnalysisRun | null>(null)
   const [trendAnalysisPreview, setTrendAnalysisPreview] = useState(false)
+  const displayedTrendAnalysis = useMemo(() => (
+    trendAnalysis && supplementalAnalysisItems.length > 0
+      ? {
+        ...trendAnalysis,
+        items: supplementalAnalysisOnly
+          ? supplementalAnalysisItems
+          : [...trendAnalysis.items, ...supplementalAnalysisItems],
+      }
+      : trendAnalysis
+  ), [trendAnalysis, supplementalAnalysisItems, supplementalAnalysisOnly])
 
   const averages = useMemo(() => ({
     ma5: movingAverage(bars, 5),
@@ -1518,14 +1532,14 @@ export function ChartCanvas({
   const macdPaneTop = projectPaneTop(chartRef.current, macdPaneRef.current)
   const openInterestPaneTop = projectPaneTop(chartRef.current, openInterestPaneRef.current)
   const generatedPivots = projectGeneratedPivots(
-    trendAnalysis,
+    displayedTrendAnalysis,
     chartRef.current,
     candleRef.current ?? closeLineRef.current,
     hostRef.current,
     showTentativePivots,
   )
   const generatedTrendLines = projectGeneratedTrendLines(
-    trendAnalysis,
+    displayedTrendAnalysis,
     chartRef.current,
     candleRef.current ?? closeLineRef.current,
     hostRef.current,
@@ -1533,7 +1547,7 @@ export function ChartCanvas({
     longTrendLinesVisible,
   )
   const generatedZones = projectGeneratedZones(
-    trendAnalysis,
+    displayedTrendAnalysis,
     chartRef.current,
     candleRef.current ?? closeLineRef.current,
     hostRef.current,
@@ -1541,13 +1555,13 @@ export function ChartCanvas({
     volumeZonesVisible,
   )
   const generatedPatterns = projectGeneratedPatterns(
-    trendAnalysis,
+    displayedTrendAnalysis,
     chartRef.current,
     candleRef.current ?? closeLineRef.current,
     patternsVisible,
   )
   const generatedBreakoutState = readGeneratedBreakoutState(
-    trendAnalysis, breakoutStateVisible,
+    displayedTrendAnalysis, breakoutStateVisible,
   )
   const projectedReviewGeometry = projectReviewGeometryHandles(
     reviewGeometryTarget,
@@ -1744,14 +1758,14 @@ export function ChartCanvas({
         onAnchorMoveEnd={event => finishTrendLineAnchorMove(event)}
         onAnchorMoveCancel={event => finishTrendLineAnchorMove(event, true)}
       />
-      {trendAnalysisEnabled && trendAnalysis && (
+      {trendAnalysisEnabled && displayedTrendAnalysis && (
         <GeneratedAnalysisOverlay
           pivots={generatedPivots}
           lines={generatedTrendLines}
           zones={generatedZones}
           patterns={generatedPatterns}
           breakoutState={generatedBreakoutState}
-          run={trendAnalysis}
+          run={displayedTrendAnalysis}
           preview={trendAnalysisPreview}
           highlightedItemId={highlightedAnalysisItemId}
         />

@@ -58,6 +58,8 @@ class ApiReader(Protocol):
         self, path: str, params: list[tuple[str, object]] | None = None
     ) -> dict[str, object]: ...
 
+    def post(self, path: str, payload: dict[str, object]) -> dict[str, object]: ...
+
 
 class LocalStockHarnessApi:
     """Small JSON client restricted to a loopback StockHarness HTTP endpoint."""
@@ -111,6 +113,36 @@ class LocalStockHarnessApi:
                 "invalid_response", "StockHarness API returned a non-object response"
             )
         return payload
+
+    def post(self, path: str, payload: dict[str, object]) -> dict[str, object]:
+        url = f"{self.base_url}{path}"
+        request = Request(
+            url,
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers={"Accept": "application/json", "Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=self.timeout_seconds) as response:
+                value = json.loads(response.read().decode("utf-8"))
+        except HTTPError as exc:
+            detail = f"StockHarness API returned HTTP {exc.code}"
+            try:
+                body = json.loads(exc.read().decode("utf-8"))
+                if isinstance(body, dict) and isinstance(body.get("detail"), str):
+                    detail = body["detail"]
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                pass
+            raise StockHarnessApiError("api_error", detail, status=exc.code) from exc
+        except (TimeoutError, socket.timeout) as exc:
+            raise StockHarnessApiError("request_timeout", "StockHarness API request timed out") from exc
+        except URLError as exc:
+            raise StockHarnessApiError("app_unavailable", "StockHarness APP is unavailable") from exc
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise StockHarnessApiError("invalid_response", "StockHarness API returned invalid JSON") from exc
+        if not isinstance(value, dict):
+            raise StockHarnessApiError("invalid_response", "StockHarness API returned a non-object response")
+        return value
 
 
 class StockHarnessMcpTools:
@@ -336,6 +368,25 @@ class StockHarnessMcpTools:
             "get_trend_analysis",
             lambda: self.api.get(
                 f"/api/analysis/trend/{normalized}", [("timeframe", timeframe)]
+            ),
+        )
+
+    def save_ai_analysis(self, payload: dict[str, object]) -> dict[str, object]:
+        return self._execute(
+            "save_ai_analysis",
+            lambda: self.api.post("/api/analysis/ai", payload),
+        )
+
+    def get_ai_analysis(
+        self, symbol: str, timeframe: str = "daily"
+    ) -> dict[str, object]:
+        normalized = _symbol(symbol)
+        if timeframe not in {"daily", "weekly", "monthly"}:
+            raise ValueError("timeframe must be daily, weekly, or monthly")
+        return self._execute(
+            "get_ai_analysis",
+            lambda: self.api.get(
+                f"/api/analysis/ai/{normalized}", [("timeframe", timeframe)]
             ),
         )
 

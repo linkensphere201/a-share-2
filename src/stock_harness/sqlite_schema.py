@@ -400,6 +400,27 @@ CREATE TABLE IF NOT EXISTS generated_analysis_items (
 CREATE INDEX IF NOT EXISTS generated_analysis_items_type
 ON generated_analysis_items(run_id, item_type, sequence);
 
+CREATE TABLE IF NOT EXISTS ai_analysis_reports (
+    report_id TEXT PRIMARY KEY,
+    instrument_id INTEGER NOT NULL,
+    timeframe TEXT NOT NULL CHECK (timeframe IN ('daily', 'weekly', 'monthly')),
+    as_of_date INTEGER NOT NULL,
+    source_run_id TEXT,
+    title TEXT NOT NULL,
+    conclusion_markdown TEXT NOT NULL,
+    framework_json TEXT NOT NULL,
+    references_json TEXT NOT NULL,
+    author TEXT NOT NULL,
+    revision INTEGER NOT NULL CHECK (revision > 0),
+    created_at_ms INTEGER NOT NULL,
+    UNIQUE (instrument_id, timeframe, revision),
+    FOREIGN KEY (instrument_id) REFERENCES instruments(instrument_id),
+    FOREIGN KEY (source_run_id) REFERENCES generated_analysis_runs(run_id)
+);
+
+CREATE INDEX IF NOT EXISTS ai_analysis_reports_latest
+ON ai_analysis_reports(instrument_id, timeframe, revision DESC);
+
 CREATE TABLE IF NOT EXISTS generated_analysis_targets (
     target_id INTEGER PRIMARY KEY,
     instrument_id INTEGER NOT NULL,

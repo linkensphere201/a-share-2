@@ -17,8 +17,16 @@ from stock_harness.mcp_tools import LocalStockHarnessApi, StockHarnessMcpTools
 
 
 READ_ONLY = ToolAnnotations(read_only_hint=True, open_world_hint=False)
+LOCAL_APPEND = ToolAnnotations(
+    read_only_hint=False,
+    destructive_hint=False,
+    idempotent_hint=False,
+    open_world_hint=False,
+)
 INSTRUCTIONS = (
-    "StockHarness is a local, read-only A-share and domestic-futures research source. "
+    "StockHarness is a local A-share and domestic-futures research source. Market, workspace, "
+    "and generated-analysis tools are read-only. save_ai_analysis is the only write tool and "
+    "may only append a versioned AI interpretation linked to explicit evidence references. "
     "Always report exact symbol, effective trading date, source, units, and final/intraday "
     "state. Treat intraday bars as provisional and continuous-series findings as derived "
     "evidence with explicit price basis and mapping. Never infer trading authorization or "
@@ -139,6 +147,51 @@ def build_server(tools: StockHarnessMcpTools | None = None) -> MCPServer:
     ) -> dict[str, object]:
         """Read official/preview trend evidence without triggering recalculation."""
         return await invoke(service.get_trend_analysis, symbol, timeframe)
+
+    @server.tool(title="Save structured AI chart analysis", annotations=LOCAL_APPEND)
+    async def save_ai_analysis(
+        symbol: Annotated[str, Field(min_length=1, max_length=200)],
+        as_of_date: Annotated[str, Field(description="Exact YYYY-MM-DD evidence cutoff.")],
+        title: Annotated[str, Field(min_length=1, max_length=160)],
+        conclusion_markdown: Annotated[str, Field(min_length=1, max_length=20_000)],
+        key_level_codes: Annotated[list[str], Field(min_length=1, max_length=50)],
+        structures: Annotated[list[dict[str, object]], Field(min_length=2, max_length=2)],
+        risk_reward: Annotated[list[dict[str, object]], Field(min_length=1, max_length=20)],
+        references: Annotated[list[dict[str, object]], Field(min_length=1, max_length=100)],
+        source_run_id: Annotated[str | None, Field(max_length=64)] = None,
+        timeframe: Literal["daily", "weekly", "monthly"] = "daily",
+        author: Annotated[str, Field(min_length=1, max_length=80)] = "codex",
+    ) -> dict[str, object]:
+        """Append an AI analysis with key levels, 7-14/14-28 day structure, and risk/reward.
+
+        Every reference needs a unique code cited as [CODE] in conclusion_markdown. References
+        may bind analysis_item_id from source_run_id or define validated level/line geometry.
+        structures must contain exactly small and medium horizons.
+        """
+        payload: dict[str, object] = {
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "as_of_date": as_of_date,
+            "source_run_id": source_run_id,
+            "title": title,
+            "conclusion_markdown": conclusion_markdown,
+            "framework": {
+                "key_level_codes": key_level_codes,
+                "structures": structures,
+                "risk_reward": risk_reward,
+            },
+            "references": references,
+            "author": author,
+        }
+        return await invoke(service.save_ai_analysis, payload)
+
+    @server.tool(title="Get latest AI chart analysis", annotations=READ_ONLY)
+    async def get_ai_analysis(
+        symbol: Annotated[str, Field(min_length=1, max_length=200)],
+        timeframe: Literal["daily", "weekly", "monthly"] = "daily",
+    ) -> dict[str, object]:
+        """Read the latest versioned AI interpretation and its frozen evidence references."""
+        return await invoke(service.get_ai_analysis, symbol, timeframe)
 
     @server.tool(title="List instrument members", annotations=READ_ONLY)
     async def list_instrument_members(

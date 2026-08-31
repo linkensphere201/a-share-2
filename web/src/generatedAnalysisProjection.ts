@@ -66,12 +66,17 @@ export type AnalysisItem = TrendAnalysisRun['items'][number]
 
 export function selectCoreTrendLineItems(items: AnalysisItem[]): AnalysisItem[] {
   const bestByRole = new Map<string, AnalysisItem>()
+  const aiReferences: AnalysisItem[] = []
   for (const item of items) {
     if (item.item_type !== 'line') continue
     const kind = item.payload.kind
     const horizon = item.payload.horizon
     if ((kind !== 'support' && kind !== 'resistance')
       || (horizon !== 'short' && horizon !== 'long')) continue
+    if (typeof item.payload.ai_reference_code === 'string') {
+      aiReferences.push(item)
+      continue
+    }
     const key = `${horizon}:${kind}`
     const current = bestByRole.get(key)
     const score = typeof item.payload.score === 'number' ? item.payload.score : 0
@@ -82,11 +87,12 @@ export function selectCoreTrendLineItems(items: AnalysisItem[]): AnalysisItem[] 
       bestByRole.set(key, item)
     }
   }
-  return [...bestByRole.values()]
+  return [...bestByRole.values(), ...aiReferences]
 }
 
 export function selectCorePatternItems(items: AnalysisItem[]): AnalysisItem[] {
   const patterns = items.filter(item => item.item_type === 'pattern')
+  const aiReferences = patterns.filter(item => typeof item.payload.ai_reference_code === 'string')
   const horizons = new Map<string, AnalysisItem[]>()
   for (const item of patterns) {
     const horizon = item.payload.horizon === 'long' || item.payload.horizon === 'short'
@@ -94,7 +100,7 @@ export function selectCorePatternItems(items: AnalysisItem[]): AnalysisItem[] {
       : 'unspecified'
     horizons.set(horizon, [...(horizons.get(horizon) ?? []), item])
   }
-  return [...horizons.values()].flatMap(candidates => {
+  const core = [...horizons.values()].flatMap(candidates => {
     const active = candidates.filter(item => item.payload.completion_state !== 'invalidated')
     const pool = active.length > 0 ? active : candidates
     const ranked = [...pool].sort((left, right) => {
@@ -117,14 +123,21 @@ export function selectCorePatternItems(items: AnalysisItem[]): AnalysisItem[] {
     })
     return ranked.slice(0, 1)
   })
+  const coreIds = new Set(core.map(item => item.item_id))
+  return [...core, ...aiReferences.filter(item => !coreIds.has(item.item_id))]
 }
 
 export function selectCoreZoneItems(items: AnalysisItem[]): AnalysisItem[] {
   const strongestByKind = new Map<string, AnalysisItem[]>()
+  const aiReferences: AnalysisItem[] = []
   for (const item of items) {
     if (item.item_type !== 'zone') continue
     const kind = item.payload.kind
     if (kind !== 'key-level' && kind !== 'estimated-volume-at-price') continue
+    if (typeof item.payload.ai_reference_code === 'string') {
+      aiReferences.push(item)
+      continue
+    }
     strongestByKind.set(kind, [...(strongestByKind.get(kind) ?? []), item])
   }
   return [...strongestByKind.values()].flatMap(candidates => (
@@ -138,7 +151,7 @@ export function selectCoreZoneItems(items: AnalysisItem[]): AnalysisItem[] {
       const rightScore = typeof right.payload.score === 'number' ? right.payload.score : 0
       return rightScore - leftScore
     }).slice(0, 2)
-  ))
+  )).concat(aiReferences)
 }
 
 export function projectReviewGeometryHandles(

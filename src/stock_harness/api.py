@@ -106,6 +106,51 @@ class TrendAnalysisInput(BaseModel):
     include_preview: bool = True
 
 
+class AiAnalysisReferenceInput(BaseModel):
+    code: str = Field(min_length=2, max_length=16, pattern=r"^[A-Z][A-Z0-9_-]*$")
+    kind: Literal["level", "line", "pattern"]
+    label: str = Field(min_length=1, max_length=100)
+    detail: str = Field(default="", max_length=500)
+    analysis_item_id: str | None = Field(default=None, max_length=200)
+    geometry: dict[str, Any] | None = None
+
+
+class AiStructureViewInput(BaseModel):
+    horizon: Literal["small", "medium"]
+    trend: str = Field(min_length=1, max_length=500)
+    pattern: str = Field(min_length=1, max_length=500)
+    state: str = Field(min_length=1, max_length=200)
+    reference_codes: list[str] = Field(min_length=1, max_length=20)
+
+
+class AiRiskRewardInput(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    direction: Literal["long", "short"] = "long"
+    trigger: str = Field(min_length=1, max_length=500)
+    entry_price: float = Field(gt=0)
+    stop_price: float = Field(gt=0)
+    target_price: float = Field(gt=0)
+    reference_codes: list[str] = Field(min_length=1, max_length=20)
+
+
+class AiAnalysisFrameworkInput(BaseModel):
+    key_level_codes: list[str] = Field(min_length=1, max_length=50)
+    structures: list[AiStructureViewInput] = Field(min_length=2, max_length=2)
+    risk_reward: list[AiRiskRewardInput] = Field(min_length=1, max_length=20)
+
+
+class AiAnalysisReportInput(BaseModel):
+    symbol: str = Field(min_length=1, max_length=200)
+    timeframe: Literal["daily", "weekly", "monthly"] = "daily"
+    as_of_date: date
+    source_run_id: str | None = Field(default=None, max_length=64)
+    title: str = Field(min_length=1, max_length=160)
+    conclusion_markdown: str = Field(min_length=1, max_length=20_000)
+    framework: AiAnalysisFrameworkInput
+    references: list[AiAnalysisReferenceInput] = Field(min_length=1, max_length=100)
+    author: str = Field(default="codex", min_length=1, max_length=80)
+
+
 class TrendReviewSourceInput(BaseModel):
     provider: str = Field(min_length=1, max_length=100)
     dataset: str = Field(min_length=1, max_length=200)
@@ -277,6 +322,51 @@ def create_app(
             "preview_expired": preview_expired,
             "effective": _json_analysis_run(effective),
         }
+
+    @app.get("/api/analysis/ai/{symbol}")
+    def latest_ai_analysis(
+        symbol: str,
+        request: Request,
+        timeframe: Literal["daily", "weekly", "monthly"] = "daily",
+    ) -> dict[str, object]:
+        report = _store(request).get_latest_ai_analysis_report(
+            _normalize_instrument_symbol(symbol), timeframe
+        )
+        if report is None:
+            raise HTTPException(status_code=404, detail="AI analysis report not found")
+        return report
+
+    @app.post("/api/analysis/ai", status_code=status.HTTP_201_CREATED)
+    def create_ai_analysis(
+        payload: AiAnalysisReportInput,
+        request: Request,
+    ) -> dict[str, object]:
+        selected_store = _store(request)
+        try:
+            framework, references = _validate_ai_analysis_payload(
+                selected_store, payload
+            )
+            report = selected_store.create_ai_analysis_report(
+                symbol=payload.symbol,
+                timeframe=payload.timeframe,
+                as_of_date=payload.as_of_date,
+                source_run_id=payload.source_run_id,
+                title=payload.title,
+                conclusion_markdown=payload.conclusion_markdown,
+                framework=framework,
+                references=references,
+                author=payload.author,
+            )
+        except ValueError as error:
+            LOGGER.warning(
+                "ai_analysis_rejected symbol=%s error=%s", payload.symbol, error
+            )
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        LOGGER.info(
+            "ai_analysis_created symbol=%s timeframe=%s revision=%s report_id=%s",
+            report["symbol"], report["timeframe"], report["revision"], report["report_id"],
+        )
+        return report
 
     @app.post("/api/trend-reviews", status_code=status.HTTP_201_CREATED)
     def create_trend_review(
@@ -1116,6 +1206,127 @@ def _materialize_custom_index(
 
 def _store(request: Request) -> SQLiteMarketDataStore:
     return request.app.state.store
+
+
+def _validate_ai_analysis_payload(
+    store: SQLiteMarketDataStore,
+    payload: AiAnalysisReportInput,
+) -> tuple[dict[str, object], list[dict[str, object]]]:
+    references = [item.model_dump(mode="json") for item in payload.references]
+    by_code = {str(item["code"]): item for item in references}
+    if len(by_code) != len(references):
+        raise ValueError("AI analysis reference codes must be unique")
+    horizons = {item.horizon for item in payload.framework.structures}
+    if horizons != {"small", "medium"}:
+        raise ValueError("AI analysis must contain small (7-14) and medium (14-28) structures")
+    used_codes = set(payload.framework.key_level_codes)
+    for structure in payload.framework.structures:
+        used_codes.update(structure.reference_codes)
+    for scenario in payload.framework.risk_reward:
+        used_codes.update(scenario.reference_codes)
+    missing = sorted(used_codes - set(by_code))
+    if missing:
+        raise ValueError(f"AI analysis references unknown codes: {', '.join(missing)}")
+    level_codes = set(payload.framework.key_level_codes)
+    if any(by_code[code]["kind"] != "level" for code in level_codes):
+        raise ValueError("key_level_codes may only reference level objects")
+    unmentioned = sorted(
+        code for code in by_code if f"[{code}]" not in payload.conclusion_markdown
+    )
+    if unmentioned:
+        raise ValueError(
+            "AI analysis conclusion must explicitly cite every reference code: "
+            + ", ".join(unmentioned)
+        )
+
+    source_items: dict[str, dict[str, object]] = {}
+    if payload.source_run_id:
+        candidates = [
+            store.get_latest_generated_analysis_run(
+                payload.symbol, "trend", payload.timeframe, namespace
+            )
+            for namespace in (AnalysisNamespace.OFFICIAL, AnalysisNamespace.PREVIEW)
+        ]
+        source = next(
+            (item for item in candidates if item and item["run_id"] == payload.source_run_id),
+            None,
+        )
+        if source is None:
+            raise ValueError("source_run_id must be the latest official or preview trend run")
+        source_items = {str(item["item_id"]): item for item in source["items"]}
+
+    expected_types = {"level": "zone", "line": "line", "pattern": "pattern"}
+    for reference in references:
+        item_id = reference.get("analysis_item_id")
+        geometry = reference.get("geometry")
+        if item_id:
+            source_item = source_items.get(str(item_id))
+            if source_item is None:
+                raise ValueError(
+                    f"reference {reference['code']} does not exist in source_run_id"
+                )
+            if source_item["item_type"] != expected_types[str(reference["kind"])]:
+                raise ValueError(f"reference {reference['code']} has an incompatible item type")
+            reference["snapshot"] = source_item
+        elif reference["kind"] == "pattern":
+            raise ValueError("custom pattern references are not supported; reference an existing item")
+        elif not isinstance(geometry, dict):
+            raise ValueError(f"reference {reference['code']} requires geometry")
+        else:
+            reference["geometry"] = _validate_ai_reference_geometry(
+                str(reference["kind"]), geometry
+            )
+
+    framework = payload.framework.model_dump(mode="json")
+    for scenario in framework["risk_reward"]:
+        entry = float(scenario["entry_price"])
+        stop = float(scenario["stop_price"])
+        target = float(scenario["target_price"])
+        if scenario["direction"] == "long":
+            risk, reward = entry - stop, target - entry
+        else:
+            risk, reward = stop - entry, entry - target
+        if risk <= 0 or reward <= 0:
+            raise ValueError(f"risk/reward scenario {scenario['name']} has invalid price ordering")
+        scenario["risk_reward_ratio"] = round(reward / risk, 4)
+    return framework, references
+
+
+def _validate_ai_reference_geometry(
+    kind: str, geometry: dict[str, Any]
+) -> dict[str, object]:
+    if kind == "level":
+        price = geometry.get("price")
+        lower = geometry.get("lower", price)
+        upper = geometry.get("upper", price)
+        if not all(isinstance(value, (int, float)) and value > 0 for value in (lower, upper)):
+            raise ValueError("level geometry requires positive price or lower/upper values")
+        if float(lower) > float(upper):
+            raise ValueError("level geometry lower must not exceed upper")
+        return {"lower": float(lower), "upper": float(upper)}
+    required = ("start_date", "start_price", "end_date", "end_price", "role")
+    if any(value not in geometry for value in required):
+        raise ValueError("line geometry requires start/end date, price, and role")
+    try:
+        start = date.fromisoformat(str(geometry["start_date"]))
+        end = date.fromisoformat(str(geometry["end_date"]))
+    except ValueError as error:
+        raise ValueError("line geometry dates must use YYYY-MM-DD") from error
+    if start >= end:
+        raise ValueError("line geometry start_date must precede end_date")
+    prices = (geometry["start_price"], geometry["end_price"])
+    if not all(isinstance(value, (int, float)) and value > 0 for value in prices):
+        raise ValueError("line geometry prices must be positive")
+    if geometry["role"] not in {"support", "resistance"}:
+        raise ValueError("line geometry role must be support or resistance")
+    horizon = geometry.get("horizon", "small")
+    if horizon not in {"small", "medium"}:
+        raise ValueError("line geometry horizon must be small or medium")
+    return {
+        "start_date": start.isoformat(), "start_price": float(prices[0]),
+        "end_date": end.isoformat(), "end_price": float(prices[1]),
+        "role": geometry["role"], "horizon": horizon,
+    }
 
 
 def _json_analysis_run(

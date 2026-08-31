@@ -25,6 +25,36 @@ class FakeApi:
         value = self.responses[path]
         return value() if callable(value) else value
 
+    def post(self, path, payload):
+        self.calls.append((path, payload))
+        if self.error:
+            raise self.error
+        value = self.responses[path]
+        return value(payload) if callable(value) else value
+
+
+def test_save_ai_analysis_uses_the_only_local_write_endpoint():
+    api = FakeApi({"/api/analysis/ai": {"report_id": "report-1", "revision": 1}})
+    tools = StockHarnessMcpTools(api)
+    payload = {"symbol": "000001.SZ", "framework": {}}
+
+    result = tools.save_ai_analysis(payload)
+
+    assert result["ok"] is True
+    assert result["operation"] == "save_ai_analysis"
+    assert api.calls == [("/api/analysis/ai", payload)]
+
+
+def test_get_ai_analysis_reads_the_latest_symbol_report():
+    api = FakeApi({
+        "/api/analysis/ai/000001.SZ": {"report_id": "report-2", "revision": 2}
+    })
+    result = StockHarnessMcpTools(api).get_ai_analysis("000001.sz")
+
+    assert result["ok"] is True
+    assert result["data"]["revision"] == 2
+    assert api.calls == [("/api/analysis/ai/000001.SZ", [("timeframe", "daily")])]
+
 
 def test_local_api_rejects_non_loopback_and_credentials():
     with pytest.raises(ValueError):

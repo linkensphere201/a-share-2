@@ -39,6 +39,32 @@ FROM trend_review_cases AS review
 JOIN instruments AS instrument USING (instrument_id)
 """
 
+_AI_ANALYSIS_REPORT_SELECT = """
+SELECT report.report_id, instrument.symbol, report.timeframe, report.as_of_date,
+       report.source_run_id, report.title, report.conclusion_markdown,
+       report.framework_json, report.references_json, report.author,
+       report.revision, report.created_at_ms
+FROM ai_analysis_reports AS report
+JOIN instruments AS instrument USING (instrument_id)
+"""
+
+
+def _ai_analysis_report(row: sqlite3.Row) -> dict[str, object]:
+    return {
+        "report_id": str(row[0]),
+        "symbol": str(row[1]),
+        "timeframe": str(row[2]),
+        "as_of_date": _date_from_key(int(row[3])),
+        "source_run_id": row[4],
+        "title": str(row[5]),
+        "conclusion_markdown": str(row[6]),
+        "framework": json.loads(str(row[7])),
+        "references": json.loads(str(row[8])),
+        "author": str(row[9]),
+        "revision": int(row[10]),
+        "created_at_ms": int(row[11]),
+    }
+
 
 def _review_labels_json(labels: Sequence[TrendReviewLabel]) -> str:
     return json.dumps([
@@ -82,6 +108,91 @@ def _trend_review_row(row: sqlite3.Row) -> dict[str, object]:
 
 
 class SQLiteAnalysisStoreMixin:
+    def create_ai_analysis_report(
+        self,
+        *,
+        symbol: str,
+        timeframe: str,
+        as_of_date: date,
+        source_run_id: str | None,
+        title: str,
+        conclusion_markdown: str,
+        framework: dict[str, object],
+        references: list[dict[str, object]],
+        author: str,
+    ) -> dict[str, object]:
+        report_id = str(uuid4())
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        with self._lock, self._transaction():
+            identity = self._canonical_instrument_identity(symbol)
+            if identity is None:
+                raise ValueError(f"AI analysis references unknown instrument: {symbol.strip()}")
+            canonical_symbol, instrument_id = identity
+            if source_run_id is not None:
+                source = self._connection.execute(
+                    """
+                    SELECT instrument.symbol, run.timeframe, run.as_of_date
+                    FROM generated_analysis_runs AS run
+                    JOIN instruments AS instrument USING (instrument_id)
+                    WHERE run.run_id = ? AND run.status = 'succeeded'
+                    """,
+                    (source_run_id,),
+                ).fetchone()
+                if source is None:
+                    raise ValueError("AI analysis source run does not exist or did not succeed")
+                if str(source[0]) != canonical_symbol or str(source[1]) != timeframe:
+                    raise ValueError("AI analysis source run belongs to another instrument or timeframe")
+                if _date_from_key(int(source[2])) != as_of_date:
+                    raise ValueError("AI analysis date must match its source run")
+            revision = int(self._connection.execute(
+                """
+                SELECT coalesce(max(revision), 0) + 1
+                FROM ai_analysis_reports
+                WHERE instrument_id = ? AND timeframe = ?
+                """,
+                (instrument_id, timeframe),
+            ).fetchone()[0])
+            self._connection.execute(
+                """
+                INSERT INTO ai_analysis_reports(
+                    report_id, instrument_id, timeframe, as_of_date, source_run_id,
+                    title, conclusion_markdown, framework_json, references_json,
+                    author, revision, created_at_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    report_id, instrument_id, timeframe, _date_key(as_of_date),
+                    source_run_id, title.strip(), conclusion_markdown.strip(),
+                    json.dumps(framework, ensure_ascii=False, sort_keys=True),
+                    json.dumps(references, ensure_ascii=False, sort_keys=True),
+                    author.strip(), revision, now_ms,
+                ),
+            )
+        report = self.get_ai_analysis_report(report_id)
+        assert report is not None
+        return report
+
+    def get_latest_ai_analysis_report(
+        self, symbol: str, timeframe: str
+    ) -> dict[str, object] | None:
+        with self._lock:
+            row = self._connection.execute(
+                _AI_ANALYSIS_REPORT_SELECT + """
+                WHERE instrument.symbol = ? AND report.timeframe = ?
+                ORDER BY report.revision DESC LIMIT 1
+                """,
+                (symbol.strip().upper(), timeframe),
+            ).fetchone()
+        return _ai_analysis_report(row) if row is not None else None
+
+    def get_ai_analysis_report(self, report_id: str) -> dict[str, object] | None:
+        with self._lock:
+            row = self._connection.execute(
+                _AI_ANALYSIS_REPORT_SELECT + " WHERE report.report_id = ?",
+                (report_id,),
+            ).fetchone()
+        return _ai_analysis_report(row) if row is not None else None
+
     def create_trend_review(self, spec: TrendReviewDraftSpec) -> dict[str, object]:
         spec.validate()
         review_id = str(uuid4())
@@ -713,12 +824,15 @@ class SQLiteAnalysisStoreMixin:
             rows = self._connection.execute(
                 """
                 SELECT run_id FROM generated_analysis_runs
-                WHERE (
+                WHERE ((
                     namespace = 'preview' AND expires_at_ms IS NOT NULL
                     AND expires_at_ms <= ?
                 ) OR (
                     status = 'failed' AND completed_at_ms IS NOT NULL
                     AND completed_at_ms <= ?
+                )) AND NOT EXISTS (
+                    SELECT 1 FROM ai_analysis_reports AS report
+                    WHERE report.source_run_id = generated_analysis_runs.run_id
                 )
                 """,
                 (now_ms - preview_retention_ms, now_ms - failed_retention_ms),

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import {
+  Bot,
   ChevronLeft,
   ChevronRight,
   ClipboardCheck,
@@ -36,6 +37,9 @@ type TradingSystemControlsProps = {
   onReview?: () => void
   explanationOpen?: boolean
   onExplanationOpenChange?: (open: boolean) => void
+  aiAnalysisAvailable?: boolean
+  aiAnalysisOpen?: boolean
+  onAiAnalysisOpenChange?: (open: boolean) => void
 }
 
 export function TradingSystemControls({
@@ -49,6 +53,9 @@ export function TradingSystemControls({
   onReview,
   explanationOpen = false,
   onExplanationOpenChange,
+  aiAnalysisAvailable = false,
+  aiAnalysisOpen = false,
+  onAiAnalysisOpenChange,
 }: TradingSystemControlsProps) {
   const descriptor = tradingSystemRegistry.get('trend')!
   const supported = descriptor.supportedInstrumentKinds.includes(instrumentKind)
@@ -147,6 +154,14 @@ export function TradingSystemControls({
           aria-pressed={explanationOpen}
           onClick={() => onExplanationOpenChange?.(!explanationOpen)}
         ><Info size={13}/></button>
+        <button
+          title="AI形态分析"
+          aria-label="打开AI形态分析"
+          disabled={!aiAnalysisAvailable}
+          className={aiAnalysisOpen ? 'active' : ''}
+          aria-pressed={aiAnalysisOpen}
+          onClick={() => onAiAnalysisOpenChange?.(!aiAnalysisOpen)}
+        ><Bot size={13}/></button>
         <button
           title="人工复核趋势分析"
           aria-label="打开趋势人工复核"

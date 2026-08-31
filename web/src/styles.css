@@ -696,6 +696,34 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .trend-explanation-panel > header span { display: flex; align-items: center; gap: 6px; color: var(--theme-text-strong); font-size: 10px; }
 .trend-explanation-panel > header button { width: 22px; height: 22px; display: grid; place-items: center; padding: 0; border: 0; background: transparent; color: var(--theme-muted); }
 .trend-explanation-panel > header button:hover { color: var(--theme-text-strong); background: var(--theme-hover); }
+.ai-analysis-panel { position: absolute; z-index: 17; top: 0; right: 0; bottom: 0; width: 340px; display: grid; grid-template-rows: 30px auto minmax(0, 1fr); overflow: hidden; border-left: 1px solid var(--theme-border); background: color-mix(in srgb, var(--theme-surface) 98%, transparent); color: var(--theme-text); box-shadow: -8px 0 24px #0008; font-size: 10px; font-weight: 400; }
+.ai-analysis-panel > header { display: flex; align-items: center; justify-content: space-between; padding: 0 5px 0 9px; border-bottom: 1px solid var(--theme-border); }
+.ai-analysis-panel > header span { display: flex; align-items: center; gap: 6px; color: var(--theme-text-strong); }
+.ai-analysis-panel > header button { width: 22px; height: 22px; display: grid; place-items: center; padding: 0; border: 0; background: transparent; color: var(--theme-muted); }
+.ai-analysis-panel > header button:hover { color: var(--theme-text-strong); background: var(--theme-hover); }
+.ai-analysis-meta { display: grid; gap: 3px; padding: 8px 10px; border-bottom: 1px solid var(--theme-border); }
+.ai-analysis-meta span { color: var(--theme-text-strong); font-size: 11px; }
+.ai-analysis-meta small { color: var(--theme-muted); font-size: 9px; }
+.ai-analysis-body { min-height: 0; overflow: auto; padding: 4px 10px 14px; }
+.ai-analysis-body > section { padding: 8px 0; border-bottom: 1px solid var(--theme-border); }
+.ai-analysis-body h3 { margin: 0 0 6px; color: var(--theme-muted); font-size: 9px; font-weight: 400; }
+.ai-reference-list { display: grid; gap: 4px; }
+.ai-reference-list article { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 3px 6px; padding: 5px; border: 1px solid transparent; border-radius: 3px; }
+.ai-reference-list article:hover, .ai-reference-list article:focus { border-color: var(--theme-accent); background: var(--theme-hover); outline: none; }
+.ai-reference-list article small { grid-column: 2; color: var(--theme-muted); font-size: 9px; line-height: 1.4; }
+.ai-reference-code { min-width: 25px; height: 18px; padding: 0 4px; border: 1px solid color-mix(in srgb, var(--theme-accent) 65%, var(--theme-border)); border-radius: 3px; background: color-mix(in srgb, var(--theme-accent) 14%, transparent); color: var(--theme-accent); font: 9px/1 ui-monospace, SFMono-Regular, Consolas, monospace; }
+.ai-reference-code:hover, .ai-reference-code:focus { background: color-mix(in srgb, var(--theme-accent) 28%, transparent); color: var(--theme-text-strong); outline: none; }
+.ai-structure-view, .ai-risk-reward { margin-top: 5px; padding: 6px; border-left: 2px solid var(--theme-border); background: color-mix(in srgb, var(--theme-hover) 55%, transparent); }
+.ai-structure-view > div, .ai-risk-reward > div { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; color: var(--theme-text-strong); }
+.ai-structure-view dl, .ai-risk-reward dl { display: grid; grid-template-columns: 34px 1fr; gap: 3px 6px; margin: 6px 0 0; }
+.ai-structure-view dt, .ai-risk-reward dt { color: var(--theme-muted); }
+.ai-structure-view dd, .ai-risk-reward dd { margin: 0; line-height: 1.4; }
+.ai-risk-reward > div i { margin-left: auto; color: var(--theme-accent); font: normal 10px/1 ui-monospace, SFMono-Regular, Consolas, monospace; }
+.ai-risk-reward p { margin: 5px 0; color: var(--theme-muted); line-height: 1.45; }
+.ai-risk-reward dl { grid-template-columns: repeat(6, auto); }
+.ai-analysis-conclusion { color: var(--theme-text); line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ai-analysis-conclusion .ai-reference-code { margin: 0 2px; vertical-align: 1px; }
+.ai-analysis-empty { align-self: start; margin: 12px; padding: 10px; border: 1px dashed var(--theme-border); color: var(--theme-muted); line-height: 1.6; }
 .trend-explanation-meta { min-height: 24px; display: flex; align-items: center; gap: 8px; padding: 0 9px; border-bottom: 1px solid var(--theme-border); color: var(--theme-muted); font-size: 8px; }
 .trend-explanation-meta .stale { color: #d8aa5d; }
 .trend-explanation-summary { margin: 0; padding: 8px 9px; border-bottom: 1px solid var(--theme-border); color: var(--theme-text); font-size: 9px; line-height: 1.5; }
@@ -714,6 +742,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 @container (max-width: 760px) {
   .instrument-window-body.explanation-open > .chart-stage { width: 100%; }
   .trend-explanation-panel { top: 34px; right: 6px; bottom: 24px; width: min(310px, calc(100cqw - 12px)); border: 1px solid var(--theme-border); border-radius: 4px; box-shadow: 0 12px 32px #000a; }
+  .ai-analysis-panel { top: 34px; right: 6px; bottom: 24px; width: min(340px, calc(100cqw - 12px)); border: 1px solid var(--theme-border); border-radius: 4px; box-shadow: 0 12px 32px #000a; }
 }
 @container (max-width: 430px) {
   .trading-system-settings-body { grid-template-columns: 1fr; }

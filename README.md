@@ -92,16 +92,18 @@ python -m stock_harness.benchmarks.sqlite_hot_path `
 
 ## Local Codex MCP Server
 
-StockHarness includes a separately launched, read-only stdio MCP server. It reads only
-from an already-running local StockHarness API and never opens SQLite, starts the APP,
-or exposes mutation and trading tools.
+StockHarness includes a separately launched local stdio MCP server. Market, workspace,
+collection, and generated-analysis tools remain read-only. The sole write tool,
+`save_ai_analysis`, can only append a validated, versioned AI chart interpretation; the
+server never opens SQLite directly, starts the APP, or exposes market-data mutation or
+trading tools.
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run_mcp.ps1
 ```
 
 The committed project-scoped `.codex/config.toml` uses that script, points only at
-the stable loopback APP API on port `8765`, and allow-lists the read-only tools.
+the stable loopback APP API on port `8765`, and explicitly allow-lists every tool.
 Codex loads project configuration for trusted repositories in a new or restarted
 session. The equivalent configuration is:
 
@@ -122,6 +124,9 @@ enabled_tools = [
   "get_custom_group",
   "get_daily_bars",
   "get_latest_quote",
+  "get_trend_analysis",
+  "get_ai_analysis",
+  "save_ai_analysis",
   "list_instrument_members",
   "list_symbol_boards",
 ]
@@ -138,6 +143,14 @@ market source plus `final` or `intraday` bar state. The largest history response
 `get_active_workspace` reads the latest in-memory snapshot published by the open frontend,
 including the active group, window relationships, resolved symbols, chart ranges and modes,
 latest data state, and symbol-owned trend-line anchors. The snapshot is not written to SQLite.
+
+`save_ai_analysis` requires an exact symbol/date and optional generated-analysis `run_id`.
+Every report must include coded key levels, one 7-14-session structure view, one 14-28-session
+structure view, and at least one entry/stop/target scenario. Risk/reward is calculated by the
+APP. Each `[K1]`, `[L1]`, or `[P1]` code binds either a compatible generated item or validated
+custom level/two-point-line geometry, enabling mouse hover and keyboard focus to highlight the
+same object in the chart-side AI panel. Reports are append-only and cannot alter market data,
+generated detector output, prior reports, workspace state, or trading state.
 Closing the Codex stdio session terminates the MCP process. Cancelled tool calls release
 their protocol task immediately while any abandoned local HTTP read remains bounded by
 `STOCK_HARNESS_MCP_TIMEOUT_SECONDS`; timeout responses use `request_timeout`.

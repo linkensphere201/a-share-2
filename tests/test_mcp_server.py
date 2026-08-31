@@ -32,7 +32,7 @@ class SlowHealthApi:
             self.finished = True
 
 
-def test_mcp_protocol_lists_only_read_tools_and_calls_health():
+def test_mcp_protocol_exposes_one_bounded_local_write_tool_and_calls_health():
     async def exercise():
         server = build_server(StockHarnessMcpTools(HealthApi()))
         async with Client(server, raise_exceptions=True) as client:
@@ -50,10 +50,18 @@ def test_mcp_protocol_lists_only_read_tools_and_calls_health():
                 "list_futures_coverage",
                 "get_futures_continuous",
                 "get_trend_analysis",
+                "get_ai_analysis",
+                "save_ai_analysis",
                 "list_instrument_members",
                 "list_symbol_boards",
             }
-            assert all(tool.annotations.read_only_hint for tool in listed.tools)
+            by_name = {tool.name: tool for tool in listed.tools}
+            assert by_name["save_ai_analysis"].annotations.read_only_hint is False
+            assert by_name["save_ai_analysis"].annotations.destructive_hint is False
+            assert all(
+                tool.annotations.read_only_hint
+                for tool in listed.tools if tool.name != "save_ai_analysis"
+            )
             assert all(tool.annotations.open_world_hint is False for tool in listed.tools)
             assert not any(
                 token in name
