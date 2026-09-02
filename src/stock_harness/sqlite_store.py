@@ -48,6 +48,7 @@ from stock_harness.sqlite_runtime import InterprocessWriterLock, ThreadOnlyWrite
 from stock_harness.sqlite_analysis_store import SQLiteAnalysisStoreMixin
 from stock_harness.sqlite_custom_index_store import SQLiteCustomIndexStoreMixin
 from stock_harness.sqlite_futures_store import SQLiteFuturesStoreMixin
+from stock_harness.sqlite_screener_store import SQLiteScreenerStoreMixin
 
 
 from stock_harness.sqlite_schema import (
@@ -70,7 +71,7 @@ def _custom_group_role(value: object) -> str:
         raise ValueError(f"invalid custom group member role: {role}")
     return role
 
-class SQLiteMarketDataStore(SQLiteFuturesStoreMixin, SQLiteAnalysisStoreMixin, SQLiteCustomIndexStoreMixin):
+class SQLiteMarketDataStore(SQLiteFuturesStoreMixin, SQLiteAnalysisStoreMixin, SQLiteCustomIndexStoreMixin, SQLiteScreenerStoreMixin):
     """Owns one local SQLite connection and serializes its short write transactions."""
 
     def __init__(

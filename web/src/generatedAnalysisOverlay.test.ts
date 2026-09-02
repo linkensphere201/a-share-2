@@ -120,6 +120,25 @@ describe('generated analysis overlay projection', () => {
       .toEqual(['line-short', 'line-short-resistance'])
   })
 
+  it('adds the exact screener major line only when it is highlighted', () => {
+    const withMajorLine: TrendAnalysisRun = {
+      ...run,
+      items: [...run.items, {
+        item_id: 'major-line', item_type: 'line', payload: {
+          kind: 'support', horizon: 'short', major_line_code: 'MDL-3M-01',
+          first_pivot_date: '2026-08-01', first_price: 9,
+          second_pivot_date: '2026-08-10', second_price: 11,
+          score: 0.1, touch_count: 2,
+        },
+      }],
+    }
+
+    expect(projectGeneratedTrendLines(withMajorLine, chart, series, host, true, false).map(item => item.id))
+      .toEqual(['line-short'])
+    expect(projectGeneratedTrendLines(withMajorLine, chart, series, host, true, false, 'major-line'))
+      .toEqual([expect.objectContaining({ id: 'line-short' }), expect.objectContaining({ id: 'major-line', label: 'MDL-3M-01' })])
+  })
+
   it('projects key levels and estimated volume zones only into the price pane', () => {
     const zones = projectGeneratedZones(run, chart, series, host, true, true)
 

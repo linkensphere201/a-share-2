@@ -38,6 +38,7 @@ from stock_harness.key_levels import (
     estimate_clear_space,
     estimate_daily_volume_profile,
 )
+from stock_harness.major_descending_lines import detect_major_descending_lines
 from stock_harness.pattern_ranking import rank_pattern_candidates
 from stock_harness.sqlite_store import SQLiteMarketDataStore
 from stock_harness.trend_pivots import (
@@ -627,6 +628,43 @@ def _generated_items(
             }),
         },
     )]
+    for line in detect_major_descending_lines(analysis_input.bars):
+        items.append(GeneratedAnalysisItem(
+            item_id=line.item_id,
+            item_type=GeneratedItemType.LINE,
+            payload={
+                "kind": "resistance",
+                "horizon": "long",
+                "major_line_code": line.code,
+                "major_line_period": line.period.value,
+                "major_line_state": line.state.value,
+                "first_pivot_date": line.first_date,
+                "first_price": line.first_price,
+                "first_confirmed_date": line.first_date,
+                "second_pivot_date": line.second_date,
+                "second_price": line.second_price,
+                "second_confirmed_date": line.second_date,
+                "available_date": line.second_date,
+                "slope_per_bar": line.slope_per_bar,
+                "projected_price": line.projected_price,
+                "distance_percent": line.distance_percent,
+                "touch_count": line.touch_count,
+                "penetration_count": line.penetration_count,
+                "anchor_span_bars": line.anchor_span_bars,
+                "decline_percent": line.decline_percent,
+                "breakout_date": line.breakout_date,
+                "volume_ratio_5": line.volume_ratio_5,
+                "support_price": line.support_price,
+                "invalidation_price": line.invalidation_price,
+                "first_target_price": line.first_target_price,
+                "major_target_price": line.major_target_price,
+                "first_risk_reward": line.first_risk_reward,
+                "major_risk_reward": line.major_risk_reward,
+                "score": line.score,
+                "score_components": {"shared_major_line_detector": 1.0},
+                "invalidation_reason": None,
+            },
+        ))
     long_bars = analysis_input.bars[-horizons.long:]
     long_pivots = ()
     pivots_by_horizon = {}

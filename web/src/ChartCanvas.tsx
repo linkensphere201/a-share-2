@@ -1545,6 +1545,7 @@ export function ChartCanvas({
     hostRef.current,
     shortTrendLinesVisible,
     longTrendLinesVisible,
+    highlightedAnalysisItemId,
   )
   const generatedZones = projectGeneratedZones(
     displayedTrendAnalysis,

@@ -811,6 +811,56 @@ class SQLiteAnalysisStoreMixin:
             ],
         }
 
+    def get_generated_analysis_run(self, run_id: str) -> dict[str, object] | None:
+        """Return an immutable succeeded analysis snapshot by its exact run ID."""
+        with self._lock:
+            row = self._connection.execute(
+                """
+                SELECT run.run_id, run.status, run.as_of_date,
+                       run.input_start_date, run.input_end_date, run.input_digest,
+                       run.algorithm_version, run.config_version,
+                       run.completion_state, run.attempt, run.duration_ms,
+                       run.warnings_json, run.failure_details,
+                       run.source_observed_at_ms, run.expires_at_ms,
+                       run.supersedes_run_id, run.created_at_ms, run.completed_at_ms,
+                       instrument.symbol
+                FROM generated_analysis_runs AS run
+                JOIN instruments AS instrument USING (instrument_id)
+                WHERE run.run_id = ? AND run.status = 'succeeded'
+                """,
+                (run_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            items = self._connection.execute(
+                """
+                SELECT item_id, item_type, parent_item_id, payload_json
+                FROM generated_analysis_items WHERE run_id = ? ORDER BY sequence
+                """,
+                (run_id,),
+            ).fetchall()
+        return {
+            "run_id": str(row[0]), "status": str(row[1]),
+            "as_of_date": _date_from_key(int(row[2])),
+            "input_start_date": _date_from_key(int(row[3])),
+            "input_end_date": _date_from_key(int(row[4])),
+            "input_digest": bytes(row[5]), "algorithm_version": str(row[6]),
+            "config_version": str(row[7]), "completion_state": str(row[8]),
+            "attempt": int(row[9]), "duration_ms": float(row[10]),
+            "warnings": json.loads(str(row[11])), "failure_details": row[12],
+            "source_observed_at_ms": row[13], "expires_at_ms": row[14],
+            "supersedes_run_id": row[15], "created_at_ms": int(row[16]),
+            "completed_at_ms": int(row[17]), "symbol": str(row[18]),
+            "stale": False, "stale_reasons": [],
+            "items": [
+                {
+                    "item_id": str(item[0]), "item_type": str(item[1]),
+                    "parent_item_id": item[2], "payload": json.loads(str(item[3])),
+                }
+                for item in items
+            ],
+        }
+
     def prune_generated_analysis_runs(
         self,
         now_ms: int,
@@ -833,6 +883,9 @@ class SQLiteAnalysisStoreMixin:
                 )) AND NOT EXISTS (
                     SELECT 1 FROM ai_analysis_reports AS report
                     WHERE report.source_run_id = generated_analysis_runs.run_id
+                ) AND NOT EXISTS (
+                    SELECT 1 FROM screener_candidates AS candidate
+                    WHERE candidate.analysis_run_id = generated_analysis_runs.run_id
                 )
                 """,
                 (now_ms - preview_retention_ms, now_ms - failed_retention_ms),

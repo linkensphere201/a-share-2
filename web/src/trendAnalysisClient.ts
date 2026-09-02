@@ -84,3 +84,12 @@ export async function loadTrendAnalysis(
   if (!response.ok) throw new Error(`HTTP ${response.status}`)
   return response.json() as Promise<TrendAnalysisSnapshot>
 }
+
+export async function loadExactTrendAnalysis(
+  runId: string,
+  signal?: AbortSignal,
+): Promise<TrendAnalysisRun> {
+  const response = await fetch(`/api/analysis/runs/${encodeURIComponent(runId)}`, { signal })
+  if (!response.ok) throw new Error(`HTTP ${response.status}`)
+  return response.json() as Promise<TrendAnalysisRun>
+}

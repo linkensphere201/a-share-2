@@ -378,16 +378,22 @@ export function GeneratedAnalysisOverlay({
           </g>
         ))}
         {lines.map(item => (
-          <line
-            key={item.id}
-            className={`generated-trend-line ${item.kind} ${item.horizon}${highlightedItemId === item.id ? ' highlighted' : ''}`}
-            x1={item.line.x1}
-            y1={item.line.y1}
-            x2={item.line.x2}
-            y2={item.line.y2}
-          >
-            <title>{`${item.horizon === 'short' ? '短期' : '长期'}${item.kind === 'support' ? '支撑' : '压力'} · 评分 ${item.score.toFixed(2)} · 触碰 ${item.touchCount}`}</title>
-          </line>
+          <g key={item.id} className={highlightedItemId === item.id ? 'generated-line-group highlighted' : 'generated-line-group'}>
+            <line
+              className={`generated-trend-line ${item.kind} ${item.horizon}${highlightedItemId === item.id ? ' highlighted' : ''}`}
+              x1={item.line.x1}
+              y1={item.line.y1}
+              x2={item.line.x2}
+              y2={item.line.y2}
+            >
+              <title>{`${item.label ? `${item.label} · ` : ''}${item.horizon === 'short' ? '短期' : '长期'}${item.kind === 'support' ? '支撑' : '压力'} · 评分 ${item.score.toFixed(2)} · 触碰 ${item.touchCount}`}</title>
+            </line>
+            {item.label && <text
+              className="generated-line-code"
+              x={Math.max(8, Math.min(item.line.x1, item.line.x2) + 8)}
+              y={Math.max(14, Math.min(item.line.y1, item.line.y2) - 6)}
+            >{item.label}</text>}
+          </g>
         ))}
         {pivots.map(pivot => {
           const markerY = pivot.kind === 'high' ? pivot.y - 7 : pivot.y + 7

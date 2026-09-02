@@ -22,6 +22,7 @@ export type GeneratedTrendLineGeometry = {
   line: LineGeometry
   score: number
   touchCount: number
+  label?: string
 }
 
 export type GeneratedZoneGeometry = {
@@ -220,11 +221,19 @@ export function projectGeneratedTrendLines(
   host: HTMLDivElement | null,
   showShort: boolean,
   showLong: boolean,
+  highlightedItemId?: string,
 ): GeneratedTrendLineGeometry[] {
   if (!run || !chart || !priceSeries || !host) return []
   const width = chart.timeScale().width()
   const height = chart.panes()[0]?.getHeight() ?? host.clientHeight
-  return selectCoreTrendLineItems(run.items).flatMap(item => {
+  const core = selectCoreTrendLineItems(run.items)
+  const highlighted = highlightedItemId
+    ? run.items.find(item => item.item_id === highlightedItemId && item.item_type === 'line')
+    : undefined
+  const selected = highlighted && !core.some(item => item.item_id === highlighted.item_id)
+    ? [...core, highlighted]
+    : core
+  return selected.flatMap(item => {
     if (item.item_type !== 'line') return []
     const kind = item.payload.kind
     const horizon = item.payload.horizon
@@ -249,6 +258,7 @@ export function projectGeneratedTrendLines(
       line: extendLineToBounds({ x1, y1, x2, y2 }, width, height),
       score: typeof item.payload.score === 'number' ? item.payload.score : 0,
       touchCount: typeof item.payload.touch_count === 'number' ? item.payload.touch_count : 0,
+      label: typeof item.payload.major_line_code === 'string' ? item.payload.major_line_code : undefined,
     }]
   })
 }

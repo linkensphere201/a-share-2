@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Activity, BarChart3, FolderKanban, Gauge, LayoutGrid, MessageSquare, Palette, PanelRightClose, RefreshCw, Settings2 } from 'lucide-react'
+import { Activity, BarChart3, Filter, FolderKanban, Gauge, LayoutGrid, MessageSquare, Palette, PanelRightClose, RefreshCw, Settings2 } from 'lucide-react'
 import type { PriceMode, VisibleRange } from './chartTypes'
 import { InstrumentEditor } from './InstrumentEditor'
 import { CustomIndexManager } from './CustomIndexManager'
@@ -7,6 +7,7 @@ import { DailyNote } from './DailyNote'
 import { IntradaySubscriptionCoordinator, sendIntradaySubscription } from './intradaySubscription'
 import { logError, logInfo, logWarning } from './eventLogger'
 import { LayoutManager } from './LayoutManager'
+import { ScreenerWorkspace } from './ScreenerWorkspace'
 import { RuntimeEventBar } from './RuntimeEventBar'
 import { subscribeDrawingStore } from './drawingStore'
 import { applyTheme, loadTheme, persistTheme, themes, type ThemeDefinition } from './themeStore'
@@ -42,6 +43,7 @@ export function StockWorkspace() {
   const [chatOpen, setChatOpen] = useState(false)
   const [layoutManagerOpen, setLayoutManagerOpen] = useState(false)
   const [customIndexManagerOpen, setCustomIndexManagerOpen] = useState(false)
+  const [screenerOpen, setScreenerOpen] = useState(false)
   const [instrumentEditor, setInstrumentEditor] = useState<{ windowId?: string; tab: 'instruments' | 'groups' }>()
   const [resolvedWindowSymbols, setResolvedWindowSymbols] = useState<Record<string, string[]>>({})
   const [drawingRevision, setDrawingRevision] = useState(0)
@@ -377,6 +379,9 @@ export function StockWorkspace() {
   if (layoutManagerOpen) {
     return <LayoutManager workspace={workspace} onChange={setWorkspace} onClose={() => setLayoutManagerOpen(false)}/>
   }
+  if (screenerOpen) {
+    return <ScreenerWorkspace theme={theme} onClose={() => setScreenerOpen(false)}/>
+  }
 
   return (
     <main className={chatOpen ? 'workstation' : 'workstation chat-closed'}>
@@ -392,6 +397,7 @@ export function StockWorkspace() {
             )}
           </div>
           <div className="toolbar-actions">
+            <button className="command-button" title="选股器" aria-label="选股器" onClick={() => setScreenerOpen(true)}><Filter size={15}/>选股器</button>
             <select aria-label="切换窗口组" value={activeGroup.id} onChange={event => {
               const groupId = event.target.value
               logInfo('workspace', '切换活动窗体组', { from: activeGroup.id, to: groupId })

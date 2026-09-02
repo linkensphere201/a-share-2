@@ -421,6 +421,46 @@ CREATE TABLE IF NOT EXISTS ai_analysis_reports (
 CREATE INDEX IF NOT EXISTS ai_analysis_reports_latest
 ON ai_analysis_reports(instrument_id, timeframe, revision DESC);
 
+CREATE TABLE IF NOT EXISTS screener_runs (
+    run_id TEXT PRIMARY KEY,
+    strategy_id TEXT NOT NULL,
+    strategy_version TEXT NOT NULL,
+    as_of_date INTEGER NOT NULL,
+    parameters_json TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('running', 'succeeded', 'failed')),
+    universe_count INTEGER NOT NULL DEFAULT 0,
+    scanned_count INTEGER NOT NULL DEFAULT 0,
+    candidate_count INTEGER NOT NULL DEFAULT 0,
+    error TEXT,
+    started_at_ms INTEGER NOT NULL,
+    completed_at_ms INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS screener_runs_latest
+ON screener_runs(started_at_ms DESC);
+
+CREATE TABLE IF NOT EXISTS screener_candidates (
+    run_id TEXT NOT NULL,
+    rank INTEGER NOT NULL CHECK (rank > 0),
+    instrument_id INTEGER NOT NULL,
+    state TEXT NOT NULL CHECK (
+        state IN ('critical-breakout', 'breakout-retest', 'broken-out')
+    ),
+    score REAL NOT NULL,
+    line_item_id TEXT NOT NULL,
+    line_code TEXT NOT NULL,
+    analysis_run_id TEXT NOT NULL,
+    evidence_json TEXT NOT NULL,
+    PRIMARY KEY (run_id, instrument_id),
+    UNIQUE (run_id, rank),
+    FOREIGN KEY (run_id) REFERENCES screener_runs(run_id) ON DELETE CASCADE,
+    FOREIGN KEY (instrument_id) REFERENCES instruments(instrument_id),
+    FOREIGN KEY (analysis_run_id) REFERENCES generated_analysis_runs(run_id)
+) WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS screener_candidates_rank
+ON screener_candidates(run_id, rank);
+
 CREATE TABLE IF NOT EXISTS generated_analysis_targets (
     target_id INTEGER PRIMARY KEY,
     instrument_id INTEGER NOT NULL,

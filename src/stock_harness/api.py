@@ -32,6 +32,8 @@ from stock_harness.workspace_context import WorkspaceContextInput, WorkspaceCont
 from stock_harness.analysis_inputs import AnalysisHorizons, AnalysisTimeframe
 from stock_harness.analysis_results import AnalysisNamespace
 from stock_harness.trend_analysis import TrendAnalysisService
+from stock_harness.major_descending_lines import MajorLinePeriod, MajorLineState
+from stock_harness.screener import ScreenerBusyError, ScreenerService
 from stock_harness.trend_review_set import has_scoreable_expected_labels
 from stock_harness.trend_reviews import (
     TrendReviewDecision,
@@ -191,6 +193,19 @@ class TrendReviewUpdateInput(BaseModel):
     rationale: str = Field(default="", max_length=2000)
 
 
+class ScreenerRunInput(BaseModel):
+    strategy_id: Literal["major-descending-breakout"] = "major-descending-breakout"
+    periods: list[Literal["3m", "6m", "1y"]] = Field(
+        default_factory=lambda: ["3m", "6m", "1y"], min_length=1,
+    )
+    states: list[Literal["critical-breakout", "breakout-retest", "broken-out"]] = Field(
+        default_factory=lambda: ["critical-breakout", "breakout-retest", "broken-out"],
+        min_length=1,
+    )
+    max_results: int = Field(default=200, ge=1, le=500)
+    as_of_date: date | None = None
+
+
 def create_app(
     store: SQLiteMarketDataStore | None = None,
     provider_config: Path = Path("config/providers.local.yaml"),
@@ -225,6 +240,7 @@ def create_app(
             )
         else:
             app.state.store = store
+        app.state.screener = ScreenerService(app.state.store)
         yield
         if owned_store:
             app.state.store.close()
@@ -257,6 +273,51 @@ def create_app(
     @app.get("/api/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/api/screener/strategies")
+    def screener_strategies(request: Request) -> dict[str, object]:
+        return {"items": request.app.state.screener.strategies()}
+
+    @app.post("/api/screener/runs", status_code=status.HTTP_202_ACCEPTED)
+    def start_screener_run(payload: ScreenerRunInput, request: Request) -> dict[str, object]:
+        try:
+            return request.app.state.screener.start_run(
+                [MajorLinePeriod(item) for item in payload.periods],
+                [MajorLineState(item) for item in payload.states],
+                payload.max_results,
+                payload.as_of_date,
+            )
+        except ScreenerBusyError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @app.get("/api/screener/runs")
+    def list_screener_runs(
+        request: Request, limit: int = Query(default=10, ge=1, le=10)
+    ) -> dict[str, object]:
+        return {"items": _store(request).list_screener_runs(limit)}
+
+    @app.get("/api/screener/runs/{run_id}")
+    def get_screener_run(run_id: str, request: Request) -> dict[str, object]:
+        result = _store(request).get_screener_run(run_id)
+        if result is None:
+            raise HTTPException(status_code=404, detail="screener run not found")
+        return result
+
+    @app.get("/api/screener/runs/{run_id}/candidates")
+    def list_screener_candidates(run_id: str, request: Request) -> dict[str, object]:
+        selected_store = _store(request)
+        if selected_store.get_screener_run(run_id) is None:
+            raise HTTPException(status_code=404, detail="screener run not found")
+        return {"items": selected_store.list_screener_candidates(run_id)}
+
+    @app.get("/api/analysis/runs/{run_id}")
+    def generated_analysis_run(run_id: str, request: Request) -> dict[str, object]:
+        result = _store(request).get_generated_analysis_run(run_id)
+        if result is None:
+            raise HTTPException(status_code=404, detail="analysis run not found")
+        return _json_analysis_run(result)  # type: ignore[return-value]
 
     @app.post("/api/analysis/trend/recalculate")
     def recalculate_trend_analysis(
