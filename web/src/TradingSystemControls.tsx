@@ -40,6 +40,8 @@ type TradingSystemControlsProps = {
   aiAnalysisAvailable?: boolean
   aiAnalysisOpen?: boolean
   onAiAnalysisOpenChange?: (open: boolean) => void
+  recalculationAvailable?: boolean
+  recalculationDisabledReason?: string
 }
 
 export function TradingSystemControls({
@@ -56,6 +58,8 @@ export function TradingSystemControls({
   aiAnalysisAvailable = false,
   aiAnalysisOpen = false,
   onAiAnalysisOpenChange,
+  recalculationAvailable = true,
+  recalculationDisabledReason,
 }: TradingSystemControlsProps) {
   const descriptor = tradingSystemRegistry.get('trend')!
   const supported = descriptor.supportedInstrumentKinds.includes(instrumentKind)
@@ -120,11 +124,13 @@ export function TradingSystemControls({
           onClick={() => onChange({ ...state, isolate: !state.isolate })}
         ><Focus size={13}/></button>
         <button
-          title={eventLabel ? `\u66f4\u65b0\u6d4b\u7b97 \u00b7 ${breakoutState?.preview ? '\u76d8\u4e2d\u9884\u89c8 \u00b7 ' : ''}${eventLabel}` : '\u66f4\u65b0\u6d4b\u7b97'}
+          title={!recalculationAvailable
+            ? recalculationDisabledReason ?? '当前分析结果不可重新测算'
+            : eventLabel ? `\u66f4\u65b0\u6d4b\u7b97 \u00b7 ${breakoutState?.preview ? '\u76d8\u4e2d\u9884\u89c8 \u00b7 ' : ''}${eventLabel}` : '\u66f4\u65b0\u6d4b\u7b97'}
           aria-label="更新测算"
           className={breakoutState ? `trend-recalculate-event ${breakoutState.state}` : ''}
           data-event-label={eventLabel}
-          disabled={!state.enabled || !supported || recalculationState === 'running'}
+          disabled={!state.enabled || !supported || !recalculationAvailable || recalculationState === 'running'}
           onClick={() => void onRecalculate(state, true)}
         >
           <RefreshCw size={13}/>
@@ -165,7 +171,7 @@ export function TradingSystemControls({
         <button
           title="人工复核趋势分析"
           aria-label="打开趋势人工复核"
-          disabled={!state.enabled || !supported}
+          disabled={!state.enabled || !supported || !onReview}
           onClick={onReview}
         ><ClipboardCheck size={13}/></button>
         <button
@@ -233,7 +239,7 @@ export function TradingSystemControls({
             <span/>
             <button onClick={() => setSettingsOpen(false)}>取消</button>
             <button onClick={() => save(false)}>保存</button>
-            <button className="primary" disabled={recalculationState === 'running'} onClick={() => save(true)}>保存并重新测算</button>
+            <button className="primary" disabled={!recalculationAvailable || recalculationState === 'running'} onClick={() => save(true)}>保存并重新测算</button>
           </footer>
         </div>
       )}

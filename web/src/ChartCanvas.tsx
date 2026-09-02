@@ -683,7 +683,18 @@ export function ChartCanvas({
     }
     chart.timeScale().subscribeVisibleLogicalRangeChange(recalculateLod)
     recalculateLodRef.current = recalculateLod
-    const resizeObserver = new ResizeObserver(recalculateLod)
+    let observedHostSize = {
+      width: Math.round(hostRef.current.clientWidth),
+      height: Math.round(hostRef.current.clientHeight),
+    }
+    const resizeObserver = new ResizeObserver(entries => {
+      const bounds = entries[0]?.contentRect
+      if (!bounds) return
+      const next = { width: Math.round(bounds.width), height: Math.round(bounds.height) }
+      if (next.width === observedHostSize.width && next.height === observedHostSize.height) return
+      observedHostSize = next
+      recalculateLod()
+    })
     resizeObserver.observe(hostRef.current)
 
     chartRef.current = chart

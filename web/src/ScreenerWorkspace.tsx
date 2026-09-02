@@ -1,12 +1,19 @@
-import { useCallback, useEffect, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useState } from 'react'
 import { ArrowLeft, Filter, Play, RefreshCw } from 'lucide-react'
 import { ChartCanvas } from './ChartCanvas'
+import { TradingSystemControls } from './TradingSystemControls'
+import { TrendExplanationPanel } from './TrendExplanationPanel'
 import { logError, logInfo } from './eventLogger'
 import {
   listScreenerCandidates, listScreenerRuns, loadScreenerRun, startScreenerRun,
   type ScreenerCandidate, type ScreenerPeriod, type ScreenerRun, type ScreenerState,
 } from './screenerClient'
 import { loadExactTrendAnalysis, type TrendAnalysisRun } from './trendAnalysisClient'
+import {
+  createTradingSystemWindowState,
+  tradingSystemRegistry,
+  type TradingSystemWindowState,
+} from './tradingSystems'
 import type { ThemeDefinition } from './themeStore'
 
 const periodLabels: Record<ScreenerPeriod, string> = { '3m': '3个月', '6m': '半年', '1y': '1年' }
@@ -15,6 +22,7 @@ const stateLabels: Record<ScreenerState, string> = {
 }
 const selectedRunKey = 'stock-harness.screener.selected-run.v1'
 const selectedCandidateKey = 'stock-harness.screener.selected-candidate.v1'
+type ResultStateFilter = ScreenerState | 'all'
 
 export function ScreenerWorkspace({ theme, onClose }: { theme: ThemeDefinition; onClose: () => void }) {
   const [runs, setRuns] = useState<ScreenerRun[]>([])
@@ -25,7 +33,18 @@ export function ScreenerWorkspace({ theme, onClose }: { theme: ThemeDefinition; 
   const [periods, setPeriods] = useState<ScreenerPeriod[]>(['3m', '6m', '1y'])
   const [states, setStates] = useState<ScreenerState[]>(['critical-breakout', 'breakout-retest', 'broken-out'])
   const [maxResults, setMaxResults] = useState(200)
+  const [resultStateFilter, setResultStateFilter] = useState<ResultStateFilter>('all')
   const [error, setError] = useState('')
+
+  const filteredCandidates = useMemo(() => resultStateFilter === 'all'
+    ? candidates
+    : candidates.filter(item => item.state === resultStateFilter), [candidates, resultStateFilter])
+  const resultStateCounts = useMemo(() => Object.fromEntries(
+    (['critical-breakout', 'breakout-retest', 'broken-out'] as ScreenerState[]).map(state => [
+      state,
+      candidates.filter(item => item.state === state).length,
+    ]),
+  ) as Record<ScreenerState, number>, [candidates])
 
   const refreshRuns = useCallback(async (preferredId?: string) => {
     const values = await listScreenerRuns()
@@ -59,6 +78,11 @@ export function ScreenerWorkspace({ theme, onClose }: { theme: ThemeDefinition; 
   useEffect(() => {
     if (selected) window.localStorage.setItem(selectedCandidateKey, selected.symbol)
   }, [selected?.symbol])
+
+  useEffect(() => {
+    if (selected && filteredCandidates.some(item => item.symbol === selected.symbol)) return
+    setSelected(filteredCandidates[0])
+  }, [filteredCandidates, selected?.symbol])
 
   useEffect(() => {
     if (!selectedRun || selectedRun.status !== 'running') return
@@ -130,18 +154,24 @@ export function ScreenerWorkspace({ theme, onClose }: { theme: ThemeDefinition; 
       <section className="screener-results">
         <header><span>选股结果</span><small>{selectedRun?.as_of_date ?? '尚未运行'} · {selectedRun?.status === 'running' ? `扫描 ${progress}%` : `${candidates.length} 个`}</small></header>
         {selectedRun?.status === 'running' && <div className="screener-progress"><i style={{ width: `${progress}%` }}/></div>}
+        <div className="screener-quick-filters" role="group" aria-label="结果快速过滤">
+          <button className={resultStateFilter === 'all' ? 'active' : ''} aria-label="快速过滤：全部" onClick={() => setResultStateFilter('all')}>全部 <small>{candidates.length}</small></button>
+          {(['critical-breakout', 'breakout-retest', 'broken-out'] as ScreenerState[]).map(state => <button
+            key={state}
+            className={resultStateFilter === state ? 'active' : ''}
+            aria-label={`快速过滤：${stateLabels[state]}`}
+            onClick={() => setResultStateFilter(state)}
+          >{stateLabels[state]} <small>{resultStateCounts[state]}</small></button>)}
+        </div>
         <div className="screener-result-head"><span>#</span><span>标的</span><span>周期/状态</span><span>得分</span></div>
-        <div className="screener-scroll">{selectedRun?.status === 'failed' && <div className="screener-empty compact error">{selectedRun.error ?? '选股任务失败'}</div>}{selectedRun?.status === 'succeeded' && candidates.length === 0 && <div className="screener-empty compact">本轮没有符合条件的标的</div>}{candidates.map(item => <button key={item.symbol} className={selected?.symbol === item.symbol ? 'active' : ''} onClick={() => setSelected(item)}>
+        <div className="screener-scroll">{selectedRun?.status === 'failed' && <div className="screener-empty compact error">{selectedRun.error ?? '选股任务失败'}</div>}{selectedRun?.status === 'succeeded' && candidates.length === 0 && <div className="screener-empty compact">本轮没有符合条件的标的</div>}{candidates.length > 0 && filteredCandidates.length === 0 && <div className="screener-empty compact">当前状态没有符合条件的标的</div>}{filteredCandidates.map(item => <button key={item.symbol} className={selected?.symbol === item.symbol ? 'active' : ''} onClick={() => setSelected(item)}>
           <span>{item.rank}</span><span><b>{item.name}</b><small>{item.symbol}</small></span><span><b>{periodLabels[item.evidence.period]}</b><small>{stateLabels[item.state]}</small></span><span>{item.score.toFixed(1)}</span>
         </button>)}</div>
       </section>
       <section className="screener-chart-pane">
         <header>{selected ? <><span>{selected.name}</span><small>{selected.line_code} · {periodLabels[selected.evidence.period]} · {stateLabels[selected.state]}</small></> : <span>个股 K 线</span>}</header>
         <div className="screener-chart-body">{selected && analysis
-          ? <ChartCanvas symbol={selected.symbol} instrumentName={selected.name} instrumentKind="stock" focused theme={theme}
-              range="1Y" priceMode="normal" volumeVisible indicator="none" settlementVisible={false} openInterestVisible={false}
-              trendAnalysisEnabled shortTrendLinesVisible longTrendLinesVisible keyLevelsVisible volumeZonesVisible patternsVisible breakoutStateVisible
-              asOfDate={selectedRun?.as_of_date} trendAnalysisOverride={analysis} highlightedAnalysisItemId={selected.line_item_id}/>
+          ? <ScreenerChart key={selected.analysis_run_id} candidate={selected} analysis={analysis} asOfDate={selectedRun?.as_of_date} theme={theme}/>
           : <div className="screener-empty">选择一条结果查看 K 线与形态分析</div>}</div>
         {selected && <footer className="screener-evidence">
           <span><small>边界</small>{selected.evidence.projected_price.toFixed(2)}</span>
@@ -157,6 +187,75 @@ export function ScreenerWorkspace({ theme, onClose }: { theme: ThemeDefinition; 
     </section>
   </main>
 }
+
+const ScreenerChart = memo(function ScreenerChart({
+  candidate,
+  analysis,
+  asOfDate,
+  theme,
+}: {
+  candidate: ScreenerCandidate
+  analysis: TrendAnalysisRun
+  asOfDate?: string
+  theme: ThemeDefinition
+}) {
+  const [trendState, setTrendState] = useState<TradingSystemWindowState>(() => ({
+    ...createTradingSystemWindowState(tradingSystemRegistry.get('trend')!),
+    enabled: true,
+    analysisStatus: 'current',
+  }))
+  const [explanationOpen, setExplanationOpen] = useState(false)
+  const [highlightedItemId, setHighlightedItemId] = useState<string | undefined>(candidate.line_item_id)
+  const layers = trendState.layers
+  return <div className={explanationOpen ? 'screener-chart-runtime explanation-open' : 'screener-chart-runtime'}>
+    <TradingSystemControls
+      instrumentKind="stock"
+      state={trendState}
+      analysisRun={analysis}
+      onChange={setTrendState}
+      onRecalculate={() => undefined}
+      recalculationAvailable={false}
+      recalculationDisabledReason="历史选股结果使用当轮固化分析，不支持重新测算"
+      explanationOpen={explanationOpen}
+      onExplanationOpenChange={open => {
+        setExplanationOpen(open)
+        if (!open) setHighlightedItemId(candidate.line_item_id)
+      }}
+    />
+    <ChartCanvas
+      symbol={candidate.symbol}
+      instrumentName={candidate.name}
+      instrumentKind="stock"
+      focused
+      theme={theme}
+      range="1Y"
+      priceMode="normal"
+      volumeVisible
+      indicator="none"
+      settlementVisible={false}
+      openInterestVisible={false}
+      trendAnalysisEnabled={trendState.enabled}
+      shortTrendLinesVisible={layers['short-trend-lines'] !== false}
+      longTrendLinesVisible={layers['long-trend-lines'] !== false}
+      keyLevelsVisible={layers['key-levels'] !== false}
+      volumeZonesVisible={layers['volume-zones'] !== false}
+      patternsVisible={layers.patterns !== false}
+      breakoutStateVisible={layers['breakout-state'] !== false}
+      trendIsolation={trendState.isolate}
+      asOfDate={asOfDate}
+      trendAnalysisOverride={trendState.enabled ? analysis : null}
+      highlightedAnalysisItemId={highlightedItemId}
+    />
+    {explanationOpen && <TrendExplanationPanel
+      run={analysis}
+      onHighlightItemChange={itemId => setHighlightedItemId(itemId ?? candidate.line_item_id)}
+      onClose={() => {
+        setExplanationOpen(false)
+        setHighlightedItemId(candidate.line_item_id)
+      }}
+    />}
+  </div>
+})
 
 function formatRunDate(value: string) { return value.replaceAll('-', '').slice(4) + ' 选股结果' }
 function signed(value: number) { return `${value > 0 ? '+' : ''}${value.toFixed(2)}` }

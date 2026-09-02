@@ -35,6 +35,36 @@ describe('ScreenerWorkspace', () => {
     expect(screen.getByTestId('screener-chart').dataset.date).toBe('2026-09-01')
     expect(screen.getByText('MDL-1Y-01 · 1年 · 突破回踩')).toBeTruthy()
     expect(screen.getByText('0901 选股结果')).toBeTruthy()
+    expect(screen.getByRole('button', { name: '打开趋势分析结果说明' })).toBeTruthy()
+  })
+
+  it('filters persisted candidates by breakout state without starting another run', async () => {
+    const brokenOut = {
+      ...candidate,
+      rank: 2,
+      symbol: '000002.SZ',
+      name: '已突破标的',
+      state: 'broken-out',
+      analysis_run_id: 'analysis-2',
+      line_item_id: 'major-line-2',
+    }
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/candidates')) return response({ items: [candidate, brokenOut] })
+      if (url.includes('/api/analysis/runs/')) return response(analysis)
+      if (url.includes('/api/screener/runs?')) return response({ items: [{ ...run, candidate_count: 2 }] })
+      throw new Error(`unexpected URL ${url}`)
+    }))
+    const user = userEvent.setup()
+    render(<ScreenerWorkspace theme={themes[0]} onClose={() => undefined}/>)
+
+    expect(await screen.findByText('000001.SZ')).toBeTruthy()
+    expect(screen.getAllByText('000002.SZ').length).toBeGreaterThan(0)
+    await user.click(screen.getByRole('button', { name: '快速过滤：已突破' }))
+
+    expect(screen.queryByText('000001.SZ')).toBeNull()
+    expect(screen.getAllByText('000002.SZ').length).toBeGreaterThan(0)
+    await waitFor(() => expect(screen.getByTestId('screener-chart').textContent).toBe('000002.SZ'))
   })
 
   it('starts a new run with the selected periods and states', async () => {
