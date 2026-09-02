@@ -49,7 +49,7 @@ def detect_directional_change_pivots(
     if not bars:
         return ()
     ordered = sorted(bars, key=lambda item: item.period_end)
-    atrs = _causal_atr(ordered, config.atr_period)
+    atrs = causal_average_true_range(ordered, config.atr_period)
     low_index = high_index = 0
     direction: str | None = None
     pivots: list[PricePivot] = []
@@ -129,7 +129,12 @@ def _threshold(
     return max(close * config.minimum_reversal_percent, atr * config.atr_multiplier)
 
 
-def _causal_atr(bars: Sequence[AnalysisBar], period: int) -> list[float]:
+def causal_average_true_range(
+    bars: Sequence[AnalysisBar], period: int = 14
+) -> list[float]:
+    """Return a causal simple moving average of true range for every bar."""
+    if period < 1:
+        raise ValueError("ATR period must be positive")
     true_ranges: list[float] = []
     result: list[float] = []
     previous_close: float | None = None

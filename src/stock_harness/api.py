@@ -195,8 +195,8 @@ class TrendReviewUpdateInput(BaseModel):
 
 class ScreenerRunInput(BaseModel):
     strategy_id: Literal["major-descending-breakout"] = "major-descending-breakout"
-    periods: list[Literal["3m", "6m", "1y"]] = Field(
-        default_factory=lambda: ["3m", "6m", "1y"], min_length=1,
+    periods: list[Literal["6m", "1y"]] = Field(
+        default_factory=lambda: ["6m", "1y"], min_length=1,
     )
     states: list[Literal["critical-breakout", "breakout-retest", "broken-out"]] = Field(
         default_factory=lambda: ["critical-breakout", "breakout-retest", "broken-out"],

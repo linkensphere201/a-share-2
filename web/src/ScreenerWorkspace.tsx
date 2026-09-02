@@ -30,7 +30,7 @@ export function ScreenerWorkspace({ theme, onClose }: { theme: ThemeDefinition; 
   const [candidates, setCandidates] = useState<ScreenerCandidate[]>([])
   const [selected, setSelected] = useState<ScreenerCandidate>()
   const [analysis, setAnalysis] = useState<TrendAnalysisRun | null>(null)
-  const [periods, setPeriods] = useState<ScreenerPeriod[]>(['3m', '6m', '1y'])
+  const [periods, setPeriods] = useState<ScreenerPeriod[]>(['6m', '1y'])
   const [states, setStates] = useState<ScreenerState[]>(['critical-breakout', 'breakout-retest', 'broken-out'])
   const [maxResults, setMaxResults] = useState(200)
   const [resultStateFilter, setResultStateFilter] = useState<ResultStateFilter>('all')
@@ -131,7 +131,7 @@ export function ScreenerWorkspace({ theme, onClose }: { theme: ThemeDefinition; 
     <header className="screener-toolbar">
       <button className="icon-button" title="返回工作台" aria-label="返回工作台" onClick={onClose}><ArrowLeft size={16}/></button>
       <span className="screener-title"><Filter size={17}/>选股器 <small>大斜边突破一期</small></span>
-      <fieldset><legend>周期</legend>{(['3m', '6m', '1y'] as ScreenerPeriod[]).map(item =>
+      <fieldset><legend>周期</legend>{(['6m', '1y'] as ScreenerPeriod[]).map(item =>
         <label key={item}><input type="checkbox" checked={periods.includes(item)} onChange={() => toggle(item, periods, setPeriods)}/>{periodLabels[item]}</label>)}</fieldset>
       <fieldset><legend>状态</legend>{(['critical-breakout', 'breakout-retest', 'broken-out'] as ScreenerState[]).map(item =>
         <label key={item}><input type="checkbox" checked={states.includes(item)} onChange={() => toggle(item, states, setStates)}/>{stateLabels[item]}</label>)}</fieldset>

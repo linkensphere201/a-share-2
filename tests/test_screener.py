@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 from stock_harness.api import create_app
 from stock_harness.major_descending_lines import MajorLinePeriod, MajorLineState
 from stock_harness.models import AdjustmentFactor, DailyBar, Instrument, InstrumentKind
-from stock_harness.screener import ScreenerService
+from stock_harness.screener import STRATEGY_VERSION, ScreenerService
 from stock_harness.sqlite_store import SQLiteMarketDataStore
 
 
@@ -20,8 +20,10 @@ def _store_with_major_edge() -> tuple[SQLiteMarketDataStore, list[date]]:
     highs: list[float] = []
     for index in range(250):
         boundary = 18 - (4.2 / 95) * (index - 20)
-        closes.append(boundary - 0.8)
-        highs.append(boundary - 0.55)
+        closes.append(boundary - 1.5)
+        highs.append(boundary - 1.2)
+    closes[:20] = [16.0] * 20
+    highs[:20] = [16.4] * 20
     highs[20], closes[20] = 18.0, 17.3
     highs[115], closes[115] = 13.8, 13.1
     highs[205], closes[205] = 9.82, 9.2
@@ -93,3 +95,35 @@ def test_screener_api_lists_runs_candidates_and_exact_analysis():
     assert candidates.json()["items"][0]["line_code"].startswith("MDL-1Y-")
     assert analysis.status_code == 200
     assert analysis.json()["run_id"] == candidate["analysis_run_id"]
+
+
+def test_new_run_rejects_legacy_quarter_period():
+    store, _ = _store_with_major_edge()
+    with TestClient(create_app(store)) as client:
+        response = client.post("/api/screener/runs", json={
+            "periods": ["3m"],
+            "states": ["critical-breakout"],
+            "max_results": 10,
+        })
+    store.close()
+
+    assert response.status_code == 422
+
+
+def test_v1_and_v2_runs_for_same_date_remain_distinct():
+    store, days = _store_with_major_edge()
+    try:
+        old = store.create_screener_run("major-descending-breakout", "v1", days[-1], {})
+        store.update_screener_progress(
+            str(old["run_id"]), universe_count=0, scanned_count=0
+        )
+        store.complete_screener_run(str(old["run_id"]), [])
+        new = ScreenerService(store).run_sync(
+            [MajorLinePeriod.YEAR], list(MajorLineState), 10, days[-1]
+        )
+
+        runs = store.list_screener_runs(10)
+        assert {item["run_id"] for item in runs} >= {old["run_id"], new["run_id"]}
+        assert {item["strategy_version"] for item in runs} >= {"v1", STRATEGY_VERSION}
+    finally:
+        store.close()

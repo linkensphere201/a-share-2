@@ -55,7 +55,7 @@ from stock_harness.trend_context import (
 )
 
 
-ALGORITHM_VERSION = "trend-causal-replay-v19"
+ALGORITHM_VERSION = "trend-causal-replay-v20"
 LOGGER = logging.getLogger(__name__)
 
 
@@ -649,7 +649,17 @@ def _generated_items(
                 "projected_price": line.projected_price,
                 "distance_percent": line.distance_percent,
                 "touch_count": line.touch_count,
+                "independent_touch_count": line.independent_touch_count,
                 "penetration_count": line.penetration_count,
+                "wick_breach_count": line.wick_breach_count,
+                "body_breach_count": line.body_breach_count,
+                "close_breach_count": line.close_breach_count,
+                "maximum_wick_breach_percent": line.maximum_wick_breach_percent,
+                "maximum_body_breach_percent": line.maximum_body_breach_percent,
+                "maximum_close_breach_percent": line.maximum_close_breach_percent,
+                "maximum_breach_atr": line.maximum_breach_atr,
+                "first_prominence_percent": line.first_prominence_percent,
+                "second_prominence_percent": line.second_prominence_percent,
                 "anchor_span_bars": line.anchor_span_bars,
                 "decline_percent": line.decline_percent,
                 "breakout_date": line.breakout_date,
@@ -709,8 +719,16 @@ def _generated_items(
                     "slope_per_bar": line.slope_per_bar,
                     "projected_price": line.projected_price,
                     "touch_count": line.touch_count,
+                    "independent_touch_count": line.independent_touch_count,
                     "penetration_count": line.penetration_count,
                     "body_cross_count": line.body_cross_count,
+                    "wick_breach_count": line.penetration_count,
+                    "body_breach_count": line.body_cross_count,
+                    "close_breach_count": line.close_breach_count,
+                    "maximum_wick_breach_percent": line.maximum_wick_breach_percent,
+                    "maximum_body_breach_percent": line.maximum_body_breach_percent,
+                    "maximum_close_breach_percent": line.maximum_close_breach_percent,
+                    "maximum_breach_atr": line.maximum_breach_atr,
                     "evaluated_bar_count": line.evaluated_bar_count,
                     "score": line.score,
                     "score_components": line.score_components,

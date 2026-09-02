@@ -42,6 +42,8 @@ describe('trend explanation', () => {
       .toEqual(['短期支撑：尚未向下破位', '长期压力：尚未向上突破'])
     expect(result.sections.find(value => value.id === 'trend-lines')?.items[0].detail)
       .toContain('尚未向下破位')
+    expect(result.sections.find(value => value.id === 'trend-lines')?.items[0].detail)
+      .toContain('独立确认 1 次；形成期最大越界 0.20 ATR')
   })
 
   it('describes the latest structural event without exposing provider prose', () => {
@@ -69,7 +71,8 @@ function line(id: string, horizon: string, kind: string, score: number) {
   return { item_id: id, item_type: 'line' as const, payload: {
     horizon, kind, score, first_pivot_date: '2026-06-01', first_price: 10,
     second_pivot_date: '2026-07-01', second_price: 11,
-    projected_price: 12, touch_count: 3, slope_per_bar: 0.1,
+    projected_price: 12, touch_count: 3, independent_touch_count: 1,
+    maximum_breach_atr: 0.2, slope_per_bar: 0.1,
   } }
 }
 

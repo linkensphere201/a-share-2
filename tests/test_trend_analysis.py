@@ -110,14 +110,14 @@ def test_explicit_recalculate_registers_and_persists_only_requested_timeframes()
             for item in results[0]["items"]
             if item["item_type"] == "anchor"
         } == {"short", "long"}
-        assert any(item["item_type"] == "line" for item in results[0]["items"])
+        assert not any(item["item_type"] == "line" for item in results[0]["items"])
         assert any(item["item_type"] == "zone" for item in results[0]["items"])
         evidence = next(
             item for item in results[0]["items"]
             if item["item_id"] == "key-level-volume-profile-evidence"
         )
         assert "not exact position cost" in evidence["payload"]["uncertainty"]
-        assert results[0]["algorithm_version"] == "trend-causal-replay-v19"
+        assert results[0]["algorithm_version"] == "trend-causal-replay-v20"
         pattern_items = [
             item for item in results[0]["items"] if item["item_type"] == "pattern"
         ]
@@ -163,7 +163,7 @@ def test_real_and_supported_continuous_futures_run_full_analysis_and_review():
                 as_of_date=days[-1],
             )[0]
             item_types = {item["item_type"] for item in result["items"]}
-            assert {"anchor", "line", "zone", "pattern", "evidence"} <= item_types
+            assert {"anchor", "zone", "pattern", "evidence"} <= item_types
             capabilities = next(
                 item["payload"] for item in result["items"]
                 if item["item_id"] == "analysis-input-capabilities"

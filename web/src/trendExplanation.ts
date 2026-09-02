@@ -67,11 +67,13 @@ function explainLine(item: AnalysisItem, allItems: AnalysisItem[]): TrendExplana
   const secondPrice = formatPrice(payload.second_price)
   const projected = numberValue(payload.projected_price)
   const touches = numberValue(payload.touch_count)
+  const independentTouches = numberValue(payload.independent_touch_count)
+  const maximumBreachAtr = numberValue(payload.maximum_breach_atr)
   const state = structuralStateFor(item.item_id, allItems)
   return {
     analysisItemId: item.item_id,
     title: `${horizon}${direction}${role}`,
-    detail: `${stringValue(payload.first_pivot_date) ?? '-'} ${firstPrice} → ${stringValue(payload.second_pivot_date) ?? '-'} ${secondPrice}${projected !== undefined ? `；当前投影 ${projected.toFixed(2)}` : ''}${touches !== undefined ? `；触碰 ${touches} 次` : ''}${state ? `；${structuralStateLabel(state)}` : ''}。`,
+    detail: `${stringValue(payload.first_pivot_date) ?? '-'} ${firstPrice} → ${stringValue(payload.second_pivot_date) ?? '-'} ${secondPrice}${projected !== undefined ? `；当前投影 ${projected.toFixed(2)}` : ''}${touches !== undefined ? `；触碰 ${touches} 次` : ''}${independentTouches !== undefined ? `，独立确认 ${independentTouches} 次` : ''}${maximumBreachAtr !== undefined ? `；形成期最大越界 ${maximumBreachAtr.toFixed(2)} ATR` : ''}${state ? `；${structuralStateLabel(state)}` : ''}。`,
     score: numberValue(payload.score),
   }
 }

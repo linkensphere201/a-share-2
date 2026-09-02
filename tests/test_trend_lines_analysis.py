@@ -34,8 +34,6 @@ CONFIG = TrendLineConfig(
     max_lines_per_kind=2,
     touch_tolerance_percent=0.02,
     body_tolerance_percent=0.01,
-    max_body_cross_ratio=0.2,
-    max_penetrations=1,
 )
 
 
@@ -114,3 +112,25 @@ def test_result_at_historical_cutoff_is_independent_of_future_suffix():
     replay = generate_trend_line_candidates(tuple(prefix), tuple(pivots), TrendHorizon.SHORT, CONFIG)
 
     assert replay == baseline
+
+
+def test_recent_non_event_wick_escape_is_not_excluded_from_envelope_check():
+    bars = _bars([
+        (9.5, 10.0, 9.0, 9.4),
+        (9.2, 9.6, 8.8, 9.1),
+        (9.0, 9.4, 8.6, 8.9),
+        (8.8, 9.0, 8.2, 8.6),
+        (8.6, 8.9, 8.0, 8.4),
+        (8.4, 8.5, 7.8, 8.2),
+        (8.2, 8.4, 7.6, 8.0),
+        (7.6, 12.0, 7.3, 7.5),
+    ])
+    pivots = [
+        _pivot(PivotKind.HIGH, 0, 10.0),
+        _pivot(PivotKind.HIGH, 3, 9.0),
+        _pivot(PivotKind.HIGH, 6, 8.4),
+    ]
+
+    assert generate_trend_line_candidates(
+        bars, pivots, TrendHorizon.SHORT, CONFIG
+    ) == ()

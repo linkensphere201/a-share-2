@@ -83,7 +83,7 @@ describe('ScreenerWorkspace', () => {
 
     const request = fetchMock.mock.calls.find(call => call[1]?.method === 'POST')
     expect(JSON.parse(String(request?.[1]?.body))).toMatchObject({
-      periods: ['3m', '6m', '1y'],
+      periods: ['6m', '1y'],
       states: ['critical-breakout', 'breakout-retest', 'broken-out'],
       max_results: 200,
     })

@@ -13,7 +13,7 @@ from stock_harness.analysis_inputs import (
     AnalysisHorizons, AnalysisInputMode, AnalysisInputService, AnalysisTimeframe,
 )
 from stock_harness.major_descending_lines import (
-    MajorDescendingLine, MajorLinePeriod, MajorLineState,
+    MajorDescendingLine, MajorLineDiagnostics, MajorLinePeriod, MajorLineState,
     detect_major_descending_lines,
 )
 from stock_harness.sqlite_store import SQLiteMarketDataStore
@@ -22,8 +22,8 @@ from stock_harness.trend_analysis import TrendAnalysisService
 
 LOGGER = logging.getLogger(__name__)
 STRATEGY_ID = "major-descending-breakout"
-STRATEGY_VERSION = "major-descending-breakout-v1"
-CONFIG_VERSION = "screener-major-descending-v1"
+STRATEGY_VERSION = "major-descending-breakout-v2"
+CONFIG_VERSION = "screener-major-descending-v2"
 DEFAULT_HORIZONS = AnalysisHorizons(60, 120, 250)
 
 
@@ -48,7 +48,7 @@ class ScreenerService:
             "strategy_id": STRATEGY_ID,
             "name": "大斜边突破",
             "version": STRATEGY_VERSION,
-            "periods": [item.value for item in MajorLinePeriod],
+            "periods": [MajorLinePeriod.HALF_YEAR.value, MajorLinePeriod.YEAR.value],
             "states": [item.value for item in MajorLineState],
             "final_bars_only": True,
         }]
@@ -113,6 +113,7 @@ class ScreenerService:
         started = time.perf_counter()
         universe = self._store.list_active_stock_symbols_for_screening()
         state_set = set(states)
+        diagnostics = MajorLineDiagnostics()
         candidates: list[tuple[dict[str, str], MajorDescendingLine, dict[str, object]]] = []
         self._store.update_screener_progress(
             run_id, universe_count=len(universe), scanned_count=0
@@ -128,7 +129,9 @@ class ScreenerService:
                     AnalysisInputMode.FINAL, DEFAULT_HORIZONS,
                 )
                 lines = [
-                    item for item in detect_major_descending_lines(analysis_input.bars, periods)
+                    item for item in detect_major_descending_lines(
+                        analysis_input.bars, periods, diagnostics=diagnostics
+                    )
                     if item.state in state_set
                 ]
                 if lines:
@@ -180,6 +183,17 @@ class ScreenerService:
             "screener_run_completed run_id=%s as_of=%s universe=%s matches=%s retained=%s duration_ms=%.1f",
             run_id, cutoff, len(universe), len(candidates), len(retained),
             (time.perf_counter() - started) * 1000,
+        )
+        LOGGER.info(
+            "screener_line_integrity run_id=%s pairs=%s accepted=%s "
+            "wick_breach=%s body_breach=%s close_breach=%s dominant_high=%s "
+            "missing_confirmation=%s",
+            run_id, diagnostics.anchor_pairs, diagnostics.accepted,
+            diagnostics.rejected_wick_breach,
+            diagnostics.rejected_body_breach,
+            diagnostics.rejected_close_breach,
+            diagnostics.rejected_dominant_high,
+            diagnostics.rejected_confirmation,
         )
 
 
