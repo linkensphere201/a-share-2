@@ -305,6 +305,19 @@ def create_app(
             raise HTTPException(status_code=404, detail="screener run not found")
         return result
 
+    @app.delete(
+        "/api/screener/runs/{run_id}", status_code=status.HTTP_204_NO_CONTENT
+    )
+    def delete_screener_run(run_id: str, request: Request) -> Response:
+        try:
+            deleted = _store(request).delete_screener_run(run_id)
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        if not deleted:
+            raise HTTPException(status_code=404, detail="screener run not found")
+        LOGGER.info("screener_run_deleted run_id=%s", run_id)
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
     @app.get("/api/screener/runs/{run_id}/candidates")
     def list_screener_candidates(run_id: str, request: Request) -> dict[str, object]:
         selected_store = _store(request)

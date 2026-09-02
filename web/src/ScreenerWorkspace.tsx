@@ -1,11 +1,11 @@
 import { memo, useCallback, useEffect, useMemo, useState } from 'react'
-import { ArrowLeft, Filter, Play, RefreshCw } from 'lucide-react'
+import { ArrowLeft, ChevronLeft, ChevronRight, Filter, ListPlus, Play, RefreshCw, Trash2 } from 'lucide-react'
 import { ChartCanvas } from './ChartCanvas'
 import { TradingSystemControls } from './TradingSystemControls'
 import { TrendExplanationPanel } from './TrendExplanationPanel'
 import { logError, logInfo } from './eventLogger'
 import {
-  listScreenerCandidates, listScreenerRuns, loadScreenerRun, startScreenerRun,
+  deleteScreenerRun, listScreenerCandidates, listScreenerRuns, loadScreenerRun, startScreenerRun,
   type ScreenerCandidate, type ScreenerPeriod, type ScreenerRun, type ScreenerState,
 } from './screenerClient'
 import { loadExactTrendAnalysis, type TrendAnalysisRun } from './trendAnalysisClient'
@@ -23,8 +23,22 @@ const stateLabels: Record<ScreenerState, string> = {
 const selectedRunKey = 'stock-harness.screener.selected-run.v1'
 const selectedCandidateKey = 'stock-harness.screener.selected-candidate.v1'
 type ResultStateFilter = ScreenerState | 'all'
+export type ScreenerTargetList = { id: string; title: string; instrumentCount: number }
+type ScreenerContextMenu =
+  | { kind: 'run'; x: number; y: number; run: ScreenerRun }
+  | { kind: 'candidate'; x: number; y: number; candidate: ScreenerCandidate; selectingTarget: boolean }
 
-export function ScreenerWorkspace({ theme, onClose }: { theme: ThemeDefinition; onClose: () => void }) {
+export function ScreenerWorkspace({
+  theme,
+  onClose,
+  targetLists,
+  onAddCandidateToList,
+}: {
+  theme: ThemeDefinition
+  onClose: () => void
+  targetLists: ScreenerTargetList[]
+  onAddCandidateToList: (windowId: string, candidate: ScreenerCandidate) => boolean
+}) {
   const [runs, setRuns] = useState<ScreenerRun[]>([])
   const [selectedRun, setSelectedRun] = useState<ScreenerRun>()
   const [candidates, setCandidates] = useState<ScreenerCandidate[]>([])
@@ -35,6 +49,8 @@ export function ScreenerWorkspace({ theme, onClose }: { theme: ThemeDefinition; 
   const [maxResults, setMaxResults] = useState(200)
   const [resultStateFilter, setResultStateFilter] = useState<ResultStateFilter>('all')
   const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
+  const [contextMenu, setContextMenu] = useState<ScreenerContextMenu>()
 
   const filteredCandidates = useMemo(() => resultStateFilter === 'all'
     ? candidates
@@ -106,6 +122,15 @@ export function ScreenerWorkspace({ theme, onClose }: { theme: ThemeDefinition; 
     return () => controller.abort()
   }, [selected?.analysis_run_id])
 
+  useEffect(() => {
+    if (!contextMenu) return
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setContextMenu(undefined)
+    }
+    window.addEventListener('keydown', closeOnEscape)
+    return () => window.removeEventListener('keydown', closeOnEscape)
+  }, [contextMenu])
+
   const toggle = <T extends string>(value: T, values: T[], setValues: (values: T[]) => void) => {
     setValues(values.includes(value) ? values.filter(item => item !== value) : [...values, value])
   }
@@ -122,6 +147,37 @@ export function ScreenerWorkspace({ theme, onClose }: { theme: ThemeDefinition; 
       setError(message)
       logError('screener', '大斜边选股任务启动失败', { error: message })
     }
+  }
+
+  const removeRun = async (run: ScreenerRun) => {
+    if (run.status === 'running') return
+    if (!window.confirm(`删除“${formatRunDate(run.as_of_date)}”？删除后无法恢复。`)) return
+    setError('')
+    try {
+      await deleteScreenerRun(run.run_id)
+      const remaining = runs.filter(item => item.run_id !== run.run_id)
+      setRuns(remaining)
+      if (selectedRun?.run_id === run.run_id) {
+        setSelectedRun(remaining[0])
+        if (remaining[0]) window.localStorage.setItem(selectedRunKey, remaining[0].run_id)
+        else window.localStorage.removeItem(selectedRunKey)
+      }
+      setContextMenu(undefined)
+      setNotice(`已删除 ${formatRunDate(run.as_of_date)}`)
+      logInfo('screener', '选股结果已删除', { runId: run.run_id })
+    } catch (value) {
+      const message = value instanceof Error ? value.message : String(value)
+      setError(message)
+      logError('screener', '选股结果删除失败', { runId: run.run_id, error: message })
+    }
+  }
+
+  const addCandidate = (target: ScreenerTargetList, candidate: ScreenerCandidate) => {
+    const added = onAddCandidateToList(target.id, candidate)
+    setContextMenu(undefined)
+    setNotice(added
+      ? `已将 ${candidate.name} 添加到 ${target.title}`
+      : `${candidate.name} 已在 ${target.title} 中`)
   }
 
   const progress = selectedRun?.universe_count
@@ -143,10 +199,14 @@ export function ScreenerWorkspace({ theme, onClose }: { theme: ThemeDefinition; 
       </button>
     </header>
     {error && <div className="screener-error">{error}</div>}
+    {notice && <button className="screener-notice" onClick={() => setNotice('')}>{notice}</button>}
     <section className="screener-grid">
       <aside className="screener-runs">
         <header>每轮选股结果 <span>{runs.length}/10</span></header>
-        <div className="screener-scroll">{runs.length === 0 && <div className="screener-empty compact">暂无历史结果</div>}{runs.map(run => <button key={run.run_id} className={selectedRun?.run_id === run.run_id ? 'active' : ''} onClick={() => setSelectedRun(run)}>
+        <div className="screener-scroll">{runs.length === 0 && <div className="screener-empty compact">暂无历史结果</div>}{runs.map(run => <button key={run.run_id} className={selectedRun?.run_id === run.run_id ? 'active' : ''} onClick={() => setSelectedRun(run)} onContextMenu={event => {
+          event.preventDefault()
+          setContextMenu({ kind: 'run', ...menuPosition(event.clientX, event.clientY), run })
+        }}>
           <span>{formatRunDate(run.as_of_date)}</span><small>{run.status === 'running' ? `${run.scanned_count}/${run.universe_count}` : run.status === 'failed' ? '失败' : `${run.candidate_count} 个标的`}</small>
           <i className={run.status}/>
         </button>)}</div>
@@ -164,7 +224,11 @@ export function ScreenerWorkspace({ theme, onClose }: { theme: ThemeDefinition; 
           >{stateLabels[state]} <small>{resultStateCounts[state]}</small></button>)}
         </div>
         <div className="screener-result-head"><span>#</span><span>标的</span><span>周期/状态</span><span>得分</span></div>
-        <div className="screener-scroll">{selectedRun?.status === 'failed' && <div className="screener-empty compact error">{selectedRun.error ?? '选股任务失败'}</div>}{selectedRun?.status === 'succeeded' && candidates.length === 0 && <div className="screener-empty compact">本轮没有符合条件的标的</div>}{candidates.length > 0 && filteredCandidates.length === 0 && <div className="screener-empty compact">当前状态没有符合条件的标的</div>}{filteredCandidates.map(item => <button key={item.symbol} className={selected?.symbol === item.symbol ? 'active' : ''} onClick={() => setSelected(item)}>
+        <div className="screener-scroll">{selectedRun?.status === 'failed' && <div className="screener-empty compact error">{selectedRun.error ?? '选股任务失败'}</div>}{selectedRun?.status === 'succeeded' && candidates.length === 0 && <div className="screener-empty compact">本轮没有符合条件的标的</div>}{candidates.length > 0 && filteredCandidates.length === 0 && <div className="screener-empty compact">当前状态没有符合条件的标的</div>}{filteredCandidates.map(item => <button key={item.symbol} className={selected?.symbol === item.symbol ? 'active' : ''} onClick={() => setSelected(item)} onContextMenu={event => {
+          event.preventDefault()
+          setSelected(item)
+          setContextMenu({ kind: 'candidate', ...menuPosition(event.clientX, event.clientY), candidate: item, selectingTarget: false })
+        }}>
           <span>{item.rank}</span><span><b>{item.name}</b><small>{item.symbol}</small></span><span><b>{periodLabels[item.evidence.period]}</b><small>{stateLabels[item.state]}</small></span><span>{item.score.toFixed(1)}</span>
         </button>)}</div>
       </section>
@@ -185,6 +249,31 @@ export function ScreenerWorkspace({ theme, onClose }: { theme: ThemeDefinition; 
         </footer>}
       </section>
     </section>
+    {contextMenu && <div className="screener-context-layer" onPointerDown={event => {
+      if (event.target === event.currentTarget) setContextMenu(undefined)
+    }} onContextMenu={event => event.preventDefault()}>
+      <div className="screener-context-menu" role="menu" style={{ left: contextMenu.x, top: contextMenu.y }}>
+        {contextMenu.kind === 'run' ? <>
+          <header>{formatRunDate(contextMenu.run.as_of_date)}</header>
+          <button role="menuitem" className="danger" disabled={contextMenu.run.status === 'running'} onClick={() => void removeRun(contextMenu.run)}>
+            <Trash2 size={14}/>删除本轮结果
+          </button>
+        </> : !contextMenu.selectingTarget ? <>
+          <header>{contextMenu.candidate.name}</header>
+          <button role="menuitem" onClick={() => setContextMenu({ ...contextMenu, selectingTarget: true })}>
+            <ListPlus size={14}/>添加到…<ChevronRight size={13}/>
+          </button>
+        </> : <>
+          <button role="menuitem" className="context-back" onClick={() => setContextMenu({ ...contextMenu, selectingTarget: false })}>
+            <ChevronLeft size={13}/>选择目标列表
+          </button>
+          {targetLists.length === 0 && <span className="context-empty">当前窗体组没有可写的固定列表</span>}
+          {targetLists.map(target => <button role="menuitem" key={target.id} onClick={() => addCandidate(target, contextMenu.candidate)}>
+            <span>{target.title}</span><small>{target.instrumentCount} 个标的</small>
+          </button>)}
+        </>}
+      </div>
+    </div>}
   </main>
 }
 
@@ -261,4 +350,11 @@ function formatRunDate(value: string) { return value.replaceAll('-', '').slice(4
 function signed(value: number) { return `${value > 0 ? '+' : ''}${value.toFixed(2)}` }
 function latestClose(value: ScreenerCandidate) {
   return value.evidence.projected_price * (1 + value.evidence.distance_percent / 100)
+}
+
+function menuPosition(x: number, y: number) {
+  return {
+    x: Math.max(8, Math.min(x, window.innerWidth - 230)),
+    y: Math.max(8, Math.min(y, window.innerHeight - 260)),
+  }
 }

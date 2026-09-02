@@ -288,6 +288,35 @@ export function deriveReferencedSymbols(
   return [...symbols].sort()
 }
 
+export function appendInstrumentToManualList(
+  group: WindowGroupState,
+  windowId: string,
+  instrument: Instrument,
+): { group: WindowGroupState; added: boolean } {
+  const target = group.windows.find(item => item.id === windowId)
+  if (
+    target?.type !== 'instrument-list'
+    || target.mode !== 'detached'
+    || !isListableInstrument(instrument)
+    || target.content.instruments.some(item => item.symbol === instrument.symbol)
+  ) {
+    return { group, added: false }
+  }
+  return {
+    group: {
+      ...group,
+      windows: group.windows.map(item => item.id === windowId ? {
+        ...target,
+        content: {
+          ...target.content,
+          instruments: [...target.content.instruments, instrument],
+        },
+      } : item),
+    },
+    added: true,
+  }
+}
+
 function normalizeWorkspace(value: unknown): WorkspaceState | undefined {
   if (!isRecord(value) || value.version !== 3 || !Array.isArray(value.groups)) return undefined
   const recovered = isRecord(value.recoveryGroups)

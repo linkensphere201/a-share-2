@@ -127,3 +127,48 @@ def test_v1_and_v2_runs_for_same_date_remain_distinct():
         assert {item["strategy_version"] for item in runs} >= {"v1", STRATEGY_VERSION}
     finally:
         store.close()
+
+
+def test_completed_screener_run_can_be_deleted_without_deleting_analysis():
+    store, days = _store_with_major_edge()
+    try:
+        run = ScreenerService(store).run_sync(
+            [MajorLinePeriod.YEAR], list(MajorLineState), 10, days[-1]
+        )
+        candidate = store.list_screener_candidates(str(run["run_id"]))[0]
+
+        assert store.delete_screener_run(str(run["run_id"])) is True
+        assert store.get_screener_run(str(run["run_id"])) is None
+        assert store.list_screener_candidates(str(run["run_id"])) == []
+        assert store.get_generated_analysis_run(candidate["analysis_run_id"]) is not None
+        assert store.delete_screener_run(str(run["run_id"])) is False
+    finally:
+        store.close()
+
+
+def test_running_screener_run_cannot_be_deleted():
+    store, days = _store_with_major_edge()
+    try:
+        run = store.create_screener_run("strategy", "v1", days[-1], {})
+        try:
+            store.delete_screener_run(str(run["run_id"]))
+        except ValueError as error:
+            assert "running" in str(error)
+        else:
+            raise AssertionError("running screener run must not be deleted")
+    finally:
+        store.close()
+
+
+def test_screener_delete_api_removes_finished_run_and_reports_missing_run():
+    store, days = _store_with_major_edge()
+    run = ScreenerService(store).run_sync(
+        [MajorLinePeriod.YEAR], list(MajorLineState), 10, days[-1]
+    )
+    with TestClient(create_app(store)) as client:
+        deleted = client.delete(f"/api/screener/runs/{run['run_id']}")
+        missing = client.delete(f"/api/screener/runs/{run['run_id']}")
+    store.close()
+
+    assert deleted.status_code == 204
+    assert missing.status_code == 404

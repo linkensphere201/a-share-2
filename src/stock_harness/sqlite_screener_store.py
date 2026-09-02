@@ -160,6 +160,20 @@ class SQLiteScreenerStoreMixin:
             ).fetchone()
         return _run_row(row) if row else None
 
+    def delete_screener_run(self, run_id: str) -> bool:
+        with self._lock, self._transaction():
+            row = self._connection.execute(
+                "SELECT status FROM screener_runs WHERE run_id = ?", (run_id,)
+            ).fetchone()
+            if row is None:
+                return False
+            if str(row[0]) == "running":
+                raise ValueError("running screener run cannot be deleted")
+            self._connection.execute(
+                "DELETE FROM screener_runs WHERE run_id = ?", (run_id,)
+            )
+        return True
+
     def list_screener_candidates(self, run_id: str) -> list[dict[str, object]]:
         with self._lock:
             rows = self._connection.execute(

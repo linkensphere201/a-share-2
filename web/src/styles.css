@@ -84,6 +84,20 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .screener-evidence span { min-width: 0; display: grid; gap: 2px; padding: 7px 8px; background: var(--theme-surface); color: var(--theme-text-strong); font-size: 11px; }
 .screener-evidence small { color: var(--theme-muted); font-size: 9px; }
 .screener-error { position: fixed; z-index: 50; top: 62px; right: 12px; max-width: 480px; padding: 8px 10px; border: 1px solid #8f4f4f; background: #3e2020; color: #ffd5d5; font-size: 11px; }
+.screener-notice { position: fixed; z-index: 50; right: 12px; bottom: 12px; max-width: 420px; padding: 7px 10px; border: 1px solid var(--theme-border); border-radius: 4px; color: var(--theme-text); background: var(--theme-raised); box-shadow: 0 8px 24px #0008; font-size: 10px; }
+.screener-context-layer { position: fixed; z-index: 80; inset: 0; }
+.screener-context-menu { position: fixed; width: 218px; max-height: 250px; overflow-y: auto; padding: 4px; border: 1px solid var(--theme-border); border-radius: 4px; background: var(--theme-raised); box-shadow: 0 12px 32px #000a; }
+.screener-context-menu header { padding: 6px 8px; overflow: hidden; border-bottom: 1px solid var(--theme-border); color: var(--theme-muted); text-overflow: ellipsis; white-space: nowrap; font-size: 9px; }
+.screener-context-menu button { width: 100%; min-height: 30px; display: flex; align-items: center; gap: 7px; padding: 5px 8px; border: 0; border-radius: 2px; color: var(--theme-text); background: transparent; text-align: left; font-size: 10px; }
+.screener-context-menu button:hover { background: var(--theme-hover); }
+.screener-context-menu button:disabled { opacity: .42; cursor: not-allowed; }
+.screener-context-menu button.danger { color: #e88c8c; }
+.screener-context-menu button > svg:last-child { margin-left: auto; }
+.screener-context-menu button > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.screener-context-menu button > small { margin-left: auto; color: var(--theme-muted); white-space: nowrap; font-size: 8px; }
+.screener-context-menu .context-back { color: var(--theme-muted); border-bottom: 1px solid var(--theme-border); }
+.screener-context-menu .context-back > svg { margin-left: 0; }
+.screener-context-menu .context-empty { display: block; padding: 10px 8px; color: var(--theme-muted); font-size: 9px; }
 .spin { animation: screener-spin 1s linear infinite; }
 @keyframes screener-spin { to { transform: rotate(360deg); } }
 .generated-line-code { fill: var(--theme-text-strong); font-size: 9px; font-family: Consolas, monospace; paint-order: stroke; stroke: var(--theme-base); stroke-width: 3px; }

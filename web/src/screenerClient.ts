@@ -61,6 +61,13 @@ export async function loadScreenerRun(runId: string, signal?: AbortSignal): Prom
   return json<ScreenerRun>(await fetch(`/api/screener/runs/${encodeURIComponent(runId)}`, { signal }))
 }
 
+export async function deleteScreenerRun(runId: string): Promise<void> {
+  const response = await fetch(`/api/screener/runs/${encodeURIComponent(runId)}`, {
+    method: 'DELETE',
+  })
+  if (!response.ok) await json<never>(response)
+}
+
 export async function listScreenerCandidates(runId: string, signal?: AbortSignal): Promise<ScreenerCandidate[]> {
   const payload = await json<{ items: ScreenerCandidate[] }>(
     await fetch(`/api/screener/runs/${encodeURIComponent(runId)}/candidates`, { signal }),

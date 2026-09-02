@@ -7,7 +7,8 @@ import { DailyNote } from './DailyNote'
 import { IntradaySubscriptionCoordinator, sendIntradaySubscription } from './intradaySubscription'
 import { logError, logInfo, logWarning } from './eventLogger'
 import { LayoutManager } from './LayoutManager'
-import { ScreenerWorkspace } from './ScreenerWorkspace'
+import { ScreenerWorkspace, type ScreenerTargetList } from './ScreenerWorkspace'
+import type { ScreenerCandidate } from './screenerClient'
 import { RuntimeEventBar } from './RuntimeEventBar'
 import { subscribeDrawingStore } from './drawingStore'
 import { applyTheme, loadTheme, persistTheme, themes, type ThemeDefinition } from './themeStore'
@@ -22,6 +23,7 @@ import { recalculateTrendAnalysis } from './trendAnalysisClient'
 import { beginTrendRequest, isCurrentTrendRequest } from './trendRequestGuard'
 import {
   chartRanges,
+  appendInstrumentToManualList,
   deriveReferencedSymbols,
   isChartableInstrument,
   isListableInstrument,
@@ -188,6 +190,45 @@ export function StockWorkspace() {
       return nextSelection ? applyListSelection(updated, id, nextSelection) : updated
     })
   }, [updateActiveGroup])
+
+  const screenerTargetLists = useMemo<ScreenerTargetList[]>(() => activeGroup.windows
+    .filter((item): item is InstrumentListWindowState => (
+      item.type === 'instrument-list' && item.mode === 'detached'
+    ))
+    .map(item => ({
+      id: item.id,
+      title: item.title,
+      instrumentCount: item.content.instruments.length,
+    })), [activeGroup.windows])
+
+  const addScreenerCandidateToList = useCallback((
+    windowId: string,
+    candidate: ScreenerCandidate,
+  ): boolean => {
+    const target = activeGroup.windows.find(item => item.id === windowId)
+    if (target?.type !== 'instrument-list' || target.mode !== 'detached') return false
+    if (target.content.instruments.some(item => item.symbol === candidate.symbol)) {
+      logInfo('screener', '选股标的已存在于目标列表', {
+        symbol: candidate.symbol, windowId,
+      })
+      return false
+    }
+    const instrument: Instrument = {
+      symbol: candidate.symbol,
+      name: candidate.name,
+      kind: candidate.kind,
+      exchange: candidate.exchange,
+      category: '个股',
+      rows: 0,
+    }
+    updateActiveGroup(group => appendInstrumentToManualList(
+      group, windowId, instrument,
+    ).group)
+    logInfo('screener', '选股标的已添加到固定列表', {
+      symbol: candidate.symbol, windowId,
+    })
+    return true
+  }, [activeGroup.windows, updateActiveGroup])
 
   const sortList = useCallback((id: string, sort: NonNullable<InstrumentListWindowState['sort']>) => {
     updateWindow(id, item => item.type === 'instrument-list' ? { ...item, sort } : item)
@@ -380,7 +421,12 @@ export function StockWorkspace() {
     return <LayoutManager workspace={workspace} onChange={setWorkspace} onClose={() => setLayoutManagerOpen(false)}/>
   }
   if (screenerOpen) {
-    return <ScreenerWorkspace theme={theme} onClose={() => setScreenerOpen(false)}/>
+    return <ScreenerWorkspace
+      theme={theme}
+      onClose={() => setScreenerOpen(false)}
+      targetLists={screenerTargetLists}
+      onAddCandidateToList={addScreenerCandidateToList}
+    />
   }
 
   return (

@@ -2,6 +2,7 @@
 
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  appendInstrumentToManualList,
   createDefaultWorkspace,
   createWindowGroup,
   chartRanges,
@@ -19,6 +20,37 @@ import { createTradingSystemWindowStates } from './tradingSystems'
 afterEach(() => window.localStorage.clear())
 
 describe('workspace persistence', () => {
+  it('appends a screener instrument only to writable manual lists and persists it', () => {
+    const state = createDefaultWorkspace()
+    const group = state.groups[0]
+    const list = group.windows.find(item => item.type === 'instrument-list')!
+    if (list.type !== 'instrument-list') throw new Error('expected list')
+    const candidate = {
+      symbol: '000001.SZ', name: '平安银行', kind: 'stock', exchange: 'SZ', rows: 0,
+    }
+
+    const appended = appendInstrumentToManualList(group, list.id, candidate)
+    const duplicate = appendInstrumentToManualList(appended.group, list.id, candidate)
+    const attachedGroup = {
+      ...appended.group,
+      windows: appended.group.windows.map(item => item.id === list.id
+        ? { ...list, mode: 'attached' as const }
+        : item),
+    }
+    const attached = appendInstrumentToManualList(attachedGroup, list.id, {
+      symbol: '000002.SZ', name: '万科A', kind: 'stock', exchange: 'SZ', rows: 0,
+    })
+
+    expect(appended.added).toBe(true)
+    expect(duplicate.added).toBe(false)
+    expect(attached.added).toBe(false)
+    saveWorkspace({ ...state, groups: [appended.group] })
+    const restored = loadWorkspace().groups[0].windows.find(item => item.id === list.id)
+    expect(restored?.type === 'instrument-list'
+      ? restored.content.instruments.map(item => item.symbol)
+      : []).toContain(candidate.symbol)
+  })
+
   it('rejects futures product catalog nodes from persisted list and chart targets', () => {
     const state = createDefaultWorkspace()
     const list = state.groups[0].windows.find(item => item.type === 'instrument-list')!

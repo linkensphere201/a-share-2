@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ScreenerWorkspace } from './ScreenerWorkspace'
 import { themes } from './themeStore'
@@ -28,7 +28,7 @@ describe('ScreenerWorkspace', () => {
       throw new Error(`unexpected URL ${url}`)
     }))
 
-    render(<ScreenerWorkspace theme={themes[0]} onClose={() => undefined}/>)
+    renderScreener()
 
     expect((await screen.findAllByText('测试标的')).length).toBeGreaterThan(0)
     await waitFor(() => expect(screen.getByTestId('screener-chart').dataset.line).toBe('major-line-1'))
@@ -56,7 +56,7 @@ describe('ScreenerWorkspace', () => {
       throw new Error(`unexpected URL ${url}`)
     }))
     const user = userEvent.setup()
-    render(<ScreenerWorkspace theme={themes[0]} onClose={() => undefined}/>)
+    renderScreener()
 
     expect(await screen.findByText('000001.SZ')).toBeTruthy()
     expect(screen.getAllByText('000002.SZ').length).toBeGreaterThan(0)
@@ -76,7 +76,7 @@ describe('ScreenerWorkspace', () => {
     })
     vi.stubGlobal('fetch', fetchMock)
     const user = userEvent.setup()
-    render(<ScreenerWorkspace theme={themes[0]} onClose={() => undefined}/>)
+    renderScreener()
 
     await screen.findByText('0/10')
     await user.click(screen.getByRole('button', { name: '开始选股' }))
@@ -88,7 +88,72 @@ describe('ScreenerWorkspace', () => {
       max_results: 200,
     })
   })
+
+  it('deletes a finished run from its context menu after confirmation', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.includes('/candidates')) return response({ items: [candidate] })
+      if (url.includes('/api/analysis/runs/')) return response(analysis)
+      if (url.includes('/api/screener/runs?')) return response({ items: [run] })
+      if (url === '/api/screener/runs/run-1' && init?.method === 'DELETE') {
+        return Promise.resolve(new Response(null, { status: 204 }))
+      }
+      throw new Error(`unexpected URL ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const user = userEvent.setup()
+    renderScreener()
+
+    const runButton = (await screen.findByText('0901 选股结果')).closest('button')!
+    fireEvent.contextMenu(runButton, { clientX: 40, clientY: 50 })
+    await user.click(screen.getByRole('menuitem', { name: '删除本轮结果' }))
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      '/api/screener/runs/run-1', { method: 'DELETE' },
+    ))
+    expect(screen.queryByText('0901 选股结果')).toBeNull()
+    expect(screen.getByText('已删除 0901 选股结果')).toBeTruthy()
+  })
+
+  it('adds a candidate to a selected writable list in the current group', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/candidates')) return response({ items: [candidate] })
+      if (url.includes('/api/analysis/runs/')) return response(analysis)
+      if (url.includes('/api/screener/runs?')) return response({ items: [run] })
+      throw new Error(`unexpected URL ${url}`)
+    }))
+    const add = vi.fn(() => true)
+    const user = userEvent.setup()
+    renderScreener({
+      targetLists: [{ id: 'list-1', title: '候选观察', instrumentCount: 3 }],
+      onAddCandidateToList: add,
+    })
+
+    const resultButton = (await screen.findAllByText('000001.SZ'))[0].closest('button')!
+    fireEvent.contextMenu(resultButton, { clientX: 250, clientY: 120 })
+    expect(screen.getByRole('menuitem', { name: '添加到…' })).toBeTruthy()
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('menuitem', { name: '添加到…' })).toBeNull()
+    fireEvent.contextMenu(resultButton, { clientX: 250, clientY: 120 })
+    await user.click(screen.getByRole('menuitem', { name: '添加到…' }))
+    await user.click(screen.getByRole('menuitem', { name: '候选观察3 个标的' }))
+
+    expect(add).toHaveBeenCalledWith('list-1', candidate)
+    expect(screen.getByText('已将 测试标的 添加到 候选观察')).toBeTruthy()
+  })
 })
+
+function renderScreener(overrides: Partial<Parameters<typeof ScreenerWorkspace>[0]> = {}) {
+  return render(<ScreenerWorkspace
+    theme={themes[0]}
+    onClose={() => undefined}
+    targetLists={[]}
+    onAddCandidateToList={() => false}
+    {...overrides}
+  />)
+}
 
 const run = {
   run_id: 'run-1', strategy_id: 'major-descending-breakout', strategy_version: 'v1',
