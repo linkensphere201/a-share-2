@@ -208,9 +208,12 @@ const rising = '#ef5350'
 const falling = '#26a269'
 const risingSoft = '#e99693'
 const fallingSoft = '#70be9a'
+const chartFontFamily = '"Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", Arial, sans-serif'
 export const chartLayoutOptions = {
   background: { type: ColorType.Solid, color: '#0d1014' },
   textColor: '#7f8997',
+  fontFamily: chartFontFamily,
+  fontSize: 12,
   panes: { separatorColor: '#303743', separatorHoverColor: '#4b84c6', enableResize: true },
   attributionLogo: false,
 } as const

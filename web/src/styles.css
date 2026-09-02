@@ -1,5 +1,5 @@
 :root {
-  font-family: "Segoe UI Variable Text", "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", Arial, sans-serif;
+  font-family: "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", Arial, sans-serif;
   color: #d8dde6;
   background: #0d1014;
   font-synthesis: none;
@@ -24,8 +24,8 @@ body {
   overflow: hidden;
   font-weight: 400;
   line-height: 1.35;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
+  text-rendering: auto;
+  -webkit-font-smoothing: auto;
   -moz-osx-font-smoothing: grayscale;
 }
 strong, b { font-weight: 500; }
@@ -1346,6 +1346,43 @@ body, .workstation, .layout-manager, .layout-preview, .window-group, .list-windo
 
 .chart-measurement-readout { font-size: 10px; }
 .markdown-preview strong { color: var(--theme-text-strong); font-weight: 500; }
+
+/* Windows WebView clarity for dense market-data surfaces. */
+.list-window-table-header { color: color-mix(in srgb, var(--theme-text) 78%, var(--theme-muted)); }
+.list-window-table-header button { font-size: 10px; }
+.list-window-row { min-height: 44px; }
+.list-window-select strong { font-size: 12px; font-weight: 400; }
+.list-window-select small,
+.list-price,
+.list-volume,
+.list-amount,
+.list-market-cap,
+.list-change { color: var(--theme-text); font-size: 11px; font-weight: 400; }
+.list-window-select small { color: var(--theme-muted); }
+
+.trend-explanation-panel {
+  background: var(--theme-surface);
+  color: var(--theme-text);
+  font-weight: 400;
+}
+.trend-explanation-panel > header span { font-size: 12px; }
+.trend-explanation-meta { min-height: 28px; color: var(--theme-muted); font-size: 10px; }
+.trend-explanation-summary { padding: 9px 10px; color: var(--theme-text); font-size: 11px; line-height: 1.55; }
+.trend-explanation-sections h3 { height: 29px; color: var(--theme-muted); font-size: 10px; }
+.trend-explanation-sections h3 small { font-size: 10px; }
+.trend-explanation-sections article { padding: 9px 10px; }
+.trend-explanation-sections article span { color: var(--theme-text-strong); font-size: 11px; font-weight: 400; }
+.trend-explanation-sections article small { font-size: 10px; }
+.trend-explanation-sections article p,
+.trend-explanation-sections section.warnings p { color: var(--theme-text); font-size: 10px; line-height: 1.55; }
+
+.chart-readout { font-size: 11px; }
+.chart-readout b { color: var(--theme-text-strong); font-weight: 400; }
+.chart-pane-title,
+.macd-legend > span { color: var(--theme-text); font-size: 10px; }
+.generated-pattern text,
+.generated-pivot text,
+.generated-line-code { font-size: 10px; }
 
 @media (max-width: 1100px) {
   .toolbar { min-width: 0; overflow: hidden; }
