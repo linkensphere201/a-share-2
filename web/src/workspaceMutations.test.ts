@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { createWindowGroup, type Instrument } from './workspace'
+import { createWindowGroup, type Instrument, type WorkspaceState } from './workspace'
 import {
   applyListSelection,
+  removeMissingCustomGroupReferences,
   removeWorkspaceWindow,
   replaceDetachedWindowInstruments,
   resolveActiveChart,
@@ -60,5 +61,37 @@ describe('workspace mutations', () => {
     const ratios = { price: 3, volume: 1, macd: 1, openInterest: 1 }
     expect(samePaneRatios(ratios, { ...ratios })).toBe(true)
     expect(samePaneRatios(ratios, { ...ratios, macd: 2 })).toBe(false)
+  })
+
+  it('removes only missing custom-group references from every saved group', () => {
+    const group = fixture()
+    const list = group.windows.find(item => item.type === 'instrument-list')!
+    const existingGroup = { ...replacement, symbol: 'CUSTOM:keep', kind: 'custom-group' }
+    const missingGroup = { ...replacement, symbol: 'CUSTOM:remove', kind: 'custom-group' }
+    const stock = { ...replacement }
+    if (list.type !== 'instrument-list') throw new Error('list fixture expected')
+    list.content.instruments = [missingGroup, existingGroup, stock]
+    list.selectedSymbol = missingGroup.symbol
+    const workspace: WorkspaceState = {
+      version: 3,
+      defaultGroupId: group.id,
+      activeGroupId: group.id,
+      groups: [group],
+      recoveryGroups: { [group.id]: structuredClone(group) },
+    }
+
+    const updated = removeMissingCustomGroupReferences(
+      workspace,
+      new Set([existingGroup.symbol]),
+    )
+    const updatedList = updated.groups[0].windows.find(item => item.id === list.id)
+
+    expect(updatedList).toMatchObject({
+      selectedSymbol: existingGroup.symbol,
+      content: { instruments: [existingGroup, stock] },
+    })
+    expect(workspace.groups[0].windows.find(item => item.id === list.id)).toMatchObject({
+      content: { instruments: [missingGroup, existingGroup, stock] },
+    })
   })
 })

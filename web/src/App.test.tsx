@@ -520,6 +520,7 @@ describe('StockWorkspace', () => {
     window.localStorage.setItem(workspaceStorageKey, JSON.stringify(state))
     vi.stubGlobal('fetch', vi.fn((input: string | URL | Request) => {
       const url = String(input)
+      if (url.endsWith('/api/custom-groups')) return response({ items: [groupInstrument] })
       if (url.endsWith('/api/custom-groups/group-ai')) return response({
         id: 'group-ai', name: groupInstrument.name, description: '企业AI应用观察池',
         members: [

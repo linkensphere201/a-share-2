@@ -34,6 +34,7 @@ import {
 } from './workspace'
 import {
   applyListSelection,
+  removeMissingCustomGroupReferences,
   removeWorkspaceWindow,
   replaceDetachedWindowInstruments,
   resolveActiveChart,
@@ -93,6 +94,36 @@ export function StockWorkspace() {
 
   useEffect(() => saveWorkspace(workspace), [workspace])
   useEffect(() => applyTheme(theme), [theme])
+
+  useEffect(() => {
+    const controller = new AbortController()
+    const reconcile = async () => {
+      try {
+        const response = await fetch('/api/custom-groups', { signal: controller.signal })
+        if (!response.ok) throw new Error(`HTTP ${response.status}`)
+        const payload = await response.json() as { items?: Array<{ symbol?: string }> }
+        const existingSymbols = new Set(
+          (payload.items ?? []).map(item => item.symbol).filter((symbol): symbol is string => Boolean(symbol)),
+        )
+        setWorkspace(current => removeMissingCustomGroupReferences(current, existingSymbols))
+      } catch (error) {
+        if ((error as Error).name !== 'AbortError') {
+          logWarning('workspace', '自选集合引用校验失败，保留现有窗口状态', { error })
+        }
+      }
+    }
+    void reconcile()
+    const handleGroupChange = (event: Event) => {
+      const detail = (event as CustomEvent<{ symbol?: string; deleted?: boolean }>).detail
+      if (!detail?.deleted || !detail.symbol) return
+      void reconcile()
+    }
+    window.addEventListener('stock-harness:custom-groups-changed', handleGroupChange)
+    return () => {
+      controller.abort()
+      window.removeEventListener('stock-harness:custom-groups-changed', handleGroupChange)
+    }
+  }, [])
 
   useEffect(() => subscribeDrawingStore(() => setDrawingRevision(value => value + 1)), [])
 

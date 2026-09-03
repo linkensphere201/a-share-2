@@ -95,7 +95,7 @@ export function CustomGroupManager({ onClose, embedded = false }: { onClose: () 
       return
     }
     window.dispatchEvent(new CustomEvent('stock-harness:custom-groups-changed', {
-      detail: { symbol },
+      detail: { symbol, deleted: true },
     }))
     setDraft(undefined)
     await reloadGroups(null)

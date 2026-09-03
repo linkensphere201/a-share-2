@@ -8,6 +8,7 @@ import {
   type Instrument,
   type InstrumentListWindowState,
   type WindowGroupState,
+  type WorkspaceState,
   type WorkspaceWindowState,
 } from './workspace'
 
@@ -133,6 +134,36 @@ export function replaceDetachedWindowInstruments(
   return nextSelection
     ? applyListSelection(updated, windowId, nextSelection)
     : updated
+}
+
+export function removeMissingCustomGroupReferences(
+  workspace: WorkspaceState,
+  existingSymbols: ReadonlySet<string>,
+): WorkspaceState {
+  let changed = false
+  const groups = workspace.groups.map(group => {
+    let groupChanged = false
+    const windows = group.windows.map(window => {
+      if (window.type !== 'instrument-list') return window
+      const instruments = window.content.instruments.filter(instrument => (
+        instrument.kind !== 'custom-group' || existingSymbols.has(instrument.symbol)
+      ))
+      if (instruments.length === window.content.instruments.length) return window
+      groupChanged = true
+      const selectedSymbol = instruments.some(item => item.symbol === window.selectedSymbol)
+        ? window.selectedSymbol
+        : instruments[0]?.symbol
+      return {
+        ...window,
+        content: { ...window.content, instruments },
+        selectedSymbol,
+      }
+    })
+    if (!groupChanged) return group
+    changed = true
+    return { ...group, windows }
+  })
+  return changed ? { ...workspace, groups } : workspace
 }
 
 export function samePaneRatios(
