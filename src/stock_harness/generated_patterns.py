@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from datetime import date
 from typing import Sequence
 
 from stock_harness.analysis_inputs import AnalysisBar, AnalysisTimeframe
@@ -164,7 +165,15 @@ def _append_consolidations(
         upper_previous = _project(pattern.upper_boundary, previous - start)
         lower_latest = _project(pattern.lower_boundary, latest - start)
         lower_previous = _project(pattern.lower_boundary, previous - start)
-        monitor_up = bars[-2].close <= (upper_previous + lower_previous) / 2
+        monitor_up = _select_bounded_pattern_direction(
+            bars,
+            pattern.breakout_direction,
+            upper_latest,
+            upper_previous,
+            lower_latest,
+            lower_previous,
+            preview,
+        )
         boundary = upper_latest if monitor_up else lower_latest
         prior_boundary = upper_previous if monitor_up else lower_previous
         item_id = _item_id(horizon, pattern.pattern_type.value, index)
@@ -191,7 +200,10 @@ def _append_consolidations(
             },
         ))
         _append_latest_event(
-            items, item_id, bars, monitor_up, boundary, prior_boundary, preview
+            items, item_id, bars, monitor_up, boundary, prior_boundary, preview,
+            completion_state=pattern.completion_state,
+            breakout_date=pattern.breakout_date,
+            invalidation_date=pattern.invalidation_date,
         )
 
 
@@ -215,7 +227,15 @@ def _append_diamonds(
         upper_previous = _project(pattern.upper_active, previous - upper_start)
         lower_latest = _project(pattern.lower_active, latest - lower_start)
         lower_previous = _project(pattern.lower_active, previous - lower_start)
-        monitor_up = bars[-2].close <= (upper_previous + lower_previous) / 2
+        monitor_up = _select_bounded_pattern_direction(
+            bars,
+            pattern.breakout_direction,
+            upper_latest,
+            upper_previous,
+            lower_latest,
+            lower_previous,
+            preview,
+        )
         boundary = upper_latest if monitor_up else lower_latest
         prior_boundary = upper_previous if monitor_up else lower_previous
         item_id = _item_id(horizon, pattern.pattern_type.value, index)
@@ -245,7 +265,10 @@ def _append_diamonds(
             },
         ))
         _append_latest_event(
-            items, item_id, bars, monitor_up, boundary, prior_boundary, preview
+            items, item_id, bars, monitor_up, boundary, prior_boundary, preview,
+            completion_state=pattern.completion_state,
+            breakout_date=pattern.breakout_date,
+            invalidation_date=pattern.invalidation_date,
         )
 
 
@@ -339,6 +362,10 @@ def _append_latest_event(
     boundary: float,
     previous_boundary: float,
     preview: bool,
+    *,
+    completion_state: str | None = None,
+    breakout_date: date | None = None,
+    invalidation_date: date | None = None,
 ) -> None:
     if len(bars) < 2:
         return
@@ -350,30 +377,112 @@ def _append_latest_event(
         preview=preview,
     )
     if event is not None:
-        items.extend(_latest_event_items(parent_item_id, event))
+        state_override = None
+        kind_override = None
+        date_override = None
+        reason_override = None
+        if completion_state == "confirmed" and breakout_date is not None:
+            if event.kind is StructuralEventKind.NO_CHANGE:
+                kind_override = (
+                    StructuralEventKind.UPWARD_BREAKOUT
+                    if monitor_up else StructuralEventKind.DOWNWARD_BREAKDOWN
+                )
+                reason_override = "the confirmed pattern breakout remains the active structural event"
+                state_override = "confirmed"
+                date_override = breakout_date
+            elif event.kind in {
+                StructuralEventKind.UPWARD_BREAKOUT,
+                StructuralEventKind.DOWNWARD_BREAKDOWN,
+            }:
+                state_override = "confirmed"
+                date_override = breakout_date
+        elif completion_state == "invalidated" and invalidation_date is not None:
+            state_override = "invalidated"
+            date_override = invalidation_date
+        items.extend(_latest_event_items(
+            parent_item_id,
+            event,
+            state_override=state_override,
+            kind_override=kind_override,
+            date_override=date_override,
+            reason_override=reason_override,
+        ))
+
+
+def _select_bounded_pattern_direction(
+    bars: Sequence[AnalysisBar],
+    breakout_direction: str | None,
+    upper_boundary: float,
+    previous_upper_boundary: float,
+    lower_boundary: float,
+    previous_lower_boundary: float,
+    preview: bool,
+) -> bool:
+    if breakout_direction in {"up", "down"}:
+        return breakout_direction == "up"
+    if len(bars) < 2:
+        return True
+    upper_event = evaluate_latest_boundary_event(
+        bars,
+        direction=BreakoutDirection.UP,
+        boundary_price=upper_boundary,
+        previous_boundary_price=previous_upper_boundary,
+        preview=preview,
+    )
+    lower_event = evaluate_latest_boundary_event(
+        bars,
+        direction=BreakoutDirection.DOWN,
+        boundary_price=lower_boundary,
+        previous_boundary_price=previous_lower_boundary,
+        preview=preview,
+    )
+    priority = {
+        StructuralEventKind.UPWARD_BREAKOUT: 4,
+        StructuralEventKind.DOWNWARD_BREAKDOWN: 4,
+        StructuralEventKind.FALSE_BREAKOUT_RISK: 3,
+        StructuralEventKind.RETEST: 2,
+        StructuralEventKind.NO_CHANGE: 1,
+    }
+    upper_priority = priority[upper_event.kind] if upper_event is not None else 0
+    lower_priority = priority[lower_event.kind] if lower_event is not None else 0
+    if upper_priority != lower_priority:
+        return upper_priority > lower_priority
+    latest_close = bars[-1].close
+    upper_distance = abs(latest_close / upper_boundary - 1)
+    lower_distance = abs(latest_close / lower_boundary - 1)
+    return upper_distance <= lower_distance
 
 
 def _latest_event_items(
-    parent_item_id: str, event: StructuralEvent
+    parent_item_id: str,
+    event: StructuralEvent,
+    *,
+    state_override: str | None = None,
+    kind_override: StructuralEventKind | None = None,
+    date_override: date | None = None,
+    reason_override: str | None = None,
 ) -> list[GeneratedAnalysisItem]:
+    event_kind = kind_override or event.kind
     state = {
         StructuralEventKind.UPWARD_BREAKOUT: "triggered",
         StructuralEventKind.DOWNWARD_BREAKDOWN: "triggered",
         StructuralEventKind.RETEST: "retesting",
         StructuralEventKind.FALSE_BREAKOUT_RISK: "failed",
         StructuralEventKind.NO_CHANGE: "ready",
-    }[event.kind]
+    }[event_kind]
+    if state_override is not None:
+        state = state_override
     evidence = asdict(event.evidence)
     evidence["trade_date"] = event.evidence.trade_date.isoformat()
     payload = {
-        "event_kind": event.kind.value,
+        "event_kind": event_kind.value,
         "current_state": state,
         "direction": event.direction.value,
-        "event_date": event.event_date.isoformat(),
+        "event_date": (date_override or event.event_date).isoformat(),
         "boundary_price": event.boundary_price,
         "previous_boundary_price": event.previous_boundary_price,
         "preview": event.preview,
-        "reason": event.reason,
+        "reason": reason_override or event.reason,
         "evidence": evidence,
     }
     return [
@@ -391,15 +500,15 @@ def _latest_event_items(
                 **payload,
                 "invalidation_level": event.boundary_price,
                 "trigger_date": (
-                    event.event_date.isoformat()
-                    if event.kind in {
+                    (date_override or event.event_date).isoformat()
+                    if event_kind in {
                         StructuralEventKind.UPWARD_BREAKOUT,
                         StructuralEventKind.DOWNWARD_BREAKDOWN,
                     } else None
                 ),
                 "failure_date": (
-                    event.event_date.isoformat()
-                    if event.kind is StructuralEventKind.FALSE_BREAKOUT_RISK
+                    (date_override or event.event_date).isoformat()
+                    if event_kind is StructuralEventKind.FALSE_BREAKOUT_RISK
                     else None
                 ),
             },

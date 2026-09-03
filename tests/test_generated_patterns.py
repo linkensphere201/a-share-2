@@ -1,8 +1,15 @@
 from datetime import date, timedelta
 
+from stock_harness import generated_patterns
 from stock_harness.analysis_inputs import AnalysisBar, AnalysisTimeframe
 from stock_harness.analysis_results import GeneratedItemType, validate_items
+from stock_harness.consolidation_patterns import (
+    BoundaryLine,
+    ConsolidationPattern,
+    ConsolidationType,
+)
 from stock_harness.generated_patterns import generate_pattern_items
+from stock_harness.pattern_tolerances import build_pattern_tolerance_profile
 from stock_harness.pattern_ranking import rank_pattern_candidates
 from stock_harness.trend_lines_analysis import TrendHorizon
 from stock_harness.trend_pivots import PivotKind, PricePivot
@@ -77,3 +84,66 @@ def test_generates_horizon_qualified_patterns_and_child_evidence():
         "short-pattern-double-bottom-0",
         "long-pattern-double-bottom-0",
     } <= parent_ids
+
+
+def test_confirmed_triangle_keeps_its_downward_breakdown_direction(monkeypatch):
+    start = date(2026, 1, 1)
+    closes = [10.0, 10.5, 10.1, 9.8, 8.7, 8.8]
+    bars = [
+        AnalysisBar(
+            start + timedelta(days=index), start + timedelta(days=index),
+            close, close + 0.2, close - 0.2, close, 100,
+            ("test",), False, True, index,
+        )
+        for index, close in enumerate(closes)
+    ]
+    pattern = ConsolidationPattern(
+        pattern_type=ConsolidationType.SYMMETRICAL_TRIANGLE,
+        display_name="对称三角形",
+        start_date=start,
+        end_date=start + timedelta(days=3),
+        available_date=start + timedelta(days=3),
+        pivots=(),
+        upper_boundary=BoundaryLine(
+            start, 12.0, start + timedelta(days=3), 11.7, -0.1,
+        ),
+        lower_boundary=BoundaryLine(
+            start, 9.0, start + timedelta(days=3), 9.3, 0.1,
+        ),
+        completion_state="confirmed",
+        breakout_direction="down",
+        breakout_date=start + timedelta(days=4),
+        invalidation_date=None,
+        score=0.9,
+        score_components={},
+        volume_ratio=1.2,
+    )
+    monkeypatch.setattr(
+        generated_patterns,
+        "detect_consolidation_patterns",
+        lambda *_args, **_kwargs: (pattern,),
+    )
+    items = []
+
+    generated_patterns._append_consolidations(
+        items,
+        bars,
+        (),
+        TrendHorizon.LONG,
+        AnalysisTimeframe.DAILY,
+        False,
+        build_pattern_tolerance_profile(bars),
+    )
+
+    parent = next(item for item in items if item.item_type is GeneratedItemType.PATTERN)
+    summary = next(
+        item for item in items
+        if item.payload.get("kind") == "latest-structural-event-summary"
+    )
+    assert parent.payload["direction"] == "down"
+    assert parent.payload["neckline_price"] == 9.5
+    assert parent.payload["invalidation_price"] == 11.5
+    assert summary.payload["event_kind"] == "downward-breakdown"
+    assert summary.payload["direction"] == "down"
+    assert summary.payload["current_state"] == "confirmed"
+    assert summary.payload["event_date"] == "2026-01-05"
