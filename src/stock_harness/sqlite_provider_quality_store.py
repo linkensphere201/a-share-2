@@ -113,7 +113,6 @@ class SQLiteProviderQualityStoreMixin:
                     message,
                     now_ms,
                     now_ms,
-
                 ),
             )
             row = self._connection.execute(
@@ -364,7 +363,6 @@ class SQLiteProviderQualityStoreMixin:
 
     def list_repair_jobs(self, statuses: set[str] | None = None) -> list[RepairJob]:
         clauses = []
-
         parameters: list[object] = []
         if statuses:
             ordered = sorted(statuses)
@@ -393,5 +391,3 @@ class SQLiteProviderQualityStoreMixin:
             )
             for row in rows
         ]
-
-

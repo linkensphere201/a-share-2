@@ -230,10 +230,7 @@ class SQLiteCustomGroupStoreMixin:
                         ensure_ascii=False, separators=(",", ":"),
                     ),
                     str(item.get("note", "")).strip(), now_ms,
-
                 )
                 for position, (symbol, item) in enumerate(zip(symbols, members))
             ),
         )
-
-

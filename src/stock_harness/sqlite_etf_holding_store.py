@@ -67,7 +67,6 @@ class SQLiteEtfHoldingStoreMixin:
             raise ValueError("ETF holding receipt row count must be non-negative")
         now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
         with self._lock, self._transaction():
-
             row = self._connection.execute(
                 "SELECT instrument_id, kind FROM instruments WHERE symbol = ?", (etf_symbol,)
             ).fetchone()
@@ -187,5 +186,3 @@ class SQLiteEtfHoldingStoreMixin:
                 for row in rows
             ],
         }
-
-
