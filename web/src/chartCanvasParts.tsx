@@ -4,14 +4,12 @@ import type { DrawingMigrationCandidate, TrendLineDash, TrendLineDrawing } from 
 import { barsInRenderPeriod, type LineGeometry } from './trendLines'
 import type { ThemeDefinition } from './themeStore'
 import type { TrendAnalysisRun } from './trendAnalysisClient'
-import type { TrendReviewGeometryTarget } from './trendReviewGeometry'
 import type {
   GeneratedBreakoutState,
   GeneratedPatternGeometry,
   GeneratedPivotGeometry,
   GeneratedTrendLineGeometry,
   GeneratedZoneGeometry,
-  ProjectedReviewGeometryHandle,
 } from './generatedAnalysisProjection'
 import type {
   MarketAnnotationGeometry,
@@ -270,45 +268,6 @@ export function TrendLineOverlay({
             <circle cx={draft.x2} cy={draft.y2} r="3.5"/>
           </g>
         )}
-      </svg>
-    </div>
-  )
-}
-
-export function TrendReviewGeometryOverlay({
-  handles,
-  onMoveStart,
-  onMove,
-  onMoveEnd,
-  onMoveCancel,
-}: {
-  handles: ProjectedReviewGeometryHandle[]
-  onMoveStart: (event: ReactPointerEvent<SVGCircleElement>, handle: ProjectedReviewGeometryHandle) => void
-  onMove: (event: ReactPointerEvent<SVGCircleElement>) => void
-  onMoveEnd: (event: ReactPointerEvent<SVGCircleElement>) => void
-  onMoveCancel: (event: ReactPointerEvent<SVGCircleElement>) => void
-}) {
-  return (
-    <div className="trend-review-geometry-overlay" aria-label="人工复核几何编辑">
-      <svg width="100%" height="100%">
-        {handles.map(handle => (
-          <g key={handle.id}>
-            {handle.priceOnly && <line className="trend-review-price-guide" x1={handle.x} y1={handle.y} x2="100%" y2={handle.y}/>}
-            <circle
-              className="trend-review-geometry-hit"
-              cx={handle.x}
-              cy={handle.y}
-              r={10}
-              role="button"
-              aria-label={`拖动${handle.label}`}
-              onPointerDown={event => onMoveStart(event, handle)}
-              onPointerMove={onMove}
-              onPointerUp={onMoveEnd}
-              onPointerCancel={onMoveCancel}
-            />
-            <circle className="trend-review-geometry-handle" cx={handle.x} cy={handle.y} r={4}/>
-          </g>
-        ))}
       </svg>
     </div>
   )

@@ -736,52 +736,6 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .trading-system-settings > footer button { width: auto; min-width: 42px; height: 25px; padding: 0 7px; border: 1px solid var(--theme-border); }
 .trading-system-settings > footer .icon-command { min-width: 25px; padding: 0; }
 .trading-system-settings > footer button.primary { color: var(--theme-text-strong); background: var(--theme-accent-soft); }
-.trend-evidence-panel { position: absolute; z-index: 12; top: 30px; right: 0; width: min(340px, calc(100cqw - 14px)); max-height: min(390px, calc(100cqh - 42px)); display: grid; grid-template-rows: 30px minmax(0, 1fr); overflow: hidden; border: 1px solid var(--theme-border); border-radius: 4px; background: var(--theme-surface); color: var(--theme-text); box-shadow: 0 10px 28px #000a; }
-.trend-evidence-panel > header { display: flex; align-items: center; justify-content: space-between; padding: 0 5px 0 9px; border-bottom: 1px solid var(--theme-border); font-size: 10px; }
-.trend-review-panel { position: absolute; z-index: 18; top: 34px; right: 6px; width: min(520px, calc(100cqw - 12px)); max-height: calc(100cqh - 42px); display: grid; grid-template-rows: 32px auto auto auto minmax(90px, 1fr) auto auto; overflow: hidden; border: 1px solid var(--theme-border); border-radius: 4px; background: color-mix(in srgb, var(--theme-surface) 97%, transparent); color: var(--theme-text); box-shadow: 0 12px 34px #000a; font-weight: 400; }
-.trend-review-panel > header { display: flex; align-items: center; justify-content: space-between; padding: 0 6px 0 10px; border-bottom: 1px solid var(--theme-border); color: var(--theme-text-strong); font-size: 11px; }
-.trend-review-panel button { min-height: 25px; display: inline-flex; align-items: center; justify-content: center; gap: 4px; border: 1px solid var(--theme-border); border-radius: 3px; background: var(--theme-raised); color: var(--theme-text); font-size: 9px; }
-.trend-review-panel button:hover:not(:disabled), .trend-review-panel button.active { border-color: var(--theme-accent); background: var(--theme-hover); color: var(--theme-text-strong); }
-.trend-review-panel button.primary { background: var(--theme-accent-soft); color: var(--theme-text-strong); }
-.trend-review-panel button:disabled { opacity: .45; }
-.trend-review-setup { display: grid; grid-template-columns: repeat(5, minmax(74px, 1fr)) auto; gap: 5px; align-items: end; padding: 7px; border-bottom: 1px solid var(--theme-border); }
-.trend-review-setup label, .trend-review-reopen { min-width: 0; display: grid; gap: 3px; color: var(--theme-muted); font-size: 8px; }
-.trend-review-setup input, .trend-review-setup select, .trend-review-reopen select { width: 100%; min-width: 0; height: 25px; border: 1px solid var(--theme-border); border-radius: 3px; padding: 0 5px; background: var(--theme-raised); color: var(--theme-text); font-size: 9px; }
-.trend-review-reopen { grid-template-columns: 58px minmax(0, 1fr); align-items: center; padding: 5px 7px; border-bottom: 1px solid var(--theme-border); }
-.trend-review-summary { min-height: 25px; display: flex; align-items: center; gap: 9px; padding: 0 8px; border-bottom: 1px solid var(--theme-border); color: var(--theme-muted); font-size: 8px; }
-.trend-review-queue { min-height: 0; overflow: auto; }
-.trend-review-candidate { min-height: 34px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 4px 7px; border-bottom: 1px solid var(--theme-border); }
-.trend-review-candidate > div:first-child { min-width: 0; display: flex; align-items: baseline; gap: 7px; }
-.trend-review-candidate > div:first-child > span { flex: 0 0 40px; color: var(--theme-muted); font-size: 8px; }
-.trend-review-candidate small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--theme-text); font-size: 9px; }
-.trend-review-candidate.accepted { border-left: 2px solid #4aa574; }
-.trend-review-candidate.rejected { border-left: 2px solid #d56f75; }
-.trend-review-candidate.ambiguous { border-left: 2px solid #d0a43c; }
-.trend-review-candidate.geometry-selected { background: color-mix(in srgb, var(--theme-accent-soft) 45%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--theme-accent) 50%, transparent); }
-.trend-review-decisions { display: flex; gap: 3px; }
-.trend-review-decisions button { width: 25px; padding: 0; }
-.trend-review-decisions .geometry.active { color: var(--theme-accent); }
-.trend-review-decisions .accept.active { color: #69c28f; }
-.trend-review-decisions .reject.active { color: #e58b90; }
-.trend-review-decisions .ambiguous.active { color: #dfb957; }
-.trend-review-panel > textarea { min-height: 48px; resize: vertical; margin: 6px 7px; border: 1px solid var(--theme-border); border-radius: 3px; padding: 6px; background: var(--theme-raised); color: var(--theme-text); font: 9px/1.45 ui-monospace, Consolas, monospace; }
-.trend-review-panel > footer { display: flex; align-items: center; justify-content: flex-end; gap: 4px; padding: 5px 7px; border-top: 1px solid var(--theme-border); }
-.trend-review-panel > footer > span { margin-right: auto; color: var(--theme-muted); font-size: 8px; }
-.trend-review-panel > footer button { padding: 0 7px; }
-.trend-review-error { margin: 0; padding: 5px 8px; border-bottom: 1px solid #5d3034; color: #e58b90; font-size: 9px; }
-@container (max-width: 620px) {
-  .trend-review-setup { grid-template-columns: repeat(3, minmax(72px, 1fr)); }
-  .trend-review-panel { top: 30px; right: 3px; width: calc(100cqw - 6px); max-height: calc(100cqh - 34px); }
-}
-.trend-evidence-body { overflow: auto; padding: 8px; font-size: 9px; }
-.trend-evidence-body dl { display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: 5px 8px; margin: 0; }
-.trend-evidence-body dt { color: var(--theme-muted); }
-.trend-evidence-body dd { min-width: 0; margin: 0; color: var(--theme-text-strong); overflow-wrap: anywhere; }
-.trend-evidence-body section { margin-top: 9px; padding-top: 7px; border-top: 1px solid var(--theme-border); }
-.trend-evidence-body section > span { color: var(--theme-muted); }
-.trend-evidence-body section > div { display: flex; flex-wrap: wrap; gap: 4px 8px; margin-top: 5px; }
-.trend-evidence-body section i { color: var(--theme-text); font-style: normal; }
-.trend-evidence-body section.warnings p { margin: 4px 0 0; color: #d8aa5d; line-height: 1.35; }
 .instrument-window-body > .chart-stage { transition: width 160ms ease; }
 .instrument-window-body.explanation-open > .chart-stage { width: calc(100% - 310px); }
 .trend-explanation-panel { position: absolute; z-index: 16; top: 0; right: 0; bottom: 0; width: 310px; display: grid; grid-template-rows: 30px auto auto minmax(0, 1fr); overflow: hidden; border-left: 1px solid var(--theme-border); background: color-mix(in srgb, var(--theme-surface) 97%, transparent); color: var(--theme-text); box-shadow: -8px 0 24px #0008; font-weight: 400; }
@@ -824,6 +778,14 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .trend-explanation-sections section { border-bottom: 1px solid var(--theme-border); }
 .trend-explanation-sections h3 { height: 25px; display: flex; align-items: center; gap: 6px; margin: 0; padding: 0 9px; color: var(--theme-muted); font-size: 9px; font-weight: 400; }
 .trend-explanation-sections h3 small { color: var(--theme-faint); font-size: 8px; }
+.trend-explanation-evidence { padding-bottom: 8px; }
+.trend-explanation-evidence dl { display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: 5px 8px; margin: 0; padding: 0 9px; font-size: 8px; }
+.trend-explanation-evidence dt { color: var(--theme-muted); }
+.trend-explanation-evidence dd { min-width: 0; margin: 0; color: var(--theme-text-strong); overflow-wrap: anywhere; }
+.trend-evidence-group { margin: 8px 9px 0; padding-top: 7px; border-top: 1px solid color-mix(in srgb, var(--theme-border) 70%, transparent); font-size: 8px; }
+.trend-evidence-group > span { color: var(--theme-muted); }
+.trend-evidence-group > div { display: flex; flex-wrap: wrap; gap: 4px 8px; margin-top: 5px; }
+.trend-evidence-group i { color: var(--theme-text); font-style: normal; }
 .trend-explanation-sections article { padding: 7px 9px; border-top: 1px solid color-mix(in srgb, var(--theme-border) 60%, transparent); outline: 0; cursor: default; transition: background 100ms ease, box-shadow 100ms ease; }
 .trend-explanation-sections article:hover, .trend-explanation-sections article:focus-visible { background: var(--theme-hover); box-shadow: inset 2px 0 var(--theme-accent); }
 .trend-explanation-sections article > div { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
@@ -921,12 +883,6 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .chart-generated-analysis .generated-pattern.highlighted { opacity: 1; filter: drop-shadow(0 0 3px var(--theme-accent)); }
 .chart-generated-analysis .generated-pattern.highlighted line,
 .chart-generated-analysis .generated-pattern.highlighted polyline { stroke-width: 2.5; }
-.trend-review-geometry-overlay { position: absolute; z-index: 7; inset: 0; overflow: hidden; pointer-events: none; }
-.trend-review-geometry-overlay > svg { display: block; overflow: hidden; }
-.trend-review-geometry-hit { fill: transparent; stroke: transparent; pointer-events: all; cursor: grab; }
-.trend-review-geometry-hit:active { cursor: grabbing; }
-.trend-review-geometry-handle { fill: var(--theme-surface); stroke: var(--theme-accent); stroke-width: 2; pointer-events: none; }
-.trend-review-price-guide { stroke: var(--theme-accent); stroke-width: 1; stroke-dasharray: 3 4; opacity: .65; pointer-events: none; }
 .generated-price-zone { vector-effect: non-scaling-stroke; }
 .generated-price-zone.key-level { fill: #e0b45a20; stroke: #d6a84d80; stroke-width: .7; }
 .generated-price-zone.estimated-volume-at-price { fill: #5f9fbd16; stroke: #6ca8c344; stroke-width: .5; }

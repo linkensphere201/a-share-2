@@ -21,6 +21,12 @@ const run: TrendAnalysisRun = {
     item_id: 'short-support-event', item_type: 'evidence', parent_item_id: 'short-support', payload: {
       kind: 'latest-structural-event-summary', event_kind: 'no-structural-change',
       current_state: 'ready', direction: 'down', event_date: '2026-08-21', boundary_price: 12,
+      invalidation_level: 12,
+    },
+  }, {
+    item_id: 'primary-pattern', item_type: 'pattern', payload: {
+      primary: true, display_name: '对称三角形', timeframe: 'daily', score: 0.82,
+      score_components: { contraction: 0.75 }, completion_state: 'forming',
     },
   }],
 }
@@ -30,6 +36,9 @@ describe('TrendExplanationPanel', () => {
     const onHighlight = vi.fn()
     render(<TrendExplanationPanel run={run} onHighlightItemChange={onHighlight} onClose={vi.fn()}/>)
     expect(screen.getByText('突破与破位')).toBeTruthy()
+    expect(screen.getByText('分析证据')).toBeTruthy()
+    expect(screen.getByText('对称三角形 · 82分')).toBeTruthy()
+    expect(screen.getAllByText('12.00')).toHaveLength(2)
     expect(screen.getByText('短期支撑：尚未向下破位')).toBeTruthy()
     const row = screen.getByText('短期上行支撑线').closest('article')!
 

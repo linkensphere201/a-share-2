@@ -19,15 +19,17 @@ function Harness({
   onRecalculate = vi.fn(),
   breakoutState,
   analysisRun,
+  onExplanationOpenChange,
 }: {
   initial?: TradingSystemWindowState
   onRecalculate?: (state: TradingSystemWindowState, refreshData: boolean) => void
   breakoutState?: GeneratedBreakoutState
   analysisRun?: TrendAnalysisRun
+  onExplanationOpenChange?: (open: boolean) => void
 }) {
   const [state, setState] = useState(initial)
   return <>
-    <TradingSystemControls instrumentKind="stock" state={state} breakoutState={breakoutState} analysisRun={analysisRun} onChange={setState} onRecalculate={onRecalculate}/>
+    <TradingSystemControls instrumentKind="stock" state={state} breakoutState={breakoutState} analysisRun={analysisRun} onChange={setState} onRecalculate={onRecalculate} onExplanationOpenChange={onExplanationOpenChange}/>
     <output data-testid="state">{JSON.stringify(state)}</output>
   </>
 }
@@ -119,7 +121,8 @@ describe('TradingSystemControls', () => {
         score_components: { symmetry: 0.9 },
       } }],
     }
-    render(<Harness initial={initial} analysisRun={analysisRun} breakoutState={{
+    const onExplanationOpenChange = vi.fn()
+    render(<Harness initial={initial} analysisRun={analysisRun} onExplanationOpenChange={onExplanationOpenChange} breakoutState={{
       state: 'failed', direction: 'up', boundaryPrice: 12,
       invalidationPrice: 11.5, preview: true,
       eventKind: 'false-breakout-risk',
@@ -132,8 +135,9 @@ describe('TradingSystemControls', () => {
     expect(button?.classList.contains('failed')).toBe(true)
 
     fireEvent.click(dot)
-    expect(screen.getByRole('dialog', { name: '趋势分析证据' }).textContent)
-      .toContain('双底')
+    expect(onExplanationOpenChange).toHaveBeenCalledWith(true)
+    expect(screen.queryByRole('button', { name: '查看趋势证据' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '打开趋势人工复核' })).toBeNull()
   })
 
   it('toggles one-click trend isolation without changing analytical settings', async () => {

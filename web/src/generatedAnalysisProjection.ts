@@ -1,9 +1,7 @@
-import { reviewGeometryHandles, type TrendReviewGeometryHandle, type TrendReviewGeometryTarget } from './trendReviewGeometry'
 import { extendLineToBounds, type LineGeometry } from './trendLines'
 import type { TrendAnalysisRun } from './trendAnalysisClient'
 import type { IChartApi, Time } from 'lightweight-charts'
 
-export type ProjectedReviewGeometryHandle = TrendReviewGeometryHandle & { x: number; y: number }
 export type GeneratedPivotGeometry = {
   id: string
   kind: 'high' | 'low'
@@ -153,24 +151,6 @@ export function selectCoreZoneItems(items: AnalysisItem[]): AnalysisItem[] {
       return rightScore - leftScore
     }).slice(0, 2)
   )).concat(aiReferences)
-}
-
-export function projectReviewGeometryHandles(
-  target: TrendReviewGeometryTarget | undefined,
-  chart: IChartApi | null,
-  priceSeries: { priceToCoordinate: (price: number) => number | null } | null,
-  host: HTMLDivElement | null,
-): ProjectedReviewGeometryHandle[] {
-  if (!target || !chart || !priceSeries || !host) return []
-  const paneHeight = chart.panes()[0]?.getHeight() ?? host.clientHeight
-  return reviewGeometryHandles(target.label).flatMap(handle => {
-    const x = handle.priceOnly
-      ? 18
-      : handle.date ? chart.timeScale().timeToCoordinate(handle.date as Time) : null
-    const y = priceSeries.priceToCoordinate(handle.price)
-    if (x === null || y === null || y < -12 || y > paneHeight + 12) return []
-    return [{ ...handle, x, y }]
-  })
 }
 
 export function projectGeneratedPivots(

@@ -4,16 +4,13 @@ import { ChartCanvas } from './ChartCanvas'
 import type { ChartIndicator, VisibleRange } from './chartTypes'
 import type { GeneratedBreakoutState } from './generatedAnalysisProjection'
 import { TradingSystemControls } from './TradingSystemControls'
-import { TrendReviewPanel } from './TrendReviewPanel'
 import { TrendExplanationPanel } from './TrendExplanationPanel'
 import { AiAnalysisPanel } from './AiAnalysisPanel'
 import { loadLatestAiAnalysis, projectAiReferences, type AiAnalysisReport } from './aiAnalysisClient'
 import type { ChartPaneRatios, ChartWindowState } from './workspace'
 import type { TradingSystemWindowState, TradingSystemWindowStates } from './tradingSystems'
-import { normalizeTrendTradingSystemSettings } from './tradingSystems'
 import type { ThemeDefinition } from './themeStore'
 import type { TrendAnalysisRun } from './trendAnalysisClient'
-import type { TrendReviewGeometryTarget } from './trendReviewGeometry'
 
 type InstrumentWindowProps = {
   windowState: ChartWindowState
@@ -66,12 +63,6 @@ export function ChartWindow({
   const [breakoutState, setBreakoutState] = useState<GeneratedBreakoutState>()
   const [trendAnalysis, setTrendAnalysis] = useState<TrendAnalysisRun | null>(null)
   const [trendRecalculationState, setTrendRecalculationState] = useState<'idle' | 'running' | 'failed'>('idle')
-  const [reviewOpen, setReviewOpen] = useState(false)
-  const [reviewContext, setReviewContext] = useState<{
-    asOfDate: string
-    analysis: TrendAnalysisRun
-  }>()
-  const [reviewGeometryTarget, setReviewGeometryTarget] = useState<TrendReviewGeometryTarget>()
   const [explanationOpen, setExplanationOpen] = useState(false)
   const [aiAnalysisOpen, setAiAnalysisOpen] = useState(false)
   const [aiAnalysisReport, setAiAnalysisReport] = useState<AiAnalysisReport | null>(null)
@@ -84,9 +75,6 @@ export function ChartWindow({
     setBreakoutState(undefined)
     setTrendAnalysis(null)
     setTrendRecalculationState('idle')
-    setReviewOpen(false)
-    setReviewContext(undefined)
-    setReviewGeometryTarget(undefined)
     setExplanationOpen(false)
     setAiAnalysisOpen(false)
     setAiAnalysisReport(null)
@@ -159,7 +147,6 @@ export function ChartWindow({
                 setTrendRecalculationState('failed')
               }
             }}
-            onReview={() => setReviewOpen(true)}
             explanationOpen={explanationOpen}
             onExplanationOpenChange={open => {
               setExplanationOpen(open)
@@ -187,10 +174,7 @@ export function ChartWindow({
           volumeZonesVisible={chart.tradingSystems.trend.layers['volume-zones'] !== false}
           patternsVisible={aiAnalysisOpen || chart.tradingSystems.trend.layers.patterns !== false}
           breakoutStateVisible={chart.tradingSystems.trend.layers['breakout-state'] !== false}
-          trendIsolation={chart.tradingSystems.trend.isolate || Boolean(reviewContext)}
-          asOfDate={reviewContext?.asOfDate}
-          trendAnalysisOverride={reviewContext?.analysis}
-          reviewGeometryTarget={reviewGeometryTarget}
+          trendIsolation={chart.tradingSystems.trend.isolate}
           onBreakoutStateChange={setBreakoutState}
           onTrendAnalysisChange={setTrendAnalysis}
           highlightedAnalysisItemId={highlightedAnalysisItemId}
@@ -211,19 +195,6 @@ export function ChartWindow({
           onClose={() => {
             setAiAnalysisOpen(false)
             setHighlightedAnalysisItemId(undefined)
-          }}
-        />}
-        {reviewOpen && <TrendReviewPanel
-          symbol={instrument.symbol}
-          name={instrument.name}
-          settings={normalizeTrendTradingSystemSettings(chart.tradingSystems.trend.settings)}
-          currentAnalysis={trendAnalysis}
-          onContextChange={setReviewContext}
-          onGeometryTargetChange={setReviewGeometryTarget}
-          onClose={() => {
-            setReviewOpen(false)
-            setReviewContext(undefined)
-            setReviewGeometryTarget(undefined)
           }}
         />}
       </div>
