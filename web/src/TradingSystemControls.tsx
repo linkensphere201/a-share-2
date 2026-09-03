@@ -42,6 +42,7 @@ type TradingSystemControlsProps = {
   onAiAnalysisOpenChange?: (open: boolean) => void
   recalculationAvailable?: boolean
   recalculationDisabledReason?: string
+  embedded?: boolean
 }
 
 export function TradingSystemControls({
@@ -60,6 +61,7 @@ export function TradingSystemControls({
   onAiAnalysisOpenChange,
   recalculationAvailable = true,
   recalculationDisabledReason,
+  embedded = false,
 }: TradingSystemControlsProps) {
   const descriptor = tradingSystemRegistry.get('trend')!
   const supported = descriptor.supportedInstrumentKinds.includes(instrumentKind)
@@ -105,7 +107,7 @@ export function TradingSystemControls({
   }
 
   return (
-    <div className={state.expanded ? 'trading-system-controls' : 'trading-system-controls collapsed'} onPointerDown={event => event.stopPropagation()}>
+    <div className={embedded ? 'trading-system-controls embedded' : state.expanded ? 'trading-system-controls' : 'trading-system-controls collapsed'} onPointerDown={event => event.stopPropagation()}>
       <div className="trading-system-control-actions">
         <button
           className={state.enabled ? 'active' : ''}
@@ -192,7 +194,7 @@ export function TradingSystemControls({
               </span>
             )}
       </div>
-      <button
+      {!embedded && <button
         className="trading-system-collapse"
         title={state.expanded ? '收起趋势交易体系' : '展开趋势交易体系'}
         aria-label={state.expanded ? '收起趋势交易体系' : '展开趋势交易体系'}
@@ -201,7 +203,7 @@ export function TradingSystemControls({
       >
         <TrendingUp size={13}/>
         {state.expanded ? <ChevronLeft size={10}/> : <ChevronRight size={10}/>} 
-      </button>
+      </button>}
 
       {settingsOpen && (
         <div className="trading-system-settings" role="dialog" aria-label="趋势交易体系设置面板">

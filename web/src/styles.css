@@ -605,7 +605,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .chart-stage.selecting { cursor: crosshair; }
 .chart-drawing-toolbar {
   position: absolute;
-  z-index: 9;
+  z-index: 11;
   top: 5px;
   right: 7px;
   display: flex;
@@ -615,24 +615,33 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
   border-radius: 3px;
   background: #11161be8;
   box-shadow: 0 2px 8px #0006;
+  max-width: calc(100% - 14px);
+  align-items: center;
   transition: padding 160ms ease, border-color 160ms ease, background-color 160ms ease;
 }
 .chart-drawing-toolbar-actions {
   display: flex;
   gap: 1px;
-  max-width: 180px;
+  max-width: 220px;
   overflow: hidden;
   opacity: 1;
   transform: translateX(0);
   transition: max-width 180ms ease, opacity 120ms ease, transform 180ms ease;
 }
+.chart-toolbar-divider { width: 1px; height: 16px; flex: 0 0 1px; margin: 0 2px; background: var(--theme-border); transition: opacity 120ms ease; }
+.chart-toolbar-content { min-width: 0; display: flex; align-items: center; transition: opacity 120ms ease; }
 .chart-drawing-toolbar.collapsed .chart-drawing-toolbar-actions {
   max-width: 0;
   opacity: 0;
   transform: translateX(8px);
   pointer-events: none;
 }
+.chart-drawing-toolbar.collapsed .chart-toolbar-divider,
+.chart-drawing-toolbar.collapsed .chart-toolbar-content { display: none; opacity: 0; pointer-events: none; }
 .chart-drawing-toolbar .chart-toolbar-toggle { color: #9aa6b4; }
+.chart-drawing-toolbar .chart-toolbar-toggle,
+.chart-drawing-toolbar-actions > button,
+.trading-system-controls.embedded .trading-system-control-actions > button { flex: 0 0 22px; }
 .chart-drawing-toolbar button {
   width: 22px;
   height: 22px;
@@ -647,7 +656,8 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .chart-drawing-toolbar button:hover:not(:disabled) { background: #27303a; color: #fff; }
 .chart-drawing-toolbar button.active { background: #31465d; color: #dbeaff; }
 .chart-drawing-toolbar button:disabled { color: #46515e; }
-.chart-stage.trend-isolated .chart-drawing-toolbar,
+.chart-stage.trend-isolated .chart-drawing-toolbar-actions,
+.chart-stage.trend-isolated .chart-toolbar-divider,
 .chart-stage.trend-isolated .trend-line-manager,
 .chart-stage.trend-isolated .chart-drawing-input,
 .chart-stage.trend-isolated .chart-range-selection,
@@ -674,6 +684,14 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
   background: color-mix(in srgb, var(--theme-surface-alt) 94%, transparent);
   box-shadow: 0 2px 8px #0006;
 }
+.trading-system-controls.embedded {
+  position: static;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.trading-system-controls.embedded .trading-system-control-actions { max-width: 220px; }
 .trading-system-control-actions { display: flex; align-items: center; gap: 1px; max-width: 190px; overflow: hidden; transition: max-width 160ms ease, opacity 120ms ease; }
 .trading-system-controls.collapsed .trading-system-control-actions { max-width: 0; opacity: 0; pointer-events: none; }
 .trading-system-controls button { width: 22px; height: 22px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 2px; background: transparent; color: var(--theme-muted); }

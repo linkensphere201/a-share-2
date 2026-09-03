@@ -1,15 +1,16 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { ReactNode } from 'react'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ScreenerWorkspace } from './ScreenerWorkspace'
 import { themes } from './themeStore'
 
 vi.mock('./ChartCanvas', () => ({
-  ChartCanvas: ({ symbol, asOfDate, highlightedAnalysisItemId }: {
-    symbol: string; asOfDate?: string; highlightedAnalysisItemId?: string
-  }) => <div data-testid="screener-chart" data-date={asOfDate} data-line={highlightedAnalysisItemId}>{symbol}</div>,
+  ChartCanvas: ({ symbol, asOfDate, highlightedAnalysisItemId, toolbarContent }: {
+    symbol: string; asOfDate?: string; highlightedAnalysisItemId?: string; toolbarContent?: ReactNode
+  }) => <div data-testid="screener-chart" data-date={asOfDate} data-line={highlightedAnalysisItemId}>{symbol}{toolbarContent}</div>,
 }))
 
 afterEach(() => {

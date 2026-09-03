@@ -168,6 +168,22 @@ describe('TradingSystemControls', () => {
     expect(state).toMatchObject({ expanded: false, enabled: true, isolate: true })
   })
 
+  it('renders as an always-expanded toolbar group when embedded in the chart toolbar', () => {
+    const state = { ...createTradingSystemWindowStates().trend, expanded: false }
+    const { container } = render(<TradingSystemControls
+      embedded
+      instrumentKind="stock"
+      state={state}
+      onChange={vi.fn()}
+      onRecalculate={vi.fn()}
+    />)
+
+    expect(container.querySelector('.trading-system-controls')?.classList.contains('embedded')).toBe(true)
+    expect(container.querySelector('.trading-system-controls')?.classList.contains('collapsed')).toBe(false)
+    expect(screen.queryByRole('button', { name: '展开趋势交易体系' })).toBeNull()
+    expect(screen.getByRole('button', { name: '启用趋势交易体系' })).toBeTruthy()
+  })
+
   it('opens the result explanation only when analysis exists', () => {
     const state = { ...createTradingSystemWindowStates().trend, enabled: true }
     const onOpenChange = vi.fn()

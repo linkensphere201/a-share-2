@@ -297,20 +297,6 @@ const ScreenerChart = memo(function ScreenerChart({
   const [highlightedItemId, setHighlightedItemId] = useState<string | undefined>(candidate.line_item_id)
   const layers = trendState.layers
   return <div className={explanationOpen ? 'screener-chart-runtime explanation-open' : 'screener-chart-runtime'}>
-    <TradingSystemControls
-      instrumentKind="stock"
-      state={trendState}
-      analysisRun={analysis}
-      onChange={setTrendState}
-      onRecalculate={() => undefined}
-      recalculationAvailable={false}
-      recalculationDisabledReason="历史选股结果使用当轮固化分析，不支持重新测算"
-      explanationOpen={explanationOpen}
-      onExplanationOpenChange={open => {
-        setExplanationOpen(open)
-        if (!open) setHighlightedItemId(candidate.line_item_id)
-      }}
-    />
     <ChartCanvas
       symbol={candidate.symbol}
       instrumentName={candidate.name}
@@ -323,6 +309,21 @@ const ScreenerChart = memo(function ScreenerChart({
       indicator="none"
       settlementVisible={false}
       openInterestVisible={false}
+      toolbarContent={<TradingSystemControls
+        embedded
+        instrumentKind="stock"
+        state={trendState}
+        analysisRun={analysis}
+        onChange={setTrendState}
+        onRecalculate={() => undefined}
+        recalculationAvailable={false}
+        recalculationDisabledReason="历史选股结果使用当轮固化分析，不支持重新测算"
+        explanationOpen={explanationOpen}
+        onExplanationOpenChange={open => {
+          setExplanationOpen(open)
+          if (!open) setHighlightedItemId(candidate.line_item_id)
+        }}
+      />}
       trendAnalysisEnabled={trendState.enabled}
       shortTrendLinesVisible={layers['short-trend-lines'] !== false}
       longTrendLinesVisible={layers['long-trend-lines'] !== false}

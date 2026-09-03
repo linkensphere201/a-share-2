@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { ReactNode } from 'react'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
@@ -13,6 +14,7 @@ vi.mock('./ChartCanvas', () => ({
     volumeVisible,
     indicator,
     toolbarCollapsed,
+    toolbarContent,
     initialVisibleRange,
     onVisibleRangeChange,
     onVolumeVisibleChange,
@@ -23,18 +25,22 @@ vi.mock('./ChartCanvas', () => ({
     volumeVisible: boolean
     indicator: 'macd' | 'none'
     toolbarCollapsed?: boolean
+    toolbarContent?: ReactNode
     initialVisibleRange?: { from: string; to: string }
     onVisibleRangeChange: (value: { from: string; to: string }) => void
     onVolumeVisibleChange: (visible: boolean) => void
     onIndicatorChange: (indicator: 'macd' | 'none') => void
     onToolbarCollapsedChange: (collapsed: boolean) => void
-  }) => <div data-testid="chart-canvas" data-visible-from={initialVisibleRange?.from} data-visible-to={initialVisibleRange?.to}>
-    {symbol}
-    <button aria-label="模拟缩放图表" onClick={() => onVisibleRangeChange({ from: '2025-04-01', to: '2026-08-05' })}/>
-    {volumeVisible && <button aria-label="隐藏成交量栏" onClick={() => onVolumeVisibleChange(false)}/>}
-    {indicator === 'macd' && <button aria-label="隐藏MACD栏" onClick={() => onIndicatorChange('none')}/>}
-    <button aria-label="模拟切换画线工具栏" onClick={() => onToolbarCollapsedChange(!toolbarCollapsed)}/>
-  </div>,
+  }) => <>
+    <div data-testid="chart-canvas" data-visible-from={initialVisibleRange?.from} data-visible-to={initialVisibleRange?.to}>
+      {symbol}
+      <button aria-label="模拟缩放图表" onClick={() => onVisibleRangeChange({ from: '2025-04-01', to: '2026-08-05' })}/>
+      {volumeVisible && <button aria-label="隐藏成交量栏" onClick={() => onVolumeVisibleChange(false)}/>}
+      {indicator === 'macd' && <button aria-label="隐藏MACD栏" onClick={() => onIndicatorChange('none')}/>}
+      <button aria-label="模拟切换画线工具栏" onClick={() => onToolbarCollapsedChange(!toolbarCollapsed)}/>
+    </div>
+    <div data-testid="chart-unified-toolbar">{toolbarContent}</div>
+  </>,
 }))
 
 afterEach(() => {
@@ -61,6 +67,7 @@ describe('StockWorkspace', () => {
     expect(screen.getByRole('button', { name: '编辑 表1 标的' })).toBeTruthy()
     expect(screen.queryByRole('button', { name: '编辑 CPO概念 标的' })).toBeNull()
     expect(screen.getByRole('button', { name: '展开对话栏' })).toBeTruthy()
+    expect(within(screen.getByTestId('chart-unified-toolbar')).getByRole('button', { name: '启用趋势交易体系' })).toBeTruthy()
     await user.click(screen.getByRole('button', { name: '展开对话栏' }))
     expect(screen.getByRole('button', { name: '收起对话栏' })).toBeTruthy()
   })
@@ -88,13 +95,12 @@ describe('StockWorkspace', () => {
     fireEvent.change(screen.getByRole('spinbutton', { name: '短期交易日' }), { target: { value: '80' } })
     await user.click(screen.getByRole('checkbox', { name: '显示关键位' }))
     await user.click(screen.getByRole('button', { name: '保存' }))
-    await user.click(screen.getByRole('button', { name: '收起趋势交易体系' }))
 
     await waitFor(() => {
       const state = JSON.parse(window.localStorage.getItem(workspaceStorageKey) ?? '{}')
       expect(state.groups[0].windows[1].chart.tradingSystems.trend).toMatchObject({
         enabled: true,
-        expanded: false,
+        expanded: true,
         isolate: true,
         settingsRevision: 1,
         settings: { shortHorizonBars: 80, mediumHorizonBars: 120, longHorizonBars: 250 },
@@ -104,8 +110,6 @@ describe('StockWorkspace', () => {
 
     first.unmount()
     render(<App />)
-    expect(screen.getByRole('button', { name: '展开趋势交易体系' })).toBeTruthy()
-    await user.click(screen.getByRole('button', { name: '展开趋势交易体系' }))
     expect(screen.getByRole('button', { name: '停用趋势交易体系' })).toBeTruthy()
     expect(screen.getByRole('button', { name: '退出趋势隔离' }).getAttribute('aria-pressed')).toBe('true')
     await user.click(screen.getByRole('button', { name: '趋势交易体系设置' }))

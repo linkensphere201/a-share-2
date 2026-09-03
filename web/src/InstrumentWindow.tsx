@@ -125,33 +125,6 @@ export function ChartWindow({
         </div>
       </header>
       <div className={explanationOpen || aiAnalysisOpen ? 'instrument-window-body explanation-open' : 'instrument-window-body'} onPointerDown={onFocus}>
-        <TradingSystemControls
-          instrumentKind={instrument.kind}
-          state={chart.tradingSystems.trend}
-          breakoutState={breakoutState}
-          analysisRun={trendAnalysis}
-          recalculationState={trendRecalculationState}
-          onChange={trend => onTradingSystemsChange({ ...chart.tradingSystems, trend })}
-          onRecalculate={async (trend, refreshData) => {
-            setTrendRecalculationState('running')
-            try {
-              await onTradingSystemRecalculate('trend', trend, refreshData)
-              setTrendRecalculationState('idle')
-            } catch {
-              setTrendRecalculationState('failed')
-            }
-          }}
-          onReview={() => setReviewOpen(true)}
-          explanationOpen={explanationOpen}
-          onExplanationOpenChange={open => {
-            setExplanationOpen(open)
-            if (open) setAiAnalysisOpen(false)
-            if (!open) setHighlightedAnalysisItemId(undefined)
-          }}
-          aiAnalysisAvailable
-          aiAnalysisOpen={aiAnalysisOpen}
-          onAiAnalysisOpenChange={open => void openAiAnalysis(open)}
-        />
         <ChartCanvas
           symbol={instrument.symbol}
           focused={focused}
@@ -169,6 +142,34 @@ export function ChartWindow({
           openInterestVisible={chart.openInterestVisible}
           paneRatios={chart.paneRatios}
           toolbarCollapsed={chart.drawingToolbarCollapsed}
+          toolbarContent={<TradingSystemControls
+            embedded
+            instrumentKind={instrument.kind}
+            state={chart.tradingSystems.trend}
+            breakoutState={breakoutState}
+            analysisRun={trendAnalysis}
+            recalculationState={trendRecalculationState}
+            onChange={trend => onTradingSystemsChange({ ...chart.tradingSystems, trend })}
+            onRecalculate={async (trend, refreshData) => {
+              setTrendRecalculationState('running')
+              try {
+                await onTradingSystemRecalculate('trend', trend, refreshData)
+                setTrendRecalculationState('idle')
+              } catch {
+                setTrendRecalculationState('failed')
+              }
+            }}
+            onReview={() => setReviewOpen(true)}
+            explanationOpen={explanationOpen}
+            onExplanationOpenChange={open => {
+              setExplanationOpen(open)
+              if (open) setAiAnalysisOpen(false)
+              if (!open) setHighlightedAnalysisItemId(undefined)
+            }}
+            aiAnalysisAvailable
+            aiAnalysisOpen={aiAnalysisOpen}
+            onAiAnalysisOpenChange={open => void openAiAnalysis(open)}
+          />}
           initialVisibleRange={chart.visibleRange}
           onCoverageChange={onCoverageChange}
           onVisibleRangeChange={onVisibleRangeChange}

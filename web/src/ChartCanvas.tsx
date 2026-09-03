@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import { AlertTriangle, Check, ChevronLeft, ChevronRight, MousePointer2, Move, MoveHorizontal, MoveVertical, PencilLine, Percent, RefreshCw, Settings2, Trash2, X, ZoomIn } from 'lucide-react'
 import { logInfo, logWarning } from './eventLogger'
 import {
@@ -176,6 +176,7 @@ type ChartCanvasProps = {
   openInterestVisible: boolean
   paneRatios?: ChartPaneRatios
   toolbarCollapsed?: boolean
+  toolbarContent?: ReactNode
   initialVisibleRange?: VisibleRange
   onCoverageChange?: (bars: number, first?: string, last?: string) => void
   onVisibleRangeChange?: (value: VisibleRange) => void
@@ -257,6 +258,7 @@ export function ChartCanvas({
   openInterestVisible,
   paneRatios,
   toolbarCollapsed: persistedToolbarCollapsed = false,
+  toolbarContent,
   initialVisibleRange,
   onCoverageChange,
   onVisibleRangeChange,
@@ -1664,7 +1666,11 @@ export function ChartCanvas({
       onContextMenu={event => event.preventDefault()}
     >
       <div ref={hostRef} className="chart-host"/>
-      <div className={toolbarCollapsed ? 'chart-drawing-toolbar collapsed' : 'chart-drawing-toolbar'} onPointerDown={event => event.stopPropagation()}>
+      <div
+        className={toolbarCollapsed ? 'chart-drawing-toolbar chart-unified-toolbar collapsed' : 'chart-drawing-toolbar chart-unified-toolbar'}
+        data-testid="chart-unified-toolbar"
+        onPointerDown={event => event.stopPropagation()}
+      >
         <div className="chart-drawing-toolbar-actions" aria-hidden={toolbarCollapsed}>
         <button
           className={manualRefreshing ? 'refreshing' : manualRefreshFeedback?.kind ?? ''}
@@ -1729,6 +1735,10 @@ export function ChartCanvas({
         <button title="删除选中的趋势线" aria-label="删除选中的趋势线" disabled={!selectedDrawingId} onClick={removeSelectedDrawing}><Trash2 size={13}/></button>
         {drawingTool === 'trend-line' && <button title="取消画线" aria-label="取消画线" onClick={cancelDrawing}><X size={13}/></button>}
         </div>
+        {toolbarContent && <>
+          <span className="chart-toolbar-divider" aria-hidden="true"/>
+          <div className="chart-toolbar-content" aria-hidden={toolbarCollapsed}>{toolbarContent}</div>
+        </>}
         <button
           className="chart-toolbar-toggle"
           title={toolbarCollapsed ? '展开图表工具栏' : '最小化图表工具栏'}
