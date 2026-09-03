@@ -3,23 +3,16 @@ import { AlertTriangle, Check, ChevronLeft, ChevronRight, MousePointer2, Move, M
 import { logInfo, logWarning } from './eventLogger'
 import {
   createTrendLine,
-  deleteTrendLine,
-  drawingIdentityKey,
-  listDrawingMigrationCandidates,
-  loadSymbolDrawings,
-  resolveDrawingMigration,
   saveTrendLine,
-  subscribeSymbolDrawings,
   type TrendLineAnchor,
   type TrendLineDrawing,
-  type DrawingTarget,
-  type DrawingMigrationCandidate,
 } from './drawingStore'
 import { barsInRenderPeriod, chooseAnchor, orientTrendLineAnchors, replaceTrendLineAnchor, translateTrendLineAnchors, type LineGeometry, type TrendLineOrientation } from './trendLines'
 import type { ThemeDefinition } from './themeStore'
-import { loadTrendAnalysis, type GeneratedAnalysisItem, type TrendAnalysisRun } from './trendAnalysisClient'
-import { refreshLatestDailyBar, type LatestDailyRefreshFeedback } from './latestDailyRefreshClient'
-import { useIntradayDailyPolling } from './useIntradayDailyPolling'
+import type { GeneratedAnalysisItem, TrendAnalysisRun } from './trendAnalysisClient'
+import { dailyBarsUrl, useChartDailyBars } from './useChartDailyBars'
+import { useChartDrawings } from './useChartDrawings'
+import { useChartTrendAnalysis } from './useChartTrendAnalysis'
 import {
   reviewGeometryHandles,
   updateReviewGeometryHandle,
@@ -57,7 +50,6 @@ import {
   createRangeMeasurement,
   detectPriceGaps,
   latestReadout,
-  mergeProvisionalBar,
   movingAverage,
   previousCloseByDate,
   remapLogicalRange,
@@ -236,10 +228,7 @@ export function paneInteractionOptions(
   }
 }
 
-export function dailyBarsUrl(symbol: string, asOfDate?: string): string {
-  const base = `/api/instruments/${encodeURIComponent(symbol)}/daily-bars`
-  return asOfDate ? `${base}?end_date=${encodeURIComponent(asOfDate)}` : base
-}
+export { dailyBarsUrl }
 
 export function ChartCanvas({
   symbol,
@@ -302,7 +291,6 @@ export function ChartCanvas({
   const macdPaneRef = useRef<IPaneApi<Time> | null>(null)
   const openInterestRef = useRef<ISeriesApi<'Histogram'> | null>(null)
   const openInterestPaneRef = useRef<IPaneApi<Time> | null>(null)
-  const barsRef = useRef<DailyBar[]>([])
   const previousCloseByDateRef = useRef<Map<string, number>>(new Map())
   const renderedBarsRef = useRef<Map<string, RenderBar>>(new Map())
   const renderedBarListRef = useRef<RenderBar[]>([])
@@ -324,26 +312,12 @@ export function ChartCanvas({
   const priceModeRef = useRef(priceMode)
   const pendingViewportRef = useRef<ViewportSnapshot | undefined>(undefined)
   const skipRangeResetRef = useRef(false)
-  const [bars, setBars] = useState<DailyBar[]>([])
-  const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading')
   const [readout, setReadout] = useState<Readout | null>(null)
   const [lodBucket, setLodBucket] = useState(1)
   const [selectionBox, setSelectionBox] = useState<SelectionBox>()
   const [rangeSelection, setRangeSelection] = useState<RangeSelection>()
   const [measurement, setMeasurement] = useState<RangeMeasurement>()
   const [drawingTool, setDrawingTool] = useState<'browse' | 'trend-line' | 'move'>('browse')
-  const [drawingTarget, setDrawingTarget] = useState<DrawingTarget>(() => ({
-    symbol, instrumentKind, priceBasis, ruleVersion,
-  }))
-  const drawingTargetKey = drawingIdentityKey(drawingTarget)
-  const [drawings, setDrawings] = useState<TrendLineDrawing[]>(() => (
-    loadSymbolDrawings({ symbol, instrumentKind, priceBasis, ruleVersion })
-  ))
-  const [drawingMigrationCandidates, setDrawingMigrationCandidates] = useState<
-    DrawingMigrationCandidate[]
-  >(() => listDrawingMigrationCandidates({
-    symbol, instrumentKind, priceBasis, ruleVersion,
-  }))
   const [drawingDraft, setDrawingDraft] = useState<[TrendLineAnchor, TrendLineAnchor]>()
   const [selectedDrawingId, setSelectedDrawingId] = useState<string>()
   const [drawingManagerOpen, setDrawingManagerOpen] = useState(false)
@@ -352,26 +326,92 @@ export function ChartCanvas({
   const [toolbarCollapsed, setToolbarCollapsed] = useState(persistedToolbarCollapsed)
   const [overlayRevision, setOverlayRevision] = useState(0)
   const initialTheme = useRef(theme).current
-  const manualRefreshControllerRef = useRef<AbortController | undefined>(undefined)
-  const manualRefreshFeedbackTimerRef = useRef(0)
-  const manualRefreshWarningAtRef = useRef(0)
-  const [manualRefreshing, setManualRefreshing] = useState(false)
-  const [manualRefreshFeedback, setManualRefreshFeedback] = useState<{
-    kind: LatestDailyRefreshFeedback
-    message: string
-  }>()
-  const [trendAnalysis, setTrendAnalysis] = useState<TrendAnalysisRun | null>(null)
-  const [trendAnalysisPreview, setTrendAnalysisPreview] = useState(false)
-  const displayedTrendAnalysis = useMemo(() => (
-    trendAnalysis && supplementalAnalysisItems.length > 0
-      ? {
-        ...trendAnalysis,
-        items: supplementalAnalysisOnly
-          ? supplementalAnalysisItems
-          : [...trendAnalysis.items, ...supplementalAnalysisItems],
-      }
-      : trendAnalysis
-  ), [trendAnalysis, supplementalAnalysisItems, supplementalAnalysisOnly])
+  const resetDrawingInteraction = useCallback(() => {
+    setSelectedDrawingId(undefined)
+    setDrawingDraft(undefined)
+    drawingDragRef.current = undefined
+    lineMoveDragRef.current = undefined
+    lineAnchorDragRef.current = undefined
+    setMovingDrawingId(undefined)
+    setEditingAnchor(undefined)
+    setDrawingTool('browse')
+    setDrawingManagerOpen(false)
+  }, [])
+  const {
+    target: drawingTarget,
+    targetKey: drawingTargetKey,
+    drawings,
+    setDrawings,
+    migrationCandidates: drawingMigrationCandidates,
+    setIdentity: setDrawingIdentity,
+    resolveMigration,
+    updateDrawing,
+    updateDrawingStyle,
+    toggleDrawingVisibility,
+    removeDrawing,
+  } = useChartDrawings({
+    symbol,
+    instrumentKind,
+    priceBasis,
+    ruleVersion,
+    onTargetReset: resetDrawingInteraction,
+  })
+  const onBeforePreserveBars = useCallback(() => {
+    pendingViewportRef.current = captureViewport(
+      chartRef.current,
+      renderedBarListRef.current.length,
+    )
+    skipRangeResetRef.current = true
+  }, [])
+  const onBarsChanged = useCallback((next: DailyBar[]) => {
+    previousCloseByDateRef.current = previousCloseByDate(next)
+    setReadout(latestReadout(next))
+  }, [])
+  const onDailyLoadStart = useCallback(() => {
+    selectionDragRef.current = undefined
+    setSelectionBox(undefined)
+    setRangeSelection(undefined)
+    setMeasurement(undefined)
+  }, [])
+  const onInstrumentIdentity = useCallback((identity: {
+    instrumentKind: string
+    priceBasis?: string | null
+    ruleVersion?: string | null
+  }) => {
+    setDrawingIdentity({
+      symbol,
+      instrumentKind: identity.instrumentKind,
+      priceBasis: identity.priceBasis,
+      ruleVersion: identity.ruleVersion,
+    })
+  }, [setDrawingIdentity, symbol])
+  const {
+    bars,
+    barsRef,
+    state,
+    refreshing: manualRefreshing,
+    refreshFeedback: manualRefreshFeedback,
+    refreshNow: refreshIntradayNow,
+  } = useChartDailyBars({
+    symbol,
+    asOfDate,
+    onLoadStart: onDailyLoadStart,
+    onBeforePreserve: onBeforePreserveBars,
+    onBarsChanged,
+    onCoverageChange,
+    onInstrumentIdentity,
+  })
+  const {
+    analysis: trendAnalysis,
+    displayed: displayedTrendAnalysis,
+    preview: trendAnalysisPreview,
+  } = useChartTrendAnalysis({
+    symbol,
+    enabled: trendAnalysisEnabled,
+    override: trendAnalysisOverride,
+    supplementalItems: supplementalAnalysisItems,
+    supplementalOnly: supplementalAnalysisOnly,
+  })
 
   const averages = useMemo(() => ({
     ma5: movingAverage(bars, 5),
@@ -394,96 +434,6 @@ export function ChartCanvas({
     setSelectionBox(undefined)
     setMeasurement(undefined)
   }, [trendIsolation])
-
-  useEffect(() => {
-    if (trendAnalysisOverride !== undefined) {
-      setTrendAnalysis(trendAnalysisOverride)
-      setTrendAnalysisPreview(false)
-      setOverlayRevision(value => value + 1)
-      return
-    }
-    if (!trendAnalysisEnabled) {
-      setTrendAnalysis(null)
-      setTrendAnalysisPreview(false)
-      return
-    }
-    let controller: AbortController | undefined
-    const reload = () => {
-      controller?.abort()
-      controller = new AbortController()
-      void loadTrendAnalysis(symbol, 'daily', controller.signal).then(snapshot => {
-        setTrendAnalysis(snapshot.effective)
-        setTrendAnalysisPreview(
-          snapshot.effective !== null && snapshot.effective.run_id === snapshot.preview?.run_id
-        )
-        setOverlayRevision(value => value + 1)
-      }).catch(error => {
-        if (error instanceof DOMException && error.name === 'AbortError') return
-        logWarning('trading-system', '趋势分析结果读取失败', {
-          symbol, error: error instanceof Error ? error.message : String(error),
-        })
-      })
-    }
-    const onUpdated = (event: Event) => {
-      const detail = (event as CustomEvent<{ symbol?: string }>).detail
-      if (detail?.symbol?.toUpperCase() === symbol.toUpperCase()) reload()
-    }
-    reload()
-    window.addEventListener('stock-harness:trend-analysis-updated', onUpdated)
-    return () => {
-      controller?.abort()
-      window.removeEventListener('stock-harness:trend-analysis-updated', onUpdated)
-    }
-  }, [symbol, trendAnalysisEnabled, trendAnalysisOverride])
-
-  useEffect(() => {
-    setDrawingTarget({ symbol, instrumentKind, priceBasis, ruleVersion })
-  }, [symbol, instrumentKind, priceBasis, ruleVersion])
-
-  useEffect(() => {
-    const reload = () => {
-      setDrawings(loadSymbolDrawings(drawingTarget))
-      setDrawingMigrationCandidates(listDrawingMigrationCandidates(drawingTarget))
-    }
-    reload()
-    setSelectedDrawingId(undefined)
-    setDrawingDraft(undefined)
-    drawingDragRef.current = undefined
-    lineMoveDragRef.current = undefined
-    lineAnchorDragRef.current = undefined
-    setMovingDrawingId(undefined)
-    setEditingAnchor(undefined)
-    setDrawingTool('browse')
-    setDrawingManagerOpen(false)
-    return subscribeSymbolDrawings(drawingTarget, reload)
-  }, [drawingTargetKey])
-
-  const resolveMigration = (
-    candidateId: string,
-    action: 'migrate' | 'reject',
-  ) => {
-    try {
-      resolveDrawingMigration(drawingTarget, candidateId, action)
-      setDrawings(loadSymbolDrawings(drawingTarget))
-      setDrawingMigrationCandidates(listDrawingMigrationCandidates(drawingTarget))
-      logInfo('drawing', action === 'migrate' ? '期货趋势线迁移完成' : '期货趋势线已保持隔离', {
-        symbol, candidateId,
-      })
-    } catch (error) {
-      logWarning('drawing', '期货趋势线迁移处理失败', { symbol, candidateId, action, error })
-    }
-  }
-
-  const replaceBars = useCallback((next: DailyBar[], preserveView = false) => {
-    if (preserveView) {
-      pendingViewportRef.current = captureViewport(chartRef.current, renderedBarListRef.current.length)
-      skipRangeResetRef.current = true
-    }
-    barsRef.current = next
-    previousCloseByDateRef.current = previousCloseByDate(next)
-    setBars(next)
-    setReadout(latestReadout(next))
-  }, [])
 
   useEffect(() => {
     chartRef.current?.applyOptions({
@@ -862,158 +812,6 @@ export function ChartCanvas({
     if (!chart || !paneRatios) return
     applyPaneRatios(chart, paneRatios, volumePaneRef.current, macdPaneRef.current, openInterestPaneRef.current)
   }, [indicator, openInterestVisible, paneRatios, volumeVisible])
-
-  useEffect(() => {
-    const controller = new AbortController()
-    selectionDragRef.current = undefined
-    setSelectionBox(undefined)
-    setRangeSelection(undefined)
-    setMeasurement(undefined)
-    setState('loading')
-    fetch(dailyBarsUrl(symbol, asOfDate), { signal: controller.signal })
-      .then(response => {
-        if (!response.ok) throw new Error(`HTTP ${response.status}`)
-        return response.json() as Promise<{
-          items: DailyBar[]
-          instrument_kind?: string
-          price_basis?: string | null
-          rule_version?: string | null
-        }>
-      })
-      .then(body => {
-        if (body.instrument_kind) {
-          setDrawingTarget({
-            symbol,
-            instrumentKind: body.instrument_kind,
-            priceBasis: body.price_basis,
-            ruleVersion: body.rule_version,
-          })
-        }
-        replaceBars(body.items)
-        setState('ready')
-        const finalItems = body.items.filter(item => item.bar_state !== 'intraday')
-        coverageCallbackRef.current?.(
-          finalItems.length,
-          finalItems.at(0)?.trade_date,
-          finalItems.at(-1)?.trade_date,
-        )
-        logInfo('chart', '日线数据加载完成', { symbol, rows: finalItems.length })
-      })
-      .catch(error => {
-        if ((error as Error).name !== 'AbortError') {
-          setState('error')
-          logWarning('chart', '日线数据加载失败', { symbol, error })
-        }
-      })
-    return () => controller.abort()
-  }, [symbol, asOfDate, replaceBars])
-
-  useEffect(() => () => {
-    manualRefreshControllerRef.current?.abort()
-    window.clearTimeout(manualRefreshFeedbackTimerRef.current)
-  }, [symbol])
-
-  useEffect(() => {
-    const onRefreshed = (event: Event) => {
-      if (asOfDate) return
-      const detail = (event as CustomEvent<{
-        symbol?: string
-        mode?: 'provisional' | 'canonical' | 'final'
-        items?: DailyBar[]
-      }>).detail
-      if (detail?.symbol?.toUpperCase() !== symbol.toUpperCase() || !detail.items) return
-      if (detail.mode === 'provisional') {
-        const live = detail.items[0]
-        if (live) replaceBars(mergeProvisionalBar(barsRef.current, live), true)
-        return
-      }
-      replaceBars(detail.items, true)
-      const finalItems = detail.items.filter(item => item.bar_state !== 'intraday')
-      coverageCallbackRef.current?.(
-        finalItems.length,
-        finalItems.at(0)?.trade_date,
-        finalItems.at(-1)?.trade_date,
-      )
-    }
-    window.addEventListener('stock-harness:latest-daily-refreshed', onRefreshed)
-    return () => window.removeEventListener('stock-harness:latest-daily-refreshed', onRefreshed)
-  }, [symbol, asOfDate, replaceBars])
-
-  const showManualRefreshFeedback = useCallback((
-    kind: LatestDailyRefreshFeedback,
-    message: string,
-  ) => {
-    window.clearTimeout(manualRefreshFeedbackTimerRef.current)
-    setManualRefreshFeedback({ kind, message })
-    manualRefreshFeedbackTimerRef.current = window.setTimeout(
-      () => setManualRefreshFeedback(undefined),
-      3_000,
-    )
-  }, [])
-
-  const refreshIntradayNow = useCallback(() => {
-    manualRefreshControllerRef.current?.abort()
-    const controller = new AbortController()
-    manualRefreshControllerRef.current = controller
-    window.clearTimeout(manualRefreshFeedbackTimerRef.current)
-    setManualRefreshFeedback(undefined)
-    setManualRefreshing(true)
-    refreshLatestDailyBar(symbol, new Date(), controller.signal)
-      .then(result => {
-        if (result.mode === 'provisional') {
-          const live = result.items[0]
-          if (live) replaceBars(mergeProvisionalBar(barsRef.current, live), true)
-        } else {
-          replaceBars(result.items, true)
-          const finalItems = result.items.filter(item => item.bar_state !== 'intraday')
-          coverageCallbackRef.current?.(
-            finalItems.length,
-            finalItems.at(0)?.trade_date,
-            finalItems.at(-1)?.trade_date,
-          )
-        }
-        showManualRefreshFeedback(result.feedback, result.message)
-        const details = {
-          symbol, mode: result.mode, state: result.status,
-          rowsChanged: result.rowsChanged, error: result.error,
-        }
-        if (result.warning) {
-          const now = Date.now()
-          if (now - manualRefreshWarningAtRef.current >= 60_000) {
-            manualRefreshWarningAtRef.current = now
-            logWarning('daily-refresh', '最新日线刷新完成但存在警告，保留可用图表数据', details)
-          }
-        } else {
-          logInfo('daily-refresh', '最新日线刷新完成', details)
-        }
-      })
-      .catch(error => {
-        if ((error as Error).name !== 'AbortError') {
-          showManualRefreshFeedback('fallback', '刷新失败，已保留现有图表数据')
-          const now = Date.now()
-          if (now - manualRefreshWarningAtRef.current >= 60_000) {
-            manualRefreshWarningAtRef.current = now
-            logWarning('daily-refresh', '最新日线刷新失败，保留现有图表', { symbol, error })
-          }
-        }
-      })
-      .finally(() => {
-        if (manualRefreshControllerRef.current === controller) {
-          manualRefreshControllerRef.current = undefined
-          setManualRefreshing(false)
-        }
-      })
-  }, [symbol, replaceBars, showManualRefreshFeedback])
-
-  const applyPolledBar = useCallback((live: DailyBar) => {
-    const next = mergeProvisionalBar(barsRef.current, live)
-    if (next !== barsRef.current) replaceBars(next, true)
-  }, [replaceBars])
-  useIntradayDailyPolling({
-    symbol,
-    disabled: Boolean(asOfDate),
-    onBar: applyPolledBar,
-  })
 
   useEffect(() => {
     applyBucketRef.current = (bucket, preserve) => {
@@ -1461,24 +1259,6 @@ export function ChartCanvas({
     }
   }
 
-  const updateDrawing = (id: string, update: (drawing: TrendLineDrawing) => TrendLineDrawing) => {
-    const drawing = drawings.find(item => item.id === id)
-    if (!drawing) return
-    try {
-      saveTrendLine({ ...update(drawing), updatedAt: new Date().toISOString() })
-    } catch (error) {
-      logWarning('drawing', '趋势线设置保存失败', { symbol, drawingId: id, error })
-    }
-  }
-
-  const updateDrawingStyle = (id: string, style: Partial<TrendLineDrawing['style']>) => {
-    updateDrawing(id, drawing => ({ ...drawing, style: { ...drawing.style, ...style } }))
-  }
-
-  const toggleDrawingVisibility = (id: string) => {
-    updateDrawing(id, drawing => ({ ...drawing, visible: !drawing.visible }))
-  }
-
   const orientSelectedDrawing = (orientation: TrendLineOrientation) => {
     if (!selectedDrawingId) return
     updateDrawing(selectedDrawingId, drawing => ({
@@ -1489,8 +1269,7 @@ export function ChartCanvas({
 
   const removeSelectedDrawing = () => {
     if (!selectedDrawingId) return
-    deleteTrendLine(drawingTarget, selectedDrawingId)
-    logInfo('drawing', '趋势线已删除', { symbol, drawingId: selectedDrawingId })
+    removeDrawing(selectedDrawingId)
     setSelectedDrawingId(undefined)
   }
 

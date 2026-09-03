@@ -5,28 +5,22 @@ import { InstrumentEditor } from './InstrumentEditor'
 import { CustomIndexManager } from './CustomIndexManager'
 import { DailyNote } from './DailyNote'
 import { IntradaySubscriptionCoordinator, sendIntradaySubscription } from './intradaySubscription'
-import { logError, logInfo, logWarning } from './eventLogger'
+import { logInfo, logWarning } from './eventLogger'
 import { LayoutManager } from './LayoutManager'
 import { ScreenerWorkspace, type ScreenerTargetList } from './ScreenerWorkspace'
 import type { ScreenerCandidate } from './screenerClient'
 import { RuntimeEventBar } from './RuntimeEventBar'
 import { subscribeDrawingStore } from './drawingStore'
 import { applyTheme, loadTheme, persistTheme, themes, type ThemeDefinition } from './themeStore'
-import { removeLayoutWindow, updateSplitRatio } from './layoutTree'
+import { updateSplitRatio } from './layoutTree'
 import { WindowGroup } from './WindowGroup'
-import { removeWindowAttachments } from './windowAttachments'
 import { buildWorkspaceContext, publishWorkspaceContext } from './workspaceContext'
-import type { TradingSystemWindowState, TradingSystemWindowStates } from './tradingSystems'
-import { normalizeTrendTradingSystemSettings } from './tradingSystems'
-import { refreshThenRecalculateTrend } from './trendRefreshCoordinator'
-import { recalculateTrendAnalysis } from './trendAnalysisClient'
-import { beginTrendRequest, isCurrentTrendRequest } from './trendRequestGuard'
+import type { TradingSystemWindowStates } from './tradingSystems'
+import { useWorkspaceTrendRecalculation } from './useWorkspaceTrendRecalculation'
 import {
   chartRanges,
   appendInstrumentToManualList,
   deriveReferencedSymbols,
-  isChartableInstrument,
-  isListableInstrument,
   loadWorkspace,
   saveWorkspace,
   type ChartWindowState,
@@ -38,6 +32,13 @@ import {
   type WorkspaceState,
   type WorkspaceWindowState,
 } from './workspace'
+import {
+  applyListSelection,
+  removeWorkspaceWindow,
+  replaceDetachedWindowInstruments,
+  resolveActiveChart,
+  samePaneRatios,
+} from './workspaceMutations'
 
 export function StockWorkspace() {
   const [workspace, setWorkspace] = useState<WorkspaceState>(loadWorkspace)
@@ -58,8 +59,6 @@ export function StockWorkspace() {
   )
   const referencedSymbolsKey = referencedSymbols.join('|')
   const subscriptionCoordinatorRef = useRef<IntradaySubscriptionCoordinator | undefined>(undefined)
-  const activeGroupRef = useRef(activeGroup)
-  const trendRequestGenerationsRef = useRef(new Map<string, number>())
   const workspaceContext = useMemo(
     () => buildWorkspaceContext(activeGroup, resolvedWindowSymbols),
     [activeGroup, resolvedWindowSymbols, drawingRevision],
@@ -94,7 +93,6 @@ export function StockWorkspace() {
 
   useEffect(() => saveWorkspace(workspace), [workspace])
   useEffect(() => applyTheme(theme), [theme])
-  useEffect(() => { activeGroupRef.current = activeGroup }, [activeGroup])
 
   useEffect(() => subscribeDrawingStore(() => setDrawingRevision(value => value + 1)), [])
 
@@ -140,23 +138,7 @@ export function StockWorkspace() {
   }, [])
 
   const removeWindow = (id: string) => {
-    if (activeGroup.windows.length === 1) return
-    updateActiveGroup(group => {
-      const index = group.windows.findIndex(item => item.id === id)
-      const windows = group.windows.filter(item => item.id !== id)
-      const layout = removeLayoutWindow(group.layout, id)
-      if (!layout) return group
-      return {
-        ...group,
-        layout,
-        windows,
-        attachments: removeWindowAttachments(group.attachments, id),
-        focusedWindowId: group.focusedWindowId === id
-          ? windows[Math.min(index, windows.length - 1)].id
-          : group.focusedWindowId,
-        maximizedWindowId: group.maximizedWindowId === id ? undefined : group.maximizedWindowId,
-      }
-    })
+    updateActiveGroup(group => removeWorkspaceWindow(group, id))
   }
 
   const selectListInstrument = useCallback((id: string, instrument: Instrument) => {
@@ -164,31 +146,7 @@ export function StockWorkspace() {
   }, [updateActiveGroup])
 
   const saveWindowInstruments = useCallback((id: string, instruments: Instrument[]) => {
-    updateActiveGroup(group => {
-      const source = group.windows.find(item => item.id === id)
-      if (!source || source.mode !== 'detached') return group
-      const selectable = instruments.filter(isListableInstrument)
-      if (source.type === 'chart') {
-        const instrument = selectable[0]
-        if (!instrument || !isChartableInstrument(instrument)) return group
-        return {
-          ...group,
-          windows: group.windows.map(item => item.id === id
-            ? { ...source, instrument, chart: { ...source.chart, visibleRange: undefined } }
-            : item),
-        }
-      }
-      const nextSelection = selectable.find(item => item.symbol === source.selectedSymbol) ?? selectable[0]
-      const updated = {
-        ...group,
-        windows: group.windows.map(item => item.id === id ? {
-          ...source,
-          content: { ...source.content, instruments: selectable },
-          selectedSymbol: nextSelection?.symbol,
-        } : item),
-      }
-      return nextSelection ? applyListSelection(updated, id, nextSelection) : updated
-    })
+    updateActiveGroup(group => replaceDetachedWindowInstruments(group, id, instruments))
   }, [updateActiveGroup])
 
   const screenerTargetLists = useMemo<ScreenerTargetList[]>(() => activeGroup.windows
@@ -298,115 +256,10 @@ export function StockWorkspace() {
       : item)
   }, [updateWindow])
 
-  const handleTradingSystemRecalculate = useCallback((
-    id: string,
-    systemId: string,
-    system: TradingSystemWindowState,
-    refreshData: boolean,
-  ): Promise<void> => {
-    const item = activeGroup.windows.find(window => window.id === id)
-    if (item?.type !== 'chart') return Promise.resolve()
-    window.dispatchEvent(new CustomEvent('stock-harness:trading-system-recalculate', {
-      detail: { windowId: id, systemId, symbol: item.instrument.symbol, refreshData },
-    }))
-    logInfo('trading-system', '交易体系测算请求已派发', {
-      windowId: id,
-      systemId,
-      symbol: item.instrument.symbol,
-      refreshData,
-    })
-    if (systemId !== 'trend') return Promise.resolve()
-    const requestToken = beginTrendRequest(trendRequestGenerationsRef.current, {
-      groupId: activeGroup.id,
-      windowId: id,
-      symbol: item.instrument.symbol,
-    })
-    const requestIsCurrent = () => {
-      const group = activeGroupRef.current
-      const activeWindow = group.windows.find(window => window.id === id)
-      return isCurrentTrendRequest(
-        trendRequestGenerationsRef.current,
-        requestToken,
-        activeWindow?.type === 'chart' ? {
-          groupId: group.id,
-          windowId: id,
-          symbol: activeWindow.instrument.symbol,
-        } : undefined,
-      )
-    }
-    const settings = normalizeTrendTradingSystemSettings(system.settings)
-    const calculation = refreshData
-      ? refreshThenRecalculateTrend(
-        item.instrument.symbol,
-        settings,
-        system.settingsRevision,
-        {
-        onRefresh: result => {
-          if (!requestIsCurrent()) return
-          window.dispatchEvent(new CustomEvent('stock-harness:latest-daily-refreshed', {
-            detail: { symbol: item.instrument.symbol, ...result },
-          }))
-          if (result.warning) {
-            logWarning('trading-system', '更新测算的数据刷新完成但存在警告，将使用最后可用数据', {
-              windowId: id, symbol: item.instrument.symbol,
-              mode: result.mode, state: result.status, error: result.error,
-            })
-          } else {
-            logInfo('trading-system', '更新测算的数据刷新完成', {
-              windowId: id, symbol: item.instrument.symbol,
-              mode: result.mode, state: result.status,
-            })
-          }
-        },
-        onRefreshError: error => {
-          if (!requestIsCurrent()) return
-          logWarning('trading-system', '更新测算的数据刷新失败，将使用最后可用数据继续分析', {
-            windowId: id, symbol: item.instrument.symbol,
-            error: error instanceof Error ? error.message : String(error),
-          })
-        },
-        },
-      )
-      : recalculateTrendAnalysis(item.instrument.symbol, settings, system.settingsRevision)
-    return calculation.then(() => {
-      if (!requestIsCurrent()) return
-      updateWindow(id, window => window.type === 'chart'
-        && window.instrument.symbol === requestToken.symbol ? {
-        ...window,
-        chart: {
-          ...window.chart,
-          tradingSystems: {
-            ...window.chart.tradingSystems,
-            trend: { ...window.chart.tradingSystems.trend, analysisStatus: 'current' },
-          },
-        },
-      } : window)
-      logInfo('trading-system', '趋势交易体系测算完成', {
-        windowId: id, symbol: item.instrument.symbol,
-      })
-      window.dispatchEvent(new CustomEvent('stock-harness:trend-analysis-updated', {
-        detail: { windowId: id, symbol: item.instrument.symbol },
-      }))
-    }).catch(error => {
-      if (!requestIsCurrent()) return
-      updateWindow(id, window => window.type === 'chart'
-        && window.instrument.symbol === requestToken.symbol ? {
-        ...window,
-        chart: {
-          ...window.chart,
-          tradingSystems: {
-            ...window.chart.tradingSystems,
-            trend: { ...window.chart.tradingSystems.trend, analysisStatus: 'stale' },
-          },
-        },
-      } : window)
-      logError('trading-system', '趋势交易体系测算失败', {
-        windowId: id, symbol: item.instrument.symbol,
-        error: error instanceof Error ? error.message : String(error),
-      })
-      throw error
-    })
-  }, [activeGroup, updateWindow])
+  const handleTradingSystemRecalculate = useWorkspaceTrendRecalculation(
+    activeGroup,
+    updateWindow,
+  )
 
   const updateActiveChart = (update: (chart: ChartWindowState) => ChartWindowState) => {
     if (!activeChart) return
@@ -600,40 +453,4 @@ export function StockWorkspace() {
       />}
     </main>
   )
-}
-
-function resolveActiveChart(group: WindowGroupState, focused: WorkspaceWindowState): ChartWindowState | undefined {
-  if (focused.type === 'chart') return focused
-  const targetId = group.attachments.find(edge => edge.sourceWindowId === focused.id && edge.type === 'show-symbol')?.targetWindowId
-  const target = group.windows.find(item => item.id === targetId)
-  if (target?.type === 'chart') return target
-  return group.windows.find((item): item is ChartWindowState => item.type === 'chart')
-}
-
-function applyListSelection(group: WindowGroupState, sourceId: string, instrument: Instrument): WindowGroupState {
-  const edges = group.attachments.filter(attachment => attachment.sourceWindowId === sourceId)
-  return {
-    ...group,
-    windows: group.windows.map(item => {
-      if (item.id === sourceId && item.type === 'instrument-list') {
-        return { ...item, selectedSymbol: instrument.symbol } satisfies InstrumentListWindowState
-      }
-      const symbolEdge = edges.find(edge => edge.targetWindowId === item.id && edge.type === 'show-symbol')
-      if (symbolEdge && item.type === 'chart' && item.mode === 'attached' && isChartableInstrument(instrument)) {
-        return { ...item, instrument, chart: { ...item.chart, visibleRange: undefined } }
-      }
-      const membersEdge = edges.find(edge => edge.targetWindowId === item.id && edge.type === 'show-members')
-      if (membersEdge && item.type === 'instrument-list' && item.mode === 'attached') {
-        return { ...item, memberSourceWindowId: sourceId, selectedSymbol: undefined }
-      }
-      return item
-    }),
-  }
-}
-
-function samePaneRatios(left: ChartPaneRatios | undefined, right: ChartPaneRatios): boolean {
-  return left?.price === right.price
-    && left.volume === right.volume
-    && left.macd === right.macd
-    && left.openInterest === right.openInterest
 }
