@@ -208,6 +208,25 @@ describe('StockWorkspace', () => {
     expect(screen.getByTestId('chart-canvas').textContent).toBe('BK1128.DC')
   })
 
+  it('resizes and remembers the list member pane in the instrument editor', async () => {
+    vi.stubGlobal('fetch', emptyFetch())
+    const user = userEvent.setup()
+
+    render(<App />)
+    await user.click(screen.getByRole('button', { name: '编辑 表1 标的' }))
+
+    const separator = screen.getByRole('separator', { name: '调整列表成员高度' })
+    const editor = separator.parentElement as HTMLElement
+    expect(editor.style.gridTemplateRows).toContain('240px')
+
+    fireEvent.pointerDown(separator, { pointerId: 1, clientY: 400 })
+    fireEvent.pointerMove(separator, { pointerId: 1, clientY: 320 })
+    fireEvent.pointerUp(separator, { pointerId: 1, clientY: 320 })
+
+    expect(editor.style.gridTemplateRows).toContain('320px')
+    expect(window.localStorage.getItem('stock-harness.instrument-editor.member-pane-height.v1')).toBe('320')
+  })
+
   it('persists the per-window drawing toolbar collapsed state', async () => {
     vi.stubGlobal('fetch', emptyFetch())
     const user = userEvent.setup()

@@ -461,6 +461,10 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .instrument-editor-tabs button.active { border-bottom-color: #4b84c6; color: #eef1f5; }
 .instrument-editor-content { min-width: 0; min-height: 0; overflow: hidden; }
 .instrument-target-editor { height: 100%; min-width: 0; min-height: 0; display: grid; grid-template-rows: minmax(260px, 1.8fr) 36px minmax(90px, .4fr); }
+.instrument-editor-resizer { display: grid; place-items: center; min-width: 0; cursor: ns-resize; touch-action: none; background: #171c22; color: #657180; border-block: 1px solid #303743; }
+.instrument-editor-resizer:hover { background: #202832; color: #d9dfe7; }
+.instrument-editor-resizer:active { background: #26313d; color: #fff; }
+.instrument-target-editor.resizable-members .instrument-browser { border-bottom: 0; }
 .instrument-browser { min-width: 0; min-height: 0; display: grid; grid-template-rows: 52px 32px minmax(0, 1fr); border-bottom: 1px solid #303743; background: #11161c; }
 .instrument-editor-search { padding: 10px 12px; }
 .instrument-editor-search > label { height: 32px; display: flex; align-items: center; gap: 7px; padding: 0 9px; border: 1px solid #303743; border-radius: 3px; background: #191e25; color: #788493; }
@@ -489,6 +493,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .instrument-type-badge.type-index { border-color: #514267; color: #aa91ca; }
 .instrument-browser-more { grid-template-columns: 1fr !important; justify-items: center; min-height: 32px !important; color: #8fa9c8 !important; }
 .instrument-editor-summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 13px; border-block: 1px solid #272d36; color: #d6dce4; font-size: 10px; }
+.instrument-target-editor.resizable-members .instrument-editor-summary { border-top: 0; }
 .instrument-editor-summary span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #657180; font-size: 9px; }
 .instrument-editor-members { min-height: 0; overflow: auto; padding: 5px 12px 12px; }
 .instrument-editor-member { min-width: 0; min-height: 44px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 4px 7px; border-bottom: 1px solid #242b34; color: #d7dde5; }
