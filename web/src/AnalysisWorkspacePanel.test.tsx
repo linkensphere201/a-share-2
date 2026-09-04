@@ -35,12 +35,17 @@ describe('AnalysisWorkspacePanel', () => {
         source_run_id: 'run-1', as_of_date: '2026-09-04', algorithm_version: 'v1',
         config_version: 'c1', completion_state: 'complete', preview: false, turns: [],
       }), { status: 201, headers: { 'Content-Type': 'application/json' } })
+      if (url.startsWith('/api/ai/conversations?')) return new Response(JSON.stringify({ items: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      if (url.startsWith('/api/analysis/trend/')) return new Response(JSON.stringify({ items: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      if (url.startsWith('/api/analysis/ai/')) return new Response(JSON.stringify({ items: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } })
       throw new Error(`unexpected URL ${url}`)
     }))
 
     render(<AnalysisWorkspacePanel
       symbol="000001.SZ"
       run={run}
+      followingLatest
+      onRunChange={vi.fn()}
       onHighlightItemChange={vi.fn()}
       onClose={vi.fn()}
     />)

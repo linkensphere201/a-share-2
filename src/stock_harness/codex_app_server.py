@@ -17,6 +17,14 @@ from typing import Callable, Protocol
 
 LOGGER = logging.getLogger(__name__)
 SUPPORTED_VERSION = (0, 146)
+DISABLED_FEATURES = (
+    "shell_tool", "unified_exec", "apps", "browser_use", "computer_use",
+    "multi_agent", "image_generation",
+)
+DENIED_ITEM_TYPES = {
+    "commandExecution", "fileChange", "mcpToolCall", "webSearch", "imageView",
+    "computerAction", "dynamicToolCall", "collabAgentToolCall",
+}
 
 
 class CodexUnavailableError(RuntimeError):
@@ -48,6 +56,8 @@ class CodexAppServerClient:
         self._loaded_threads: set[str] = set()
         self._listeners: dict[str, Callable[[str, dict[str, object]], None]] = {}
         self._listeners_lock = threading.Lock()
+        self._start_attempts: list[float] = []
+        self._restart_count = 0
 
     def status(self) -> dict[str, object]:
         try:
@@ -59,12 +69,21 @@ class CodexAppServerClient:
             return {
                 "available": True, "authenticated": signed_in,
                 "version": self._version, "experimental": True,
+                "process_running": self._process is not None and self._process.poll() is None,
+                "transport": "stdio-jsonl", "sandbox": "read-only",
+                "approval_policy": "never", "mcp_enabled": False,
+                "builtin_tools_disabled": list(DISABLED_FEATURES),
+                "tool_event_tripwire": True, "restart_count": self._restart_count,
                 "error": None if signed_in else "Codex 尚未登录",
             }
         except Exception as error:
             return {
                 "available": False, "authenticated": False,
                 "version": self._version, "experimental": True,
+                "process_running": False, "transport": "stdio-jsonl",
+                "sandbox": "read-only", "approval_policy": "never",
+                "mcp_enabled": False, "builtin_tools_disabled": list(DISABLED_FEATURES),
+                "tool_event_tripwire": True, "restart_count": self._restart_count,
                 "error": _bounded_error(error),
             }
 
@@ -147,6 +166,18 @@ class CodexAppServerClient:
                     if delta:
                         parts.append(delta)
                         on_event("delta", {"delta": delta})
+                elif method in {"item/started", "item/completed"}:
+                    item = params.get("item")
+                    item_type = str(item.get("type", "")) if isinstance(item, dict) else ""
+                    if item_type in DENIED_ITEM_TYPES:
+                        self.interrupt(thread_id, turn_id)
+                        on_event("warning", {
+                            "message": "已阻止超出只读分析权限的 Codex 工具调用",
+                            "item_type": item_type,
+                        })
+                        raise CodexUnavailableError(
+                            f"Codex attempted denied tool item: {item_type}"
+                        )
                 elif method == "turn/completed":
                     status = str(nested_turn.get("status", "completed")) if isinstance(nested_turn, dict) else "completed"
                     return turn_id, "".join(parts), status
@@ -178,6 +209,13 @@ class CodexAppServerClient:
         with self._start_lock:
             if self._process is not None and self._process.poll() is None:
                 return
+            now = time.monotonic()
+            self._start_attempts = [value for value in self._start_attempts if now - value < 60]
+            if len(self._start_attempts) >= 3:
+                raise CodexUnavailableError("Codex app-server repeatedly exited; retry after 60 seconds")
+            if self._process is not None:
+                self._restart_count += 1
+            self._start_attempts.append(now)
             executable = self._executable or shutil.which("codex.exe") or shutil.which("codex.cmd")
             if not executable:
                 raise CodexUnavailableError("未找到本机 Codex CLI")
@@ -191,8 +229,11 @@ class CodexAppServerClient:
                 raise CodexUnavailableError(
                     f"Codex 版本不兼容：{self._version or 'unknown'}；需要 0.146.x"
                 )
+            command = [executable, "app-server", "--stdio", "-c", "mcp_servers={}"]
+            for feature in DISABLED_FEATURES:
+                command.extend(["--disable", feature])
             self._process = subprocess.Popen(
-                [executable, "app-server", "--stdio", "-c", "mcp_servers={}"],
+                command,
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 text=True, encoding="utf-8", errors="replace", bufsize=1,
             )

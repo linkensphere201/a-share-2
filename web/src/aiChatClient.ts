@@ -1,4 +1,4 @@
-export type ChatTemplate = { id: string; label: string; instruction: string }
+export type ChatTemplate = { id: string; version: string; label: string; instruction: string }
 
 export type CodexCapabilities = {
   codex: {
@@ -6,6 +6,14 @@ export type CodexCapabilities = {
     authenticated: boolean
     version?: string | null
     experimental: boolean
+    process_running?: boolean
+    transport?: string
+    sandbox?: string
+    approval_policy?: string
+    mcp_enabled?: boolean
+    builtin_tools_disabled?: string[]
+    tool_event_tripwire?: boolean
+    restart_count?: number
     error?: string | null
   }
   templates: ChatTemplate[]
@@ -37,7 +45,43 @@ export type ChatConversation = {
   config_version: string
   completion_state: string
   preview: boolean
+  input_digest?: string
+  source_observed_at_ms?: number | null
+  title: string
+  status: 'active' | 'archived'
   turns: ChatTurn[]
+}
+
+export type ChatConversationSummary = {
+  conversation_id: string
+  source_run_id: string
+  title: string
+  status: 'active' | 'archived'
+  as_of_date: string
+  turn_count: number
+  created_at_ms: number
+  updated_at_ms: number
+}
+
+export type ChatTurnContextSummary = {
+  schema_version: string
+  workspace_reference: string
+  source_run_id: string
+  as_of_date: string
+  input_start_date: string
+  input_end_date: string
+  input_digest: string
+  algorithm_version: string
+  config_version: string
+  completion_state: string
+  preview: boolean
+  source_observed_at_ms?: number | null
+  stale: boolean
+  stale_reasons: string[]
+  truncated: boolean
+  evidence_codes: string[]
+  sources: string[]
+  tool_request_id?: string | null
 }
 
 async function jsonRequest<T>(url: string, init?: RequestInit): Promise<T> {
@@ -60,13 +104,36 @@ export function loadCodexCapabilities(): Promise<CodexCapabilities> {
 }
 
 export function openChatConversation(
-  symbol: string, sourceRunId: string,
+  symbol: string, sourceRunId: string, forceNew = false,
 ): Promise<ChatConversation> {
   return jsonRequest('/api/ai/conversations', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ symbol, timeframe: 'daily', source_run_id: sourceRunId }),
+    body: JSON.stringify({ symbol, timeframe: 'daily', source_run_id: sourceRunId, force_new: forceNew }),
   })
+}
+
+export function listChatConversations(
+  symbol: string, sourceRunId: string,
+): Promise<{ items: ChatConversationSummary[] }> {
+  const query = new URLSearchParams({ symbol, timeframe: 'daily', source_run_id: sourceRunId })
+  return jsonRequest(`/api/ai/conversations?${query}`)
+}
+
+export function updateChatConversation(
+  conversationId: string, update: { title?: string; status?: 'active' | 'archived' },
+): Promise<ChatConversation> {
+  return jsonRequest(`/api/ai/conversations/${encodeURIComponent(conversationId)}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(update),
+  })
+}
+
+export async function deleteChatConversation(conversationId: string): Promise<void> {
+  const response = await fetch(`/api/ai/conversations/${encodeURIComponent(conversationId)}`, {
+    method: 'DELETE',
+  })
+  if (!response.ok) throw new Error(`HTTP ${response.status}`)
 }
 
 export function loadChatConversation(conversationId: string): Promise<ChatConversation> {
@@ -85,6 +152,14 @@ export function startChatTurn(
 
 export async function cancelChatTurn(turnId: string): Promise<void> {
   await jsonRequest(`/api/ai/turns/${encodeURIComponent(turnId)}/cancel`, { method: 'POST' })
+}
+
+export function retryChatTurn(turnId: string): Promise<{ turn_id: string; status: string }> {
+  return jsonRequest(`/api/ai/turns/${encodeURIComponent(turnId)}/retry`, { method: 'POST' })
+}
+
+export function loadChatTurnContext(turnId: string): Promise<ChatTurnContextSummary> {
+  return jsonRequest(`/api/ai/turns/${encodeURIComponent(turnId)}/context`)
 }
 
 export function streamChatTurn(

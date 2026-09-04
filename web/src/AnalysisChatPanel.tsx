@@ -1,14 +1,21 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Bot, Send, Square } from 'lucide-react'
+import { Archive, Bot, Database, Pencil, PanelRightClose, Plus, RotateCcw, Send, ShieldCheck, Square, Trash2, X } from 'lucide-react'
 import {
   cancelChatTurn,
+  deleteChatConversation,
+  listChatConversations,
+  loadChatTurnContext,
   loadChatConversation,
   loadCodexCapabilities,
   openChatConversation,
+  retryChatTurn,
   startChatTurn,
   streamChatTurn,
   type ChatConversation,
+  type ChatConversationSummary,
+  type ChatTurnContextSummary,
   type CodexCapabilities,
+  updateChatConversation,
 } from './aiChatClient'
 import type { TrendAnalysisRun } from './trendAnalysisClient'
 
@@ -16,16 +23,20 @@ type Props = {
   symbol: string
   run: TrendAnalysisRun
   onHighlightItemChange: (itemId?: string) => void
+  onCollapse: () => void
 }
 
-export function AnalysisChatPanel({ symbol, run, onHighlightItemChange }: Props) {
+export function AnalysisChatPanel({ symbol, run, onHighlightItemChange, onCollapse }: Props) {
   const [capabilities, setCapabilities] = useState<CodexCapabilities | null>(null)
   const [conversation, setConversation] = useState<ChatConversation | null>(null)
+  const [conversations, setConversations] = useState<ChatConversationSummary[]>([])
   const [templateId, setTemplateId] = useState<string>()
   const [draft, setDraft] = useState('')
   const [liveResponse, setLiveResponse] = useState('')
   const [activeTurnId, setActiveTurnId] = useState<string>()
   const [error, setError] = useState<string>()
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false)
+  const [contextDetail, setContextDetail] = useState<ChatTurnContextSummary>()
   const streamRef = useRef<EventSource | null>(null)
   const deltaBufferRef = useRef('')
   const flushTimerRef = useRef<number | undefined>(undefined)
@@ -37,11 +48,14 @@ export function AnalysisChatPanel({ symbol, run, onHighlightItemChange }: Props)
     setError(undefined)
     setLiveResponse('')
     setActiveTurnId(undefined)
-    Promise.all([loadCodexCapabilities(), openChatConversation(symbol, run.run_id)])
-      .then(([nextCapabilities, nextConversation]) => {
+    Promise.all([
+      loadCodexCapabilities(), openChatConversation(symbol, run.run_id),
+    ]).then(async ([nextCapabilities, nextConversation]) => {
+        const history = await listChatConversations(symbol, run.run_id)
         if (!cancelled) {
           setCapabilities(nextCapabilities)
           setConversation(nextConversation)
+          setConversations(history.items)
         }
       })
       .catch(reason => { if (!cancelled) setError(String(reason)) })
@@ -53,6 +67,91 @@ export function AnalysisChatPanel({ symbol, run, onHighlightItemChange }: Props)
     }
   }, [run.run_id, symbol])
 
+  const refreshConversations = async (selectedId?: string) => {
+    const history = await listChatConversations(symbol, run.run_id)
+    setConversations(history.items)
+    if (selectedId) setConversation(await loadChatConversation(selectedId))
+  }
+
+  const newConversation = async () => {
+    if (activeTurnId) return
+    setError(undefined)
+    try {
+      const created = await openChatConversation(symbol, run.run_id, true)
+      setConversation(created)
+      await refreshConversations()
+    } catch (reason) { setError(String(reason)) }
+  }
+
+  const renameConversation = async () => {
+    if (!conversation) return
+    const title = window.prompt('会话名称', conversation.title)
+    if (!title?.trim()) return
+    try {
+      setConversation(await updateChatConversation(conversation.conversation_id, { title }))
+      await refreshConversations()
+    } catch (reason) { setError(String(reason)) }
+  }
+
+  const archiveConversation = async () => {
+    if (!conversation || activeTurnId) return
+    try {
+      await updateChatConversation(conversation.conversation_id, { status: 'archived' })
+      const replacement = await openChatConversation(symbol, run.run_id)
+      setConversation(replacement)
+      await refreshConversations()
+    } catch (reason) { setError(String(reason)) }
+  }
+
+  const removeConversation = async () => {
+    if (!conversation || activeTurnId || !window.confirm(`删除会话“${conversation.title}”及其消息？分析结果不会被删除。`)) return
+    try {
+      await deleteChatConversation(conversation.conversation_id)
+      const replacement = await openChatConversation(symbol, run.run_id)
+      setConversation(replacement)
+      await refreshConversations()
+    } catch (reason) { setError(String(reason)) }
+  }
+
+  const retryTurn = async (turnId: string) => {
+    if (activeTurnId) return
+    try {
+      const turn = await retryChatTurn(turnId)
+      setLiveResponse('')
+      setActiveTurnId(turn.turn_id)
+      connectStream(turn.turn_id)
+    } catch (reason) { setError(String(reason)) }
+  }
+
+  const connectStream = (turnId: string) => {
+    streamRef.current?.close()
+    streamRef.current = streamChatTurn(turnId, {
+      onDelta: delta => {
+        deltaBufferRef.current += delta
+        if (flushTimerRef.current !== undefined) return
+        flushTimerRef.current = window.setTimeout(() => {
+          const buffered = deltaBufferRef.current
+          deltaBufferRef.current = ''
+          flushTimerRef.current = undefined
+          setLiveResponse(value => value + buffered)
+        }, 40)
+      },
+      onTerminal: async () => {
+        if (flushTimerRef.current !== undefined) window.clearTimeout(flushTimerRef.current)
+        flushTimerRef.current = undefined
+        deltaBufferRef.current = ''
+        setActiveTurnId(undefined)
+        if (!conversation) return
+        try {
+          setConversation(await loadChatConversation(conversation.conversation_id))
+          setLiveResponse('')
+          await refreshConversations()
+        } catch (reason) { setError(String(reason)) }
+      },
+      onError: () => setError('Codex 流式连接中断，已保留服务器端结果。'),
+    })
+  }
+
   const send = async () => {
     const content = draft.trim()
     if (!conversation || !content || activeTurnId) return
@@ -62,52 +161,39 @@ export function AnalysisChatPanel({ symbol, run, onHighlightItemChange }: Props)
       const turn = await startChatTurn(conversation.conversation_id, content, templateId)
       setDraft('')
       setActiveTurnId(turn.turn_id)
-      streamRef.current = streamChatTurn(turn.turn_id, {
-        onDelta: delta => {
-          deltaBufferRef.current += delta
-          if (flushTimerRef.current !== undefined) return
-          flushTimerRef.current = window.setTimeout(() => {
-            const buffered = deltaBufferRef.current
-            deltaBufferRef.current = ''
-            flushTimerRef.current = undefined
-            setLiveResponse(value => value + buffered)
-          }, 40)
-        },
-        onTerminal: async () => {
-          if (flushTimerRef.current !== undefined) window.clearTimeout(flushTimerRef.current)
-          flushTimerRef.current = undefined
-          deltaBufferRef.current = ''
-          setActiveTurnId(undefined)
-          try {
-            setConversation(await loadChatConversation(conversation.conversation_id))
-            setLiveResponse('')
-          } catch (reason) {
-            setError(String(reason))
-          }
-        },
-        onError: () => setError('Codex 流式连接中断，已保留服务器端结果。'),
-      })
+      connectStream(turn.turn_id)
     } catch (reason) {
       setError(String(reason))
     }
   }
 
   const available = Boolean(capabilities?.codex.available && capabilities.codex.authenticated)
+  const canSend = available && conversation?.status === 'active'
   return <section className="analysis-chat-pane" aria-label="Codex形态分析对话">
     <header>
       <span><Bot size={13}/>Codex 对话</span>
-      <small className={available ? 'available' : 'unavailable'}>
-        {capabilities === null ? '检测中' : available ? '已连接' : '不可用'}
-      </small>
+      <div className="analysis-chat-actions">
+        <small className={available ? 'available' : 'unavailable'}>{capabilities === null ? '检测中' : available ? '已连接' : '不可用'}</small>
+        <button title="新建会话" aria-label="新建会话" onClick={() => void newConversation()}><Plus size={12}/></button>
+        <button title="重命名会话" aria-label="重命名会话" onClick={() => void renameConversation()}><Pencil size={11}/></button>
+        <button title="归档会话" aria-label="归档会话" onClick={() => void archiveConversation()}><Archive size={11}/></button>
+        <button title="删除会话" aria-label="删除会话" onClick={() => void removeConversation()}><Trash2 size={11}/></button>
+        <button title="Codex诊断" aria-label="Codex诊断" onClick={() => setDiagnosticsOpen(value => !value)}><ShieldCheck size={11}/></button>
+        <button title="收起Codex对话" aria-label="收起Codex对话" onClick={onCollapse}><PanelRightClose size={11}/></button>
+      </div>
     </header>
+    {diagnosticsOpen && capabilities && <CodexDiagnostics capabilities={capabilities}/ >}
     <div className="analysis-chat-context">
+      <select aria-label="会话历史" value={conversation?.conversation_id ?? ''} onChange={event => void refreshConversations(event.target.value)}>
+        {conversations.map(item => <option key={item.conversation_id} value={item.conversation_id}>{item.status === 'archived' ? '[归档] ' : ''}{item.title} · {item.turn_count}</option>)}
+      </select>
       <span>{run.expires_at_ms ? '盘中预览' : '正式结果'} · {run.as_of_date}</span>
-      <small>结果已固定到本轮分析，更新测算不会改写当前对话</small>
+      <small>{run.algorithm_version ?? conversation?.algorithm_version ?? '算法版本未知'} · {run.stale ? '结果已过期' : '快照有效'} · 结果固定到本轮分析</small>
     </div>
     <div className="analysis-chat-messages">
       {conversation?.turns.flatMap(turn => turn.messages.map(message =>
         <article key={message.message_id} className={`analysis-chat-message ${message.role}`}>
-          <small>{message.role === 'user' ? '你' : 'Codex'}{message.incomplete ? ' · 未完成' : ''}</small>
+          <small>{message.role === 'user' ? '你' : 'Codex'}{message.incomplete ? ' · 未完成' : ''}{message.role === 'assistant' && <button title="查看本轮证据快照" aria-label="查看本轮证据快照" onClick={() => void loadChatTurnContext(turn.turn_id).then(setContextDetail).catch(reason => setError(String(reason)))}><Database size={10}/></button>}{message.role === 'assistant' && turn.status !== 'running' && <button title="按相同上下文重试" aria-label="按相同上下文重试" onClick={() => void retryTurn(turn.turn_id)}><RotateCcw size={10}/></button>}</small>
           <ReferenceText text={message.content} references={referenceMap} onHighlight={onHighlightItemChange}/>
         </article>,
       ))}
@@ -119,6 +205,7 @@ export function AnalysisChatPanel({ symbol, run, onHighlightItemChange }: Props)
       {conversation?.turns.length === 0 && !liveResponse && <p className="analysis-chat-empty">选择模板或直接提问。</p>}
       {error && <p className="analysis-chat-error">{error}</p>}
     </div>
+    {contextDetail && <ContextDetail value={contextDetail} onClose={() => setContextDetail(undefined)}/>}
     <div className="analysis-chat-compose">
       <div className="analysis-chat-templates">
         {capabilities?.templates.map(template => <button
@@ -131,8 +218,8 @@ export function AnalysisChatPanel({ symbol, run, onHighlightItemChange }: Props)
       <div className="analysis-chat-input">
         <textarea
           value={draft}
-          placeholder={available ? '就本轮形态结果继续分析…' : capabilities?.codex.error ?? 'Codex不可用'}
-          disabled={!available || !conversation || Boolean(activeTurnId)}
+          placeholder={conversation?.status === 'archived' ? '归档会话只读' : available ? '就本轮形态结果继续分析…' : capabilities?.codex.error ?? 'Codex不可用'}
+          disabled={!canSend || Boolean(activeTurnId)}
           onChange={event => setDraft(event.target.value)}
           onKeyDown={event => {
             if (event.key === 'Enter' && !event.shiftKey) {
@@ -143,10 +230,42 @@ export function AnalysisChatPanel({ symbol, run, onHighlightItemChange }: Props)
         />
         {activeTurnId
           ? <button title="停止生成" aria-label="停止生成" onClick={() => void cancelChatTurn(activeTurnId)}><Square size={13}/></button>
-          : <button title="发送" aria-label="发送" disabled={!available || !draft.trim()} onClick={() => void send()}><Send size={13}/></button>}
+          : <button title="发送" aria-label="发送" disabled={!canSend || !draft.trim()} onClick={() => void send()}><Send size={13}/></button>}
       </div>
     </div>
   </section>
+}
+
+function ContextDetail({ value, onClose }: { value: ChatTurnContextSummary; onClose: () => void }) {
+  return <div className="chat-context-detail" role="dialog" aria-label="本轮证据快照">
+    <header><span>本轮证据快照</span><button title="关闭证据快照" aria-label="关闭证据快照" onClick={onClose}><X size={11}/></button></header>
+    <dl>
+      <dt>截至</dt><dd>{value.as_of_date} · {value.preview ? '盘中预览' : '正式结果'}</dd>
+      <dt>输入范围</dt><dd>{value.input_start_date} 至 {value.input_end_date}</dd>
+      <dt>算法</dt><dd>{value.algorithm_version} / {value.config_version}</dd>
+      <dt>数据源</dt><dd>{value.sources.join('、') || '未记录'}</dd>
+      <dt>证据</dt><dd>{value.evidence_codes.join('、') || '无'}{value.truncated ? ' · 已截断' : ''}</dd>
+      <dt>指纹</dt><dd title={value.input_digest}>{value.input_digest.slice(0, 16)}…</dd>
+      <dt>状态</dt><dd>{value.stale ? `已过期：${value.stale_reasons.join('、')}` : value.completion_state}</dd>
+      <dt>请求</dt><dd>{value.tool_request_id ?? '本地快照，无工具请求'}</dd>
+    </dl>
+  </div>
+}
+
+function CodexDiagnostics({ capabilities }: { capabilities: CodexCapabilities }) {
+  const value = capabilities.codex
+  return <div className="codex-diagnostics" role="status">
+    <span>Codex {value.version ?? 'unknown'}</span>
+    <dl>
+      <dt>进程</dt><dd>{value.process_running ? '运行中' : '未运行'}</dd>
+      <dt>传输</dt><dd>{value.transport ?? '未知'}</dd>
+      <dt>沙箱</dt><dd>{value.sandbox ?? '未知'}</dd>
+      <dt>审批</dt><dd>{value.approval_policy ?? '未知'}</dd>
+      <dt>MCP</dt><dd>{value.mcp_enabled ? '启用' : '禁用'}</dd>
+      <dt>工具熔断</dt><dd>{value.tool_event_tripwire ? '启用' : '禁用'}</dd>
+      <dt>重启</dt><dd>{value.restart_count ?? 0}</dd>
+    </dl>
+  </div>
 }
 
 function buildReferenceMap(run: TrendAnalysisRun): Map<string, string> {

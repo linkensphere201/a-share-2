@@ -193,6 +193,19 @@ class SQLiteAnalysisStoreMixin:
             ).fetchone()
         return _ai_analysis_report(row) if row is not None else None
 
+    def list_ai_analysis_reports(
+        self, symbol: str, timeframe: str, limit: int = 50
+    ) -> list[dict[str, object]]:
+        with self._lock:
+            rows = self._connection.execute(
+                _AI_ANALYSIS_REPORT_SELECT + """
+                WHERE instrument.symbol = ? COLLATE NOCASE AND report.timeframe = ?
+                ORDER BY report.revision DESC LIMIT ?
+                """,
+                (symbol.strip().upper(), timeframe, limit),
+            ).fetchall()
+        return [_ai_analysis_report(row) for row in rows]
+
     def create_trend_review(self, spec: TrendReviewDraftSpec) -> dict[str, object]:
         spec.validate()
         review_id = str(uuid4())
@@ -810,6 +823,37 @@ class SQLiteAnalysisStoreMixin:
                 for item in items
             ],
         }
+
+    def list_generated_analysis_runs(
+        self, symbol: str, system_id: str, timeframe: str, limit: int = 50
+    ) -> list[dict[str, object]]:
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT run.run_id, run.namespace, run.as_of_date,
+                       run.algorithm_version, run.config_version,
+                       run.completion_state, run.expires_at_ms,
+                       run.created_at_ms, run.completed_at_ms,
+                       count(item.item_id)
+                FROM generated_analysis_runs AS run
+                JOIN instruments AS instrument USING (instrument_id)
+                LEFT JOIN generated_analysis_items AS item USING (run_id)
+                WHERE instrument.symbol = ? COLLATE NOCASE
+                  AND run.system_id = ? AND run.timeframe = ?
+                  AND run.status = 'succeeded'
+                GROUP BY run.run_id
+                ORDER BY run.as_of_date DESC, run.completed_at_ms DESC LIMIT ?
+                """,
+                (symbol.strip().upper(), system_id, timeframe, limit),
+            ).fetchall()
+        return [{
+            "run_id": str(row[0]), "namespace": str(row[1]),
+            "as_of_date": _date_from_key(int(row[2])),
+            "algorithm_version": str(row[3]), "config_version": str(row[4]),
+            "completion_state": str(row[5]), "preview": row[6] is not None,
+            "created_at_ms": int(row[7]), "completed_at_ms": int(row[8]),
+            "item_count": int(row[9]),
+        } for row in rows]
 
     def get_generated_analysis_run(self, run_id: str) -> dict[str, object] | None:
         """Return an immutable succeeded analysis snapshot by its exact run ID."""

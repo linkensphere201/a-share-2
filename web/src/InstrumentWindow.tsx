@@ -60,12 +60,14 @@ export function ChartWindow({
   const { chart, instrument } = windowState
   const [breakoutState, setBreakoutState] = useState<GeneratedBreakoutState>()
   const [trendAnalysis, setTrendAnalysis] = useState<TrendAnalysisRun | null>(null)
+  const [viewedTrendAnalysis, setViewedTrendAnalysis] = useState<TrendAnalysisRun | null>(null)
   const [trendRecalculationState, setTrendRecalculationState] = useState<'idle' | 'running' | 'failed'>('idle')
   const [explanationOpen, setExplanationOpen] = useState(false)
   const [highlightedAnalysisItemId, setHighlightedAnalysisItemId] = useState<string>()
   useEffect(() => {
     setBreakoutState(undefined)
     setTrendAnalysis(null)
+    setViewedTrendAnalysis(null)
     setTrendRecalculationState('idle')
     setExplanationOpen(false)
     setHighlightedAnalysisItemId(undefined)
@@ -152,11 +154,14 @@ export function ChartWindow({
           trendIsolation={chart.tradingSystems.trend.isolate}
           onBreakoutStateChange={setBreakoutState}
           onTrendAnalysisChange={setTrendAnalysis}
+          trendAnalysisOverride={viewedTrendAnalysis}
           highlightedAnalysisItemId={highlightedAnalysisItemId}
         />
-        {explanationOpen && trendAnalysis && <AnalysisWorkspacePanel
+        {explanationOpen && (viewedTrendAnalysis ?? trendAnalysis) && <AnalysisWorkspacePanel
           symbol={instrument.symbol}
-          run={trendAnalysis}
+          run={(viewedTrendAnalysis ?? trendAnalysis)!}
+          followingLatest={viewedTrendAnalysis === null}
+          onRunChange={setViewedTrendAnalysis}
           onHighlightItemChange={setHighlightedAnalysisItemId}
           onClose={() => {
             setExplanationOpen(false)

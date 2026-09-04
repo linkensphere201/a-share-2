@@ -103,6 +103,16 @@ def create_analysis_router() -> APIRouter:
             raise HTTPException(status_code=404, detail="analysis run not found")
         return cast(dict[str, object], json_analysis_run(result))
 
+    @router.get("/api/analysis/trend/{symbol}/runs")
+    def trend_analysis_runs(
+        symbol: str, request: Request,
+        timeframe: Literal["daily", "weekly", "monthly"] = "daily",
+        limit: int = Query(default=50, ge=1, le=100),
+    ) -> dict[str, object]:
+        return {"items": store(request).list_generated_analysis_runs(
+            symbol, "trend", timeframe, limit
+        )}
+
     @router.post("/api/analysis/trend/recalculate")
     def recalculate_trend_analysis(
         payload: TrendAnalysisInput, request: Request
@@ -180,6 +190,16 @@ def create_analysis_router() -> APIRouter:
         if report is None:
             raise HTTPException(status_code=404, detail="AI analysis report not found")
         return report
+
+    @router.get("/api/analysis/ai/{symbol}/reports")
+    def ai_analysis_reports(
+        symbol: str, request: Request,
+        timeframe: Literal["daily", "weekly", "monthly"] = "daily",
+        limit: int = Query(default=50, ge=1, le=100),
+    ) -> dict[str, object]:
+        return {"items": store(request).list_ai_analysis_reports(
+            normalize_instrument_symbol(symbol), timeframe, limit
+        )}
 
     @router.post("/api/analysis/ai", status_code=status.HTTP_201_CREATED)
     def create_ai_analysis(

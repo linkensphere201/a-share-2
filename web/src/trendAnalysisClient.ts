@@ -11,6 +11,9 @@ export type TrendAnalysisRun = {
   run_id: string
   as_of_date: string
   completion_state: string
+  algorithm_version?: string
+  config_version?: string
+  input_digest?: string
   source_observed_at_ms?: number | null
   expires_at_ms?: number | null
   stale: boolean
@@ -26,6 +29,19 @@ export type TrendAnalysisSnapshot = {
   preview: TrendAnalysisRun | null
   preview_expired: boolean
   effective: TrendAnalysisRun | null
+}
+
+export type TrendAnalysisRunSummary = {
+  run_id: string
+  namespace: 'official' | 'preview'
+  as_of_date: string
+  algorithm_version: string
+  config_version: string
+  completion_state: string
+  preview: boolean
+  created_at_ms: number
+  completed_at_ms: number
+  item_count: number
 }
 
 export async function recalculateTrendAnalysis(
@@ -92,4 +108,15 @@ export async function loadExactTrendAnalysis(
   const response = await fetch(`/api/analysis/runs/${encodeURIComponent(runId)}`, { signal })
   if (!response.ok) throw new Error(`HTTP ${response.status}`)
   return response.json() as Promise<TrendAnalysisRun>
+}
+
+export async function loadTrendAnalysisRuns(
+  symbol: string, timeframe = 'daily', signal?: AbortSignal,
+): Promise<TrendAnalysisRunSummary[]> {
+  const response = await fetch(
+    `/api/analysis/trend/${encodeURIComponent(symbol)}/runs?timeframe=${encodeURIComponent(timeframe)}`,
+    { signal },
+  )
+  if (!response.ok) throw new Error(`HTTP ${response.status}`)
+  return ((await response.json()) as { items: TrendAnalysisRunSummary[] }).items
 }

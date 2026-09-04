@@ -431,7 +431,6 @@ CREATE TABLE IF NOT EXISTS ai_chat_conversations (
     status TEXT NOT NULL CHECK (status IN ('active', 'archived')),
     created_at_ms INTEGER NOT NULL,
     updated_at_ms INTEGER NOT NULL,
-    UNIQUE (instrument_id, timeframe, source_run_id),
     FOREIGN KEY (instrument_id) REFERENCES instruments(instrument_id),
     FOREIGN KEY (source_run_id) REFERENCES generated_analysis_runs(run_id)
 );
@@ -444,6 +443,7 @@ CREATE TABLE IF NOT EXISTS ai_chat_turns (
     conversation_id TEXT NOT NULL,
     codex_turn_id TEXT,
     template_id TEXT,
+    template_version TEXT,
     status TEXT NOT NULL CHECK (
         status IN ('queued', 'running', 'completed', 'failed', 'cancelled')
     ),
@@ -486,6 +486,16 @@ CREATE TABLE IF NOT EXISTS ai_chat_message_references (
     analysis_item_id TEXT NOT NULL,
     PRIMARY KEY (message_id, code),
     FOREIGN KEY (message_id) REFERENCES ai_chat_messages(message_id) ON DELETE CASCADE
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS ai_chat_stream_events (
+    turn_id TEXT NOT NULL,
+    sequence INTEGER NOT NULL CHECK (sequence > 0),
+    event_type TEXT NOT NULL,
+    data_json TEXT NOT NULL,
+    created_at_ms INTEGER NOT NULL,
+    PRIMARY KEY (turn_id, sequence),
+    FOREIGN KEY (turn_id) REFERENCES ai_chat_turns(turn_id) ON DELETE CASCADE
 ) WITHOUT ROWID;
 
 CREATE TABLE IF NOT EXISTS screener_runs (

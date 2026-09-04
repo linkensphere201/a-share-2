@@ -118,6 +118,12 @@ class AiChatConversationInput(BaseModel):
     symbol: str = Field(min_length=1, max_length=200)
     timeframe: Literal["daily"] = "daily"
     source_run_id: str = Field(min_length=1, max_length=64)
+    force_new: bool = False
+
+
+class AiChatConversationUpdateInput(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=160)
+    status: Literal["active", "archived"] | None = None
 
 
 class AiChatTurnInput(BaseModel):

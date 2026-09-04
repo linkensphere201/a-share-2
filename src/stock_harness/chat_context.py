@@ -10,7 +10,7 @@ if TYPE_CHECKING:
     from stock_harness.sqlite_store import SQLiteMarketDataStore
 
 
-CHAT_CONTEXT_SCHEMA_VERSION = "1.0"
+CHAT_CONTEXT_SCHEMA_VERSION = "1.1"
 MAX_CONTEXT_BARS = 250
 MAX_CONTEXT_ITEMS = 160
 
@@ -31,6 +31,11 @@ def build_chat_context(
     assert isinstance(as_of_date, date)
     bars = store.get_recent_daily_bars(symbol, as_of_date, MAX_CONTEXT_BARS)
     items = list(run.get("items", []))[:MAX_CONTEXT_ITEMS]
+    prior_summary = next((item for item in store.list_generated_analysis_runs(
+        symbol, "trend", timeframe, 50
+    ) if item["run_id"] != source_run_id and item["namespace"] == "official"
+        and item["as_of_date"] <= as_of_date), None)
+    prior = store.get_generated_analysis_run(str(prior_summary["run_id"])) if prior_summary else None
     counters = {"zone": 0, "line": 0, "pattern": 0}
     prefixes = {"zone": "K", "line": "L", "pattern": "P"}
     evidence: list[dict[str, object]] = []
@@ -59,6 +64,7 @@ def build_chat_context(
         "symbol": str(run["symbol"]),
         "timeframe": timeframe,
         "source_run_id": source_run_id,
+        "workspace_reference": f"analysis:{run['symbol']}:{timeframe}:{source_run_id}",
         "as_of_date": as_of_date.isoformat(),
         "input_start_date": _iso(run.get("input_start_date")),
         "input_end_date": _iso(run.get("input_end_date")),
@@ -78,6 +84,17 @@ def build_chat_context(
         } for bar in bars],
         "analysis_items": analysis_items,
         "evidence": evidence,
+        "visible_evidence_codes": [item["code"] for item in evidence],
+        "previous_official_result": None if prior is None else {
+            "source_run_id": prior["run_id"],
+            "as_of_date": _iso(prior["as_of_date"]),
+            "input_digest": bytes(prior["input_digest"]).hex(),
+            "algorithm_version": prior["algorithm_version"],
+            "config_version": prior["config_version"],
+            "completion_state": prior["completion_state"],
+            "analysis_items": list(prior.get("items", []))[:MAX_CONTEXT_ITEMS],
+            "truncated": len(prior.get("items", [])) > MAX_CONTEXT_ITEMS,
+        },
         "truncated": len(run.get("items", [])) > MAX_CONTEXT_ITEMS,
     }
 

@@ -115,6 +115,8 @@ class SQLiteMarketDataStore(
         self._configure()
         with self._writer_lock:
             self._connection.executescript(_SCHEMA)
+        self._ensure_chat_conversation_sessions()
+        self._ensure_chat_template_version()
         self._futures_storage_ready = False
         self._futures_storage_error: str | None = None
         self._ensure_futures_schema()
@@ -123,6 +125,58 @@ class SQLiteMarketDataStore(
         self._ensure_market_snapshot_metrics()
         self._ensure_generated_analysis_target_settings()
         self._backfill_pinyin_aliases()
+
+    def _ensure_chat_conversation_sessions(self) -> None:
+        """Remove the original one-conversation-per-result constraint without losing chat."""
+        with self._lock, self._writer_lock:
+            table_sql = self._connection.execute(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'ai_chat_conversations'"
+            ).fetchone()[0]
+            if "UNIQUE (instrument_id, timeframe, source_run_id)" not in str(table_sql):
+                return
+            self._connection.execute("PRAGMA foreign_keys = OFF")
+            try:
+                self._connection.executescript(
+                    """
+                    BEGIN IMMEDIATE;
+                    CREATE TABLE ai_chat_conversations_v2 (
+                        conversation_id TEXT PRIMARY KEY,
+                        instrument_id INTEGER NOT NULL,
+                        timeframe TEXT NOT NULL CHECK (timeframe IN ('daily', 'weekly', 'monthly')),
+                        source_run_id TEXT NOT NULL,
+                        title TEXT NOT NULL,
+                        codex_thread_id TEXT,
+                        status TEXT NOT NULL CHECK (status IN ('active', 'archived')),
+                        created_at_ms INTEGER NOT NULL,
+                        updated_at_ms INTEGER NOT NULL,
+                        FOREIGN KEY (instrument_id) REFERENCES instruments(instrument_id),
+                        FOREIGN KEY (source_run_id) REFERENCES generated_analysis_runs(run_id)
+                    );
+                    INSERT INTO ai_chat_conversations_v2
+                    SELECT * FROM ai_chat_conversations;
+                    DROP TABLE ai_chat_conversations;
+                    ALTER TABLE ai_chat_conversations_v2 RENAME TO ai_chat_conversations;
+                    CREATE INDEX ai_chat_conversations_latest
+                    ON ai_chat_conversations(instrument_id, timeframe, updated_at_ms DESC);
+                    COMMIT;
+                    """
+                )
+            except Exception:
+                if self._connection.in_transaction:
+                    self._connection.execute("ROLLBACK")
+                raise
+            finally:
+                self._connection.execute("PRAGMA foreign_keys = ON")
+
+    def _ensure_chat_template_version(self) -> None:
+        with self._lock, self._writer_lock:
+            columns = {
+                str(row[1]) for row in self._connection.execute("PRAGMA table_info(ai_chat_turns)")
+            }
+            if "template_version" not in columns:
+                self._connection.execute(
+                    "ALTER TABLE ai_chat_turns ADD COLUMN template_version TEXT"
+                )
 
     def __enter__(self) -> SQLiteMarketDataStore:
         return self

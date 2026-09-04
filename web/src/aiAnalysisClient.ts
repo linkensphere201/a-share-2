@@ -77,6 +77,17 @@ export async function loadLatestAiAnalysis(
   return value as AiAnalysisReport
 }
 
+export async function loadAiAnalysisReports(
+  symbol: string, timeframe = 'daily', signal?: AbortSignal,
+): Promise<AiAnalysisReport[]> {
+  const response = await fetch(
+    `/api/analysis/ai/${encodeURIComponent(symbol)}/reports?timeframe=${encodeURIComponent(timeframe)}`,
+    { signal },
+  )
+  if (!response.ok) throw new Error(`HTTP ${response.status}`)
+  return ((await response.json()) as { items: AiAnalysisReport[] }).items
+}
+
 export function aiReferenceItemId(report: AiAnalysisReport, reference: AiAnalysisReference): string {
   return reference.snapshot || !reference.analysis_item_id
     ? `ai:${report.report_id}:${reference.code}`

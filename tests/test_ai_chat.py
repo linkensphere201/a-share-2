@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import date
 from pathlib import Path
+import json
+import threading
 import time
 from typing import Callable
 
@@ -13,6 +15,7 @@ from stock_harness.analysis_results import (
 from stock_harness.api import create_app
 from stock_harness.models import DailyBar, Instrument, InstrumentKind
 from stock_harness.sqlite_store import SQLiteMarketDataStore
+from stock_harness.codex_app_server import CodexAppServerClient, CodexUnavailableError
 
 
 class FakeCodexBridge:
@@ -95,6 +98,7 @@ def test_result_bound_chat_streams_and_persists_a_completed_turn() -> None:
             json={"content": "现在是什么形态？", "template_id": "correction"},
         )
         event_response = client.get(f"/api/ai/turns/{turn.json()['turn_id']}/events")
+        context_response = client.get(f"/api/ai/turns/{turn.json()['turn_id']}/context")
         deadline = time.time() + 2
         persisted = None
         while time.time() < deadline:
@@ -110,6 +114,8 @@ def test_result_bound_chat_streams_and_persists_a_completed_turn() -> None:
     assert turn.status_code == 202
     assert "event: delta" in event_response.text
     assert "event: completed" in event_response.text
+    assert context_response.json()["workspace_reference"].endswith(run_id)
+    assert context_response.json()["sources"] == ["test"]
     assert persisted is not None
     assert persisted["turns"][0]["messages"][1]["content"] == "关注 [L1]，并观察 [K1]。"
     assert "纠错" not in bridge.prompts[0]
@@ -182,3 +188,141 @@ def test_startup_marks_abandoned_chat_turn_as_failed() -> None:
     assert recovered["turns"][0]["status"] == "failed"
     assert recovered["turns"][0]["error"] == "应用退出时对话尚未完成"
     store.close()
+
+
+def test_chat_conversations_support_multiple_sessions_and_management() -> None:
+    store, run_id = _store_with_run()
+    first = store.get_or_create_chat_conversation(
+        symbol="000001.SZ", timeframe="daily", source_run_id=run_id
+    )
+    second = store.get_or_create_chat_conversation(
+        symbol="000001.SZ", timeframe="daily", source_run_id=run_id, force_new=True
+    )
+
+    assert first["conversation_id"] != second["conversation_id"]
+    assert len(store.list_chat_conversations(
+        symbol="000001.SZ", timeframe="daily", source_run_id=run_id
+    )) == 2
+    renamed = store.update_chat_conversation(
+        str(first["conversation_id"]), title="长期形态复盘", status="archived"
+    )
+    assert renamed is not None
+    assert renamed["title"] == "长期形态复盘"
+    assert renamed["status"] == "archived"
+    assert store.delete_chat_conversation(str(first["conversation_id"])) is True
+    assert store.get_chat_conversation(str(first["conversation_id"])) is None
+    assert store.get_generated_analysis_run(run_id) is not None
+    store.close()
+
+
+def test_analysis_history_and_legacy_report_routes_preserve_revisions() -> None:
+    store, run_id = _store_with_run()
+    store.create_ai_analysis_report(
+        symbol="000001.SZ", timeframe="daily", as_of_date=date(2026, 8, 31),
+        source_run_id=run_id, title="旧版结论", conclusion_markdown="观察 [L1]",
+        framework={"key_level_codes": ["L1"], "structures": [], "risk_reward": []},
+        references=[{
+            "code": "L1", "kind": "line", "label": "下降压力线",
+            "detail": "旧报告证据", "analysis_item_id": "resistance",
+        }], author="codex",
+    )
+    with TestClient(create_app(store, codex_bridge=FakeCodexBridge())) as client:
+        runs = client.get("/api/analysis/trend/000001.SZ/runs").json()["items"]
+        reports = client.get("/api/analysis/ai/000001.SZ/reports").json()["items"]
+
+    assert runs[0]["run_id"] == run_id
+    assert runs[0]["item_count"] == 2
+    assert reports[0]["title"] == "旧版结论"
+    assert reports[0]["source_run_id"] == run_id
+    store.close()
+
+
+def test_terminal_stream_reconnects_from_sqlite_after_memory_stream_is_lost() -> None:
+    store, run_id = _store_with_run()
+    bridge = FakeCodexBridge()
+    with TestClient(create_app(store, codex_bridge=bridge)) as client:
+        conversation = client.post("/api/ai/conversations", json={
+            "symbol": "000001.SZ", "timeframe": "daily", "source_run_id": run_id,
+        }).json()
+        turn = client.post(
+            f"/api/ai/conversations/{conversation['conversation_id']}/turns",
+            json={"content": "分析", "template_id": None},
+        ).json()
+        first = client.get(f"/api/ai/turns/{turn['turn_id']}/events")
+        client.app.state.chat_service._streams.clear()
+        replay = client.get(
+            f"/api/ai/turns/{turn['turn_id']}/events",
+            headers={"Last-Event-ID": "2"},
+        )
+
+    assert "event: completed" in first.text
+    assert "id: 3" in replay.text
+    assert "event: delta" in replay.text or "event: completed" in replay.text
+    store.close()
+
+
+def test_pinned_codex_protocol_contract_matches_runtime_adapter() -> None:
+    from stock_harness.codex_app_server import DENIED_ITEM_TYPES, SUPPORTED_VERSION
+
+    contract = json.loads(
+        Path("validation/codex-app-server-v0.146-contract.json").read_text(encoding="utf-8")
+    )
+    assert (
+        contract["codex_cli"]["supported_major"],
+        contract["codex_cli"]["supported_minor"],
+    ) == SUPPORTED_VERSION
+    assert set(contract["denied_item_types"]) == DENIED_ITEM_TYPES
+    assert contract["permission_profile"] == {
+        "sandbox": "read-only", "approval_policy": "never",
+        "mcp_enabled": False, "tool_event_tripwire": True,
+    }
+
+
+def test_retry_reuses_the_original_immutable_context_after_market_correction() -> None:
+    store, run_id = _store_with_run()
+    bridge = FakeCodexBridge()
+    with TestClient(create_app(store, codex_bridge=bridge)) as client:
+        conversation = client.post("/api/ai/conversations", json={
+            "symbol": "000001.SZ", "timeframe": "daily", "source_run_id": run_id,
+        }).json()
+        original = client.post(
+            f"/api/ai/conversations/{conversation['conversation_id']}/turns",
+            json={"content": "复核", "template_id": "correction"},
+        ).json()
+        client.get(f"/api/ai/turns/{original['turn_id']}/events")
+        original_context = store.get_chat_turn_context(original["turn_id"])
+        store.upsert_daily_bars("corrected", [
+            DailyBar("000001.SZ", date(2026, 8, 31), 10.5, 99, 10, 11.5, 200),
+        ])
+        retried = client.post(f"/api/ai/turns/{original['turn_id']}/retry").json()
+        retried_context = store.get_chat_turn_context(retried["turn_id"])
+
+    assert retried_context == original_context
+    store.close()
+
+
+def test_protocol_tripwire_interrupts_a_denied_app_server_tool_item() -> None:
+    class ProtocolFixture(CodexAppServerClient):
+        def __init__(self) -> None:
+            super().__init__(executable="fixture")
+            self.calls: list[str] = []
+
+        def _request(self, method: str, params: dict[str, object]) -> dict[str, object]:
+            self.calls.append(method)
+            if method == "turn/start":
+                def emit() -> None:
+                    self._listeners["thread-1"]("item/started", {
+                        "threadId": "thread-1", "turnId": "turn-1",
+                        "item": {"type": "commandExecution"},
+                    })
+                threading.Timer(0.01, emit).start()
+                return {"turn": {"id": "turn-1"}}
+            return {}
+
+    client = ProtocolFixture()
+    try:
+        client.run_turn("thread-1", "do not use tools", lambda *_args: None)
+        raise AssertionError("denied tool item was not rejected")
+    except CodexUnavailableError as error:
+        assert "commandExecution" in str(error)
+    assert client.calls == ["turn/start", "turn/interrupt"]

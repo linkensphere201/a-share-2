@@ -1,0 +1,41 @@
+{
+  "contract_version": "1.0",
+  "codex_cli": {
+    "supported_major": 0,
+    "supported_minor": 146,
+    "experimental": true
+  },
+  "transport": "stdio-jsonl",
+  "client_requests": [
+    "initialize",
+    "account/read",
+    "thread/start",
+    "thread/resume",
+    "turn/start",
+    "turn/interrupt"
+  ],
+  "client_notifications": ["initialized"],
+  "accepted_server_notifications": [
+    "item/agentMessage/delta",
+    "item/started",
+    "item/completed",
+    "turn/completed",
+    "error"
+  ],
+  "denied_item_types": [
+    "commandExecution",
+    "fileChange",
+    "mcpToolCall",
+    "webSearch",
+    "imageView",
+    "computerAction",
+    "dynamicToolCall",
+    "collabAgentToolCall"
+  ],
+  "permission_profile": {
+    "sandbox": "read-only",
+    "approval_policy": "never",
+    "mcp_enabled": false,
+    "tool_event_tripwire": true
+  }
+}

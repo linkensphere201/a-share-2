@@ -6,7 +6,7 @@ import json
 import logging
 from pathlib import Path
 import threading
-from typing import Iterator
+from typing import Callable, Iterator
 
 from stock_harness.chat_context import build_chat_context, render_chat_prompt
 from stock_harness.codex_app_server import CodexBridge
@@ -16,20 +16,31 @@ from stock_harness.sqlite_store import SQLiteMarketDataStore
 LOGGER = logging.getLogger(__name__)
 
 CHAT_TEMPLATES: tuple[dict[str, str], ...] = (
-    {"id": "daily-update", "label": "每日跟踪", "instruction": "对比并解释当前形态状态，指出延续、变化、失效和需要次日跟踪的证据。"},
-    {"id": "correction", "label": "纠错", "instruction": "严格审查形态、趋势线和关键位是否成立，优先指出证据不足、冲突和算法可能误判。"},
-    {"id": "entry", "label": "开仓点", "instruction": "给出条件式触发位、确认条件、失效位、上方阻力和不入场情形，不生成交易指令。"},
-    {"id": "position-tracking", "label": "持仓跟踪", "instruction": "基于用户提供的持仓信息分析趋势是否延续、何处失效以及需要跟踪的证据。"},
-    {"id": "exit", "label": "止盈止损", "instruction": "区分结构失效、保护性止损和情景止盈，明确各自依据和不确定性。"},
-    {"id": "risk-reward", "label": "盈亏比", "instruction": "只使用用户明确给出的或快照可验证的入场、止损、目标价格计算盈亏比，并列出假设。"},
+    {"id": "daily-update", "version": "1.0", "label": "每日跟踪", "instruction": "对比并解释当前形态状态，指出延续、变化、失效和需要次日跟踪的证据。"},
+    {"id": "correction", "version": "1.0", "label": "纠错", "instruction": "严格审查形态、趋势线和关键位是否成立，优先指出证据不足、冲突和算法可能误判。"},
+    {"id": "entry", "version": "1.0", "label": "开仓点", "instruction": "给出条件式触发位、确认条件、失效位、上方阻力和不入场情形，不生成交易指令。"},
+    {"id": "position-tracking", "version": "1.0", "label": "持仓跟踪", "instruction": "基于用户提供的持仓信息分析趋势是否延续、何处失效以及需要跟踪的证据。"},
+    {"id": "exit", "version": "1.0", "label": "止盈止损", "instruction": "区分结构失效、保护性止损和情景止盈，明确各自依据和不确定性。"},
+    {"id": "risk-reward", "version": "1.0", "label": "盈亏比", "instruction": "只使用用户明确给出的或快照可验证的入场、止损、目标价格计算盈亏比，并列出假设。"},
 )
 
 
 class TurnEventStream:
-    def __init__(self) -> None:
+    def __init__(
+        self, initial: list[dict[str, object]] | None = None,
+        persist: Callable[[int, str, dict[str, object]], None] | None = None,
+    ) -> None:
         self._condition = threading.Condition()
-        self._events: list[dict[str, object]] = []
-        self._terminal = False
+        self._events = list(initial or [])
+        self._terminal = any(
+            event["type"] in {"completed", "failed", "cancelled"}
+            for event in self._events
+        )
+        self._persist = persist
+
+    @property
+    def terminal(self) -> bool:
+        return self._terminal
 
     def publish(self, event_type: str, data: dict[str, object]) -> None:
         with self._condition:
@@ -38,6 +49,8 @@ class TurnEventStream:
                 "type": event_type,
                 "data": data,
             })
+            if self._persist is not None:
+                self._persist(len(self._events), event_type, data)
             if event_type in {"completed", "failed", "cancelled"}:
                 self._terminal = True
             self._condition.notify_all()
@@ -85,11 +98,26 @@ class CodexChatService:
         return {"codex": self._bridge.status(), "templates": list(CHAT_TEMPLATES)}
 
     def conversation(
-        self, *, symbol: str, timeframe: str, source_run_id: str
+        self, *, symbol: str, timeframe: str, source_run_id: str,
+        force_new: bool = False,
     ) -> dict[str, object]:
         return self._store.get_or_create_chat_conversation(
-            symbol=symbol, timeframe=timeframe, source_run_id=source_run_id
+            symbol=symbol, timeframe=timeframe, source_run_id=source_run_id,
+            force_new=force_new,
         )
+
+    def list_conversations(self, **filters: object) -> list[dict[str, object]]:
+        return self._store.list_chat_conversations(**filters)
+
+    def update_conversation(
+        self, conversation_id: str, *, title: str | None, status: str | None
+    ) -> dict[str, object] | None:
+        return self._store.update_chat_conversation(
+            conversation_id, title=title, status=status
+        )
+
+    def delete_conversation(self, conversation_id: str) -> bool:
+        return self._store.delete_chat_conversation(conversation_id)
 
     def get_conversation(self, conversation_id: str) -> dict[str, object] | None:
         return self._store.get_chat_conversation(conversation_id)
@@ -101,6 +129,7 @@ class CodexChatService:
         content: str,
         template_id: str | None,
     ) -> dict[str, object]:
+        self._ensure_stream_capacity()
         conversation = self._store.get_chat_conversation(conversation_id)
         if conversation is None:
             raise ValueError("chat conversation not found")
@@ -113,11 +142,28 @@ class CodexChatService:
             timeframe=str(conversation["timeframe"]),
             source_run_id=str(conversation["source_run_id"]),
         )
+        return self._enqueue_turn(
+            conversation_id, content, template, context,
+            template_id=template_id,
+            template_version=template["version"] if template else None,
+        )
+
+    def _enqueue_turn(
+        self, conversation_id: str, content: str,
+        template: dict[str, str] | None, context: dict[str, object], *,
+        template_id: str | None, template_version: str | None,
+    ) -> dict[str, object]:
         turn = self._store.create_chat_turn(
             conversation_id=conversation_id, content=content,
-            template_id=template_id, context=context,
+            template_id=template_id,
+            template_version=template_version,
+            context=context,
         )
-        stream = TurnEventStream()
+        stream = TurnEventStream(persist=lambda sequence, event_type, data: (
+            self._store.append_chat_stream_event(
+                str(turn["turn_id"]), sequence, event_type, data
+            )
+        ))
         with self._lock:
             self._streams[str(turn["turn_id"])] = stream
         stream.publish("queued", {"turn_id": turn["turn_id"]})
@@ -131,11 +177,73 @@ class CodexChatService:
         worker.start()
         return turn
 
+    def retry_turn(self, turn_id: str) -> dict[str, object]:
+        self._ensure_stream_capacity()
+        previous = self._store.get_chat_turn(turn_id)
+        if previous is None:
+            raise ValueError("chat turn not found")
+        context = self._store.get_chat_turn_context(turn_id)
+        if context is None:
+            raise ValueError("chat turn context not found")
+        template_id = str(previous["template_id"]) if previous["template_id"] else None
+        template = next((item for item in CHAT_TEMPLATES if item["id"] == template_id), None)
+        if template_id is not None and template is None:
+            raise ValueError("chat turn template is no longer supported")
+        return self._enqueue_turn(
+            str(previous["conversation_id"]), str(previous["content"]),
+            template, context, template_id=template_id,
+            template_version=(str(previous["template_version"])
+                              if previous["template_version"] else None),
+        )
+
+    def turn_context_summary(self, turn_id: str) -> dict[str, object] | None:
+        context = self._store.get_chat_turn_context(turn_id)
+        if context is None:
+            return None
+        bars = context.get("bars", [])
+        sources = sorted({
+            str(bar.get("source")) for bar in bars
+            if isinstance(bar, dict) and bar.get("source")
+        })
+        return {
+            "schema_version": context.get("schema_version"),
+            "workspace_reference": context.get("workspace_reference"),
+            "source_run_id": context.get("source_run_id"),
+            "as_of_date": context.get("as_of_date"),
+            "input_start_date": context.get("input_start_date"),
+            "input_end_date": context.get("input_end_date"),
+            "input_digest": context.get("input_digest"),
+            "algorithm_version": context.get("algorithm_version"),
+            "config_version": context.get("config_version"),
+            "completion_state": context.get("completion_state"),
+            "preview": context.get("preview"),
+            "source_observed_at_ms": context.get("source_observed_at_ms"),
+            "stale": context.get("stale"),
+            "stale_reasons": context.get("stale_reasons", []),
+            "truncated": context.get("truncated"),
+            "evidence_codes": context.get("visible_evidence_codes", []),
+            "sources": sources,
+            "tool_request_id": None,
+        }
+
+    def _ensure_stream_capacity(self) -> None:
+        with self._lock:
+            terminal_ids = [key for key, value in self._streams.items() if value.terminal]
+            for key in terminal_ids:
+                self._streams.pop(key, None)
+            if len(self._streams) >= 128:
+                raise RuntimeError("Codex chat stream capacity is full")
+
     def events(self, turn_id: str, after: int = 0) -> Iterator[str]:
         with self._lock:
             stream = self._streams.get(turn_id)
         if stream is None:
-            raise ValueError("chat turn event stream not found")
+            persisted = self._store.list_chat_stream_events(turn_id)
+            if not persisted:
+                raise ValueError("chat turn event stream not found")
+            stream = TurnEventStream(initial=persisted)
+            with self._lock:
+                self._streams[turn_id] = stream
         return stream.iterate(after)
 
     def cancel(self, turn_id: str) -> None:
