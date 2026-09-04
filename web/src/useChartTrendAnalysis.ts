@@ -25,7 +25,7 @@ export function useChartTrendAnalysis({
   const [preview, setPreview] = useState(false)
 
   useEffect(() => {
-    if (override !== undefined) {
+    if (override !== undefined && override !== null) {
       setAnalysis(override)
       setPreview(false)
       return
