@@ -1,6 +1,12 @@
 import type { ReactNode } from 'react'
 
-export function MarkdownPreview({ content }: { content: string }) {
+type MarkdownPreviewProps = {
+  content: string
+  className?: string
+  renderText?: (text: string, keyPrefix: string) => ReactNode
+}
+
+export function MarkdownPreview({ content, className, renderText }: MarkdownPreviewProps) {
   if (!content.trim()) return <div className="daily-note-empty">暂无内容</div>
 
   const lines = content.replace(/\r\n/g, '\n').split('\n')
@@ -27,7 +33,7 @@ export function MarkdownPreview({ content }: { content: string }) {
     const heading = /^(#{1,6})\s+(.+)$/.exec(line)
     if (heading) {
       const level = heading[1].length
-      const children = renderInline(heading[2], `heading-${blocks.length}`)
+      const children = renderInline(heading[2], `heading-${blocks.length}`, renderText)
       blocks.push(level === 1 ? <h1 key={blocks.length}>{children}</h1>
         : level === 2 ? <h2 key={blocks.length}>{children}</h2>
           : <h3 key={blocks.length}>{children}</h3>)
@@ -38,7 +44,7 @@ export function MarkdownPreview({ content }: { content: string }) {
     if (/^\s*[-*+]\s+/.test(line)) {
       const items: ReactNode[] = []
       while (index < lines.length && /^\s*[-*+]\s+/.test(lines[index])) {
-        items.push(<li key={items.length}>{renderInline(lines[index].replace(/^\s*[-*+]\s+/, ''), `ul-${blocks.length}-${items.length}`)}</li>)
+        items.push(<li key={items.length}>{renderInline(lines[index].replace(/^\s*[-*+]\s+/, ''), `ul-${blocks.length}-${items.length}`, renderText)}</li>)
         index += 1
       }
       blocks.push(<ul key={blocks.length}>{items}</ul>)
@@ -48,7 +54,7 @@ export function MarkdownPreview({ content }: { content: string }) {
     if (/^\s*\d+\.\s+/.test(line)) {
       const items: ReactNode[] = []
       while (index < lines.length && /^\s*\d+\.\s+/.test(lines[index])) {
-        items.push(<li key={items.length}>{renderInline(lines[index].replace(/^\s*\d+\.\s+/, ''), `ol-${blocks.length}-${items.length}`)}</li>)
+        items.push(<li key={items.length}>{renderInline(lines[index].replace(/^\s*\d+\.\s+/, ''), `ol-${blocks.length}-${items.length}`, renderText)}</li>)
         index += 1
       }
       blocks.push(<ol key={blocks.length}>{items}</ol>)
@@ -58,7 +64,7 @@ export function MarkdownPreview({ content }: { content: string }) {
     if (/^>\s?/.test(line)) {
       const quote: string[] = []
       while (index < lines.length && /^>\s?/.test(lines[index])) quote.push(lines[index++].replace(/^>\s?/, ''))
-      blocks.push(<blockquote key={blocks.length}>{renderInline(quote.join(' '), `quote-${blocks.length}`)}</blockquote>)
+      blocks.push(<blockquote key={blocks.length}>{renderInline(quote.join(' '), `quote-${blocks.length}`, renderText)}</blockquote>)
       continue
     }
 
@@ -74,10 +80,10 @@ export function MarkdownPreview({ content }: { content: string }) {
       paragraph.push(lines[index].trim())
       index += 1
     }
-    blocks.push(<p key={blocks.length}>{renderInline(paragraph.join(' '), `paragraph-${blocks.length}`)}</p>)
+    blocks.push(<p key={blocks.length}>{renderInline(paragraph.join(' '), `paragraph-${blocks.length}`, renderText)}</p>)
   }
 
-  return <div className="markdown-preview">{blocks}</div>
+  return <div className={className ? `markdown-preview ${className}` : 'markdown-preview'}>{blocks}</div>
 }
 
 function isBlockStart(line: string): boolean {
@@ -89,19 +95,31 @@ function isBlockStart(line: string): boolean {
     || /^\s*([-*_])\1\1+\s*$/.test(line)
 }
 
-function renderInline(text: string, keyPrefix: string): ReactNode[] {
+function renderInline(
+  text: string,
+  keyPrefix: string,
+  renderText?: (text: string, keyPrefix: string) => ReactNode,
+): ReactNode[] {
   const pattern = /(`[^`]+`|\[[^\]]+\]\([^)]+\)|\*\*[^*]+\*\*|__[^_]+__|\*[^*]+\*|_[^_]+_)/g
   const nodes: ReactNode[] = []
   let cursor = 0
   let match: RegExpExecArray | null
 
   while ((match = pattern.exec(text))) {
-    if (match.index > cursor) nodes.push(text.slice(cursor, match.index))
+    if (match.index > cursor) {
+      const plain = text.slice(cursor, match.index)
+      nodes.push(renderText?.(plain, `${keyPrefix}-plain-${nodes.length}`) ?? plain)
+    }
     const token = match[0]
     const key = `${keyPrefix}-${nodes.length}`
     if (token.startsWith('`')) nodes.push(<code key={key}>{token.slice(1, -1)}</code>)
-    else if (token.startsWith('**') || token.startsWith('__')) nodes.push(<strong key={key}>{token.slice(2, -2)}</strong>)
-    else if (token.startsWith('*') || token.startsWith('_')) nodes.push(<em key={key}>{token.slice(1, -1)}</em>)
+    else if (token.startsWith('**') || token.startsWith('__')) {
+      const value = token.slice(2, -2)
+      nodes.push(<strong key={key}>{renderText?.(value, `${key}-strong`) ?? value}</strong>)
+    } else if (token.startsWith('*') || token.startsWith('_')) {
+      const value = token.slice(1, -1)
+      nodes.push(<em key={key}>{renderText?.(value, `${key}-em`) ?? value}</em>)
+    }
     else {
       const link = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(token)
       const href = link ? safeHref(link[2]) : undefined
@@ -111,7 +129,10 @@ function renderInline(text: string, keyPrefix: string): ReactNode[] {
     }
     cursor = match.index + token.length
   }
-  if (cursor < text.length) nodes.push(text.slice(cursor))
+  if (cursor < text.length) {
+    const plain = text.slice(cursor)
+    nodes.push(renderText?.(plain, `${keyPrefix}-plain-${nodes.length}`) ?? plain)
+  }
   return nodes
 }
 

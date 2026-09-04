@@ -18,6 +18,7 @@ import {
   updateChatConversation,
 } from './aiChatClient'
 import type { TrendAnalysisRun } from './trendAnalysisClient'
+import { MarkdownPreview } from './MarkdownPreview'
 
 type Props = {
   symbol: string
@@ -36,6 +37,7 @@ export function AnalysisChatPanel({ symbol, run, onHighlightItemChange, onCollap
     direction: 'long' as 'long' | 'short', entry: '', stop: '', target: '',
   })
   const [liveResponse, setLiveResponse] = useState('')
+  const [pendingPrompt, setPendingPrompt] = useState<string>()
   const [activeTurnId, setActiveTurnId] = useState<string>()
   const [error, setError] = useState<string>()
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false)
@@ -43,6 +45,7 @@ export function AnalysisChatPanel({ symbol, run, onHighlightItemChange, onCollap
   const streamRef = useRef<EventSource | null>(null)
   const deltaBufferRef = useRef('')
   const flushTimerRef = useRef<number | undefined>(undefined)
+  const messagesRef = useRef<HTMLDivElement | null>(null)
   const referenceMap = useMemo(() => buildReferenceMap(run), [run])
 
   useEffect(() => {
@@ -50,6 +53,7 @@ export function AnalysisChatPanel({ symbol, run, onHighlightItemChange, onCollap
     setConversation(null)
     setError(undefined)
     setLiveResponse('')
+    setPendingPrompt(undefined)
     setActiveTurnId(undefined)
     Promise.all([
       loadCodexCapabilities(), openChatConversation(symbol, run.run_id),
@@ -69,6 +73,12 @@ export function AnalysisChatPanel({ symbol, run, onHighlightItemChange, onCollap
       if (flushTimerRef.current !== undefined) window.clearTimeout(flushTimerRef.current)
     }
   }, [run.run_id, symbol])
+
+  useEffect(() => {
+    const element = messagesRef.current
+    if (!element || typeof element.scrollTo !== 'function') return
+    element.scrollTo({ top: element.scrollHeight, behavior: 'smooth' })
+  }, [activeTurnId, conversation?.turns.length, liveResponse, pendingPrompt])
 
   const refreshConversations = async (selectedId?: string) => {
     const history = await listChatConversations(symbol, run.run_id)
@@ -144,12 +154,16 @@ export function AnalysisChatPanel({ symbol, run, onHighlightItemChange, onCollap
         flushTimerRef.current = undefined
         deltaBufferRef.current = ''
         setActiveTurnId(undefined)
-        if (!conversation) return
+        if (!conversation) {
+          setPendingPrompt(undefined)
+          return
+        }
         try {
           setConversation(await loadChatConversation(conversation.conversation_id))
           setLiveResponse('')
           await refreshConversations()
         } catch (reason) { setError(String(reason)) }
+        finally { setPendingPrompt(undefined) }
       },
       onError: () => setError('Codex 流式连接中断，已保留服务器端结果。'),
     })
@@ -157,18 +171,21 @@ export function AnalysisChatPanel({ symbol, run, onHighlightItemChange, onCollap
 
   const send = async () => {
     const content = draft.trim()
-    if (!conversation || !content || activeTurnId || !validateTradeInputs(templateId, tradeInputs)) return
+    if (!conversation || !content || activeTurnId || pendingPrompt || !validateTradeInputs(templateId, tradeInputs)) return
     setError(undefined)
     setLiveResponse('')
+    setPendingPrompt(content)
+    setDraft('')
     try {
       const turn = await startChatTurn(
         conversation.conversation_id, content, templateId,
         buildTradeInputs(templateId, tradeInputs),
       )
-      setDraft('')
       setActiveTurnId(turn.turn_id)
       connectStream(turn.turn_id)
     } catch (reason) {
+      setPendingPrompt(undefined)
+      setDraft(content)
       setError(String(reason))
     }
   }
@@ -197,19 +214,27 @@ export function AnalysisChatPanel({ symbol, run, onHighlightItemChange, onCollap
       <span>{run.expires_at_ms ? '盘中预览' : '正式结果'} · {run.as_of_date}</span>
       <small>{run.algorithm_version ?? conversation?.algorithm_version ?? '算法版本未知'} · {run.stale ? '结果已过期' : '快照有效'} · 结果固定到本轮分析</small>
     </div>
-    <div className="analysis-chat-messages">
+    <div className="analysis-chat-messages" ref={messagesRef} aria-live="polite">
       {conversation?.turns.flatMap(turn => turn.messages.map(message =>
         <article key={message.message_id} className={`analysis-chat-message ${message.role}`}>
           <small>{message.role === 'user' ? '你' : 'Codex'}{message.incomplete ? ' · 未完成' : ''}{message.role === 'assistant' && <button title="查看本轮证据快照" aria-label="查看本轮证据快照" onClick={() => void loadChatTurnContext(turn.turn_id).then(setContextDetail).catch(reason => setError(String(reason)))}><Database size={10}/></button>}{message.role === 'assistant' && turn.status !== 'running' && <button title="按相同上下文重试" aria-label="按相同上下文重试" onClick={() => void retryTurn(turn.turn_id)}><RotateCcw size={10}/></button>}</small>
-          <ReferenceText text={message.content} references={referenceMap} onHighlight={onHighlightItemChange}/>
+          <ChatMarkdown text={message.content} references={referenceMap} onHighlight={onHighlightItemChange}/>
         </article>,
       ))}
+      {pendingPrompt && <article className="analysis-chat-message user pending">
+        <small>你 · 已发送</small>
+        <ChatMarkdown text={pendingPrompt} references={referenceMap} onHighlight={onHighlightItemChange}/>
+      </article>}
       {liveResponse && <article className="analysis-chat-message assistant streaming">
         <small>Codex · 生成中</small>
-        <ReferenceText text={liveResponse} references={referenceMap} onHighlight={onHighlightItemChange}/>
+        <ChatMarkdown text={liveResponse} references={referenceMap} onHighlight={onHighlightItemChange}/>
+      </article>}
+      {(activeTurnId || pendingPrompt) && !liveResponse && <article className="analysis-chat-message assistant working" role="status">
+        <small>Codex</small>
+        <div className="analysis-chat-working"><span>Working</span><i/><i/><i/></div>
       </article>}
       {!conversation && !error && <p className="analysis-chat-empty">正在建立结果绑定会话…</p>}
-      {conversation?.turns.length === 0 && !liveResponse && <p className="analysis-chat-empty">选择模板或直接提问。</p>}
+      {conversation?.turns.length === 0 && !pendingPrompt && !liveResponse && <p className="analysis-chat-empty">选择模板或直接提问。</p>}
       {error && <p className="analysis-chat-error">{error}</p>}
     </div>
     {contextDetail && <ContextDetail value={contextDetail} onClose={() => setContextDetail(undefined)}/>}
@@ -232,7 +257,7 @@ export function AnalysisChatPanel({ symbol, run, onHighlightItemChange, onCollap
         <textarea
           value={draft}
           placeholder={conversation?.status === 'archived' ? '归档会话只读' : available ? '就本轮形态结果继续分析…' : capabilities?.codex.error ?? 'Codex不可用'}
-          disabled={!canSend || Boolean(activeTurnId)}
+          disabled={!canSend || Boolean(activeTurnId) || Boolean(pendingPrompt)}
           onChange={event => setDraft(event.target.value)}
           onKeyDown={event => {
             if (event.key === 'Enter' && !event.shiftKey) {
@@ -243,7 +268,7 @@ export function AnalysisChatPanel({ symbol, run, onHighlightItemChange, onCollap
         />
         {activeTurnId
           ? <button title="停止生成" aria-label="停止生成" onClick={() => void cancelChatTurn(activeTurnId)}><Square size={13}/></button>
-          : <button title="发送" aria-label="发送" disabled={!canSend || !draft.trim() || !tradeInputsValid} onClick={() => void send()}><Send size={13}/></button>}
+          : <button title="发送" aria-label="发送" disabled={!canSend || !draft.trim() || !tradeInputsValid || Boolean(pendingPrompt)} onClick={() => void send()}><Send size={13}/></button>}
       </div>
     </div>
   </section>
@@ -322,6 +347,25 @@ function buildReferenceMap(run: TrendAnalysisRun): Map<string, string> {
   return result
 }
 
+function ChatMarkdown({
+  text, references, onHighlight,
+}: {
+  text: string
+  references: Map<string, string>
+  onHighlight: (itemId?: string) => void
+}) {
+  return <MarkdownPreview
+    content={text}
+    className="analysis-chat-markdown"
+    renderText={(value, keyPrefix) => <ReferenceText
+      key={keyPrefix}
+      text={value}
+      references={references}
+      onHighlight={onHighlight}
+    />}
+  />
+}
+
 function ReferenceText({
   text, references, onHighlight,
 }: {
@@ -330,7 +374,7 @@ function ReferenceText({
   onHighlight: (itemId?: string) => void
 }) {
   const parts = text.split(/(\[[KLP]\d+\])/g)
-  return <p>{parts.map((part, index) => {
+  return <>{parts.map((part, index) => {
     const code = /^\[([KLP]\d+)\]$/.exec(part)?.[1]
     const itemId = code ? references.get(code) : undefined
     return itemId ? <button
@@ -341,5 +385,5 @@ function ReferenceText({
       onFocus={() => onHighlight(itemId)}
       onBlur={() => onHighlight(undefined)}
     >{part}</button> : <span key={`${index}-${part.slice(0, 8)}`}>{part}</span>
-  })}</p>
+  })}</>
 }
