@@ -1348,7 +1348,7 @@ body, .workstation, .layout-manager, .layout-preview, .window-group, .list-windo
 .chart-measurement-readout { font-size: 10px; }
 .markdown-preview strong { color: var(--theme-text-strong); font-weight: 500; }
 
-/* Windows WebView clarity for dense market-data surfaces. */
+/* Windows WebView clarity for dense market-data and analysis surfaces. */
 .list-window-table-header { color: color-mix(in srgb, var(--theme-text) 78%, var(--theme-muted)); }
 .list-window-table-header button { font-size: 10px; }
 .list-window-row { min-height: 44px; }
@@ -1361,21 +1361,53 @@ body, .workstation, .layout-manager, .layout-preview, .window-group, .list-windo
 .list-change { color: var(--theme-text); font-size: 11px; font-weight: 400; }
 .list-window-select small { color: var(--theme-muted); }
 
-.trend-explanation-panel {
+.trend-explanation-panel,
+.ai-analysis-panel,
+.trading-system-settings {
+  font-family: "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", Arial, sans-serif;
   background: var(--theme-surface);
   color: var(--theme-text);
   font-weight: 400;
+  text-rendering: auto;
+  -webkit-font-smoothing: auto;
 }
 .trend-explanation-panel > header span { font-size: 12px; }
 .trend-explanation-meta { min-height: 28px; color: var(--theme-muted); font-size: 10px; }
 .trend-explanation-summary { padding: 9px 10px; color: var(--theme-text); font-size: 11px; line-height: 1.55; }
-.trend-explanation-sections h3 { height: 29px; color: var(--theme-muted); font-size: 10px; }
+.trend-explanation-sections h3 { height: 29px; color: var(--theme-text); font-size: 11px; }
 .trend-explanation-sections h3 small { font-size: 10px; }
+.trend-explanation-evidence dl,
+.trend-evidence-group { color: var(--theme-text); font-size: 11px; line-height: 1.5; }
+.trend-explanation-evidence dt,
+.trend-evidence-group > span { color: var(--theme-muted); }
 .trend-explanation-sections article { padding: 9px 10px; }
 .trend-explanation-sections article span { color: var(--theme-text-strong); font-size: 11px; font-weight: 400; }
 .trend-explanation-sections article small { font-size: 10px; }
 .trend-explanation-sections article p,
-.trend-explanation-sections section.warnings p { color: var(--theme-text); font-size: 10px; line-height: 1.55; }
+.trend-explanation-sections section.warnings p { color: var(--theme-text); font-size: 11px; line-height: 1.55; }
+
+.ai-analysis-panel { background: var(--theme-surface); font-size: 11px; line-height: 1.5; }
+.ai-analysis-panel > header span { color: var(--theme-text-strong); font-size: 12px; font-weight: 400; }
+.ai-analysis-meta span { color: var(--theme-text-strong); font-size: 12px; font-weight: 400; }
+.ai-analysis-meta small { color: var(--theme-muted); font-size: 10px; }
+.ai-analysis-body h3 { color: var(--theme-text); font-size: 11px; font-weight: 400; }
+.ai-reference-list article > span,
+.ai-structure-view,
+.ai-risk-reward,
+.ai-analysis-conclusion,
+.ai-analysis-empty { color: var(--theme-text); font-size: 11px; font-weight: 400; }
+.ai-reference-list article small { color: var(--theme-muted); font-size: 10px; line-height: 1.5; }
+.ai-reference-code { font-size: 10px; }
+.ai-structure-view dt,
+.ai-risk-reward dt,
+.ai-risk-reward p { color: var(--theme-muted); }
+
+.trading-system-settings > header > span { color: var(--theme-text-strong); font-size: 12px; font-weight: 400; }
+.trading-system-settings legend,
+.trading-system-settings label { font-size: 11px; font-weight: 400; }
+.trading-system-settings legend { color: var(--theme-muted); }
+.trading-system-settings input[type="number"],
+.trading-system-settings > footer button { font-size: 11px; font-weight: 400; }
 
 .chart-readout { font-size: 11px; }
 .chart-readout b { color: var(--theme-text-strong); font-weight: 400; }
