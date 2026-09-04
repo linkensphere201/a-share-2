@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 CustomGroupRole = Literal[
@@ -126,9 +126,39 @@ class AiChatConversationUpdateInput(BaseModel):
     status: Literal["active", "archived"] | None = None
 
 
+class AiPositionContextInput(BaseModel):
+    direction: Literal["long", "short"] = "long"
+    entry_price: float = Field(gt=0)
+    entry_date: date | None = None
+    quantity: float | None = Field(default=None, gt=0)
+    stop_price: float | None = Field(default=None, gt=0)
+    target_price: float | None = Field(default=None, gt=0)
+    note: str = Field(default="", max_length=500)
+
+
+class AiRiskRewardContextInput(BaseModel):
+    direction: Literal["long", "short"] = "long"
+    entry_price: float = Field(gt=0)
+    stop_price: float = Field(gt=0)
+    target_price: float = Field(gt=0)
+
+    @model_validator(mode="after")
+    def validate_price_order(self) -> "AiRiskRewardContextInput":
+        valid = (
+            self.stop_price < self.entry_price < self.target_price
+            if self.direction == "long"
+            else self.target_price < self.entry_price < self.stop_price
+        )
+        if not valid:
+            raise ValueError("risk/reward prices do not match the selected direction")
+        return self
+
+
 class AiChatTurnInput(BaseModel):
     content: str = Field(min_length=1, max_length=10_000)
     template_id: str | None = Field(default=None, max_length=80)
+    position: AiPositionContextInput | None = None
+    risk_reward: AiRiskRewardContextInput | None = None
 
 
 class TrendReviewSourceInput(BaseModel):

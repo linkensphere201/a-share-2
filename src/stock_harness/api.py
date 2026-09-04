@@ -21,7 +21,10 @@ from stock_harness.api_models import (
     AiAnalysisReferenceInput,
     AiAnalysisReportInput,
     AiChatConversationInput,
+    AiChatConversationUpdateInput,
     AiChatTurnInput,
+    AiPositionContextInput,
+    AiRiskRewardContextInput,
     AiRiskRewardInput,
     AiStructureViewInput,
     CustomGroupInput,
@@ -58,7 +61,8 @@ LOGGER = logging.getLogger(__name__)
 __all__ = [
     "AiAnalysisFrameworkInput", "AiAnalysisReferenceInput", "AiAnalysisReportInput",
     "AiRiskRewardInput", "AiStructureViewInput", "AiChatConversationInput",
-    "AiChatTurnInput", "CustomGroupInput",
+    "AiChatConversationUpdateInput", "AiChatTurnInput", "AiPositionContextInput",
+    "AiRiskRewardContextInput", "CustomGroupInput",
     "CustomGroupMemberInput", "CustomGroupRole", "CustomIndexInput",
     "CustomIndexMemberInput", "FrontendEventInput", "IntradayRefreshInput",
     "IntradaySubscriptionInput", "ScreenerRunInput", "TrendAnalysisInput",
@@ -135,7 +139,7 @@ def create_app(
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
-        allow_methods=["GET", "POST", "PUT", "DELETE"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
         allow_headers=["*"],
     )
 

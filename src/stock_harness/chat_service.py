@@ -5,15 +5,17 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+import re
 import threading
 from typing import Callable, Iterator
 
 from stock_harness.chat_context import build_chat_context, render_chat_prompt
-from stock_harness.codex_app_server import CodexBridge
+from stock_harness.ai_provider import AiConversationProvider, PROVIDER_EVENT_TYPES
 from stock_harness.sqlite_store import SQLiteMarketDataStore
 
 
 LOGGER = logging.getLogger(__name__)
+_REFERENCE_PATTERN = re.compile(r"\[([KLP]\d+)\]")
 
 CHAT_TEMPLATES: tuple[dict[str, str], ...] = (
     {"id": "daily-update", "version": "1.0", "label": "每日跟踪", "instruction": "对比并解释当前形态状态，指出延续、变化、失效和需要次日跟踪的证据。"},
@@ -81,7 +83,7 @@ class TurnEventStream:
 
 class CodexChatService:
     def __init__(
-        self, store: SQLiteMarketDataStore, bridge: CodexBridge, workdir: Path
+        self, store: SQLiteMarketDataStore, bridge: AiConversationProvider, workdir: Path
     ) -> None:
         self._store = store
         self._bridge = bridge
@@ -128,6 +130,7 @@ class CodexChatService:
         conversation_id: str,
         content: str,
         template_id: str | None,
+        user_inputs: dict[str, object] | None = None,
     ) -> dict[str, object]:
         self._ensure_stream_capacity()
         conversation = self._store.get_chat_conversation(conversation_id)
@@ -136,12 +139,17 @@ class CodexChatService:
         template = next((item for item in CHAT_TEMPLATES if item["id"] == template_id), None)
         if template_id is not None and template is None:
             raise ValueError("unknown chat template")
+        if template_id == "position-tracking" and not (user_inputs or {}).get("position"):
+            raise ValueError("position tracking requires explicit position context")
+        if template_id == "risk-reward" and not (user_inputs or {}).get("risk_reward"):
+            raise ValueError("risk/reward analysis requires validated price inputs")
         context = build_chat_context(
             self._store,
             symbol=str(conversation["symbol"]),
             timeframe=str(conversation["timeframe"]),
             source_run_id=str(conversation["source_run_id"]),
         )
+        context["user_inputs"] = user_inputs or {}
         return self._enqueue_turn(
             conversation_id, content, template, context,
             template_id=template_id,
@@ -202,8 +210,8 @@ class CodexChatService:
             return None
         bars = context.get("bars", [])
         sources = sorted({
-            str(bar.get("source")) for bar in bars
-            if isinstance(bar, dict) and bar.get("source")
+            str(source) for bar in bars if isinstance(bar, dict)
+            for source in (bar.get("sources") or [bar.get("source")]) if source
         })
         return {
             "schema_version": context.get("schema_version"),
@@ -216,6 +224,8 @@ class CodexChatService:
             "algorithm_version": context.get("algorithm_version"),
             "config_version": context.get("config_version"),
             "completion_state": context.get("completion_state"),
+            "price_basis": context.get("price_basis"),
+            "volume_semantics": context.get("volume_semantics"),
             "preview": context.get("preview"),
             "source_observed_at_ms": context.get("source_observed_at_ms"),
             "stale": context.get("stale"),
@@ -291,6 +301,9 @@ class CodexChatService:
             )
 
             def on_event(event_type: str, data: dict[str, object]) -> None:
+                if event_type not in PROVIDER_EVENT_TYPES and event_type != "turn":
+                    event_type = "warning"
+                    data = {"message": "Provider returned an unknown event"}
                 if event_type == "delta":
                     parts.append(str(data.get("delta", "")))
                 elif event_type == "turn":
@@ -318,6 +331,10 @@ class CodexChatService:
                 turn_id, status, codex_turn_id=codex_turn_id,
                 error=error, assistant_content=final_text or None,
             )
+            evidence_codes = set(context.get("visible_evidence_codes", []))
+            for code in dict.fromkeys(_REFERENCE_PATTERN.findall(final_text)):
+                if code in evidence_codes:
+                    stream.publish("citation", {"code": code})
             stream.publish(status, {"turn_id": turn_id, "status": codex_status})
         except Exception as error:
             message = " ".join(str(error).split())[:500] or type(error).__name__

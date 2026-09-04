@@ -19,6 +19,9 @@
     "item/agentMessage/delta",
     "item/started",
     "item/completed",
+    "item/reasoning/summaryTextDelta",
+    "item/reasoning/textDelta",
+    "thread/tokenUsage/updated",
     "turn/completed",
     "error"
   ],

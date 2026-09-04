@@ -5,6 +5,8 @@ export type CodexCapabilities = {
     available: boolean
     authenticated: boolean
     version?: string | null
+    provider?: string
+    model?: string | null
     experimental: boolean
     process_running?: boolean
     transport?: string
@@ -74,6 +76,8 @@ export type ChatTurnContextSummary = {
   algorithm_version: string
   config_version: string
   completion_state: string
+  price_basis?: string
+  volume_semantics?: string
   preview: boolean
   source_observed_at_ms?: number | null
   stale: boolean
@@ -142,11 +146,15 @@ export function loadChatConversation(conversationId: string): Promise<ChatConver
 
 export function startChatTurn(
   conversationId: string, content: string, templateId?: string,
+  userInputs?: {
+    position?: { direction: 'long' | 'short'; entry_price: number; stop_price?: number; target_price?: number }
+    risk_reward?: { direction: 'long' | 'short'; entry_price: number; stop_price: number; target_price: number }
+  },
 ): Promise<{ turn_id: string; status: string }> {
   return jsonRequest(`/api/ai/conversations/${encodeURIComponent(conversationId)}/turns`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content, template_id: templateId || null }),
+    body: JSON.stringify({ content, template_id: templateId || null, ...userInputs }),
   })
 }
 

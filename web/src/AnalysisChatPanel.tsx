@@ -32,6 +32,9 @@ export function AnalysisChatPanel({ symbol, run, onHighlightItemChange, onCollap
   const [conversations, setConversations] = useState<ChatConversationSummary[]>([])
   const [templateId, setTemplateId] = useState<string>()
   const [draft, setDraft] = useState('')
+  const [tradeInputs, setTradeInputs] = useState({
+    direction: 'long' as 'long' | 'short', entry: '', stop: '', target: '',
+  })
   const [liveResponse, setLiveResponse] = useState('')
   const [activeTurnId, setActiveTurnId] = useState<string>()
   const [error, setError] = useState<string>()
@@ -154,11 +157,14 @@ export function AnalysisChatPanel({ symbol, run, onHighlightItemChange, onCollap
 
   const send = async () => {
     const content = draft.trim()
-    if (!conversation || !content || activeTurnId) return
+    if (!conversation || !content || activeTurnId || !validateTradeInputs(templateId, tradeInputs)) return
     setError(undefined)
     setLiveResponse('')
     try {
-      const turn = await startChatTurn(conversation.conversation_id, content, templateId)
+      const turn = await startChatTurn(
+        conversation.conversation_id, content, templateId,
+        buildTradeInputs(templateId, tradeInputs),
+      )
       setDraft('')
       setActiveTurnId(turn.turn_id)
       connectStream(turn.turn_id)
@@ -169,6 +175,7 @@ export function AnalysisChatPanel({ symbol, run, onHighlightItemChange, onCollap
 
   const available = Boolean(capabilities?.codex.available && capabilities.codex.authenticated)
   const canSend = available && conversation?.status === 'active'
+  const tradeInputsValid = validateTradeInputs(templateId, tradeInputs)
   return <section className="analysis-chat-pane" aria-label="Codex形态分析对话">
     <header>
       <span><Bot size={13}/>Codex 对话</span>
@@ -216,6 +223,12 @@ export function AnalysisChatPanel({ symbol, run, onHighlightItemChange, onCollap
         >{template.label}</button>)}
       </div>
       <div className="analysis-chat-input">
+        {(templateId === 'position-tracking' || templateId === 'risk-reward') && <div className="analysis-chat-trade-inputs">
+          <select aria-label="方向" value={tradeInputs.direction} onChange={event => setTradeInputs(value => ({ ...value, direction: event.target.value as 'long' | 'short' }))}><option value="long">多头</option><option value="short">空头</option></select>
+          <input aria-label="入场价" inputMode="decimal" placeholder="入场价" value={tradeInputs.entry} onChange={event => setTradeInputs(value => ({ ...value, entry: event.target.value }))}/>
+          <input aria-label="止损价" inputMode="decimal" placeholder={templateId === 'risk-reward' ? '止损价*' : '止损价'} value={tradeInputs.stop} onChange={event => setTradeInputs(value => ({ ...value, stop: event.target.value }))}/>
+          <input aria-label="目标价" inputMode="decimal" placeholder={templateId === 'risk-reward' ? '目标价*' : '目标价'} value={tradeInputs.target} onChange={event => setTradeInputs(value => ({ ...value, target: event.target.value }))}/>
+        </div>}
         <textarea
           value={draft}
           placeholder={conversation?.status === 'archived' ? '归档会话只读' : available ? '就本轮形态结果继续分析…' : capabilities?.codex.error ?? 'Codex不可用'}
@@ -230,10 +243,37 @@ export function AnalysisChatPanel({ symbol, run, onHighlightItemChange, onCollap
         />
         {activeTurnId
           ? <button title="停止生成" aria-label="停止生成" onClick={() => void cancelChatTurn(activeTurnId)}><Square size={13}/></button>
-          : <button title="发送" aria-label="发送" disabled={!canSend || !draft.trim()} onClick={() => void send()}><Send size={13}/></button>}
+          : <button title="发送" aria-label="发送" disabled={!canSend || !draft.trim() || !tradeInputsValid} onClick={() => void send()}><Send size={13}/></button>}
       </div>
     </div>
   </section>
+}
+
+type TradeInputs = { direction: 'long' | 'short'; entry: string; stop: string; target: string }
+
+function validateTradeInputs(templateId: string | undefined, value: TradeInputs): boolean {
+  if (templateId !== 'position-tracking' && templateId !== 'risk-reward') return true
+  const entry = Number(value.entry)
+  if (!(entry > 0)) return false
+  if (templateId === 'position-tracking') return true
+  const stop = Number(value.stop)
+  const target = Number(value.target)
+  return value.direction === 'long'
+    ? stop > 0 && stop < entry && target > entry
+    : target > 0 && target < entry && stop > entry
+}
+
+function buildTradeInputs(templateId: string | undefined, value: TradeInputs) {
+  if (templateId !== 'position-tracking' && templateId !== 'risk-reward') return undefined
+  const base = { direction: value.direction, entry_price: Number(value.entry) }
+  if (templateId === 'risk-reward') return { risk_reward: {
+    ...base, stop_price: Number(value.stop), target_price: Number(value.target),
+  }}
+  return { position: {
+    ...base,
+    ...(Number(value.stop) > 0 ? { stop_price: Number(value.stop) } : {}),
+    ...(Number(value.target) > 0 ? { target_price: Number(value.target) } : {}),
+  }}
 }
 
 function ContextDetail({ value, onClose }: { value: ChatTurnContextSummary; onClose: () => void }) {
@@ -244,6 +284,7 @@ function ContextDetail({ value, onClose }: { value: ChatTurnContextSummary; onCl
       <dt>输入范围</dt><dd>{value.input_start_date} 至 {value.input_end_date}</dd>
       <dt>算法</dt><dd>{value.algorithm_version} / {value.config_version}</dd>
       <dt>数据源</dt><dd>{value.sources.join('、') || '未记录'}</dd>
+      <dt>价格口径</dt><dd>{value.price_basis ?? '未记录'} / {value.volume_semantics ?? '未记录'}</dd>
       <dt>证据</dt><dd>{value.evidence_codes.join('、') || '无'}{value.truncated ? ' · 已截断' : ''}</dd>
       <dt>指纹</dt><dd title={value.input_digest}>{value.input_digest.slice(0, 16)}…</dd>
       <dt>状态</dt><dd>{value.stale ? `已过期：${value.stale_reasons.join('、')}` : value.completion_state}</dd>

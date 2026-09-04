@@ -4,6 +4,7 @@ from datetime import date
 from pathlib import Path
 import json
 import threading
+import sys
 import time
 from typing import Callable
 
@@ -326,3 +327,147 @@ def test_protocol_tripwire_interrupts_a_denied_app_server_tool_item() -> None:
     except CodexUnavailableError as error:
         assert "commandExecution" in str(error)
     assert client.calls == ["turn/start", "turn/interrupt"]
+
+
+def test_position_and_risk_reward_templates_require_validated_structured_inputs() -> None:
+    store, run_id = _store_with_run()
+    with TestClient(create_app(store, codex_bridge=FakeCodexBridge())) as client:
+        conversation = client.post("/api/ai/conversations", json={
+            "symbol": "000001.SZ", "timeframe": "daily", "source_run_id": run_id,
+        }).json()
+        missing = client.post(
+            f"/api/ai/conversations/{conversation['conversation_id']}/turns",
+            json={"content": "计算", "template_id": "risk-reward"},
+        )
+        invalid = client.post(
+            f"/api/ai/conversations/{conversation['conversation_id']}/turns",
+            json={
+                "content": "计算", "template_id": "risk-reward",
+                "risk_reward": {
+                    "direction": "long", "entry_price": 10,
+                    "stop_price": 11, "target_price": 12,
+                },
+            },
+        )
+        valid = client.post(
+            f"/api/ai/conversations/{conversation['conversation_id']}/turns",
+            json={
+                "content": "计算", "template_id": "risk-reward",
+                "risk_reward": {
+                    "direction": "long", "entry_price": 10,
+                    "stop_price": 9, "target_price": 12,
+                },
+            },
+        )
+        context = store.get_chat_turn_context(valid.json()["turn_id"])
+
+    assert missing.status_code == 422
+    assert invalid.status_code == 422
+    assert valid.status_code == 202
+    assert context is not None
+    assert context["user_inputs"]["risk_reward"]["stop_price"] == 9.0
+    store.close()
+
+
+def test_protocol_normalizes_reasoning_usage_and_completion_events() -> None:
+    class ProtocolFixture(CodexAppServerClient):
+        def __init__(self) -> None:
+            super().__init__(executable="fixture")
+
+        def _request(self, method: str, _params: dict[str, object]) -> dict[str, object]:
+            if method == "turn/start":
+                def emit() -> None:
+                    listener = self._listeners["thread-1"]
+                    listener("item/reasoning/summaryTextDelta", {
+                        "threadId": "thread-1", "turnId": "turn-1", "delta": "检查证据",
+                    })
+                    listener("thread/tokenUsage/updated", {
+                        "threadId": "thread-1", "turnId": "turn-1",
+                        "tokenUsage": {"total": {"totalTokens": 42}},
+                    })
+                    listener("item/agentMessage/delta", {
+                        "threadId": "thread-1", "turnId": "turn-1", "delta": "结论",
+                    })
+                    listener("turn/completed", {
+                        "threadId": "thread-1", "turn": {"id": "turn-1", "status": "completed"},
+                    })
+                threading.Timer(0.01, emit).start()
+                return {"turn": {"id": "turn-1"}}
+            return {}
+
+    events: list[tuple[str, dict[str, object]]] = []
+    turn_id, response, status = ProtocolFixture().run_turn(
+        "thread-1", "分析", lambda kind, data: events.append((kind, data))
+    )
+    assert (turn_id, response, status) == ("turn-1", "结论", "completed")
+    assert ("reasoning", {"delta": "检查证据"}) in events
+    assert any(kind == "usage" for kind, _data in events)
+
+
+def test_jsonl_fake_app_server_covers_stream_malformed_crash_and_cancel(monkeypatch) -> None:
+    fixture = str(Path("tests/fake_codex_app_server.py").resolve())
+
+    for mode in ("normal", "malformed"):
+        monkeypatch.setenv("STOCK_HARNESS_FAKE_CODEX_MODE", mode)
+        client = CodexAppServerClient(
+            executable=sys.executable, executable_args=(fixture,), request_timeout=2,
+        )
+        try:
+            assert client.status()["authenticated"] is True
+            thread_id = client.start_thread(Path(".tmp/fake-codex"))
+            assert client.run_turn(thread_id, "test", lambda *_args: None)[1] == "fixture-ok"
+        finally:
+            client.close()
+
+    monkeypatch.setenv("STOCK_HARNESS_FAKE_CODEX_MODE", "crash")
+    crashed = CodexAppServerClient(
+        executable=sys.executable, executable_args=(fixture,), request_timeout=2,
+    )
+    try:
+        thread_id = crashed.start_thread(Path(".tmp/fake-codex"))
+        try:
+            crashed.run_turn(thread_id, "test", lambda *_args: None)
+            raise AssertionError("transport crash did not fail the turn")
+        except CodexUnavailableError as error:
+            assert "exited during the turn" in str(error)
+    finally:
+        crashed.close()
+
+    monkeypatch.setenv("STOCK_HARNESS_FAKE_CODEX_MODE", "hold")
+    held = CodexAppServerClient(
+        executable=sys.executable, executable_args=(fixture,), request_timeout=2,
+    )
+    started = threading.Event()
+    result: list[tuple[str, str, str]] = []
+    try:
+        thread_id = held.start_thread(Path(".tmp/fake-codex"))
+        worker = threading.Thread(target=lambda: result.append(held.run_turn(
+            thread_id, "test",
+            lambda kind, _data: started.set() if kind == "turn" else None,
+        )))
+        worker.start()
+        assert started.wait(1)
+        held.interrupt(thread_id, "fixture-turn")
+        worker.join(2)
+        assert result[0][2] == "interrupted"
+    finally:
+        held.close()
+
+
+def test_codex_unavailable_does_not_block_health_or_analysis_history() -> None:
+    class UnavailableBridge(FakeCodexBridge):
+        def status(self) -> dict[str, object]:
+            return {
+                "available": False, "authenticated": False,
+                "experimental": True, "error": "Codex unavailable",
+            }
+
+    store, run_id = _store_with_run()
+    with TestClient(create_app(store, codex_bridge=UnavailableBridge())) as client:
+        assert client.get("/api/health").json() == {"status": "ok"}
+        history = client.get("/api/analysis/trend/000001.SZ/runs").json()["items"]
+        status = client.get("/api/ai/codex/status").json()["codex"]
+
+    assert history[0]["run_id"] == run_id
+    assert status["available"] is False
+    store.close()

@@ -85,6 +85,13 @@ def create_chat_router() -> APIRouter:
                 conversation_id=conversation_id,
                 content=payload.content,
                 template_id=payload.template_id,
+                user_inputs={
+                    key: value.model_dump(mode="json")
+                    for key, value in {
+                        "position": payload.position,
+                        "risk_reward": payload.risk_reward,
+                    }.items() if value is not None
+                },
             )
         except RuntimeError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error

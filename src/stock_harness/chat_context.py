@@ -6,6 +6,10 @@ from datetime import date
 import json
 from typing import TYPE_CHECKING, Any
 
+from stock_harness.analysis_inputs import (
+    AnalysisHorizons, AnalysisInputMode, AnalysisInputService, AnalysisTimeframe,
+)
+
 if TYPE_CHECKING:
     from stock_harness.sqlite_store import SQLiteMarketDataStore
 
@@ -29,7 +33,12 @@ def build_chat_context(
         raise ValueError("chat context must match a daily analysis run for the symbol")
     as_of_date = run["as_of_date"]
     assert isinstance(as_of_date, date)
-    bars = store.get_recent_daily_bars(symbol, as_of_date, MAX_CONTEXT_BARS)
+    analysis_input = AnalysisInputService(store).build(
+        symbol, as_of_date, AnalysisTimeframe.DAILY,
+        AnalysisInputMode.PREVIEW if run.get("expires_at_ms") is not None else AnalysisInputMode.FINAL,
+        AnalysisHorizons(long=MAX_CONTEXT_BARS),
+    )
+    bars = analysis_input.bars[-MAX_CONTEXT_BARS:]
     items = list(run.get("items", []))[:MAX_CONTEXT_ITEMS]
     prior_summary = next((item for item in store.list_generated_analysis_runs(
         symbol, "trend", timeframe, 50
@@ -77,10 +86,15 @@ def build_chat_context(
         "stale": bool(run.get("stale")),
         "stale_reasons": list(run.get("stale_reasons", [])),
         "warnings": list(run.get("warnings", [])),
+        "price_basis": analysis_input.price_basis,
+        "volume_semantics": analysis_input.volume_semantics,
         "bars": [{
-            "date": bar.trade_date.isoformat(), "open": bar.open,
+            "date": bar.period_end.isoformat(), "open": bar.open,
             "high": bar.high, "low": bar.low, "close": bar.close,
-            "volume": bar.volume, "source": bar.source,
+            "volume": bar.volume, "source": "+".join(bar.sources),
+            "sources": list(bar.sources),
+            "contains_provisional": bar.contains_provisional,
+            "period_complete": bar.period_complete,
         } for bar in bars],
         "analysis_items": analysis_items,
         "evidence": evidence,

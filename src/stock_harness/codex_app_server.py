@@ -12,7 +12,9 @@ import shutil
 import subprocess
 import threading
 import time
-from typing import Callable, Protocol
+from typing import Callable
+
+from stock_harness.ai_provider import AiConversationProvider
 
 
 LOGGER = logging.getLogger(__name__)
@@ -31,20 +33,16 @@ class CodexUnavailableError(RuntimeError):
     pass
 
 
-class CodexBridge(Protocol):
-    def status(self) -> dict[str, object]: ...
-    def start_thread(self, workdir: Path) -> str: ...
-    def ensure_thread(self, thread_id: str, workdir: Path) -> None: ...
-    def run_turn(
-        self, thread_id: str, prompt: str, on_event: Callable[[str, dict[str, object]], None]
-    ) -> tuple[str, str, str]: ...
-    def interrupt(self, thread_id: str, turn_id: str) -> None: ...
-    def close(self) -> None: ...
+CodexBridge = AiConversationProvider
 
 
 class CodexAppServerClient:
-    def __init__(self, executable: str | None = None, request_timeout: float = 20.0) -> None:
+    def __init__(
+        self, executable: str | None = None, request_timeout: float = 20.0,
+        executable_args: tuple[str, ...] = (),
+    ) -> None:
         self._executable = executable
+        self._executable_args = executable_args
         self._request_timeout = request_timeout
         self._process: subprocess.Popen[str] | None = None
         self._pending: dict[int, Future[dict[str, object]]] = {}
@@ -69,6 +67,7 @@ class CodexAppServerClient:
             return {
                 "available": True, "authenticated": signed_in,
                 "version": self._version, "experimental": True,
+                "provider": "local-codex", "model": None,
                 "process_running": self._process is not None and self._process.poll() is None,
                 "transport": "stdio-jsonl", "sandbox": "read-only",
                 "approval_policy": "never", "mcp_enabled": False,
@@ -80,6 +79,7 @@ class CodexAppServerClient:
             return {
                 "available": False, "authenticated": False,
                 "version": self._version, "experimental": True,
+                "provider": "local-codex", "model": None,
                 "process_running": False, "transport": "stdio-jsonl",
                 "sandbox": "read-only", "approval_policy": "never",
                 "mcp_enabled": False, "builtin_tools_disabled": list(DISABLED_FEATURES),
@@ -130,7 +130,7 @@ class CodexAppServerClient:
         events: queue.Queue[tuple[str, dict[str, object]]] = queue.Queue()
 
         def listener(method: str, params: dict[str, object]) -> None:
-            if params.get("threadId") == thread_id:
+            if method == "transport/closed" or params.get("threadId") == thread_id:
                 events.put((method, params))
 
         with self._listeners_lock:
@@ -166,6 +166,15 @@ class CodexAppServerClient:
                     if delta:
                         parts.append(delta)
                         on_event("delta", {"delta": delta})
+                elif method in {
+                    "item/reasoning/summaryTextDelta", "item/reasoning/textDelta",
+                }:
+                    delta = str(params.get("delta", ""))
+                    if delta:
+                        on_event("reasoning", {"delta": delta})
+                elif method == "thread/tokenUsage/updated":
+                    usage = params.get("tokenUsage")
+                    on_event("usage", {"usage": usage if isinstance(usage, dict) else {}})
                 elif method in {"item/started", "item/completed"}:
                     item = params.get("item")
                     item_type = str(item.get("type", "")) if isinstance(item, dict) else ""
@@ -178,11 +187,18 @@ class CodexAppServerClient:
                         raise CodexUnavailableError(
                             f"Codex attempted denied tool item: {item_type}"
                         )
+                    if item_type and item_type not in {"agentMessage", "reasoning", "plan"}:
+                        on_event(
+                            "tool-started" if method == "item/started" else "tool-completed",
+                            {"item_type": item_type},
+                        )
                 elif method == "turn/completed":
                     status = str(nested_turn.get("status", "completed")) if isinstance(nested_turn, dict) else "completed"
                     return turn_id, "".join(parts), status
                 elif method == "error":
                     on_event("warning", {"message": "Codex 返回错误事件"})
+                elif method == "transport/closed":
+                    raise CodexUnavailableError("Codex app-server exited during the turn")
         except queue.Empty as error:
             raise CodexUnavailableError("Codex response timed out") from error
         finally:
@@ -220,7 +236,8 @@ class CodexAppServerClient:
             if not executable:
                 raise CodexUnavailableError("未找到本机 Codex CLI")
             version_result = subprocess.run(
-                [executable, "--version"], capture_output=True, text=True,
+                [executable, *self._executable_args, "--version"],
+                capture_output=True, text=True,
                 encoding="utf-8", errors="replace", timeout=10, check=False,
             )
             self._version = version_result.stdout.strip()
@@ -229,7 +246,10 @@ class CodexAppServerClient:
                 raise CodexUnavailableError(
                     f"Codex 版本不兼容：{self._version or 'unknown'}；需要 0.146.x"
                 )
-            command = [executable, "app-server", "--stdio", "-c", "mcp_servers={}"]
+            command = [
+                executable, *self._executable_args,
+                "app-server", "--stdio", "-c", "mcp_servers={}",
+            ]
             for feature in DISABLED_FEATURES:
                 command.extend(["--disable", feature])
             self._process = subprocess.Popen(
@@ -312,6 +332,10 @@ class CodexAppServerClient:
                         listener(str(method), params)
         finally:
             self._fail_pending(CodexUnavailableError("Codex app-server exited"))
+            with self._listeners_lock:
+                listeners = list(self._listeners.values())
+            for listener in listeners:
+                listener("transport/closed", {})
 
     def _read_stderr(self) -> None:
         process = self._process
