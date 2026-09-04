@@ -1,12 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Maximize2, Minimize2, Pencil, X } from 'lucide-react'
 import { ChartCanvas } from './ChartCanvas'
 import type { ChartIndicator, VisibleRange } from './chartTypes'
 import type { GeneratedBreakoutState } from './generatedAnalysisProjection'
 import { TradingSystemControls } from './TradingSystemControls'
-import { TrendExplanationPanel } from './TrendExplanationPanel'
-import { AiAnalysisPanel } from './AiAnalysisPanel'
-import { loadLatestAiAnalysis, projectAiReferences, type AiAnalysisReport } from './aiAnalysisClient'
+import { AnalysisWorkspacePanel } from './AnalysisWorkspacePanel'
 import type { ChartPaneRatios, ChartWindowState } from './workspace'
 import type { TradingSystemWindowState, TradingSystemWindowStates } from './tradingSystems'
 import type { ThemeDefinition } from './themeStore'
@@ -64,33 +62,14 @@ export function ChartWindow({
   const [trendAnalysis, setTrendAnalysis] = useState<TrendAnalysisRun | null>(null)
   const [trendRecalculationState, setTrendRecalculationState] = useState<'idle' | 'running' | 'failed'>('idle')
   const [explanationOpen, setExplanationOpen] = useState(false)
-  const [aiAnalysisOpen, setAiAnalysisOpen] = useState(false)
-  const [aiAnalysisReport, setAiAnalysisReport] = useState<AiAnalysisReport | null>(null)
   const [highlightedAnalysisItemId, setHighlightedAnalysisItemId] = useState<string>()
-  const aiAnalysisItems = useMemo(
-    () => projectAiReferences(aiAnalysisReport),
-    [aiAnalysisReport],
-  )
   useEffect(() => {
     setBreakoutState(undefined)
     setTrendAnalysis(null)
     setTrendRecalculationState('idle')
     setExplanationOpen(false)
-    setAiAnalysisOpen(false)
-    setAiAnalysisReport(null)
     setHighlightedAnalysisItemId(undefined)
   }, [instrument.symbol])
-  const openAiAnalysis = async (open: boolean) => {
-    setAiAnalysisOpen(open)
-    setExplanationOpen(false)
-    setHighlightedAnalysisItemId(undefined)
-    if (!open) return
-    try {
-      setAiAnalysisReport(await loadLatestAiAnalysis(instrument.symbol, 'daily'))
-    } catch {
-      setAiAnalysisReport(null)
-    }
-  }
   return (
     <section className={focused ? 'instrument-window focused' : 'instrument-window'}>
       <header className="instrument-window-header">
@@ -112,7 +91,7 @@ export function ChartWindow({
           ><X size={14}/></button>
         </div>
       </header>
-      <div className={explanationOpen || aiAnalysisOpen ? 'instrument-window-body explanation-open' : 'instrument-window-body'} onPointerDown={onFocus}>
+      <div className={explanationOpen ? 'instrument-window-body analysis-open' : 'instrument-window-body'} onPointerDown={onFocus}>
         <ChartCanvas
           symbol={instrument.symbol}
           focused={focused}
@@ -150,12 +129,8 @@ export function ChartWindow({
             explanationOpen={explanationOpen}
             onExplanationOpenChange={open => {
               setExplanationOpen(open)
-              if (open) setAiAnalysisOpen(false)
               if (!open) setHighlightedAnalysisItemId(undefined)
             }}
-            aiAnalysisAvailable
-            aiAnalysisOpen={aiAnalysisOpen}
-            onAiAnalysisOpenChange={open => void openAiAnalysis(open)}
           />}
           initialVisibleRange={chart.visibleRange}
           onCoverageChange={onCoverageChange}
@@ -166,34 +141,25 @@ export function ChartWindow({
           onOpenInterestVisibleChange={onOpenInterestVisibleChange}
           onPaneRatiosChange={onPaneRatiosChange}
           onToolbarCollapsedChange={onToolbarCollapsedChange}
-          trendAnalysisEnabled={chart.tradingSystems.trend.enabled || aiAnalysisOpen}
+          trendAnalysisEnabled={chart.tradingSystems.trend.enabled || explanationOpen}
           showTentativePivots={Boolean(chart.tradingSystems.trend.settings.showTentativePivots)}
-          shortTrendLinesVisible={aiAnalysisOpen || chart.tradingSystems.trend.layers['short-trend-lines'] !== false}
-          longTrendLinesVisible={aiAnalysisOpen || chart.tradingSystems.trend.layers['long-trend-lines'] !== false}
-          keyLevelsVisible={aiAnalysisOpen || chart.tradingSystems.trend.layers['key-levels'] !== false}
+          shortTrendLinesVisible={explanationOpen || chart.tradingSystems.trend.layers['short-trend-lines'] !== false}
+          longTrendLinesVisible={explanationOpen || chart.tradingSystems.trend.layers['long-trend-lines'] !== false}
+          keyLevelsVisible={explanationOpen || chart.tradingSystems.trend.layers['key-levels'] !== false}
           volumeZonesVisible={chart.tradingSystems.trend.layers['volume-zones'] !== false}
-          patternsVisible={aiAnalysisOpen || chart.tradingSystems.trend.layers.patterns !== false}
+          patternsVisible={explanationOpen || chart.tradingSystems.trend.layers.patterns !== false}
           breakoutStateVisible={chart.tradingSystems.trend.layers['breakout-state'] !== false}
           trendIsolation={chart.tradingSystems.trend.isolate}
           onBreakoutStateChange={setBreakoutState}
           onTrendAnalysisChange={setTrendAnalysis}
           highlightedAnalysisItemId={highlightedAnalysisItemId}
-          supplementalAnalysisItems={aiAnalysisItems}
-          supplementalAnalysisOnly={aiAnalysisOpen && aiAnalysisItems.length > 0}
         />
-        {explanationOpen && trendAnalysis && <TrendExplanationPanel
+        {explanationOpen && trendAnalysis && <AnalysisWorkspacePanel
+          symbol={instrument.symbol}
           run={trendAnalysis}
           onHighlightItemChange={setHighlightedAnalysisItemId}
           onClose={() => {
             setExplanationOpen(false)
-            setHighlightedAnalysisItemId(undefined)
-          }}
-        />}
-        {aiAnalysisOpen && <AiAnalysisPanel
-          report={aiAnalysisReport}
-          onHighlightItemChange={setHighlightedAnalysisItemId}
-          onClose={() => {
-            setAiAnalysisOpen(false)
             setHighlightedAnalysisItemId(undefined)
           }}
         />}

@@ -198,7 +198,7 @@ describe('TradingSystemControls', () => {
       onRecalculate={vi.fn()}
       onExplanationOpenChange={onOpenChange}
     />)
-    const unavailable = screen.getByRole('button', { name: '打开趋势分析结果说明' })
+    const unavailable = screen.getByRole('button', { name: '打开形态分析结果' })
     expect(unavailable).toHaveProperty('disabled', true)
 
     rerender(<TradingSystemControls
@@ -212,7 +212,7 @@ describe('TradingSystemControls', () => {
       onRecalculate={vi.fn()}
       onExplanationOpenChange={onOpenChange}
     />)
-    const available = screen.getByRole('button', { name: '打开趋势分析结果说明' })
+    const available = screen.getByRole('button', { name: '打开形态分析结果' })
     expect(available).toHaveProperty('disabled', false)
     fireEvent.click(available)
     expect(onOpenChange).toHaveBeenCalledWith(true)

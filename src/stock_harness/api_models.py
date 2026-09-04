@@ -114,6 +114,17 @@ class AiAnalysisReportInput(BaseModel):
     author: str = Field(default="codex", min_length=1, max_length=80)
 
 
+class AiChatConversationInput(BaseModel):
+    symbol: str = Field(min_length=1, max_length=200)
+    timeframe: Literal["daily"] = "daily"
+    source_run_id: str = Field(min_length=1, max_length=64)
+
+
+class AiChatTurnInput(BaseModel):
+    content: str = Field(min_length=1, max_length=10_000)
+    template_id: str | None = Field(default=None, max_length=80)
+
+
 class TrendReviewSourceInput(BaseModel):
     provider: str = Field(min_length=1, max_length=100)
     dataset: str = Field(min_length=1, max_length=200)

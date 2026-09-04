@@ -743,6 +743,42 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .trading-system-settings > footer button.primary { color: var(--theme-text-strong); background: var(--theme-accent-soft); }
 .instrument-window-body > .chart-stage { transition: width 160ms ease; }
 .instrument-window-body.explanation-open > .chart-stage { width: calc(100% - 310px); }
+.instrument-window-body.analysis-open > .chart-stage { width: calc(100% - min(660px, 58%)); }
+.analysis-workspace-panel { position: absolute; z-index: 17; top: 0; right: 0; bottom: 0; width: min(660px, 58%); display: grid; grid-template-rows: 30px minmax(0, 1fr); overflow: hidden; border-left: 1px solid var(--theme-border); background: var(--theme-surface); color: var(--theme-text); box-shadow: -8px 0 24px #0008; }
+.analysis-workspace-panel > header { display: flex; align-items: center; justify-content: space-between; padding: 0 5px 0 9px; border-bottom: 1px solid var(--theme-border); }
+.analysis-workspace-panel > header span { display: flex; align-items: center; gap: 6px; color: var(--theme-text-strong); font-size: 12px; }
+.analysis-workspace-panel > header button { width: 22px; height: 22px; display: grid; place-items: center; padding: 0; border: 0; background: transparent; color: var(--theme-muted); }
+.analysis-workspace-panel > header button:hover { color: var(--theme-text-strong); background: var(--theme-hover); }
+.analysis-workspace-body { min-height: 0; display: grid; grid-template-columns: minmax(260px, .9fr) minmax(300px, 1.1fr); }
+.trend-explanation-pane { min-width: 0; min-height: 0; display: grid; grid-template-rows: auto auto minmax(0, 1fr); overflow: hidden; border-right: 1px solid var(--theme-border); }
+.analysis-chat-pane { min-width: 0; min-height: 0; display: grid; grid-template-rows: 30px auto minmax(0, 1fr) auto; overflow: hidden; }
+.analysis-chat-pane > header { display: flex; align-items: center; justify-content: space-between; padding: 0 9px; border-bottom: 1px solid var(--theme-border); }
+.analysis-chat-pane > header span { display: flex; align-items: center; gap: 6px; color: var(--theme-text-strong); font-size: 11px; }
+.analysis-chat-pane > header small { font-size: 10px; }
+.analysis-chat-pane > header small.available { color: #4fa77a; }
+.analysis-chat-pane > header small.unavailable { color: #d16b6b; }
+.analysis-chat-context { display: grid; gap: 2px; padding: 7px 9px; border-bottom: 1px solid var(--theme-border); }
+.analysis-chat-context span { color: var(--theme-text-strong); font-size: 11px; }
+.analysis-chat-context small { color: var(--theme-muted); font-size: 10px; line-height: 1.45; }
+.analysis-chat-messages { min-height: 0; overflow: auto; padding: 8px 9px 12px; }
+.analysis-chat-message { margin: 0 0 10px; }
+.analysis-chat-message > small { display: block; margin-bottom: 3px; color: var(--theme-muted); font-size: 10px; }
+.analysis-chat-message > p { margin: 0; color: var(--theme-text); font-size: 11px; line-height: 1.58; white-space: pre-wrap; overflow-wrap: anywhere; }
+.analysis-chat-message.user { padding-left: 18px; }
+.analysis-chat-message.user > p { padding: 6px 7px; border-left: 2px solid var(--theme-accent); background: var(--theme-raised); }
+.analysis-chat-message.streaming > p::after { content: ''; display: inline-block; width: 5px; height: 11px; margin-left: 2px; background: var(--theme-accent); animation: chat-caret 900ms steps(1) infinite; vertical-align: -1px; }
+@keyframes chat-caret { 50% { opacity: 0; } }
+.analysis-chat-reference { display: inline; width: auto; height: auto; padding: 0 2px; border: 0; border-radius: 2px; background: var(--theme-accent-soft); color: var(--theme-text-strong); font: inherit; }
+.analysis-chat-reference:hover, .analysis-chat-reference:focus { color: var(--theme-accent); outline: 1px solid var(--theme-accent); }
+.analysis-chat-empty, .analysis-chat-error { margin: 8px 0; color: var(--theme-muted); font-size: 11px; line-height: 1.5; }
+.analysis-chat-error { color: #d16b6b; }
+.analysis-chat-compose { padding: 7px 8px 8px; border-top: 1px solid var(--theme-border); }
+.analysis-chat-templates { display: flex; gap: 4px; overflow-x: auto; padding-bottom: 6px; }
+.analysis-chat-templates button { flex: 0 0 auto; min-height: 22px; padding: 0 6px; border: 1px solid var(--theme-border); border-radius: 3px; background: transparent; color: var(--theme-muted); font-size: 10px; }
+.analysis-chat-templates button.active { border-color: var(--theme-accent); color: var(--theme-text-strong); background: var(--theme-accent-soft); }
+.analysis-chat-input { display: grid; grid-template-columns: minmax(0, 1fr) 27px; gap: 5px; align-items: end; }
+.analysis-chat-input textarea { min-width: 0; min-height: 54px; max-height: 130px; resize: vertical; padding: 6px 7px; border: 1px solid var(--theme-border); border-radius: 3px; background: var(--theme-base); color: var(--theme-text); font: 11px/1.5 "Microsoft YaHei UI", "Microsoft YaHei", sans-serif; }
+.analysis-chat-input button { width: 27px; height: 27px; display: grid; place-items: center; padding: 0; }
 .trend-explanation-panel { position: absolute; z-index: 16; top: 0; right: 0; bottom: 0; width: 310px; display: grid; grid-template-rows: 30px auto auto minmax(0, 1fr); overflow: hidden; border-left: 1px solid var(--theme-border); background: color-mix(in srgb, var(--theme-surface) 97%, transparent); color: var(--theme-text); box-shadow: -8px 0 24px #0008; font-weight: 400; }
 .trend-explanation-panel > header { display: flex; align-items: center; justify-content: space-between; padding: 0 5px 0 9px; border-bottom: 1px solid var(--theme-border); }
 .trend-explanation-panel > header span { display: flex; align-items: center; gap: 6px; color: var(--theme-text-strong); font-size: 10px; }
@@ -801,11 +837,15 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .trend-explanation-sections section.warnings p { padding: 0 9px; color: #d8aa5d; }
 @container (max-width: 760px) {
   .instrument-window-body.explanation-open > .chart-stage,
+  .instrument-window-body.analysis-open > .chart-stage,
   .screener-chart-runtime.explanation-open > .chart-stage { width: 100%; }
   .trend-explanation-panel { top: 34px; right: 6px; bottom: 24px; width: min(310px, calc(100cqw - 12px)); border: 1px solid var(--theme-border); border-radius: 4px; box-shadow: 0 12px 32px #000a; }
   .ai-analysis-panel { top: 34px; right: 6px; bottom: 24px; width: min(340px, calc(100cqw - 12px)); border: 1px solid var(--theme-border); border-radius: 4px; box-shadow: 0 12px 32px #000a; }
+  .analysis-workspace-panel { top: 34px; right: 6px; bottom: 24px; width: calc(100cqw - 12px); border: 1px solid var(--theme-border); border-radius: 4px; box-shadow: 0 12px 32px #000a; }
 }
 @container (max-width: 430px) {
+  .analysis-workspace-body { grid-template-columns: 1fr; overflow: auto; }
+  .trend-explanation-pane, .analysis-chat-pane { min-height: 360px; overflow: visible; }
   .trading-system-settings-body { grid-template-columns: 1fr; }
   .trading-system-settings > footer { grid-template-columns: 26px 1fr auto auto; }
   .trading-system-settings > footer button.primary { grid-column: 3 / 5; }
@@ -1362,6 +1402,9 @@ body, .workstation, .layout-manager, .layout-preview, .window-group, .list-windo
 .list-window-select small { color: var(--theme-muted); }
 
 .trend-explanation-panel,
+.analysis-workspace-panel,
+.trend-explanation-pane,
+.analysis-chat-pane,
 .ai-analysis-panel,
 .trading-system-settings {
   font-family: "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", Arial, sans-serif;

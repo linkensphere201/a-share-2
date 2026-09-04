@@ -14,11 +14,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from stock_harness.api_analysis_routes import create_analysis_router
+from stock_harness.api_chat_routes import create_chat_router
 from stock_harness.api_market_routes import create_market_router
 from stock_harness.api_models import (
     AiAnalysisFrameworkInput,
     AiAnalysisReferenceInput,
     AiAnalysisReportInput,
+    AiChatConversationInput,
+    AiChatTurnInput,
     AiRiskRewardInput,
     AiStructureViewInput,
     CustomGroupInput,
@@ -39,7 +42,9 @@ from stock_harness.api_models import (
 from stock_harness.api_operations_routes import create_operations_router
 from stock_harness.api_runtime import ApiRuntime
 from stock_harness.api_support import CHINA_TIME
+from stock_harness.chat_service import CodexChatService
 from stock_harness.config import FuturesExchangeCutoff, load_runtime_settings
+from stock_harness.codex_app_server import CodexAppServerClient, CodexBridge
 from stock_harness.futures_intraday import FuturesProvisionalService
 from stock_harness.intraday import IntradayQuoteService
 from stock_harness.models import AdjustmentFactor, StockTradeStatus
@@ -52,7 +57,8 @@ LOGGER = logging.getLogger(__name__)
 
 __all__ = [
     "AiAnalysisFrameworkInput", "AiAnalysisReferenceInput", "AiAnalysisReportInput",
-    "AiRiskRewardInput", "AiStructureViewInput", "CustomGroupInput",
+    "AiRiskRewardInput", "AiStructureViewInput", "AiChatConversationInput",
+    "AiChatTurnInput", "CustomGroupInput",
     "CustomGroupMemberInput", "CustomGroupRole", "CustomIndexInput",
     "CustomIndexMemberInput", "FrontendEventInput", "IntradayRefreshInput",
     "IntradaySubscriptionInput", "ScreenerRunInput", "TrendAnalysisInput",
@@ -78,6 +84,7 @@ def create_app(
     custom_index_status_loader: Callable[
         [list[str], date, date], list[StockTradeStatus]
     ] | None = None,
+    codex_bridge: CodexBridge | None = None,
 ) -> FastAPI:
     """Create the API while preserving injectable services for tests and desktop."""
     owned_store = store is None
@@ -98,7 +105,18 @@ def create_app(
         else:
             app.state.store = store
         app.state.screener = ScreenerService(app.state.store)
+        bridge = codex_bridge or CodexAppServerClient()
+        store_path = str(app.state.store.path)
+        chat_workdir = (
+            Path.cwd() / ".tmp" / "codex-chat"
+            if store_path == ":memory:"
+            else Path(store_path).resolve().parent / "runtime" / "codex-chat"
+        )
+        app.state.chat_service = CodexChatService(
+            app.state.store, bridge, chat_workdir
+        )
         yield
+        app.state.chat_service.close()
         if owned_store:
             app.state.store.close()
 
@@ -149,6 +167,7 @@ def create_app(
         return {"status": "ok"}
 
     app.include_router(create_analysis_router())
+    app.include_router(create_chat_router())
     app.include_router(create_operations_router())
     app.include_router(create_market_router())
 

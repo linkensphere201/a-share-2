@@ -421,6 +421,73 @@ CREATE TABLE IF NOT EXISTS ai_analysis_reports (
 CREATE INDEX IF NOT EXISTS ai_analysis_reports_latest
 ON ai_analysis_reports(instrument_id, timeframe, revision DESC);
 
+CREATE TABLE IF NOT EXISTS ai_chat_conversations (
+    conversation_id TEXT PRIMARY KEY,
+    instrument_id INTEGER NOT NULL,
+    timeframe TEXT NOT NULL CHECK (timeframe IN ('daily', 'weekly', 'monthly')),
+    source_run_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    codex_thread_id TEXT,
+    status TEXT NOT NULL CHECK (status IN ('active', 'archived')),
+    created_at_ms INTEGER NOT NULL,
+    updated_at_ms INTEGER NOT NULL,
+    UNIQUE (instrument_id, timeframe, source_run_id),
+    FOREIGN KEY (instrument_id) REFERENCES instruments(instrument_id),
+    FOREIGN KEY (source_run_id) REFERENCES generated_analysis_runs(run_id)
+);
+
+CREATE INDEX IF NOT EXISTS ai_chat_conversations_latest
+ON ai_chat_conversations(instrument_id, timeframe, updated_at_ms DESC);
+
+CREATE TABLE IF NOT EXISTS ai_chat_turns (
+    turn_id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL,
+    codex_turn_id TEXT,
+    template_id TEXT,
+    status TEXT NOT NULL CHECK (
+        status IN ('queued', 'running', 'completed', 'failed', 'cancelled')
+    ),
+    error TEXT,
+    created_at_ms INTEGER NOT NULL,
+    completed_at_ms INTEGER,
+    FOREIGN KEY (conversation_id)
+        REFERENCES ai_chat_conversations(conversation_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS ai_chat_turns_conversation
+ON ai_chat_turns(conversation_id, created_at_ms, turn_id);
+
+CREATE TABLE IF NOT EXISTS ai_chat_messages (
+    message_id TEXT PRIMARY KEY,
+    turn_id TEXT NOT NULL,
+    role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+    sequence INTEGER NOT NULL CHECK (sequence > 0),
+    content TEXT NOT NULL,
+    incomplete INTEGER NOT NULL DEFAULT 0 CHECK (incomplete IN (0, 1)),
+    created_at_ms INTEGER NOT NULL,
+    UNIQUE (turn_id, sequence),
+    FOREIGN KEY (turn_id) REFERENCES ai_chat_turns(turn_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS ai_chat_turn_contexts (
+    turn_id TEXT PRIMARY KEY,
+    schema_version TEXT NOT NULL,
+    source_run_id TEXT NOT NULL,
+    as_of_date INTEGER NOT NULL,
+    input_digest TEXT NOT NULL,
+    context_json TEXT NOT NULL,
+    FOREIGN KEY (turn_id) REFERENCES ai_chat_turns(turn_id) ON DELETE CASCADE,
+    FOREIGN KEY (source_run_id) REFERENCES generated_analysis_runs(run_id)
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS ai_chat_message_references (
+    message_id TEXT NOT NULL,
+    code TEXT NOT NULL,
+    analysis_item_id TEXT NOT NULL,
+    PRIMARY KEY (message_id, code),
+    FOREIGN KEY (message_id) REFERENCES ai_chat_messages(message_id) ON DELETE CASCADE
+) WITHOUT ROWID;
+
 CREATE TABLE IF NOT EXISTS screener_runs (
     run_id TEXT PRIMARY KEY,
     strategy_id TEXT NOT NULL,

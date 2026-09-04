@@ -8,22 +8,23 @@ export function TrendExplanationPanel({
   run,
   onHighlightItemChange,
   onClose,
+  embedded = false,
 }: {
   run: TrendAnalysisRun
   onHighlightItemChange: (itemId?: string) => void
   onClose: () => void
+  embedded?: boolean
 }) {
   const explanation = buildTrendExplanation(run)
   if (!explanation) return null
   const breakoutState = readGeneratedBreakoutState(run, true)
   const evidence = readTrendEvidence(run, breakoutState)
   const clearHighlight = () => onHighlightItemChange(undefined)
-  return (
-    <aside className="trend-explanation-panel" role="dialog" aria-label="趋势分析结果说明">
-      <header>
+  const content = <>
+      {!embedded && <header>
         <span><Info size={13}/>趋势分析说明</span>
         <button title="关闭结果说明" aria-label="关闭趋势分析结果说明" onClick={() => { clearHighlight(); onClose() }}><X size={13}/></button>
-      </header>
+      </header>}
       <div className="trend-explanation-meta">
         <span>{explanation.source === 'preview' ? '盘中预览' : '正式结果'}</span>
         <span>截至 {explanation.asOfDate}</span>
@@ -71,8 +72,10 @@ export function TrendExplanationPanel({
           {explanation.warnings.map(value => <p key={value}>{value}</p>)}
         </section>}
       </div>
-    </aside>
-  )
+    </>
+  return embedded
+    ? <section className="trend-explanation-pane" aria-label="形态分析结果">{content}</section>
+    : <aside className="trend-explanation-panel" role="dialog" aria-label="趋势分析结果说明">{content}</aside>
 }
 
 function evidenceStateLabel(eventKind: string | undefined, state: string): string {

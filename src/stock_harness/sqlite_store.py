@@ -40,6 +40,7 @@ from stock_harness.sqlite_mapping import (
 )
 from stock_harness.sqlite_runtime import InterprocessWriterLock, ThreadOnlyWriterLock, Transaction
 from stock_harness.sqlite_analysis_store import SQLiteAnalysisStoreMixin
+from stock_harness.sqlite_chat_store import SQLiteChatStoreMixin
 from stock_harness.sqlite_custom_group_store import SQLiteCustomGroupStoreMixin
 from stock_harness.sqlite_custom_index_store import SQLiteCustomIndexStoreMixin
 from stock_harness.sqlite_etf_holding_store import SQLiteEtfHoldingStoreMixin
@@ -60,6 +61,7 @@ LOGGER = logging.getLogger(__name__)
 
 class SQLiteMarketDataStore(
     SQLiteFuturesStoreMixin,
+    SQLiteChatStoreMixin,
     SQLiteAnalysisStoreMixin,
     SQLiteCustomGroupStoreMixin,
     SQLiteCustomIndexStoreMixin,

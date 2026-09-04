@@ -1,6 +1,5 @@
 import { useState } from 'react'
 import {
-  Bot,
   ChevronLeft,
   ChevronRight,
   Eye,
@@ -33,9 +32,6 @@ type TradingSystemControlsProps = {
   onRecalculate: (state: TradingSystemWindowState, refreshData: boolean) => void | Promise<void>
   explanationOpen?: boolean
   onExplanationOpenChange?: (open: boolean) => void
-  aiAnalysisAvailable?: boolean
-  aiAnalysisOpen?: boolean
-  onAiAnalysisOpenChange?: (open: boolean) => void
   recalculationAvailable?: boolean
   recalculationDisabledReason?: string
   embedded?: boolean
@@ -51,9 +47,6 @@ export function TradingSystemControls({
   onRecalculate,
   explanationOpen = false,
   onExplanationOpenChange,
-  aiAnalysisAvailable = false,
-  aiAnalysisOpen = false,
-  onAiAnalysisOpenChange,
   recalculationAvailable = true,
   recalculationDisabledReason,
   embedded = false,
@@ -141,21 +134,13 @@ export function TradingSystemControls({
           />}
         </button>
         <button
-          title="趋势分析结果说明"
-          aria-label="打开趋势分析结果说明"
+          title="形态分析结果"
+          aria-label="打开形态分析结果"
           disabled={!analysisRun}
           className={explanationOpen ? 'active' : ''}
           aria-pressed={explanationOpen}
           onClick={() => onExplanationOpenChange?.(!explanationOpen)}
         ><Info size={13}/></button>
-        <button
-          title="AI形态分析"
-          aria-label="打开AI形态分析"
-          disabled={!aiAnalysisAvailable}
-          className={aiAnalysisOpen ? 'active' : ''}
-          aria-pressed={aiAnalysisOpen}
-          onClick={() => onAiAnalysisOpenChange?.(!aiAnalysisOpen)}
-        ><Bot size={13}/></button>
         <button
           className={settingsOpen ? 'active' : ''}
           title="趋势交易体系设置"

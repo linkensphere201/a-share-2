@@ -886,6 +886,9 @@ class SQLiteAnalysisStoreMixin:
                 ) AND NOT EXISTS (
                     SELECT 1 FROM screener_candidates AS candidate
                     WHERE candidate.analysis_run_id = generated_analysis_runs.run_id
+                ) AND NOT EXISTS (
+                    SELECT 1 FROM ai_chat_conversations AS conversation
+                    WHERE conversation.source_run_id = generated_analysis_runs.run_id
                 )
                 """,
                 (now_ms - preview_retention_ms, now_ms - failed_retention_ms),

@@ -36,7 +36,7 @@ describe('ScreenerWorkspace', () => {
     expect(screen.getByTestId('screener-chart').dataset.date).toBe('2026-09-01')
     expect(screen.getByText('MDL-1Y-01 · 1年 · 突破回踩')).toBeTruthy()
     expect(screen.getByText('0901 选股结果')).toBeTruthy()
-    expect(screen.getByRole('button', { name: '打开趋势分析结果说明' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '打开形态分析结果' })).toBeTruthy()
   })
 
   it('filters persisted candidates by breakout state without starting another run', async () => {
