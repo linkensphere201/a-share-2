@@ -13,6 +13,8 @@ export type CodexCapabilities = {
     sandbox?: string
     approval_policy?: string
     mcp_enabled?: boolean
+    mcp_server?: string
+    mcp_tools?: string[]
     builtin_tools_disabled?: string[]
     tool_event_tripwire?: boolean
     restart_count?: number
@@ -176,6 +178,7 @@ export function streamChatTurn(
     onDelta: (delta: string) => void
     onTerminal: (type: 'completed' | 'failed' | 'cancelled', data: Record<string, unknown>) => void
     onError: () => void
+    onTool?: (type: 'tool-started' | 'tool-completed', data: ChatToolEvent) => void
   },
 ): EventSource {
   const source = new EventSource(`/api/ai/turns/${encodeURIComponent(turnId)}/events`)
@@ -183,6 +186,14 @@ export function streamChatTurn(
     const payload = JSON.parse((event as MessageEvent).data) as { delta?: string }
     if (payload.delta) handlers.onDelta(payload.delta)
   })
+  for (const type of ['tool-started', 'tool-completed'] as const) {
+    source.addEventListener(type, event => {
+      handlers.onTool?.(
+        type,
+        JSON.parse((event as MessageEvent).data) as ChatToolEvent,
+      )
+    })
+  }
   for (const type of ['completed', 'failed', 'cancelled'] as const) {
     source.addEventListener(type, event => {
       handlers.onTerminal(type, JSON.parse((event as MessageEvent).data) as Record<string, unknown>)
@@ -191,4 +202,14 @@ export function streamChatTurn(
   }
   source.onerror = () => handlers.onError()
   return source
+}
+
+export type ChatToolEvent = {
+  item_id: string
+  server: string
+  tool: string
+  status: string
+  duration_ms?: number | null
+  arguments?: Record<string, string | number | boolean>
+  error?: string | null
 }

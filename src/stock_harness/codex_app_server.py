@@ -10,9 +10,11 @@ import queue
 import re
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from typing import Callable
+from urllib.parse import urlparse
 
 from stock_harness.ai_provider import AiConversationProvider
 
@@ -24,9 +26,17 @@ DISABLED_FEATURES = (
     "multi_agent", "image_generation",
 )
 DENIED_ITEM_TYPES = {
-    "commandExecution", "fileChange", "mcpToolCall", "webSearch", "imageView",
+    "commandExecution", "fileChange", "webSearch", "imageView",
     "computerAction", "dynamicToolCall", "collabAgentToolCall",
 }
+ALLOWED_MCP_SERVER = "stock_harness_embedded"
+ALLOWED_MCP_TOOLS = frozenset({
+    "stock_harness_health", "get_active_workspace", "search_instruments",
+    "get_instrument", "list_custom_groups", "get_custom_group",
+    "get_daily_bars", "get_latest_quote", "list_futures_coverage",
+    "get_futures_continuous", "get_trend_analysis", "get_ai_analysis",
+    "list_instrument_members", "list_symbol_boards", "recalculate_trend_analysis",
+})
 
 
 class CodexUnavailableError(RuntimeError):
@@ -40,10 +50,12 @@ class CodexAppServerClient:
     def __init__(
         self, executable: str | None = None, request_timeout: float = 20.0,
         executable_args: tuple[str, ...] = (),
+        mcp_api_url: str = "http://127.0.0.1:8765",
     ) -> None:
         self._executable = executable
         self._executable_args = executable_args
         self._request_timeout = request_timeout
+        self._mcp_api_url = _loopback_url(mcp_api_url)
         self._process: subprocess.Popen[str] | None = None
         self._pending: dict[int, Future[dict[str, object]]] = {}
         self._pending_lock = threading.Lock()
@@ -70,7 +82,9 @@ class CodexAppServerClient:
                 "provider": "local-codex", "model": None,
                 "process_running": self._process is not None and self._process.poll() is None,
                 "transport": "stdio-jsonl", "sandbox": "read-only",
-                "approval_policy": "never", "mcp_enabled": False,
+                "approval_policy": "never", "mcp_enabled": True,
+                "mcp_server": ALLOWED_MCP_SERVER,
+                "mcp_tools": sorted(ALLOWED_MCP_TOOLS),
                 "builtin_tools_disabled": list(DISABLED_FEATURES),
                 "tool_event_tripwire": True, "restart_count": self._restart_count,
                 "error": None if signed_in else "Codex 尚未登录",
@@ -82,7 +96,9 @@ class CodexAppServerClient:
                 "provider": "local-codex", "model": None,
                 "process_running": False, "transport": "stdio-jsonl",
                 "sandbox": "read-only", "approval_policy": "never",
-                "mcp_enabled": False, "builtin_tools_disabled": list(DISABLED_FEATURES),
+                "mcp_enabled": True, "mcp_server": ALLOWED_MCP_SERVER,
+                "mcp_tools": sorted(ALLOWED_MCP_TOOLS),
+                "builtin_tools_disabled": list(DISABLED_FEATURES),
                 "tool_event_tripwire": True, "restart_count": self._restart_count,
                 "error": _bounded_error(error),
             }
@@ -97,8 +113,10 @@ class CodexAppServerClient:
             "ephemeral": False,
             "baseInstructions": (
                 "You are the embedded StockHarness market-analysis assistant. "
-                "Use only structured context supplied in each user turn. Never call tools, "
-                "run commands, read files, request permissions, or modify external state."
+                "Use the frozen selected-result context and, when needed, only the allowlisted "
+                "stock_harness MCP tools. Never call shell, filesystem, browser, web, apps, "
+                "other MCP servers, or request permissions. The only permitted computation "
+                "write is recalculate_trend_analysis over already stored market bars."
             ),
             "developerInstructions": (
                 "Answer in Chinese. Keep facts, rule-based inference, and uncertainty distinct. "
@@ -178,6 +196,19 @@ class CodexAppServerClient:
                 elif method in {"item/started", "item/completed"}:
                     item = params.get("item")
                     item_type = str(item.get("type", "")) if isinstance(item, dict) else ""
+                    if item_type == "mcpToolCall":
+                        if not _allowed_mcp_item(item):
+                            self.interrupt(thread_id, turn_id)
+                            on_event("warning", {
+                                "message": "Codex MCP call was blocked by the StockHarness allow list",
+                                "item_type": item_type,
+                            })
+                            raise CodexUnavailableError("Codex attempted a denied MCP tool call")
+                        on_event(
+                            "tool-started" if method == "item/started" else "tool-completed",
+                            _mcp_event(item),
+                        )
+                        continue
                     if item_type in DENIED_ITEM_TYPES:
                         self.interrupt(thread_id, turn_id)
                         on_event("warning", {
@@ -246,9 +277,12 @@ class CodexAppServerClient:
                 raise CodexUnavailableError(
                     f"Codex 版本不兼容：{self._version or 'unknown'}；需要 0.146.x"
                 )
+            disabled_servers = _configured_mcp_servers(
+                executable, self._executable_args
+            ) if _is_codex_executable(executable) else []
             command = [
                 executable, *self._executable_args,
-                "app-server", "--stdio", "-c", "mcp_servers={}",
+                "app-server", "--stdio", *self._mcp_config_args(disabled_servers),
             ]
             for feature in DISABLED_FEATURES:
                 command.extend(["--disable", feature])
@@ -265,6 +299,36 @@ class CodexAppServerClient:
                 "capabilities": {"experimentalApi": False},
             })
             self._notify("initialized", {})
+
+    def _mcp_config_args(self, disabled_servers: list[str] | None = None) -> list[str]:
+        command, args, cwd = _embedded_mcp_command()
+        mcp_environment = "{ " + ", ".join([
+            f"STOCK_HARNESS_API_URL = {_toml_string(self._mcp_api_url)}",
+            'STOCK_HARNESS_MCP_TIMEOUT_SECONDS = "30"',
+            'STOCK_HARNESS_MCP_LOG_LEVEL = "WARNING"',
+            'STOCK_HARNESS_MCP_PROFILE = "embedded-chat"',
+        ]) + " }"
+        values = {
+            f"mcp_servers.{ALLOWED_MCP_SERVER}.command": _toml_string(command),
+            f"mcp_servers.{ALLOWED_MCP_SERVER}.args": json.dumps(args),
+            f"mcp_servers.{ALLOWED_MCP_SERVER}.cwd": _toml_string(cwd),
+            f"mcp_servers.{ALLOWED_MCP_SERVER}.required": "true",
+            f"mcp_servers.{ALLOWED_MCP_SERVER}.startup_timeout_sec": "15",
+            f"mcp_servers.{ALLOWED_MCP_SERVER}.tool_timeout_sec": "120",
+            f"mcp_servers.{ALLOWED_MCP_SERVER}.enabled_tools": json.dumps(
+                sorted(ALLOWED_MCP_TOOLS)
+            ),
+            f"mcp_servers.{ALLOWED_MCP_SERVER}.env": mcp_environment,
+        }
+        result: list[str] = []
+        for key, value in values.items():
+            result.extend(["-c", f"{key}={value}"])
+        for name in disabled_servers or []:
+            if name != ALLOWED_MCP_SERVER:
+                result.extend([
+                    "-c", f"mcp_servers.{_toml_key_segment(name)}.enabled=false"
+                ])
+        return result
 
     def _request(self, method: str, params: dict[str, object]) -> dict[str, object]:
         process = self._process
@@ -358,3 +422,95 @@ class CodexAppServerClient:
 
 def _bounded_error(error: Exception) -> str:
     return " ".join(str(error).split())[:300] or type(error).__name__
+
+
+def _loopback_url(value: str) -> str:
+    parsed = urlparse(value)
+    if (
+        parsed.scheme != "http"
+        or parsed.hostname not in {"127.0.0.1", "localhost", "::1"}
+        or parsed.username
+        or parsed.password
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError("embedded MCP API URL must be a plain loopback HTTP URL")
+    return value.rstrip("/")
+
+
+def _embedded_mcp_command() -> tuple[str, list[str], str]:
+    if getattr(sys, "frozen", False):
+        return sys.executable, ["--mcp-server"], str(Path(sys.executable).resolve().parent)
+    return (
+        sys.executable,
+        ["-m", "stock_harness.mcp_server"],
+        str(Path(__file__).resolve().parents[2]),
+    )
+
+
+def _toml_string(value: str) -> str:
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _toml_key_segment(value: str) -> str:
+    if re.fullmatch(r"[A-Za-z0-9_-]+", value):
+        return value
+    raise CodexUnavailableError("Configured MCP server name cannot be safely overridden")
+
+
+def _is_codex_executable(value: str) -> bool:
+    return Path(value).name.lower() in {"codex", "codex.exe", "codex.cmd"}
+
+
+def _configured_mcp_servers(
+    executable: str, executable_args: tuple[str, ...]
+) -> list[str]:
+    try:
+        result = subprocess.run(
+            [executable, *executable_args, "mcp", "list", "--json"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=10, check=False,
+        )
+        if result.returncode != 0:
+            raise CodexUnavailableError("Codex MCP inventory command failed")
+        payload = json.loads(result.stdout)
+        if not isinstance(payload, list):
+            raise CodexUnavailableError("Codex MCP inventory returned an invalid response")
+        return [
+            str(item["name"])
+            for item in payload
+            if isinstance(item, dict) and isinstance(item.get("name"), str)
+        ]
+    except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError) as error:
+        LOGGER.warning("codex_mcp_inventory_failed")
+        raise CodexUnavailableError(
+            "Could not inventory configured MCP servers; embedded Chat remains disabled"
+        ) from error
+
+
+def _allowed_mcp_item(item: dict[str, object]) -> bool:
+    return (
+        str(item.get("server", "")) == ALLOWED_MCP_SERVER
+        and str(item.get("tool", "")) in ALLOWED_MCP_TOOLS
+    )
+
+
+def _mcp_event(item: dict[str, object]) -> dict[str, object]:
+    arguments = item.get("arguments")
+    safe_arguments: dict[str, object] = {}
+    if isinstance(arguments, dict):
+        for key in ("symbol", "query", "timeframe", "classification"):
+            value = arguments.get(key)
+            if isinstance(value, (str, int, float, bool)):
+                safe_arguments[key] = str(value)[:200] if isinstance(value, str) else value
+    error = item.get("error")
+    return {
+        "item_id": str(item.get("id", ""))[:100],
+        "server": ALLOWED_MCP_SERVER,
+        "tool": str(item.get("tool", "")),
+        "status": str(item.get("status", "")),
+        "duration_ms": item.get("durationMs"),
+        "arguments": safe_arguments,
+        "error": " ".join(str(error).split())[:240] if error else None,
+    }

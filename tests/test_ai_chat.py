@@ -9,6 +9,7 @@ import time
 from typing import Callable
 
 from fastapi.testclient import TestClient
+import pytest
 
 from stock_harness.analysis_results import (
     AnalysisNamespace, AnalysisRunSpec, GeneratedAnalysisItem, GeneratedItemType,
@@ -262,8 +263,58 @@ def test_terminal_stream_reconnects_from_sqlite_after_memory_stream_is_lost() ->
     store.close()
 
 
+def test_allowed_mcp_tool_events_are_persisted_and_replayed() -> None:
+    class ToolEventBridge(FakeCodexBridge):
+        def run_turn(
+            self,
+            _thread_id: str,
+            prompt: str,
+            on_event: Callable[[str, dict[str, object]], None],
+        ) -> tuple[str, str, str]:
+            self.prompts.append(prompt)
+            on_event("turn", {"turn_id": "codex-turn-tool"})
+            event = {
+                "item_id": "mcp-item-1",
+                "server": "stock_harness_embedded",
+                "tool": "get_daily_bars",
+                "status": "inProgress",
+                "arguments": {"symbol": "000001.SZ"},
+            }
+            on_event("tool-started", event)
+            on_event("tool-completed", {
+                **event, "status": "completed", "duration_ms": 18,
+            })
+            on_event("delta", {"delta": "done"})
+            return "codex-turn-tool", "done", "completed"
+
+    store, run_id = _store_with_run()
+    with TestClient(create_app(store, codex_bridge=ToolEventBridge())) as client:
+        conversation = client.post("/api/ai/conversations", json={
+            "symbol": "000001.SZ", "timeframe": "daily", "source_run_id": run_id,
+        }).json()
+        turn = client.post(
+            f"/api/ai/conversations/{conversation['conversation_id']}/turns",
+            json={"content": "compare another instrument", "template_id": None},
+        ).json()
+        first = client.get(f"/api/ai/turns/{turn['turn_id']}/events")
+        client.app.state.chat_service._streams.clear()
+        replay = client.get(f"/api/ai/turns/{turn['turn_id']}/events")
+
+    persisted = store.list_chat_stream_events(turn["turn_id"])
+    assert [item["type"] for item in persisted if str(item["type"]).startswith("tool-")] == [
+        "tool-started", "tool-completed",
+    ]
+    assert "event: tool-started" in first.text
+    assert "event: tool-completed" in replay.text
+    assert "stock_harness_embedded" in replay.text
+    assert "000001.SZ" in replay.text
+    store.close()
+
+
 def test_pinned_codex_protocol_contract_matches_runtime_adapter() -> None:
-    from stock_harness.codex_app_server import DENIED_ITEM_TYPES, SUPPORTED_VERSION
+    from stock_harness.codex_app_server import (
+        ALLOWED_MCP_SERVER, ALLOWED_MCP_TOOLS, DENIED_ITEM_TYPES, SUPPORTED_VERSION,
+    )
 
     contract = json.loads(
         Path("validation/codex-app-server-v0.146-contract.json").read_text(encoding="utf-8")
@@ -273,10 +324,18 @@ def test_pinned_codex_protocol_contract_matches_runtime_adapter() -> None:
         contract["codex_cli"]["supported_minor"],
     ) == SUPPORTED_VERSION
     assert set(contract["denied_item_types"]) == DENIED_ITEM_TYPES
+    assert contract["allowed_mcp"] == {
+        "server": ALLOWED_MCP_SERVER, "tools": sorted(ALLOWED_MCP_TOOLS),
+    }
     assert contract["permission_profile"] == {
         "sandbox": "read-only", "approval_policy": "never",
-        "mcp_enabled": False, "tool_event_tripwire": True,
+        "mcp_enabled": True, "tool_event_tripwire": True,
     }
+
+
+def test_embedded_mcp_rejects_non_root_loopback_url() -> None:
+    with pytest.raises(ValueError, match="plain loopback HTTP URL"):
+        CodexAppServerClient(mcp_api_url="http://127.0.0.1:8765/private")
 
 
 def test_retry_reuses_the_original_immutable_context_after_market_correction() -> None:
@@ -327,6 +386,58 @@ def test_protocol_tripwire_interrupts_a_denied_app_server_tool_item() -> None:
     except CodexUnavailableError as error:
         assert "commandExecution" in str(error)
     assert client.calls == ["turn/start", "turn/interrupt"]
+
+
+def test_protocol_allows_only_stock_harness_mcp_items_and_normalizes_events() -> None:
+    class ProtocolFixture(CodexAppServerClient):
+        def __init__(self, server: str, tool: str) -> None:
+            super().__init__(executable="fixture")
+            self.server = server
+            self.tool = tool
+            self.calls: list[str] = []
+
+        def _request(self, method: str, _params: dict[str, object]) -> dict[str, object]:
+            self.calls.append(method)
+            if method == "turn/start":
+                def emit() -> None:
+                    listener = self._listeners["thread-1"]
+                    base = {
+                        "threadId": "thread-1", "turnId": "turn-1",
+                        "item": {
+                            "id": "tool-1", "type": "mcpToolCall",
+                            "server": self.server, "tool": self.tool,
+                            "arguments": {"symbol": "000001.SZ", "secret": "hidden"},
+                            "status": "inProgress",
+                        },
+                    }
+                    listener("item/started", base)
+                    base["item"] = {**base["item"], "status": "completed", "durationMs": 12}
+                    listener("item/completed", base)
+                    listener("turn/completed", {
+                        "threadId": "thread-1",
+                        "turn": {"id": "turn-1", "status": "completed"},
+                    })
+                threading.Timer(0.01, emit).start()
+                return {"turn": {"id": "turn-1"}}
+            return {}
+
+    events: list[tuple[str, dict[str, object]]] = []
+    allowed = ProtocolFixture("stock_harness_embedded", "get_daily_bars")
+    assert allowed.run_turn(
+        "thread-1", "compare", lambda kind, data: events.append((kind, data))
+    )[2] == "completed"
+    assert [kind for kind, _data in events if kind.startswith("tool-")] == [
+        "tool-started", "tool-completed",
+    ]
+    assert events[-1][1].get("arguments") != {"secret": "hidden"}
+
+    denied = ProtocolFixture("other_server", "get_daily_bars")
+    try:
+        denied.run_turn("thread-1", "compare", lambda *_args: None)
+        raise AssertionError("non-StockHarness MCP server was not rejected")
+    except CodexUnavailableError as error:
+        assert "denied MCP" in str(error)
+    assert denied.calls[-1] == "turn/interrupt"
 
 
 def test_position_and_risk_reward_templates_require_validated_structured_inputs() -> None:

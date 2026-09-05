@@ -28,17 +28,36 @@
   "denied_item_types": [
     "commandExecution",
     "fileChange",
-    "mcpToolCall",
     "webSearch",
     "imageView",
     "computerAction",
     "dynamicToolCall",
     "collabAgentToolCall"
   ],
+  "allowed_mcp": {
+    "server": "stock_harness_embedded",
+    "tools": [
+      "get_active_workspace",
+      "get_ai_analysis",
+      "get_custom_group",
+      "get_daily_bars",
+      "get_futures_continuous",
+      "get_instrument",
+      "get_latest_quote",
+      "get_trend_analysis",
+      "list_custom_groups",
+      "list_futures_coverage",
+      "list_instrument_members",
+      "list_symbol_boards",
+      "recalculate_trend_analysis",
+      "search_instruments",
+      "stock_harness_health"
+    ]
+  },
   "permission_profile": {
     "sandbox": "read-only",
     "approval_policy": "never",
-    "mcp_enabled": false,
+    "mcp_enabled": true,
     "tool_event_tripwire": true
   }
 }

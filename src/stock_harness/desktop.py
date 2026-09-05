@@ -21,6 +21,7 @@ import uvicorn
 from stock_harness.api import create_app
 from stock_harness.auto_update import AutoUpdateService
 from stock_harness.config import load_runtime_settings
+from stock_harness.codex_app_server import CodexAppServerClient
 from stock_harness.intraday import IntradayQuoteService
 from stock_harness.futures_intraday import FuturesProvisionalService
 from stock_harness.futures_provider_health import FuturesProviderMonitor
@@ -82,6 +83,10 @@ class DesktopServer:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    if args.mcp_server:
+        from stock_harness.mcp_server import EMBEDDED_CHAT_PROFILE, main as mcp_main
+        mcp_main(EMBEDDED_CHAT_PROFILE)
+        return 0
     paths = resolve_desktop_paths(args.provider_config, args.storage_config, args.web_dist)
     configure_runtime_logging(resolve_runtime_log_directory(paths.log_dir, args.smoke_test))
     port = args.port or find_available_port(args.host)
@@ -166,6 +171,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         futures_final_cutoffs=settings.futures.final_cutoffs,
         custom_index_factor_loader=load_custom_index_factors,
         custom_index_status_loader=load_custom_index_statuses,
+        codex_bridge=CodexAppServerClient(mcp_api_url=url),
     )
     server = DesktopServer(app, args.host, port)
     try:
@@ -303,6 +309,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-auto-update", action="store_true")
     parser.add_argument("--no-intraday", action="store_true")
     parser.add_argument("--smoke-test", action="store_true")
+    parser.add_argument("--mcp-server", action="store_true", help=argparse.SUPPRESS)
     return parser
 
 

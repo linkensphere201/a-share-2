@@ -23,6 +23,8 @@ MAX_GROUP_MEMBERS = 500
 MAX_MEMBERSHIPS = 500
 MAX_DAILY_BARS = 8_000
 MAX_FUTURES_ROWS = 500
+MIN_SHORT_HORIZON = 5
+MAX_LONG_HORIZON = 1_000
 LOGGER = logging.getLogger(__name__)
 _WARNING_LOCK = threading.Lock()
 _WARNING_TIMES: dict[str, float] = {}
@@ -370,6 +372,65 @@ class StockHarnessMcpTools:
                 f"/api/analysis/trend/{normalized}", [("timeframe", timeframe)]
             ),
         )
+
+    def recalculate_trend_analysis(
+        self,
+        symbol: str,
+        short_horizon_bars: int = 60,
+        medium_horizon_bars: int = 120,
+        long_horizon_bars: int = 250,
+        include_preview: bool = True,
+    ) -> dict[str, object]:
+        normalized = _symbol(symbol)
+        short = _bounded(
+            short_horizon_bars, MIN_SHORT_HORIZON, 250, "short_horizon_bars"
+        )
+        medium = _bounded(medium_horizon_bars, 10, 500, "medium_horizon_bars")
+        long = _bounded(long_horizon_bars, 60, MAX_LONG_HORIZON, "long_horizon_bars")
+        if not short < medium < long:
+            raise ValueError("trend horizons must satisfy short < medium < long")
+
+        def calculate() -> dict[str, object]:
+            payload = self.api.post("/api/analysis/trend/recalculate", {
+                "symbol": normalized,
+                "timeframes": ["daily"],
+                "short_horizon_bars": short,
+                "medium_horizon_bars": medium,
+                "long_horizon_bars": long,
+                "config_version": f"embedded-mcp-r1-{short}-{medium}-{long}",
+                "include_preview": bool(include_preview),
+            })
+            results = payload.get("results", [])
+            if not isinstance(results, list):
+                raise StockHarnessApiError(
+                    "invalid_response", "Trend recalculation results are not a list"
+                )
+            summaries = []
+            for result in results:
+                if not isinstance(result, dict):
+                    continue
+                items = result.get("items", [])
+                summaries.append({
+                    "run_id": result.get("run_id"),
+                    "symbol": result.get("symbol", normalized),
+                    "timeframe": result.get("timeframe", "daily"),
+                    "as_of_date": result.get("as_of_date"),
+                    "completion_state": result.get("completion_state"),
+                    "algorithm_version": result.get("algorithm_version"),
+                    "config_version": result.get("config_version"),
+                    "preview": result.get("expires_at_ms") is not None,
+                    "item_count": len(items) if isinstance(items, list) else 0,
+                })
+            return {
+                "status": payload.get("status", "completed"),
+                "symbol": normalized,
+                "timeframe": "daily",
+                "horizons": {"short": short, "medium": medium, "long": long},
+                "results": summaries,
+                "next_operation": "get_trend_analysis",
+            }
+
+        return self._execute("recalculate_trend_analysis", calculate)
 
     def save_ai_analysis(self, payload: dict[str, object]) -> dict[str, object]:
         return self._execute(

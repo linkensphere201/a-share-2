@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from datetime import date, datetime
 import logging
 from pathlib import Path
+import os
 import time
 
 from fastapi import FastAPI, Request
@@ -109,7 +110,11 @@ def create_app(
         else:
             app.state.store = store
         app.state.screener = ScreenerService(app.state.store)
-        bridge = codex_bridge or CodexAppServerClient()
+        bridge = codex_bridge or CodexAppServerClient(
+            mcp_api_url=os.environ.get(
+                "STOCK_HARNESS_EMBEDDED_MCP_API_URL", "http://127.0.0.1:8765"
+            )
+        )
         store_path = str(app.state.store.path)
         chat_workdir = (
             Path.cwd() / ".tmp" / "codex-chat"

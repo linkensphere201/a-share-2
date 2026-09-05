@@ -56,6 +56,43 @@ def test_get_ai_analysis_reads_the_latest_symbol_report():
     assert api.calls == [("/api/analysis/ai/000001.SZ", [("timeframe", "daily")])]
 
 
+def test_recalculate_trend_analysis_is_bounded_and_returns_run_summaries():
+    api = FakeApi({
+        "/api/analysis/trend/recalculate": lambda payload: {
+            "status": "completed",
+            "results": [{
+                "run_id": "run-1", "symbol": payload["symbol"],
+                "timeframe": "daily", "as_of_date": "2026-09-05",
+                "completion_state": "completed", "algorithm_version": "v22",
+                "config_version": payload["config_version"], "expires_at_ms": None,
+                "items": [{"item_id": "line-1"}] * 3,
+            }],
+        }
+    })
+
+    result = StockHarnessMcpTools(api).recalculate_trend_analysis(
+        "000001.sz", 30, 90, 200, False
+    )
+
+    assert result["ok"] is True
+    assert result["data"]["results"][0]["item_count"] == 3
+    assert "items" not in result["data"]["results"][0]
+    assert result["data"]["next_operation"] == "get_trend_analysis"
+    assert api.calls[0][1] == {
+        "symbol": "000001.SZ", "timeframes": ["daily"],
+        "short_horizon_bars": 30, "medium_horizon_bars": 90,
+        "long_horizon_bars": 200, "config_version": "embedded-mcp-r1-30-90-200",
+        "include_preview": False,
+    }
+
+
+def test_recalculate_trend_analysis_rejects_invalid_horizon_order():
+    with pytest.raises(ValueError, match="short < medium < long"):
+        StockHarnessMcpTools(FakeApi()).recalculate_trend_analysis(
+            "000001.SZ", 120, 90, 250
+        )
+
+
 def test_local_api_rejects_non_loopback_and_credentials():
     with pytest.raises(ValueError):
         LocalStockHarnessApi("https://example.com")

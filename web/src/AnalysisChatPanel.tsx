@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Archive, Bot, Database, Pencil, PanelRightClose, Plus, RotateCcw, Send, ShieldCheck, Square, Trash2, X } from 'lucide-react'
+import { Archive, Bot, Database, Pencil, PanelRightClose, Plus, RotateCcw, Send, ShieldCheck, Square, Trash2, Wrench, X } from 'lucide-react'
 import {
   cancelChatTurn,
   deleteChatConversation,
@@ -14,6 +14,7 @@ import {
   type ChatConversation,
   type ChatConversationSummary,
   type ChatTurnContextSummary,
+  type ChatToolEvent,
   type CodexCapabilities,
   updateChatConversation,
 } from './aiChatClient'
@@ -39,6 +40,7 @@ export function AnalysisChatPanel({ symbol, run, onHighlightItemChange, onCollap
   const [liveResponse, setLiveResponse] = useState('')
   const [pendingPrompt, setPendingPrompt] = useState<string>()
   const [activeTurnId, setActiveTurnId] = useState<string>()
+  const [toolEvents, setToolEvents] = useState<ChatToolEvent[]>([])
   const [error, setError] = useState<string>()
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false)
   const [contextDetail, setContextDetail] = useState<ChatTurnContextSummary>()
@@ -55,6 +57,7 @@ export function AnalysisChatPanel({ symbol, run, onHighlightItemChange, onCollap
     setLiveResponse('')
     setPendingPrompt(undefined)
     setActiveTurnId(undefined)
+    setToolEvents([])
     Promise.all([
       loadCodexCapabilities(), openChatConversation(symbol, run.run_id),
     ]).then(async ([nextCapabilities, nextConversation]) => {
@@ -131,6 +134,7 @@ export function AnalysisChatPanel({ symbol, run, onHighlightItemChange, onCollap
     try {
       const turn = await retryChatTurn(turnId)
       setLiveResponse('')
+      setToolEvents([])
       setActiveTurnId(turn.turn_id)
       connectStream(turn.turn_id)
     } catch (reason) { setError(String(reason)) }
@@ -165,6 +169,13 @@ export function AnalysisChatPanel({ symbol, run, onHighlightItemChange, onCollap
         } catch (reason) { setError(String(reason)) }
         finally { setPendingPrompt(undefined) }
       },
+      onTool: (_type, event) => {
+        setToolEvents(current => {
+          const index = current.findIndex(item => item.item_id === event.item_id)
+          if (index < 0) return [...current.slice(-5), event]
+          return current.map((item, itemIndex) => itemIndex === index ? event : item)
+        })
+      },
       onError: () => setError('Codex 流式连接中断，已保留服务器端结果。'),
     })
   }
@@ -174,6 +185,7 @@ export function AnalysisChatPanel({ symbol, run, onHighlightItemChange, onCollap
     if (!conversation || !content || activeTurnId || pendingPrompt || !validateTradeInputs(templateId, tradeInputs)) return
     setError(undefined)
     setLiveResponse('')
+    setToolEvents([])
     setPendingPrompt(content)
     setDraft('')
     try {
@@ -225,6 +237,9 @@ export function AnalysisChatPanel({ symbol, run, onHighlightItemChange, onCollap
         <small>你 · 已发送</small>
         <ChatMarkdown text={pendingPrompt} references={referenceMap} onHighlight={onHighlightItemChange}/>
       </article>}
+      {toolEvents.length > 0 && <div className="analysis-chat-tools" aria-label="StockHarness MCP 调用">
+        {toolEvents.map(event => <ToolActivity key={event.item_id} event={event}/>) }
+      </div>}
       {liveResponse && <article className="analysis-chat-message assistant streaming">
         <small>Codex · 生成中</small>
         <ChatMarkdown text={liveResponse} references={referenceMap} onHighlight={onHighlightItemChange}/>
@@ -327,11 +342,37 @@ function CodexDiagnostics({ capabilities }: { capabilities: CodexCapabilities })
       <dt>传输</dt><dd>{value.transport ?? '未知'}</dd>
       <dt>沙箱</dt><dd>{value.sandbox ?? '未知'}</dd>
       <dt>审批</dt><dd>{value.approval_policy ?? '未知'}</dd>
-      <dt>MCP</dt><dd>{value.mcp_enabled ? '启用' : '禁用'}</dd>
+      <dt>MCP</dt><dd>{value.mcp_enabled ? `${value.mcp_server ?? 'StockHarness'} · ${value.mcp_tools?.length ?? 0}项` : '禁用'}</dd>
       <dt>工具熔断</dt><dd>{value.tool_event_tripwire ? '启用' : '禁用'}</dd>
       <dt>重启</dt><dd>{value.restart_count ?? 0}</dd>
     </dl>
   </div>
+}
+
+function ToolActivity({ event }: { event: ChatToolEvent }) {
+  const target = event.arguments?.symbol ?? event.arguments?.query
+  const completed = event.status === 'completed'
+  const failed = event.status === 'failed' || Boolean(event.error)
+  return <div className={`analysis-chat-tool ${failed ? 'failed' : completed ? 'completed' : 'running'}`}>
+    <Wrench size={10}/>
+    <span>{toolLabel(event.tool)}</span>
+    {target !== undefined && <code>{String(target)}</code>}
+    <small>{failed ? '失败' : completed ? '完成' : '运行中'}{event.duration_ms != null ? ` · ${event.duration_ms}ms` : ''}</small>
+  </div>
+}
+
+function toolLabel(tool: string): string {
+  const labels: Record<string, string> = {
+    search_instruments: '搜索标的', get_instrument: '读取标的信息',
+    get_daily_bars: '读取日线', get_latest_quote: '读取最新行情',
+    get_trend_analysis: '读取形态分析', recalculate_trend_analysis: '更新形态分析',
+    list_instrument_members: '读取成分', list_symbol_boards: '读取所属板块',
+    list_custom_groups: '读取自选集合', get_custom_group: '读取集合成员',
+    get_futures_continuous: '读取期货连续合约', list_futures_coverage: '读取期货覆盖',
+    get_active_workspace: '读取当前工作台', get_ai_analysis: '读取AI报告',
+    stock_harness_health: '检查StockHarness',
+  }
+  return labels[tool] ?? tool
 }
 
 function buildReferenceMap(run: TrendAnalysisRun): Map<string, string> {

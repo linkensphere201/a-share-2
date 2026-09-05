@@ -4,8 +4,9 @@ import subprocess
 import sys
 from pathlib import Path
 from mcp import Client
+import pytest
 
-from stock_harness.mcp_server import build_server
+from stock_harness.mcp_server import EMBEDDED_CHAT_PROFILE, build_server
 from stock_harness.mcp_tools import StockHarnessMcpTools
 
 
@@ -92,6 +93,30 @@ def test_mcp_protocol_rejects_malformed_arguments_before_api_access():
             assert result.is_error is True
 
     anyio.run(exercise)
+
+
+def test_embedded_chat_profile_replaces_report_write_with_controlled_recalculation():
+    async def exercise():
+        server = build_server(
+            StockHarnessMcpTools(HealthApi()), profile=EMBEDDED_CHAT_PROFILE
+        )
+        async with Client(server, raise_exceptions=True) as client:
+            listed = await client.list_tools()
+            by_name = {tool.name: tool for tool in listed.tools}
+            assert "save_ai_analysis" not in by_name
+            assert "recalculate_trend_analysis" in by_name
+            compute = by_name["recalculate_trend_analysis"].annotations
+            assert compute.read_only_hint is False
+            assert compute.destructive_hint is False
+            assert compute.idempotent_hint is True
+            assert all(tool.annotations.open_world_hint is False for tool in listed.tools)
+
+    anyio.run(exercise)
+
+
+def test_unknown_mcp_profile_is_rejected():
+    with pytest.raises(ValueError, match="unsupported StockHarness MCP profile"):
+        build_server(StockHarnessMcpTools(HealthApi()), profile="unknown")
 
 
 def test_mcp_call_cancellation_releases_protocol_task_without_waiting_for_http_timeout():
