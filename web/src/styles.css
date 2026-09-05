@@ -1342,6 +1342,15 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .markdown-preview pre code { padding: 0; background: transparent; }
 .markdown-preview a { color: var(--theme-accent); }
 .markdown-preview hr { border: 0; border-top: 1px solid var(--theme-border); }
+.markdown-table-scroll { max-width: 100%; margin: 6px 0; overflow-x: auto; border: 1px solid var(--theme-border); }
+.markdown-preview table { width: 100%; min-width: max-content; border-collapse: collapse; font: inherit; }
+.markdown-preview th, .markdown-preview td { min-width: 64px; max-width: 260px; padding: 4px 7px; border-right: 1px solid var(--theme-border); border-bottom: 1px solid var(--theme-border); vertical-align: top; overflow-wrap: anywhere; }
+.markdown-preview th { background: var(--theme-raised); color: var(--theme-text-strong); font-weight: 500; white-space: nowrap; }
+.markdown-preview tr:last-child td { border-bottom: 0; }
+.markdown-preview th:last-child, .markdown-preview td:last-child { border-right: 0; }
+.markdown-table-left { text-align: left; }
+.markdown-table-center { text-align: center; }
+.markdown-table-right { text-align: right; }
 
 /* Runtime theme bridge. Market direction and indicator colors remain semantic. */
 body, .workstation, .layout-manager, .layout-preview, .window-group, .list-window-body,

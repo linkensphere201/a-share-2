@@ -30,6 +30,25 @@ export function MarkdownPreview({ content, className, renderText }: MarkdownPrev
       continue
     }
 
+    const table = parseTable(lines, index)
+    if (table) {
+      blocks.push(<div className="markdown-table-scroll" key={blocks.length}>
+        <table>
+          <thead><tr>{table.headers.map((header, cellIndex) =>
+            <th className={alignmentClass(table.alignments[cellIndex])} key={cellIndex}>
+              {renderInline(header, `table-${blocks.length}-head-${cellIndex}`, renderText)}
+            </th>)}</tr></thead>
+          <tbody>{table.rows.map((row, rowIndex) =>
+            <tr key={rowIndex}>{row.map((cell, cellIndex) =>
+              <td className={alignmentClass(table.alignments[cellIndex])} key={cellIndex}>
+                {renderInline(cell, `table-${blocks.length}-${rowIndex}-${cellIndex}`, renderText)}
+              </td>)}</tr>)}</tbody>
+        </table>
+      </div>)
+      index = table.nextIndex
+      continue
+    }
+
     const heading = /^(#{1,6})\s+(.+)$/.exec(line)
     if (heading) {
       const level = heading[1].length
@@ -84,6 +103,67 @@ export function MarkdownPreview({ content, className, renderText }: MarkdownPrev
   }
 
   return <div className={className ? `markdown-preview ${className}` : 'markdown-preview'}>{blocks}</div>
+}
+
+type TableAlignment = 'left' | 'center' | 'right'
+
+type ParsedTable = {
+  headers: string[]
+  alignments: TableAlignment[]
+  rows: string[][]
+  nextIndex: number
+}
+
+function parseTable(lines: string[], index: number): ParsedTable | null {
+  if (index + 1 >= lines.length || !lines[index].includes('|')) return null
+  const headers = splitTableRow(lines[index])
+  const separators = splitTableRow(lines[index + 1])
+  if (headers.length === 0 || separators.length !== headers.length) return null
+  if (!separators.every(cell => /^:?-{3,}:?$/.test(cell.replace(/\s+/g, '')))) return null
+  const alignments = separators.map<TableAlignment>(cell => {
+    const value = cell.replace(/\s+/g, '')
+    if (value.startsWith(':') && value.endsWith(':')) return 'center'
+    if (value.endsWith(':')) return 'right'
+    return 'left'
+  })
+  const rows: string[][] = []
+  let nextIndex = index + 2
+  while (nextIndex < lines.length && lines[nextIndex].trim() && lines[nextIndex].includes('|')) {
+    const cells = splitTableRow(lines[nextIndex]).slice(0, headers.length)
+    while (cells.length < headers.length) cells.push('')
+    rows.push(cells)
+    nextIndex += 1
+  }
+  return { headers, alignments, rows, nextIndex }
+}
+
+function splitTableRow(line: string): string[] {
+  let value = line.trim()
+  if (value.startsWith('|')) value = value.slice(1)
+  if (value.endsWith('|') && !value.endsWith('\\|')) value = value.slice(0, -1)
+  const cells: string[] = []
+  let current = ''
+  let escaped = false
+  for (const character of value) {
+    if (escaped) {
+      current += character
+      escaped = false
+    } else if (character === '\\') {
+      escaped = true
+    } else if (character === '|') {
+      cells.push(current.trim())
+      current = ''
+    } else {
+      current += character
+    }
+  }
+  if (escaped) current += '\\'
+  cells.push(current.trim())
+  return cells
+}
+
+function alignmentClass(alignment: TableAlignment): string {
+  return `markdown-table-${alignment}`
 }
 
 function isBlockStart(line: string): boolean {
