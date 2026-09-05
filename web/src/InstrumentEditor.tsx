@@ -3,10 +3,11 @@ import type { PointerEvent as ReactPointerEvent } from 'react'
 import { ArrowDown, ArrowUp, GripHorizontal, ListPlus, Save, Trash2, X } from 'lucide-react'
 import { CustomGroupManager } from './CustomGroupManager'
 import { InstrumentBrowser, instrumentClassLabel, instrumentSecondaryLabel } from './InstrumentBrowser'
+import { InstrumentTagManager } from './InstrumentTagManager'
 import type { ChartWindowState, Instrument, InstrumentListWindowState } from './workspace'
 
 type EditableWindow = ChartWindowState | InstrumentListWindowState
-type EditorTab = 'instruments' | 'groups'
+type EditorTab = 'instruments' | 'groups' | 'tags'
 
 const memberPaneHeightStorageKey = 'stock-harness.instrument-editor.member-pane-height.v1'
 const defaultMemberPaneHeight = 240
@@ -122,10 +123,13 @@ export function InstrumentEditor({
       <nav className="instrument-editor-tabs" aria-label="编辑内容">
         <button className={tab === 'instruments' ? 'active' : ''} disabled={!target} onClick={() => setTab('instruments')}>窗口标的</button>
         <button className={tab === 'groups' ? 'active' : ''} onClick={() => setTab('groups')}>自选集合</button>
+        <button className={tab === 'tags' ? 'active' : ''} onClick={() => setTab('tags')}>标的标签</button>
       </nav>
       <div className="instrument-editor-content">
         {tab === 'groups'
           ? <CustomGroupManager embedded onClose={onClose}/>
+          : tab === 'tags'
+            ? <InstrumentTagManager/>
           : target && <div
             ref={targetEditorRef}
             className={`instrument-target-editor${target.type === 'instrument-list' ? ' resizable-members' : ''}`}

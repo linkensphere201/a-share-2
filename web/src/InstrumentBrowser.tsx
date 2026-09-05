@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Plus, Search } from 'lucide-react'
+import { Plus, Search, Tags } from 'lucide-react'
 import type { Instrument } from './workspace'
 
 type BrowseClass = 'all' | 'custom-group' | 'stock' | 'etf' | 'index' | 'custom-index' | 'concept' | 'industry' | 'sector' | 'futures'
@@ -14,6 +14,7 @@ type InstrumentBrowserProps = {
   stockOnly?: boolean
   searchLabel: string
   placeholder: string
+  actionMode?: 'add' | 'edit-tags'
 }
 
 const browseClasses: { value: BrowseClass; label: string }[] = [
@@ -36,6 +37,7 @@ export function InstrumentBrowser({
   stockOnly = false,
   searchLabel,
   placeholder,
+  actionMode = 'add',
 }: InstrumentBrowserProps) {
   const [classification, setClassification] = useState<BrowseClass>(stockOnly ? 'stock' : 'all')
   const [query, setQuery] = useState('')
@@ -204,7 +206,7 @@ export function InstrumentBrowser({
           <b className={`instrument-type-badge type-${item.classification ?? item.kind}`}>{instrumentClassLabel(item)}</b>
           <small>{item.source_label ?? instrumentSourceLabel(item)}</small>
         </span>
-        <Plus size={14}/>
+        {actionMode === 'edit-tags' ? <Tags size={14}/> : <Plus size={14}/>}
         </button>
       })}
       {hasMore && <button className="instrument-browser-more" disabled={loading} onClick={loadMore}>

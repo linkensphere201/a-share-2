@@ -17,6 +17,19 @@ CREATE TABLE IF NOT EXISTS instruments (
     active INTEGER NOT NULL CHECK (active IN (0, 1))
 );
 
+CREATE TABLE IF NOT EXISTS instrument_tags (
+    instrument_id INTEGER NOT NULL,
+    tag TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    updated_at_ms INTEGER NOT NULL,
+    PRIMARY KEY (instrument_id, tag),
+    UNIQUE (instrument_id, position),
+    FOREIGN KEY (instrument_id) REFERENCES instruments(instrument_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_instrument_tags_tag
+ON instrument_tags(tag, instrument_id);
+
 CREATE INDEX IF NOT EXISTS instruments_kind_active
 ON instruments(kind, active, symbol);
 

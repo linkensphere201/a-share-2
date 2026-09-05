@@ -27,6 +27,10 @@ class CustomGroupInput(BaseModel):
     members: list[CustomGroupMemberInput] = Field(default_factory=list, max_length=5000)
 
 
+class InstrumentTagsInput(BaseModel):
+    tags: list[str] = Field(default_factory=list, max_length=8)
+
+
 class CustomIndexMemberInput(BaseModel):
     symbol: str = Field(min_length=1, max_length=40)
     weight: float | None = Field(default=None, gt=0)

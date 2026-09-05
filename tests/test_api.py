@@ -58,6 +58,40 @@ def test_search_supports_pinyin_initials():
     assert response.json()["items"][0]["symbol"] == "300308.SZ"
 
 
+def test_stock_instrument_tags_are_global_persisted_and_batch_readable():
+    store, client = _client()
+    with client:
+        updated = client.put(
+            "/api/instruments/300308.SZ/tags",
+            json={"tags": ["板块核心辨识度", "情绪弹性核心", "板块核心辨识度"]},
+        )
+        search = client.get("/api/instruments", params={"query": "zjxc"})
+        detail = client.get("/api/instruments/300308.SZ")
+        batch = client.get(
+            "/api/instrument-tags",
+            params=[("symbol", "300308.SZ"), ("symbol", "BK1128.DC")],
+        )
+        rejected = client.put(
+            "/api/instruments/BK1128.DC/tags", json={"tags": ["板块核心"]}
+        )
+        cleared = client.put(
+            "/api/instruments/300308.SZ/tags", json={"tags": []}
+        )
+    store.close()
+
+    expected = ["板块核心辨识度", "情绪弹性核心"]
+    assert updated.status_code == 200
+    assert updated.json()["tags"] == expected
+    assert search.json()["items"][0]["instrument_tags"] == expected
+    assert detail.json()["instrument_tags"] == expected
+    assert batch.json()["items"] == [
+        {"symbol": "300308.SZ", "tags": expected},
+        {"symbol": "BK1128.DC", "tags": []},
+    ]
+    assert rejected.status_code == 422
+    assert cleared.json()["tags"] == []
+
+
 def test_classified_browsing_normalizes_board_sources_and_allows_empty_query():
     store, client = _client()
     observed_on = date(2026, 8, 3)

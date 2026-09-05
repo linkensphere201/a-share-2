@@ -22,6 +22,7 @@ type MarketSnapshot = {
 }
 
 type ListInstrument = Instrument & { available?: boolean }
+type InstrumentTagRecord = { symbol: string; tags: string[] }
 
 type InstrumentListWindowProps = {
   windowState: InstrumentListWindowState
@@ -69,6 +70,8 @@ export function InstrumentListWindow({
   const [memberRefresh, setMemberRefresh] = useState(0)
   const [columnEditorOpen, setColumnEditorOpen] = useState(false)
   const [mindMap, setMindMap] = useState<{ group: Instrument; anchor: MindMapAnchor }>()
+  const [instrumentTags, setInstrumentTags] = useState<Record<string, string[]>>({})
+  const [tagRefresh, setTagRefresh] = useState(0)
 
   useEffect(() => {
     const closeOtherMap = (event: Event) => {
@@ -152,10 +155,42 @@ export function InstrumentListWindow({
   }, [derived, manualInstruments.map(item => item.symbol).join('|')])
 
   const sourceItems: ListInstrument[] = derived ? members : manualInstruments
+  const sourceSymbolsKey = sourceItems.map(item => item.symbol).join('|')
+  useEffect(() => {
+    const refresh = (event: Event) => {
+      const symbol = (event as CustomEvent<{ symbol?: string }>).detail?.symbol
+      if (!symbol || sourceItems.some(item => item.symbol === symbol)) {
+        setTagRefresh(value => value + 1)
+      }
+    }
+    window.addEventListener('stock-harness:instrument-tags-changed', refresh)
+    return () => window.removeEventListener('stock-harness:instrument-tags-changed', refresh)
+  }, [sourceSymbolsKey])
+
+  useEffect(() => {
+    const stockSymbols = sourceItems
+      .filter(item => item.kind === 'stock')
+      .map(item => item.symbol)
+    if (stockSymbols.length === 0) {
+      setInstrumentTags({})
+      return
+    }
+    const controller = new AbortController()
+    fetchInstrumentTags(stockSymbols, controller.signal)
+      .then(setInstrumentTags)
+      .catch(error => {
+        if ((error as Error).name !== 'AbortError') {
+          setInstrumentTags({})
+          logWarning('instrument-tags', '加载标的标签失败', { symbols: stockSymbols.length, error })
+        }
+      })
+    return () => controller.abort()
+  }, [sourceSymbolsKey, tagRefresh])
+
   useEffect(() => {
     onReferencedSymbolsChange(windowState.id, sourceItems.map(item => item.symbol))
     return () => onReferencedSymbolsChange(windowState.id, [])
-  }, [onReferencedSymbolsChange, windowState.id, sourceItems.map(item => item.symbol).join('|')])
+  }, [onReferencedSymbolsChange, windowState.id, sourceSymbolsKey])
   const displayedItems = useMemo(
     () => sortListInstruments(sourceItems, snapshots, windowState.sort),
     [sourceItems, snapshots, windowState.sort],
@@ -259,7 +294,13 @@ export function InstrumentListWindow({
                   }
                 }}
               >
-                <span><strong>{item.name}</strong><small>{instrumentSecondaryLabel(item)}</small></span>
+                <span>
+                  <strong>{item.name}</strong>
+                  <small>{instrumentSecondaryLabel(item)}</small>
+                  {(instrumentTags[item.symbol] ?? item.instrument_tags ?? []).length > 0 && <span className="list-instrument-tags">
+                    {(instrumentTags[item.symbol] ?? item.instrument_tags ?? []).map(tag => <i key={tag}>{tag}</i>)}
+                  </span>}
+                </span>
               </button>}
               {visibleColumns.includes('close') && <span className="list-price">{formatPrice(snapshot?.close)}</span>}
               {visibleColumns.includes('change_percent') && <span className={changeClass(snapshot?.change_percent)}>{formatChange(snapshot?.change_percent)}</span>}
@@ -379,4 +420,19 @@ function formatChange(value?: number): string {
 function changeClass(value?: number): string {
   if (value === undefined || value === null) return 'list-change'
   return `list-change ${value >= 0 ? 'rise' : 'fall'}`
+}
+
+async function fetchInstrumentTags(
+  symbols: string[], signal?: AbortSignal,
+): Promise<Record<string, string[]>> {
+  const records: InstrumentTagRecord[] = []
+  for (let offset = 0; offset < symbols.length; offset += 500) {
+    const params = new URLSearchParams()
+    symbols.slice(offset, offset + 500).forEach(symbol => params.append('symbol', symbol))
+    const response = await fetch(`/api/instrument-tags?${params}`, { signal })
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    const body = await response.json() as { items: InstrumentTagRecord[] }
+    records.push(...body.items)
+  }
+  return Object.fromEntries(records.map(item => [item.symbol, item.tags]))
 }

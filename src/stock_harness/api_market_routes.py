@@ -10,7 +10,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response, status
 
-from stock_harness.api_models import CustomGroupInput, CustomIndexInput
+from stock_harness.api_models import CustomGroupInput, CustomIndexInput, InstrumentTagsInput
 from stock_harness.api_runtime import runtime
 from stock_harness.api_support import (
     enrich_members,
@@ -338,6 +338,37 @@ def create_market_router() -> APIRouter:
         if len(symbol) > 500:
             raise HTTPException(status_code=422, detail="at most 500 symbols are allowed")
         return {"items": store(request).list_market_snapshots(symbol)}
+
+    @router.get("/api/instrument-tags")
+    def instrument_tags(
+        request: Request, symbol: list[str] = Query(default=[])
+    ) -> dict[str, object]:
+        if len(symbol) > 500:
+            raise HTTPException(status_code=422, detail="at most 500 symbols are allowed")
+        normalized_symbols = list(dict.fromkeys(
+            value.strip().upper() for value in symbol if value.strip()
+        ))
+        tags = store(request).list_instrument_tags(normalized_symbols)
+        return {
+            "items": [
+                {"symbol": item, "tags": tags.get(item, [])}
+                for item in normalized_symbols
+            ]
+        }
+
+    @router.put("/api/instruments/{symbol}/tags")
+    def update_instrument_tags(
+        request: Request, symbol: str, payload: InstrumentTagsInput
+    ) -> dict[str, object]:
+        normalized = normalize_instrument_symbol(symbol)
+        try:
+            tags = store(request).replace_instrument_tags(normalized, payload.tags)
+        except ValueError as exc:
+            detail = str(exc)
+            status_code = 404 if detail == "instrument not found" else 422
+            raise HTTPException(status_code=status_code, detail=detail) from exc
+        LOGGER.info("instrument_tags_updated symbol=%s count=%s", normalized, len(tags))
+        return {"symbol": normalized, "tags": tags}
 
     @router.get("/api/instruments/{symbol}/daily-bars")
     def daily_bars(

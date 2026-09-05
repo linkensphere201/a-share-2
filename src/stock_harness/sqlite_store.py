@@ -45,6 +45,7 @@ from stock_harness.sqlite_custom_group_store import SQLiteCustomGroupStoreMixin
 from stock_harness.sqlite_custom_index_store import SQLiteCustomIndexStoreMixin
 from stock_harness.sqlite_etf_holding_store import SQLiteEtfHoldingStoreMixin
 from stock_harness.sqlite_futures_store import SQLiteFuturesStoreMixin
+from stock_harness.sqlite_instrument_tag_store import SQLiteInstrumentTagStoreMixin
 from stock_harness.sqlite_provider_quality_store import SQLiteProviderQualityStoreMixin
 from stock_harness.sqlite_screener_store import SQLiteScreenerStoreMixin
 
@@ -61,6 +62,7 @@ LOGGER = logging.getLogger(__name__)
 
 class SQLiteMarketDataStore(
     SQLiteFuturesStoreMixin,
+    SQLiteInstrumentTagStoreMixin,
     SQLiteChatStoreMixin,
     SQLiteAnalysisStoreMixin,
     SQLiteCustomGroupStoreMixin,
@@ -1704,7 +1706,11 @@ class SQLiteMarketDataStore(
                 """,
                 parameters,
             ).fetchall()
-        return [_instrument_row(row) for row in rows]
+        results = [_instrument_row(row) for row in rows]
+        tags = self.list_instrument_tags([str(item["symbol"]) for item in results])
+        for item in results:
+            item["instrument_tags"] = tags.get(str(item["symbol"]), [])
+        return results
 
     def get_instrument_summary(self, symbol: str) -> dict[str, object] | None:
         futures_min_case = (
@@ -1831,6 +1837,9 @@ class SQLiteMarketDataStore(
                 (symbol, f"%:{symbol}"),
             ).fetchall()
         result = _instrument_row(row)
+        result["instrument_tags"] = self.list_instrument_tags([str(result["symbol"])]).get(
+            str(result["symbol"]), []
+        )
         result.update(
             {
                 "aliases": [str(item[0]) for item in aliases],

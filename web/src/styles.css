@@ -450,6 +450,8 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .list-window-select > span { min-width: 0; display: grid; gap: 2px; text-align: left; }
 .list-window-select strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #d8dde6; font-size: 11px; }
 .list-window-select small { color: #657180; font-size: 9px; }
+.list-instrument-tags { min-width: 0; display: flex; gap: 3px; overflow: hidden; }
+.list-instrument-tags i { flex: 0 0 auto; max-width: 92px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 1px 4px; border: 1px solid var(--theme-border-strong); border-radius: 2px; color: var(--theme-accent); background: var(--theme-accent-soft); font-size: 8px; font-style: normal; line-height: 12px; }
 .list-window-items { min-height: 0; overflow: auto; padding: 2px 5px 6px; }
 .list-window-row { min-height: 42px; border-radius: 3px; border-bottom-color: transparent; }
 .list-window-row:hover, .list-window-row.selected { background: #1b2129; }
@@ -508,6 +510,27 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .instrument-editor-member > div { flex: 0 0 auto; display: flex; gap: 2px; }
 .instrument-editor-member button { width: 26px; height: 26px; display: grid; place-items: center; border: 0; border-radius: 3px; background: transparent; color: #788493; }
 .instrument-editor-member button:hover:not(:disabled) { background: #252d37; color: #fff; }
+.instrument-tag-manager { min-height: 0; height: 100%; display: grid; grid-template-columns: minmax(300px, 1.1fr) minmax(300px, .9fr); }
+.instrument-tag-manager > .instrument-browser { border-right: 1px solid var(--theme-border); }
+.instrument-tag-editor { min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 12px; padding: 14px; overflow: auto; background: var(--theme-surface); }
+.instrument-tag-editor > header span { display: flex; align-items: center; gap: 7px; }
+.instrument-tag-editor > header strong { font-size: 13px; font-weight: 500; }
+.instrument-tag-editor > header small { color: var(--theme-muted); font-size: 10px; }
+.instrument-tag-suggestions, .instrument-tag-current { display: flex; flex-wrap: wrap; align-content: flex-start; gap: 6px; }
+.instrument-tag-suggestions button { min-height: 25px; padding: 3px 7px; border: 1px solid var(--theme-border-strong); border-radius: 3px; background: var(--theme-raised); color: var(--theme-muted); font-size: 10px; }
+.instrument-tag-suggestions button.active { border-color: var(--theme-accent); color: var(--theme-text-strong); background: var(--theme-accent-soft); }
+.instrument-tag-current { min-height: 54px; padding: 9px; border: 1px solid var(--theme-border); background: var(--theme-base); }
+.instrument-tag-current > small { color: var(--theme-muted); font-size: 9px; }
+.instrument-tag-current > span { height: 23px; display: inline-flex; align-items: center; gap: 3px; padding: 2px 3px 2px 7px; border: 1px solid var(--theme-accent); border-radius: 3px; color: var(--theme-text); background: var(--theme-accent-soft); font-size: 9px; }
+.instrument-tag-current button { width: 18px; height: 18px; display: grid; place-items: center; border: 0; background: transparent; color: var(--theme-muted); }
+.instrument-tag-custom { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; }
+.instrument-tag-custom input { min-width: 0; height: 28px; border: 1px solid var(--theme-border-strong); border-radius: 3px; padding: 0 8px; background: var(--theme-base); color: var(--theme-text); font-size: 10px; }
+.instrument-tag-error { color: #d98a8a; font-size: 9px; }
+.instrument-tag-editor > footer { margin-top: auto; display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--theme-muted); font-size: 9px; }
+@media (max-width: 760px) {
+  .instrument-tag-manager { grid-template-columns: 1fr; grid-template-rows: minmax(220px, 1fr) minmax(220px, .85fr); }
+  .instrument-tag-manager > .instrument-browser { border-right: 0; border-bottom: 1px solid var(--theme-border); }
+}
 .instrument-editor-empty { padding: 24px 10px; color: #657180; font-size: 10px; text-align: center; }
 .instrument-editor-modal > footer { display: flex; align-items: center; justify-content: flex-end; gap: 6px; padding: 0 10px; border-top: 1px solid #303743; background: #171c22; }
 .instrument-editor-modal > footer > span { margin-right: auto; color: #657180; font-size: 9px; }
