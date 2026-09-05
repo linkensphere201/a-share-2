@@ -35,7 +35,7 @@ const dark = (
   accent: string,
 ): ThemeDefinition => ({
   id, name, mode: 'dark', colors: {
-    base, surface, surfaceAlt: raised, raised,
+    base, surface, surfaceAlt: mix(surface, raised, .55), raised,
     hover: mix(raised, text, .1), border, borderStrong: mix(border, text, .22),
     text, textStrong: mix(text, '#ffffff', .45), muted, accent,
     accentSoft: mix(raised, accent, .3), chartBackground: base,
@@ -55,7 +55,7 @@ const light = (
   accent: string,
 ): ThemeDefinition => ({
   id, name, mode: 'light', colors: {
-    base, surface, surfaceAlt: raised, raised,
+    base, surface, surfaceAlt: mix(surface, raised, .55), raised,
     hover: mix(raised, text, .07), border, borderStrong: mix(border, text, .2),
     text, textStrong: mix(text, '#000000', .35), muted, accent,
     accentSoft: mix(raised, accent, .18), chartBackground: base,
@@ -70,7 +70,7 @@ export const themes: ThemeDefinition[] = [
   dark('evening', 'Evening', '#17171d', '#1d1d25', '#282833', '#3d3d4c', '#d2d1dc', '#8c8a9c', '#8b91d6'),
   dark('habamax', 'Habamax', '#111415', '#171b1c', '#202627', '#343c3e', '#d0d5d4', '#82908d', '#5fb7a2'),
   dark('industry', 'Industry', '#111416', '#181d20', '#22292d', '#384248', '#d6dadc', '#879298', '#ed9b4f'),
-  dark('koehler', 'Koehler', '#080a0d', '#10141a', '#181f28', '#303a46', '#d4dae3', '#798697', '#69a8e6'),
+  dark('koehler', 'Koehler', '#090c0e', '#111619', '#1a2226', '#2c393e', '#d6dfe1', '#7f9195', '#55b7a6'),
   light('lunaperche', 'Lunaperche', '#f4f6f7', '#ffffff', '#e9eef1', '#c8d1d7', '#26343c', '#687982', '#367fa6'),
   light('morning', 'Morning', '#f7f7f3', '#ffffff', '#ecece6', '#d0d0c8', '#30312d', '#74756d', '#527f9f'),
   dark('murphy', 'Murphy', '#10160f', '#171f15', '#202b1d', '#34462f', '#d0ddca', '#829479', '#7fbd68'),
