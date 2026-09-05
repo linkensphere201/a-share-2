@@ -28,7 +28,7 @@ def main() -> None:
     parser.add_argument("--max-boards", type=int)
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--apply-report", type=Path)
-    parser.add_argument("--group-name", default="全市场板块龙一合集")
+    parser.add_argument("--group-name", default="全市场辨识度品种")
     parser.add_argument("--output", type=Path, default=Path("data/reports/board-leaders-latest.json"))
     args = parser.parse_args()
 

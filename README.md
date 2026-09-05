@@ -198,7 +198,7 @@ Run the explicit full-market board dragon proxy batch against a running source-c
   --base-url http://127.0.0.1:8765 --years 3 --apply
 ```
 
-The batch ranks two candidates per sufficiently covered current concept/industry board from final daily price/volume evidence, writes `data/reports/board-leaders-latest.json`, manages only the global `板块龙1`/`板块龙2` tags, and creates or updates `全市场板块龙一合集`. It excludes ST/risk names and preserves unrelated user tags. The result is a dated quantitative proxy over current membership, not a permanent or point-in-time historical leadership claim. Reapply an existing report without recalculation by passing `--apply-report data\reports\board-leaders-latest.json`.
+The batch ranks two candidates per sufficiently covered current concept/industry board from final daily price/volume evidence, writes `data/reports/board-leaders-latest.json`, manages only the global `板块龙1`/`板块龙2` tags, and creates or updates `全市场辨识度品种`. It excludes ST/risk names and preserves unrelated user tags. The result is a dated quantitative proxy over current membership, not a permanent or point-in-time historical leadership claim. Reapply an existing report without recalculation by passing `--apply-report data\reports\board-leaders-latest.json`.
 
 Resume their 30-year available histories and refresh current board memberships:
 
