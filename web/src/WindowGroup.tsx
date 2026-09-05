@@ -1,6 +1,7 @@
 import type { ChartIndicator, VisibleRange } from './chartTypes'
 import { ChartWindow } from './InstrumentWindow'
 import { InstrumentListWindow } from './InstrumentListWindow'
+import { MarketBoardBadge } from './MarketBoardBadge'
 import { SplitLayout } from './SplitLayout'
 import type { ChartPaneRatios, Instrument, ListColumnKey, WindowGroupState } from './workspace'
 import type { ThemeDefinition } from './themeStore'
@@ -75,7 +76,9 @@ export function WindowGroup({
     if (!poppedOutHost && item.presentation.mode === 'popped-out') {
       return <div className="popped-out-placeholder" data-window-id={item.id}>
         <button title="显示已弹出窗口" aria-label={`显示已弹出的 ${item.title}`} onClick={() => onFocusPopoutWindow(item.id)}>
-          <PanelTopClose size={14}/><span>{item.type === 'chart' ? item.instrument.name : item.title}</span>
+          <PanelTopClose size={14}/>{item.type === 'chart'
+            ? <span className="instrument-name-line"><span>{item.instrument.name}</span><MarketBoardBadge instrument={item.instrument}/></span>
+            : <span>{item.title}</span>}
         </button>
       </div>
     }

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Plus, Save, Tag, X } from 'lucide-react'
 import { InstrumentBrowser } from './InstrumentBrowser'
+import { MarketBoardBadge } from './MarketBoardBadge'
 import type { Instrument } from './workspace'
 
 const suggestedTags = [
@@ -110,7 +111,7 @@ export function InstrumentTagManager() {
     <section className="instrument-tag-editor" aria-label="标的标签设置">
       {!selected && <div className="instrument-editor-empty">从左侧搜索结果中选择一只股票</div>}
       {selected && <>
-        <header><span><Tag size={15}/><strong>{selected.name}</strong><small>{selected.symbol}</small></span></header>
+        <header><span><Tag size={15}/><span className="instrument-name-line"><strong>{selected.name}</strong><MarketBoardBadge instrument={selected}/></span><small>{selected.symbol}</small></span></header>
         {loading ? <div className="instrument-editor-empty">正在加载标签</div> : <>
           <div className="instrument-tag-suggestions">
             {suggestedTags.map(tag => <button

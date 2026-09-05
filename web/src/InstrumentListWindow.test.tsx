@@ -56,6 +56,46 @@ describe('InstrumentListWindow instrument tags', () => {
     expect(await screen.findByText('板块核心辨识度')).toBeTruthy()
     expect(screen.getByText('情绪弹性核心')).toBeTruthy()
   })
+
+  it('shows the stock market-board badge beside the instrument name', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
+      const url = String(input)
+      if (url.startsWith('/api/market-snapshots?')) return response({ items: [] })
+      if (url.startsWith('/api/instrument-tags?')) return response({ items: [] })
+      throw new Error(`unexpected request ${url}`)
+    }))
+    const windowState: InstrumentListWindowState = {
+      id: 'list-1', type: 'instrument-list', title: '观察列表', mode: 'detached',
+      presentation: { mode: 'docked' },
+      content: {
+        mode: 'manual',
+        instruments: [{
+          symbol: '688519.SH', name: '南亚新材', kind: 'stock', exchange: 'SH', rows: 1000,
+        }],
+      },
+      visibleColumns: ['name'],
+    }
+
+    render(<InstrumentListWindow
+      windowState={windowState}
+      focused
+      maximized={false}
+      removable
+      onFocus={() => undefined}
+      onToggleMaximize={() => undefined}
+      onRemoveWindow={() => undefined}
+      onSelect={() => undefined}
+      onEdit={() => undefined}
+      onPopOut={() => undefined}
+      onDock={() => undefined}
+      derived={false}
+      onSortChange={() => undefined}
+      onVisibleColumnsChange={() => undefined}
+      onReferencedSymbolsChange={() => undefined}
+    />)
+
+    expect(await screen.findByLabelText('科创板')).toBeTruthy()
+  })
 })
 
 function response(body: unknown): Response {

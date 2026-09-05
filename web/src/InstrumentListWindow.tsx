@@ -4,6 +4,7 @@ import { allListColumns, type Instrument, type InstrumentListWindowState, type L
 import { logWarning } from './eventLogger'
 import { instrumentSecondaryLabel } from './InstrumentBrowser'
 import { CustomGroupMindMap, type MindMapAnchor } from './CustomGroupMindMap'
+import { MarketBoardBadge } from './MarketBoardBadge'
 
 type MarketSnapshot = {
   symbol: string
@@ -295,7 +296,7 @@ export function InstrumentListWindow({
                 }}
               >
                 <span>
-                  <strong>{item.name}</strong>
+                  <span className="instrument-name-line"><strong>{item.name}</strong><MarketBoardBadge instrument={item}/></span>
                   <small>{instrumentSecondaryLabel(item)}</small>
                   {(instrumentTags[item.symbol] ?? item.instrument_tags ?? []).length > 0 && <span className="list-instrument-tags">
                     {(instrumentTags[item.symbol] ?? item.instrument_tags ?? []).map(tag => <i key={tag}>{tag}</i>)}

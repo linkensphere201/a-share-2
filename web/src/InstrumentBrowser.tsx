@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Plus, Search, Tags } from 'lucide-react'
 import type { Instrument } from './workspace'
+import { MarketBoardBadge } from './MarketBoardBadge'
 
 type BrowseClass = 'all' | 'custom-group' | 'stock' | 'etf' | 'index' | 'custom-index' | 'concept' | 'industry' | 'sector' | 'futures'
 type FuturesType = 'all' | 'futures-contract' | 'futures-continuous'
@@ -199,7 +200,7 @@ export function InstrumentBrowser({
           onClick={() => onSelect(item)}
         >
         <span className="instrument-result-identity">
-          <strong>{item.name}</strong>
+          <span className="instrument-name-line"><strong>{item.name}</strong><MarketBoardBadge instrument={item}/></span>
           <small>{instrumentSecondaryLabel(item)}</small>
         </span>
         <span className="instrument-result-meta">

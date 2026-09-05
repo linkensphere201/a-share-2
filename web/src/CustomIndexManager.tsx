@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Gauge, Plus, RefreshCw, Save, Trash2, X } from 'lucide-react'
 import { InstrumentBrowser } from './InstrumentBrowser'
+import { MarketBoardBadge } from './MarketBoardBadge'
 import type { Instrument } from './workspace'
 
 type WeightingMethod = 'equal' | 'manual'
@@ -229,7 +230,7 @@ export function CustomIndexManager({ onClose }: { onClose: () => void }) {
                 ? 1 / draft.members.length
                 : member.raw_weight / total
               return <div className="custom-index-member-row" key={member.symbol}>
-                <span>{member.name}<small>{member.symbol}</small></span>
+                <span><span className="instrument-name-line"><span>{member.name}</span><MarketBoardBadge instrument={{ symbol: member.symbol, kind: 'stock', exchange: '' }}/></span><small>{member.symbol}</small></span>
                 <input
                   type="number" min="0.000001" step="0.1"
                   aria-label={`${member.name} 权重`}

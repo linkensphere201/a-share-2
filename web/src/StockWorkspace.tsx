@@ -7,6 +7,7 @@ import { DailyNote } from './DailyNote'
 import { IntradaySubscriptionCoordinator, sendIntradaySubscription } from './intradaySubscription'
 import { logInfo, logWarning } from './eventLogger'
 import { LayoutManager } from './LayoutManager'
+import { MarketBoardBadge } from './MarketBoardBadge'
 import { ScreenerWorkspace, type ScreenerTargetList } from './ScreenerWorkspace'
 import type { ScreenerCandidate } from './screenerClient'
 import { RuntimeEventBar } from './RuntimeEventBar'
@@ -578,7 +579,7 @@ export function StockWorkspace() {
             <span className="workspace-brand"><BarChart3 size={18}/><strong>StockHarness</strong></span>
             {activeChart && (
               <span className="security"><LayoutGrid size={16}/><span>
-                <strong>{activeChart.instrument.name}</strong>
+                <span className="instrument-name-line"><strong>{activeChart.instrument.name}</strong><MarketBoardBadge instrument={activeChart.instrument}/></span>
                 <small>{activeChart.instrument.symbol} · {activeChart.instrument.category ?? activeChart.instrument.kind}</small>
               </span></span>
             )}

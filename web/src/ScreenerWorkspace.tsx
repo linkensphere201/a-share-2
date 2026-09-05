@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useState } from 'react'
 import { ArrowLeft, ChevronLeft, ChevronRight, Filter, ListPlus, Play, RefreshCw, Trash2 } from 'lucide-react'
 import { ChartCanvas } from './ChartCanvas'
+import { MarketBoardBadge } from './MarketBoardBadge'
 import { TradingSystemControls } from './TradingSystemControls'
 import { TrendExplanationPanel } from './TrendExplanationPanel'
 import { logError, logInfo } from './eventLogger'
@@ -229,11 +230,11 @@ export function ScreenerWorkspace({
           setSelected(item)
           setContextMenu({ kind: 'candidate', ...menuPosition(event.clientX, event.clientY), candidate: item, selectingTarget: false })
         }}>
-          <span>{item.rank}</span><span><b>{item.name}</b><small>{item.symbol}</small></span><span><b>{periodLabels[item.evidence.period]}</b><small>{stateLabels[item.state]}</small></span><span>{item.score.toFixed(1)}</span>
+          <span>{item.rank}</span><span><span className="instrument-name-line"><b>{item.name}</b><MarketBoardBadge instrument={item}/></span><small>{item.symbol}</small></span><span><b>{periodLabels[item.evidence.period]}</b><small>{stateLabels[item.state]}</small></span><span>{item.score.toFixed(1)}</span>
         </button>)}</div>
       </section>
       <section className="screener-chart-pane">
-        <header>{selected ? <><span>{selected.name}</span><small>{selected.line_code} · {periodLabels[selected.evidence.period]} · {stateLabels[selected.state]}</small></> : <span>个股 K 线</span>}</header>
+        <header>{selected ? <><span className="instrument-name-line"><span>{selected.name}</span><MarketBoardBadge instrument={selected}/></span><small>{selected.line_code} · {periodLabels[selected.evidence.period]} · {stateLabels[selected.state]}</small></> : <span>个股 K 线</span>}</header>
         <div className="screener-chart-body">{selected && analysis
           ? <ScreenerChart key={selected.analysis_run_id} candidate={selected} analysis={analysis} asOfDate={selectedRun?.as_of_date} theme={theme}/>
           : <div className="screener-empty">选择一条结果查看 K 线与形态分析</div>}</div>
@@ -259,7 +260,7 @@ export function ScreenerWorkspace({
             <Trash2 size={14}/>删除本轮结果
           </button>
         </> : !contextMenu.selectingTarget ? <>
-          <header>{contextMenu.candidate.name}</header>
+          <header><span className="instrument-name-line"><span>{contextMenu.candidate.name}</span><MarketBoardBadge instrument={contextMenu.candidate}/></span></header>
           <button role="menuitem" onClick={() => setContextMenu({ ...contextMenu, selectingTarget: true })}>
             <ListPlus size={14}/>添加到…<ChevronRight size={13}/>
           </button>

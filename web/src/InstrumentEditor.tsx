@@ -3,6 +3,7 @@ import type { PointerEvent as ReactPointerEvent } from 'react'
 import { ArrowDown, ArrowUp, GripHorizontal, ListPlus, Save, Trash2, X } from 'lucide-react'
 import { CustomGroupManager } from './CustomGroupManager'
 import { InstrumentBrowser, instrumentClassLabel, instrumentSecondaryLabel } from './InstrumentBrowser'
+import { MarketBoardBadge } from './MarketBoardBadge'
 import { InstrumentTagManager } from './InstrumentTagManager'
 import type { ChartWindowState, Instrument, InstrumentListWindowState } from './workspace'
 
@@ -166,7 +167,7 @@ export function InstrumentEditor({
                 {target.type === 'chart' ? '请选择一个图表标的' : '固定列表可以为空'}
               </div>}
               {draft.map((item, index) => <div className="instrument-editor-member" key={item.symbol}>
-                <span><strong>{item.name}</strong><small>{instrumentSecondaryLabel(item)} · {instrumentClassLabel(item)}</small></span>
+                <span><span className="instrument-name-line"><strong>{item.name}</strong><MarketBoardBadge instrument={item}/></span><small>{instrumentSecondaryLabel(item)} · {instrumentClassLabel(item)}</small></span>
                 {target.type === 'instrument-list' && <div>
                   <button title="上移" aria-label={`上移 ${item.name}`} disabled={index === 0} onClick={() => moveInstrument(index, -1)}><ArrowUp size={13}/></button>
                   <button title="下移" aria-label={`下移 ${item.name}`} disabled={index === draft.length - 1} onClick={() => moveInstrument(index, 1)}><ArrowDown size={13}/></button>

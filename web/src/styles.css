@@ -1655,6 +1655,24 @@ input::placeholder, textarea::placeholder { color: var(--theme-muted); opacity: 
 .list-price, .list-volume, .list-amount, .list-market-cap, .list-change { padding: 0 4px; font-size: 11px; font-variant-numeric: tabular-nums; }
 .list-instrument-tags { gap: 4px; margin-top: 1px; }
 .list-instrument-tags i { max-width: 104px; padding: 1px 5px; border-color: color-mix(in srgb, var(--theme-accent) 35%, var(--theme-border)); border-radius: 3px; font-size: 9px; line-height: 13px; }
+.instrument-name-line { min-width: 0; display: flex; align-items: center; gap: 5px; }
+.screener-results button .instrument-name-line { display: flex; align-items: center; gap: 5px; }
+.instrument-name-line > strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.market-board-badge {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  font: 500 9px/1 "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+  letter-spacing: 0;
+}
+.market-board-bse { color: #d5a45f; background: color-mix(in srgb, #d5a45f 14%, transparent); }
+.market-board-chinext { color: #55b7a6; background: color-mix(in srgb, #55b7a6 14%, transparent); }
+.market-board-star { color: #a98bd4; background: color-mix(in srgb, #a98bd4 14%, transparent); }
+.instrument-window-title > .instrument-name-line { flex: 0 1 auto; }
 
 .chart-drawing-toolbar {
   top: 34px;

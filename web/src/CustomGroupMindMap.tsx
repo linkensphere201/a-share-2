@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointer
 import { Grip, Move, Network, X } from 'lucide-react'
 import { createPortal } from 'react-dom'
 import { customGroupRoleDefinitions, type CustomGroupMember } from './customGroupRoles'
+import { MarketBoardBadge } from './MarketBoardBadge'
 import type { Instrument } from './workspace'
 
 export type MindMapAnchor = {
@@ -155,7 +156,7 @@ export function CustomGroupMindMap({
                   onClose()
                 }}
               >
-                <span className="custom-group-map-name">{member.name}</span>
+                <span className="custom-group-map-name instrument-name-line"><span>{member.name}</span><MarketBoardBadge instrument={member}/></span>
                 {(member.note || member.tags.length > 0) && <span>{member.note || member.tags.join(' · ')}</span>}
               </button>)}
             </div>

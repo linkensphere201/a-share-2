@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ArrowDown, ArrowUp, FolderPlus, Plus, Save, Trash2, X } from 'lucide-react'
 import { InstrumentBrowser } from './InstrumentBrowser'
+import { MarketBoardBadge } from './MarketBoardBadge'
 import type { Instrument } from './workspace'
 import { customGroupRoleDefinitions, customGroupRoleLabel, type CustomGroupMember } from './customGroupRoles'
 
@@ -179,7 +180,7 @@ export function CustomGroupManager({ onClose, embedded = false }: { onClose: () 
               }}
               onDragEnd={() => setDraggedSymbol(undefined)}
             >
-              <span><strong>{member.name}</strong><small>{member.symbol}</small></span>
+              <span><span className="instrument-name-line"><strong>{member.name}</strong><MarketBoardBadge instrument={member}/></span><small>{member.symbol}</small></span>
               <select value={member.role ?? ''} aria-label={`${member.name} 角色`} onChange={event => {
                 const members = [...draft.members]
                 members[index] = { ...member, role: event.target.value as CustomGroupMember['role'] }

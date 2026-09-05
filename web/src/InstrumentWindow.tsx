@@ -8,6 +8,7 @@ import { AnalysisWorkspacePanel } from './AnalysisWorkspacePanel'
 import type { ChartPaneRatios, ChartWindowState } from './workspace'
 import type { TradingSystemWindowState, TradingSystemWindowStates } from './tradingSystems'
 import type { ThemeDefinition } from './themeStore'
+import { MarketBoardBadge } from './MarketBoardBadge'
 import type { TrendAnalysisRun } from './trendAnalysisClient'
 
 type InstrumentWindowProps = {
@@ -82,7 +83,7 @@ export function ChartWindow({
     <section className={focused ? 'instrument-window focused' : 'instrument-window'}>
       <header className="instrument-window-header">
         <button className="instrument-window-title" onClick={onFocus}>
-          <strong>{instrument.name}</strong><small>{instrument.symbol} · {instrument.category ?? instrument.kind}</small>
+          <span className="instrument-name-line"><strong>{instrument.name}</strong><MarketBoardBadge instrument={instrument}/></span><small>{instrument.symbol} · {instrument.category ?? instrument.kind}</small>
         </button>
         <div className="instrument-window-actions">
           <button
