@@ -191,6 +191,15 @@ $env:PYTHONPATH = "src"
 ..\stock-picker\.venv\Scripts\python.exe -m stock_harness.cli sync-catalog --scope all
 ```
 
+Run the explicit full-market board dragon proxy batch against a running source-compatible API:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\scan_board_leaders.py `
+  --base-url http://127.0.0.1:8765 --years 3 --apply
+```
+
+The batch ranks two candidates per sufficiently covered current concept/industry board from final daily price/volume evidence, writes `data/reports/board-leaders-latest.json`, manages only the global `板块龙1`/`板块龙2` tags, and creates or updates `全市场板块龙一合集`. It excludes ST/risk names and preserves unrelated user tags. The result is a dated quantitative proxy over current membership, not a permanent or point-in-time historical leadership claim. Reapply an existing report without recalculation by passing `--apply-report data\reports\board-leaders-latest.json`.
+
 Resume their 30-year available histories and refresh current board memberships:
 
 ```powershell
