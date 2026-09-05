@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react'
-import { ArrowDown, ArrowUp, ArrowUpDown, Columns3, Maximize2, Minimize2, Pencil, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, ArrowUpDown, Columns3, Maximize2, Minimize2, PanelTopClose, PanelTopOpen, Pencil, X } from 'lucide-react'
 import { allListColumns, type Instrument, type InstrumentListWindowState, type ListColumnKey } from './workspace'
 import { logWarning } from './eventLogger'
 import { instrumentSecondaryLabel } from './InstrumentBrowser'
@@ -28,11 +28,14 @@ type InstrumentListWindowProps = {
   focused: boolean
   maximized: boolean
   removable: boolean
+  poppedOutHost?: boolean
   onFocus: () => void
   onToggleMaximize: () => void
   onRemoveWindow: () => void
   onSelect: (instrument: Instrument) => void
   onEdit: () => void
+  onPopOut: () => void
+  onDock: () => void
   derived: boolean
   memberSource?: Instrument
   onSortChange: (sort: NonNullable<InstrumentListWindowState['sort']>) => void
@@ -45,11 +48,14 @@ export function InstrumentListWindow({
   focused,
   maximized,
   removable,
+  poppedOutHost = false,
   onFocus,
   onToggleMaximize,
   onRemoveWindow,
   onSelect,
   onEdit,
+  onPopOut,
+  onDock,
   derived,
   memberSource,
   onSortChange,
@@ -171,6 +177,11 @@ export function InstrumentListWindow({
         </button>
         <div className="instrument-window-actions">
           <button
+            title={poppedOutHost ? '恢复到原布局' : '弹出为独立窗口'}
+            aria-label={poppedOutHost ? `恢复 ${windowState.title} 到原布局` : `弹出 ${windowState.title} 为独立窗口`}
+            onClick={poppedOutHost ? onDock : onPopOut}
+          >{poppedOutHost ? <PanelTopClose size={13}/> : <PanelTopOpen size={13}/>}</button>
+          <button
             className={columnEditorOpen ? 'active' : ''}
             title="编辑表头"
             aria-label={`编辑 ${windowState.title} 表头`}
@@ -178,7 +189,7 @@ export function InstrumentListWindow({
             onClick={() => setColumnEditorOpen(value => !value)}
           ><Columns3 size={13}/></button>
           {!derived && <button title="编辑标的" aria-label={`编辑 ${windowState.title} 标的`} onClick={onEdit}><Pencil size={13}/></button>}
-          <button
+          {!poppedOutHost && <><button
             title={maximized ? '还原窗口' : '最大化窗口'}
             aria-label={maximized ? '还原窗口' : `最大化 ${windowState.title} 窗口`}
             onClick={onToggleMaximize}
@@ -188,7 +199,7 @@ export function InstrumentListWindow({
             aria-label={`移除 ${windowState.title} 窗口`}
             disabled={!removable}
             onClick={onRemoveWindow}
-          ><X size={14}/></button>
+          ><X size={14}/></button></>}
         </div>
       </header>
       {columnEditorOpen && <div className="list-column-editor" onPointerDown={event => event.stopPropagation()}>

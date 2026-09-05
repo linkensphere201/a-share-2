@@ -17,9 +17,10 @@ class FakeWebview:
         self.window_kwargs = {}
         self.start_kwargs = {}
 
-    def create_window(self, *args, **kwargs) -> None:
+    def create_window(self, *args, **kwargs):
         self.window_args = args
         self.window_kwargs = kwargs
+        return object()
 
     def start(self, **kwargs) -> None:
         self.start_kwargs = kwargs
@@ -39,6 +40,7 @@ def test_webview_uses_persistent_profile(tmp_path: Path) -> None:
     open_desktop_window(webview, "http://127.0.0.1:8765", False, storage_path)
 
     assert webview.window_args[:2] == ("StockHarness", "http://127.0.0.1:8765")
+    assert webview.window_kwargs["js_api"] is not None
     assert storage_path.is_dir()
     assert webview.start_kwargs == {
         "gui": "edgechromium",

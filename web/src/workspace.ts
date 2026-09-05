@@ -70,11 +70,24 @@ export type ChartPaneRatios = {
   openInterest?: number
 }
 
+export type NativeWindowGeometry = {
+  x?: number
+  y?: number
+  width: number
+  height: number
+}
+
+export type WindowPresentationState = {
+  mode: 'docked' | 'popped-out'
+  geometry?: NativeWindowGeometry
+}
+
 export type ChartWindowState = {
   id: string
   type: 'chart'
   title: string
   mode: 'attached' | 'detached'
+  presentation: WindowPresentationState
   instrument: Instrument
   chart: ChartViewState
 }
@@ -95,6 +108,7 @@ export type InstrumentListWindowState = {
   type: 'instrument-list'
   title: string
   mode: 'attached' | 'detached'
+  presentation: WindowPresentationState
   content: {
     mode: 'manual'
     instruments: Instrument[]
@@ -168,6 +182,7 @@ export function createWindowGroup(
     type: 'chart',
     title: nextTitle(),
     mode,
+    presentation: { mode: 'docked' },
     instrument: { ...fallbackInstrument },
     chart: { range: '3Y', priceMode: 'normal', volumeVisible: true, indicator: 'macd', settlementVisible: false, openInterestVisible: false, drawingToolbarCollapsed: false, tradingSystems: createTradingSystemWindowStates() },
   })
@@ -176,6 +191,7 @@ export function createWindowGroup(
     type: 'instrument-list',
     title: nextTitle(),
     mode: 'detached',
+    presentation: { mode: 'docked' },
     content: { mode: 'manual', instruments: [{ ...fallbackInstrument }] },
     selectedSymbol: fallbackInstrument.symbol,
     visibleColumns: [...defaultListColumns],
@@ -206,7 +222,11 @@ export function duplicateWindowGroup(
 ): WindowGroupState {
   const windowIds = new Map(source.windows.map(window => [window.id, createId(window.type === 'chart' ? 'chart' : 'list')]))
   const windows = source.windows.map(window => {
-    const copied = { ...structuredClone(window), id: windowIds.get(window.id)! }
+    const copied = {
+      ...structuredClone(window),
+      id: windowIds.get(window.id)!,
+      presentation: { mode: 'docked' as const },
+    }
     return copied.type === 'instrument-list' && copied.memberSourceWindowId
       ? { ...copied, memberSourceWindowId: windowIds.get(copied.memberSourceWindowId) }
       : copied
@@ -232,6 +252,7 @@ export function createDefaultWorkspace(): WorkspaceState {
     type: 'instrument-list',
     title: '表1',
     mode: 'detached',
+    presentation: { mode: 'docked' },
     content: { mode: 'manual', instruments: [fallbackInstrument] },
     selectedSymbol: fallbackInstrument.symbol,
     visibleColumns: [...defaultListColumns],
@@ -241,6 +262,7 @@ export function createDefaultWorkspace(): WorkspaceState {
     type: 'chart',
     title: '表2',
     mode: 'attached',
+    presentation: { mode: 'docked' },
     instrument: fallbackInstrument,
     chart: { range: '3Y', priceMode: 'normal', volumeVisible: true, indicator: 'macd', settlementVisible: false, openInterestVisible: false, drawingToolbarCollapsed: false, tradingSystems: createTradingSystemWindowStates() },
   }
@@ -436,6 +458,7 @@ function normalizeChartWindow(value: unknown): ChartWindowState | undefined {
     type: 'chart',
     title: typeof value.title === 'string' ? value.title : value.instrument.name,
     mode: value.mode === 'attached' ? 'attached' : 'detached',
+    presentation: normalizePresentation(value.presentation),
     instrument: value.instrument,
     chart: {
       range: value.chart.range,
@@ -466,6 +489,7 @@ function normalizeListWindow(value: Record<string, unknown>): InstrumentListWind
     type: 'instrument-list',
     title: typeof value.title === 'string' ? value.title : '标的列表',
     mode: value.mode === 'attached' ? 'attached' : 'detached',
+    presentation: normalizePresentation(value.presentation),
     content: { mode: 'manual', instruments },
     selectedSymbol,
     visibleColumns: normalizeListColumns(value.visibleColumns),
@@ -492,6 +516,32 @@ function normalizeListSort(value: unknown): InstrumentListWindowState['sort'] {
   }
 }
 
+function normalizePresentation(value: unknown): WindowPresentationState {
+  if (!isRecord(value)) return { mode: 'docked' }
+  const geometry = isRecord(value.geometry)
+    && isFiniteDimension(value.geometry.width, 640, 4096)
+    && isFiniteDimension(value.geometry.height, 480, 2160)
+    ? {
+        width: Number(value.geometry.width),
+        height: Number(value.geometry.height),
+        ...(isFiniteCoordinate(value.geometry.x) ? { x: Number(value.geometry.x) } : {}),
+        ...(isFiniteCoordinate(value.geometry.y) ? { y: Number(value.geometry.y) } : {}),
+      }
+    : undefined
+  return {
+    mode: value.mode === 'popped-out' ? 'popped-out' : 'docked',
+    ...(geometry ? { geometry } : {}),
+  }
+}
+
+function isFiniteDimension(value: unknown, minimum: number, maximum: number): boolean {
+  return typeof value === 'number' && Number.isFinite(value) && value >= minimum && value <= maximum
+}
+
+function isFiniteCoordinate(value: unknown): boolean {
+  return typeof value === 'number' && Number.isFinite(value) && value >= -32768 && value <= 32768
+}
+
 function normalizeAttachment(value: unknown): WindowAttachment | undefined {
   if (!isRecord(value) || typeof value.id !== 'string') return undefined
   if (value.type !== 'show-symbol' && value.type !== 'show-members') return undefined
@@ -508,6 +558,7 @@ function migrateLegacyWindow(value: unknown): ChartWindowState | undefined {
     type: 'chart',
     title: legacy.instrument.name,
     mode: 'detached',
+    presentation: { mode: 'docked' },
     instrument: legacy.instrument,
     chart: {
       range: legacy.range,

@@ -21,6 +21,7 @@ import uvicorn
 from stock_harness.api import create_app
 from stock_harness.auto_update import AutoUpdateService
 from stock_harness.config import load_runtime_settings
+from stock_harness.desktop_windows import DesktopWindowBridge
 from stock_harness.codex_app_server import CodexAppServerClient
 from stock_harness.intraday import IntradayQuoteService
 from stock_harness.futures_intraday import FuturesProvisionalService
@@ -262,14 +263,17 @@ def resolve_runtime_log_directory(log_dir: Path, smoke_test: bool) -> Path:
 
 def open_desktop_window(webview_module: object, url: str, debug: bool, storage_path: Path) -> None:
     storage_path.mkdir(parents=True, exist_ok=True)
-    webview_module.create_window(
+    bridge = DesktopWindowBridge(webview_module, url)
+    main_window = webview_module.create_window(
         "StockHarness",
         url,
         width=1440,
         height=900,
         min_size=(960, 640),
         text_select=True,
+        js_api=bridge,
     )
+    bridge._set_main_window(main_window)
     webview_module.start(
         gui="edgechromium",
         debug=debug,

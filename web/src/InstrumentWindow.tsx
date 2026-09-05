@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Maximize2, Minimize2, Pencil, X } from 'lucide-react'
+import { Maximize2, Minimize2, PanelTopClose, PanelTopOpen, Pencil, X } from 'lucide-react'
 import { ChartCanvas } from './ChartCanvas'
 import type { ChartIndicator, VisibleRange } from './chartTypes'
 import type { GeneratedBreakoutState } from './generatedAnalysisProjection'
@@ -16,10 +16,13 @@ type InstrumentWindowProps = {
   focused: boolean
   maximized: boolean
   removable: boolean
+  poppedOutHost?: boolean
   onFocus: () => void
   onToggleMaximize: () => void
   onRemove: () => void
   onEdit: () => void
+  onPopOut: () => void
+  onDock: () => void
   onCoverageChange: (rows: number, first?: string, last?: string) => void
   onVisibleRangeChange: (value: VisibleRange) => void
   onVolumeVisibleChange: (visible: boolean) => void
@@ -42,10 +45,13 @@ export function ChartWindow({
   focused,
   maximized,
   removable,
+  poppedOutHost = false,
   onFocus,
   onToggleMaximize,
   onRemove,
   onEdit,
+  onPopOut,
+  onDock,
   onCoverageChange,
   onVisibleRangeChange,
   onVolumeVisibleChange,
@@ -79,8 +85,13 @@ export function ChartWindow({
           <strong>{instrument.name}</strong><small>{instrument.symbol} · {instrument.category ?? instrument.kind}</small>
         </button>
         <div className="instrument-window-actions">
-          {windowState.mode === 'detached' && <button title="编辑标的" aria-label={`编辑 ${instrument.name} 标的`} onClick={onEdit}><Pencil size={13}/></button>}
           <button
+            title={poppedOutHost ? '恢复到原布局' : '弹出为独立窗口'}
+            aria-label={poppedOutHost ? `恢复 ${instrument.name} 到原布局` : `弹出 ${instrument.name} 为独立窗口`}
+            onClick={poppedOutHost ? onDock : onPopOut}
+          >{poppedOutHost ? <PanelTopClose size={13}/> : <PanelTopOpen size={13}/>}</button>
+          {windowState.mode === 'detached' && <button title="编辑标的" aria-label={`编辑 ${instrument.name} 标的`} onClick={onEdit}><Pencil size={13}/></button>}
+          {!poppedOutHost && <><button
             title={maximized ? '还原窗口' : '最大化窗口'}
             aria-label={maximized ? '还原窗口' : `最大化 ${instrument.name} 窗口`}
             onClick={onToggleMaximize}
@@ -90,7 +101,7 @@ export function ChartWindow({
             aria-label={`移除 ${instrument.name} 窗口`}
             disabled={!removable}
             onClick={onRemove}
-          ><X size={14}/></button>
+          ><X size={14}/></button></>}
         </div>
       </header>
       <div className={explanationOpen ? 'instrument-window-body analysis-open' : 'instrument-window-body'} onPointerDown={onFocus}>

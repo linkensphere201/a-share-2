@@ -46,10 +46,53 @@ vi.mock('./ChartCanvas', () => ({
 afterEach(() => {
   cleanup()
   window.localStorage.clear()
+  delete window.pywebview
+  window.history.replaceState({}, '', '/')
   vi.unstubAllGlobals()
 })
 
 describe('StockWorkspace', () => {
+  it('pops a chart into the native shell, retains its slot, and docks it after native close', async () => {
+    vi.stubGlobal('fetch', emptyFetch())
+    const popOut = vi.fn().mockResolvedValue({ ok: true, state: 'opened' })
+    window.pywebview = { api: {
+      pop_out_window: popOut,
+      dock_window: vi.fn().mockResolvedValue({ ok: true, state: 'docked' }),
+      focus_window: vi.fn().mockResolvedValue({ ok: true, state: 'focused' }),
+    } }
+    const user = userEvent.setup()
+    render(<App />)
+
+    const popoutButtons = screen.getAllByTitle('弹出为独立窗口')
+    await user.click(popoutButtons[1])
+
+    await waitFor(() => expect(popOut).toHaveBeenCalledWith(
+      'group-primary', 'chart-primary', expect.stringContaining('StockHarness - '), undefined,
+    ))
+    expect(screen.getByRole('button', { name: /显示已弹出的/ })).toBeTruthy()
+    expect(JSON.parse(window.localStorage.getItem(workspaceStorageKey) ?? '{}')
+      .groups[0].windows[1].presentation.mode).toBe('popped-out')
+
+    window.dispatchEvent(new CustomEvent('stock-harness:native-window-closed', {
+      detail: { groupId: 'group-primary', windowId: 'chart-primary' },
+    }))
+    await waitFor(() => expect(screen.getByTestId('chart-canvas')).toBeTruthy())
+    expect(JSON.parse(window.localStorage.getItem(workspaceStorageKey) ?? '{}')
+      .groups[0].windows[1].presentation.mode).toBe('docked')
+  })
+
+  it('renders only the requested layout leaf in a pop-out host', () => {
+    vi.stubGlobal('fetch', emptyFetch())
+    window.history.replaceState({}, '', '/?popoutGroupId=group-primary&popoutWindowId=chart-primary')
+
+    render(<App />)
+
+    expect(document.querySelector('.popout-workstation')).toBeTruthy()
+    expect(screen.getAllByTestId('chart-canvas')).toHaveLength(1)
+    expect(screen.queryByText('2/8')).toBeNull()
+    expect(screen.getByTitle('恢复到原布局')).toBeTruthy()
+  })
+
   it('opens the default list-plus-attached-chart group and collapses chat', async () => {
     vi.stubGlobal('fetch', emptyFetch())
     const user = userEvent.setup()
@@ -430,6 +473,7 @@ describe('StockWorkspace', () => {
       type: 'instrument-list' as const,
       title: '成分列表',
       mode: 'attached' as const,
+      presentation: { mode: 'docked' as const },
       content: { mode: 'manual' as const, instruments: [] },
       visibleColumns: [...defaultListColumns],
     }

@@ -14,6 +14,8 @@ import { subscribeDrawingStore } from './drawingStore'
 import { applyTheme, loadTheme, persistTheme, themes, type ThemeDefinition } from './themeStore'
 import { updateSplitRatio } from './layoutTree'
 import { WindowGroup } from './WindowGroup'
+import { dockNativeWindow, focusNativeWindow, popOutNativeWindow, readPopoutTarget } from './nativeWindowBridge'
+import { createWorkspaceSync, type WorkspaceSync } from './workspaceSync'
 import { buildWorkspaceContext, publishWorkspaceContext } from './workspaceContext'
 import type { TradingSystemWindowStates } from './tradingSystems'
 import { useWorkspaceTrendRecalculation } from './useWorkspaceTrendRecalculation'
@@ -41,8 +43,25 @@ import {
   samePaneRatios,
 } from './workspaceMutations'
 
+const nativeWindowKey = (groupId: string, windowId: string) => JSON.stringify([groupId, windowId])
+
+function parseNativeWindowKey(value: string): { groupId: string; windowId: string } | undefined {
+  try {
+    const parsed = JSON.parse(value) as unknown
+    return Array.isArray(parsed) && parsed.length === 2
+      && typeof parsed[0] === 'string' && typeof parsed[1] === 'string'
+      ? { groupId: parsed[0], windowId: parsed[1] }
+      : undefined
+  } catch {
+    return undefined
+  }
+}
+
 export function StockWorkspace() {
   const [workspace, setWorkspace] = useState<WorkspaceState>(loadWorkspace)
+  const popoutTarget = useMemo(readPopoutTarget, [])
+  const isPopoutHost = Boolean(popoutTarget)
+  const [nativeShellReady, setNativeShellReady] = useState(Boolean(window.pywebview?.api?.pop_out_window))
   const [theme, setTheme] = useState<ThemeDefinition>(loadTheme)
   const [chatOpen, setChatOpen] = useState(false)
   const [layoutManagerOpen, setLayoutManagerOpen] = useState(false)
@@ -51,7 +70,8 @@ export function StockWorkspace() {
   const [instrumentEditor, setInstrumentEditor] = useState<{ windowId?: string; tab: 'instruments' | 'groups' }>()
   const [resolvedWindowSymbols, setResolvedWindowSymbols] = useState<Record<string, string[]>>({})
   const [drawingRevision, setDrawingRevision] = useState(0)
-  const activeGroup = workspace.groups.find(group => group.id === workspace.activeGroupId) ?? workspace.groups[0]
+  const hostGroupId = popoutTarget?.groupId ?? workspace.activeGroupId
+  const activeGroup = workspace.groups.find(group => group.id === hostGroupId) ?? workspace.groups[0]
   const focusedWindow = activeGroup.windows.find(item => item.id === activeGroup.focusedWindowId) ?? activeGroup.windows[0]
   const activeChart = resolveActiveChart(activeGroup, focusedWindow)
   const referencedSymbols = useMemo(
@@ -60,12 +80,24 @@ export function StockWorkspace() {
   )
   const referencedSymbolsKey = referencedSymbols.join('|')
   const subscriptionCoordinatorRef = useRef<IntradaySubscriptionCoordinator | undefined>(undefined)
+  const workspaceSyncRef = useRef<WorkspaceSync | undefined>(undefined)
+  const remoteWorkspaceRef = useRef<string | undefined>(undefined)
+  const nativeRequestedRef = useRef(new Set<string>())
+  const geometryTimersRef = useRef(new Map<string, number>())
+  const pendingGeometryRef = useRef(new Map<string, {
+    groupId: string
+    windowId: string
+    geometry: Partial<NonNullable<WorkspaceWindowState['presentation']['geometry']>>
+  }>())
+  const workspaceRef = useRef(workspace)
+  workspaceRef.current = workspace
   const workspaceContext = useMemo(
     () => buildWorkspaceContext(activeGroup, resolvedWindowSymbols),
     [activeGroup, resolvedWindowSymbols, drawingRevision],
   )
 
   useEffect(() => {
+    if (isPopoutHost) return
     const coordinator = new IntradaySubscriptionCoordinator(
       sendIntradaySubscription,
       {
@@ -90,12 +122,40 @@ export function StockWorkspace() {
         subscriptionCoordinatorRef.current = undefined
       }
     }
+  }, [isPopoutHost])
+
+  useEffect(() => {
+    const sync = createWorkspaceSync(incoming => {
+      const serialized = JSON.stringify(incoming)
+      remoteWorkspaceRef.current = serialized
+      setWorkspace(current => JSON.stringify(current) === serialized ? current : incoming)
+    })
+    workspaceSyncRef.current = sync
+    return () => {
+      sync.close()
+      if (workspaceSyncRef.current === sync) workspaceSyncRef.current = undefined
+    }
   }, [])
 
-  useEffect(() => saveWorkspace(workspace), [workspace])
+  useEffect(() => {
+    const serialized = JSON.stringify(workspace)
+    saveWorkspace(workspace)
+    if (remoteWorkspaceRef.current === serialized) {
+      remoteWorkspaceRef.current = undefined
+      return
+    }
+    workspaceSyncRef.current?.publish(workspace)
+  }, [workspace])
   useEffect(() => applyTheme(theme), [theme])
 
   useEffect(() => {
+    const ready = () => setNativeShellReady(true)
+    window.addEventListener('pywebviewready', ready)
+    return () => window.removeEventListener('pywebviewready', ready)
+  }, [])
+
+  useEffect(() => {
+    if (isPopoutHost) return
     const controller = new AbortController()
     const reconcile = async () => {
       try {
@@ -123,11 +183,12 @@ export function StockWorkspace() {
       controller.abort()
       window.removeEventListener('stock-harness:custom-groups-changed', handleGroupChange)
     }
-  }, [])
+  }, [isPopoutHost])
 
   useEffect(() => subscribeDrawingStore(() => setDrawingRevision(value => value + 1)), [])
 
   useEffect(() => {
+    if (isPopoutHost) return
     const controller = new AbortController()
     const handle = window.setTimeout(() => {
       publishWorkspaceContext(workspaceContext, controller.signal).catch(error => {
@@ -140,18 +201,19 @@ export function StockWorkspace() {
       window.clearTimeout(handle)
       controller.abort()
     }
-  }, [workspaceContext])
+  }, [isPopoutHost, workspaceContext])
 
   useEffect(() => {
+    if (isPopoutHost) return
     subscriptionCoordinatorRef.current?.update({ groupId: activeGroup.id, symbols: referencedSymbols })
-  }, [activeGroup.id, referencedSymbolsKey])
+  }, [activeGroup.id, isPopoutHost, referencedSymbolsKey])
 
   const updateActiveGroup = useCallback((update: (group: WindowGroupState) => WindowGroupState) => {
     setWorkspace(current => ({
       ...current,
-      groups: current.groups.map(group => group.id === current.activeGroupId ? update(group) : group),
+      groups: current.groups.map(group => group.id === hostGroupId ? update(group) : group),
     }))
-  }, [])
+  }, [hostGroupId])
 
   const updateWindow = useCallback((id: string, update: (item: WorkspaceWindowState) => WorkspaceWindowState) => {
     updateActiveGroup(group => ({
@@ -159,6 +221,149 @@ export function StockWorkspace() {
       windows: group.windows.map(item => item.id === id ? update(item) : item),
     }))
   }, [updateActiveGroup])
+
+  const updateWindowPresentation = useCallback((
+    groupId: string,
+    id: string,
+    update: (presentation: WorkspaceWindowState['presentation']) => WorkspaceWindowState['presentation'],
+  ) => {
+    setWorkspace(current => ({
+      ...current,
+      groups: current.groups.map(group => group.id !== groupId ? group : ({
+        ...group,
+        windows: group.windows.map(item => item.id === id
+          ? { ...item, presentation: update(item.presentation) } as WorkspaceWindowState
+          : item),
+      })),
+    }))
+  }, [])
+
+  useEffect(() => {
+    if (isPopoutHost) return
+    const handleClosed = (event: Event) => {
+      const detail = (event as CustomEvent<{ groupId?: string; windowId?: string }>).detail
+      if (!detail?.groupId || !detail.windowId) return
+      nativeRequestedRef.current.delete(nativeWindowKey(detail.groupId, detail.windowId))
+      updateWindowPresentation(detail.groupId, detail.windowId, current => ({
+        ...current, mode: 'docked',
+      }))
+    }
+    const handleGeometry = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        groupId?: string
+        windowId?: string
+        geometry?: Partial<NonNullable<WorkspaceWindowState['presentation']['geometry']>>
+      }>).detail
+      if (!detail?.groupId || !detail.windowId || !detail.geometry) return
+      const key = nativeWindowKey(detail.groupId, detail.windowId)
+      const pending = pendingGeometryRef.current.get(key)
+      pendingGeometryRef.current.set(key, {
+        groupId: detail.groupId,
+        windowId: detail.windowId,
+        geometry: { ...pending?.geometry, ...detail.geometry },
+      })
+      const timer = geometryTimersRef.current.get(key)
+      if (timer !== undefined) window.clearTimeout(timer)
+      geometryTimersRef.current.set(key, window.setTimeout(() => {
+        const next = pendingGeometryRef.current.get(key)
+        pendingGeometryRef.current.delete(key)
+        geometryTimersRef.current.delete(key)
+        if (!next) return
+        updateWindowPresentation(next.groupId, next.windowId, current => ({
+          ...current,
+          geometry: {
+            width: next.geometry.width ?? current.geometry?.width ?? 1200,
+            height: next.geometry.height ?? current.geometry?.height ?? 760,
+            ...(next.geometry.x !== undefined || current.geometry?.x !== undefined
+              ? { x: next.geometry.x ?? current.geometry?.x }
+              : {}),
+            ...(next.geometry.y !== undefined || current.geometry?.y !== undefined
+              ? { y: next.geometry.y ?? current.geometry?.y }
+              : {}),
+          },
+        }))
+      }, 150))
+    }
+    window.addEventListener('stock-harness:native-window-closed', handleClosed)
+    window.addEventListener('stock-harness:native-window-geometry', handleGeometry)
+    return () => {
+      window.removeEventListener('stock-harness:native-window-closed', handleClosed)
+      window.removeEventListener('stock-harness:native-window-geometry', handleGeometry)
+      geometryTimersRef.current.forEach(timer => window.clearTimeout(timer))
+      geometryTimersRef.current.clear()
+      pendingGeometryRef.current.clear()
+    }
+  }, [isPopoutHost, updateWindowPresentation])
+
+  const popOutWindow = useCallback(async (id: string) => {
+    const item = activeGroup.windows.find(window => window.id === id)
+    if (!item) return
+    const target = { groupId: activeGroup.id, windowId: id }
+    const key = nativeWindowKey(target.groupId, target.windowId)
+    updateActiveGroup(group => ({
+      ...group,
+      maximizedWindowId: group.maximizedWindowId === id ? undefined : group.maximizedWindowId,
+      windows: group.windows.map(window => window.id === id
+        ? { ...window, presentation: { ...window.presentation, mode: 'popped-out' } } as WorkspaceWindowState
+        : window),
+    }))
+    nativeRequestedRef.current.add(key)
+    const result = await popOutNativeWindow(
+      target,
+      `StockHarness - ${item.type === 'chart' ? item.instrument.name : item.title}`,
+      item.presentation.geometry,
+    )
+    if (!result.ok) {
+      nativeRequestedRef.current.delete(key)
+      updateWindowPresentation(activeGroup.id, id, current => ({ ...current, mode: 'docked' }))
+      logWarning('desktop-window', '弹出独立窗口失败', { state: result.state, limit: result.limit })
+    }
+  }, [activeGroup, updateActiveGroup, updateWindowPresentation])
+
+  const dockWindow = useCallback(async (id: string) => {
+    const target = { groupId: activeGroup.id, windowId: id }
+    nativeRequestedRef.current.delete(nativeWindowKey(target.groupId, target.windowId))
+    updateWindowPresentation(activeGroup.id, id, current => ({ ...current, mode: 'docked' }))
+    const result = await dockNativeWindow(target)
+    if (!result.ok) logWarning('desktop-window', '恢复独立窗口失败', { state: result.state })
+  }, [activeGroup.id, updateWindowPresentation])
+
+  const focusPopoutWindow = useCallback(async (id: string) => {
+    const result = await focusNativeWindow({ groupId: activeGroup.id, windowId: id })
+    if (!result.ok) logWarning('desktop-window', '已弹出窗口不可用', { state: result.state })
+  }, [activeGroup.id])
+
+  const popoutPresentationKey = useMemo(() => JSON.stringify(workspace.groups.flatMap(group => (
+    group.windows.map(item => [group.id, item.id, item.presentation.mode])
+  ))), [workspace.groups])
+
+  useEffect(() => {
+    if (isPopoutHost || !nativeShellReady) return
+    const desired = new Set<string>()
+    workspaceRef.current.groups.forEach(group => group.windows.forEach(item => {
+      const key = nativeWindowKey(group.id, item.id)
+      if (item.presentation.mode !== 'popped-out') return
+      desired.add(key)
+      if (nativeRequestedRef.current.has(key)) return
+      nativeRequestedRef.current.add(key)
+      void popOutNativeWindow(
+        { groupId: group.id, windowId: item.id },
+        `StockHarness - ${item.type === 'chart' ? item.instrument.name : item.title}`,
+        item.presentation.geometry,
+      ).then(result => {
+        if (result.ok) return
+        nativeRequestedRef.current.delete(key)
+        updateWindowPresentation(group.id, item.id, current => ({ ...current, mode: 'docked' }))
+        logWarning('desktop-window', '恢复已弹出窗口失败', { state: result.state, limit: result.limit })
+      })
+    }))
+    nativeRequestedRef.current.forEach(key => {
+      if (desired.has(key)) return
+      nativeRequestedRef.current.delete(key)
+      const target = parseNativeWindowKey(key)
+      if (target) void dockNativeWindow(target)
+    })
+  }, [isPopoutHost, nativeShellReady, popoutPresentationKey, updateWindowPresentation])
 
   const updateReferencedSymbols = useCallback((id: string, symbols: string[]) => {
     setResolvedWindowSymbols(current => {
@@ -301,6 +506,58 @@ export function StockWorkspace() {
     updateActiveChart(item => ({ ...item, chart: { ...item.chart, priceMode } }))
   }
 
+  const renderActiveWindowGroup = (renderOnlyWindowId?: string) => <WindowGroup
+    group={activeGroup}
+    theme={theme}
+    renderOnlyWindowId={renderOnlyWindowId}
+    poppedOutHost={isPopoutHost}
+    onFocusWindow={id => updateActiveGroup(group => ({ ...group, focusedWindowId: id }))}
+    onToggleMaximize={id => updateActiveGroup(group => ({
+      ...group,
+      focusedWindowId: id,
+      maximizedWindowId: group.maximizedWindowId === id ? undefined : id,
+    }))}
+    onRemoveWindow={removeWindow}
+    onResizeSplit={(id, ratio) => updateActiveGroup(group => ({
+      ...group,
+      layout: updateSplitRatio(group.layout, id, ratio),
+    }))}
+    onSelectListInstrument={selectListInstrument}
+    onEditWindow={id => setInstrumentEditor({ windowId: id, tab: 'instruments' })}
+    onSortList={sortList}
+    onListColumnsChange={updateListColumns}
+    onCoverageChange={handleCoverage}
+    onVisibleRangeChange={handleVisibleRange}
+    onVolumeVisibleChange={handleVolumeVisible}
+    onIndicatorChange={handleIndicator}
+    onSettlementVisibleChange={handleSettlementVisible}
+    onOpenInterestVisibleChange={handleOpenInterestVisible}
+    onPaneRatiosChange={handlePaneRatios}
+    onToolbarCollapsedChange={handleToolbarCollapsed}
+    onTradingSystemsChange={handleTradingSystems}
+    onTradingSystemRecalculate={handleTradingSystemRecalculate}
+    onReferencedSymbolsChange={updateReferencedSymbols}
+    onPopOutWindow={popOutWindow}
+    onDockWindow={dockWindow}
+    onFocusPopoutWindow={focusPopoutWindow}
+  />
+
+  if (isPopoutHost && popoutTarget) {
+    const targetExists = activeGroup.id === popoutTarget.groupId
+      && activeGroup.windows.some(item => item.id === popoutTarget.windowId)
+    return <main className="popout-workstation">
+      {targetExists
+        ? renderActiveWindowGroup(popoutTarget.windowId)
+        : <div className="popout-missing">该窗口已从布局中移除。</div>}
+      {instrumentEditor && <InstrumentEditor
+        target={activeGroup.windows.find(item => item.id === instrumentEditor.windowId)}
+        initialTab={instrumentEditor.tab}
+        onSave={saveWindowInstruments}
+        onClose={() => setInstrumentEditor(undefined)}
+      />}
+    </main>
+  }
+
   if (layoutManagerOpen) {
     return <LayoutManager workspace={workspace} onChange={setWorkspace} onClose={() => setLayoutManagerOpen(false)}/>
   }
@@ -427,36 +684,7 @@ export function StockWorkspace() {
           </>}
           <span className="window-count">{activeGroup.windows.length}/8</span>
         </div>
-        <WindowGroup
-          group={activeGroup}
-          theme={theme}
-          onFocusWindow={id => updateActiveGroup(group => ({ ...group, focusedWindowId: id }))}
-          onToggleMaximize={id => updateActiveGroup(group => ({
-            ...group,
-            focusedWindowId: id,
-            maximizedWindowId: group.maximizedWindowId === id ? undefined : id,
-          }))}
-          onRemoveWindow={removeWindow}
-          onResizeSplit={(id, ratio) => updateActiveGroup(group => ({
-            ...group,
-            layout: updateSplitRatio(group.layout, id, ratio),
-          }))}
-          onSelectListInstrument={selectListInstrument}
-          onEditWindow={id => setInstrumentEditor({ windowId: id, tab: 'instruments' })}
-          onSortList={sortList}
-          onListColumnsChange={updateListColumns}
-          onCoverageChange={handleCoverage}
-          onVisibleRangeChange={handleVisibleRange}
-          onVolumeVisibleChange={handleVolumeVisible}
-          onIndicatorChange={handleIndicator}
-          onSettlementVisibleChange={handleSettlementVisible}
-          onOpenInterestVisibleChange={handleOpenInterestVisible}
-          onPaneRatiosChange={handlePaneRatios}
-          onToolbarCollapsedChange={handleToolbarCollapsed}
-          onTradingSystemsChange={handleTradingSystems}
-          onTradingSystemRecalculate={handleTradingSystemRecalculate}
-          onReferencedSymbolsChange={updateReferencedSymbols}
-        />
+        {renderActiveWindowGroup()}
         <footer className="statusbar">
           <RuntimeEventBar/>
           {activeChart && <>

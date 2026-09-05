@@ -378,6 +378,14 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
   background: #0d1014;
 }
 .window-group.maximized > .instrument-window { width: 100%; height: 100%; }
+.popout-workstation { width: 100vw; height: 100vh; overflow: hidden; background: var(--theme-base); }
+.window-group.popout-host { width: 100%; height: 100%; }
+.window-group.popout-host > .instrument-window { width: 100%; height: 100%; }
+.popped-out-placeholder { width: 100%; height: 100%; display: grid; place-items: center; background: var(--theme-base); }
+.popped-out-placeholder button { max-width: 72%; height: 26px; display: flex; align-items: center; gap: 6px; padding: 0 8px; border: 1px solid transparent; border-radius: 3px; background: transparent; color: var(--theme-muted); font-size: 9px; }
+.popped-out-placeholder button:hover { border-color: var(--theme-border); color: var(--theme-text); background: var(--theme-hover); }
+.popped-out-placeholder span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.popout-missing { width: 100vw; height: 100vh; display: grid; place-items: center; color: var(--theme-muted); background: var(--theme-base); font-size: 11px; }
 .split-node { width: 100%; height: 100%; min-width: 0; min-height: 0; display: grid; overflow: hidden; }
 .split-pane { min-width: 0; min-height: 0; overflow: hidden; }
 .split-pane > .instrument-window { width: 100%; height: 100%; }
@@ -754,6 +762,8 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .analysis-workspace-history button.active { color: var(--theme-accent); background: var(--theme-accent-soft); }
 .analysis-workspace-body { min-height: 0; display: grid; grid-template-columns: minmax(260px, .9fr) minmax(300px, 1.1fr); }
 .analysis-workspace-body.chat-collapsed { grid-template-columns: minmax(260px, 1fr) 28px; }
+.window-group.popout-host .instrument-window-body.analysis-open > .chart-stage { width: calc(100% - min(760px, 62%)); }
+.window-group.popout-host .analysis-workspace-panel { width: min(760px, 62%); }
 .analysis-chat-expand { width: 28px; min-height: 0; padding: 7px 0; border: 0; border-left: 1px solid var(--theme-border); background: var(--theme-surface); color: var(--theme-muted); display: flex; justify-content: center; align-items: flex-start; }
 .trend-explanation-pane { min-width: 0; min-height: 0; display: grid; grid-template-rows: auto auto minmax(0, 1fr); overflow: hidden; border-right: 1px solid var(--theme-border); }
 .analysis-chat-pane { position: relative; min-width: 0; min-height: 0; display: grid; grid-template-rows: 30px auto minmax(0, 1fr) auto; overflow: hidden; }

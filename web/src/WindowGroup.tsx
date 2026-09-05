@@ -5,6 +5,7 @@ import { SplitLayout } from './SplitLayout'
 import type { ChartPaneRatios, Instrument, ListColumnKey, WindowGroupState } from './workspace'
 import type { ThemeDefinition } from './themeStore'
 import type { TradingSystemWindowState, TradingSystemWindowStates } from './tradingSystems'
+import { PanelTopClose } from 'lucide-react'
 
 type WindowGroupProps = {
   group: WindowGroupState
@@ -33,6 +34,11 @@ type WindowGroupProps = {
     refreshData: boolean,
   ) => Promise<void>
   onReferencedSymbolsChange: (id: string, symbols: string[]) => void
+  renderOnlyWindowId?: string
+  poppedOutHost?: boolean
+  onPopOutWindow: (id: string) => void
+  onDockWindow: (id: string) => void
+  onFocusPopoutWindow: (id: string) => void
 }
 
 export function WindowGroup({
@@ -57,10 +63,22 @@ export function WindowGroup({
   onTradingSystemsChange,
   onTradingSystemRecalculate,
   onReferencedSymbolsChange,
+  renderOnlyWindowId,
+  poppedOutHost = false,
+  onPopOutWindow,
+  onDockWindow,
+  onFocusPopoutWindow,
 }: WindowGroupProps) {
   const renderWindow = (windowId: string) => {
     const item = group.windows.find(window => window.id === windowId)
     if (!item) return null
+    if (!poppedOutHost && item.presentation.mode === 'popped-out') {
+      return <div className="popped-out-placeholder" data-window-id={item.id}>
+        <button title="显示已弹出窗口" aria-label={`显示已弹出的 ${item.title}`} onClick={() => onFocusPopoutWindow(item.id)}>
+          <PanelTopClose size={14}/><span>{item.type === 'chart' ? item.instrument.name : item.title}</span>
+        </button>
+      </div>
+    }
     if (item.type === 'instrument-list') {
       const incoming = group.attachments.filter(edge => edge.type === 'show-members' && edge.targetWindowId === item.id)
       const sourceEdge = incoming.find(edge => edge.sourceWindowId === item.memberSourceWindowId) ?? incoming[0]
@@ -74,11 +92,14 @@ export function WindowGroup({
           focused={group.focusedWindowId === item.id}
           maximized={group.maximizedWindowId === item.id}
           removable={group.windows.length > 1}
+          poppedOutHost={poppedOutHost}
           onFocus={() => onFocusWindow(item.id)}
           onToggleMaximize={() => onToggleMaximize(item.id)}
           onRemoveWindow={() => onRemoveWindow(item.id)}
           onSelect={instrument => onSelectListInstrument(item.id, instrument)}
           onEdit={() => onEditWindow(item.id)}
+          onPopOut={() => onPopOutWindow(item.id)}
+          onDock={() => onDockWindow(item.id)}
           derived={item.mode === 'attached'}
           memberSource={memberSource}
           onSortChange={sort => onSortList(item.id, sort)}
@@ -94,10 +115,13 @@ export function WindowGroup({
         focused={group.focusedWindowId === item.id}
         maximized={group.maximizedWindowId === item.id}
         removable={group.windows.length > 1}
+        poppedOutHost={poppedOutHost}
         onFocus={() => onFocusWindow(item.id)}
         onToggleMaximize={() => onToggleMaximize(item.id)}
         onRemove={() => onRemoveWindow(item.id)}
         onEdit={() => onEditWindow(item.id)}
+        onPopOut={() => onPopOutWindow(item.id)}
+        onDock={() => onDockWindow(item.id)}
         onCoverageChange={(rows, first, last) => onCoverageChange(item.id, item.instrument.symbol, rows, first, last)}
         onVisibleRangeChange={value => onVisibleRangeChange(item.id, value)}
         onVolumeVisibleChange={visible => onVolumeVisibleChange(item.id, visible)}
@@ -115,8 +139,10 @@ export function WindowGroup({
   }
 
   return (
-    <div className={group.maximizedWindowId ? 'window-group maximized' : 'window-group'} data-group-id={group.id}>
-      {group.maximizedWindowId
+    <div className={`${group.maximizedWindowId ? 'window-group maximized' : 'window-group'}${poppedOutHost ? ' popout-host' : ''}`} data-group-id={group.id}>
+      {renderOnlyWindowId
+        ? renderWindow(renderOnlyWindowId)
+        : group.maximizedWindowId
         ? renderWindow(group.maximizedWindowId)
         : <SplitLayout layout={group.layout} renderWindow={renderWindow} onRatioCommit={onResizeSplit}/>
       }

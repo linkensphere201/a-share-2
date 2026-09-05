@@ -20,6 +20,36 @@ import { createTradingSystemWindowStates } from './tradingSystems'
 afterEach(() => window.localStorage.clear())
 
 describe('workspace persistence', () => {
+  it('normalizes and persists native window presentation geometry', () => {
+    const state = createDefaultWorkspace()
+    state.groups[0].windows[0].presentation = {
+      mode: 'popped-out',
+      geometry: { x: 120, y: 80, width: 1100, height: 760 },
+    }
+    saveWorkspace(state)
+
+    expect(loadWorkspace().groups[0].windows[0].presentation).toEqual({
+      mode: 'popped-out',
+      geometry: { x: 120, y: 80, width: 1100, height: 760 },
+    })
+  })
+
+  it('defaults legacy windows to docked and rejects unusable geometry', () => {
+    const state = createDefaultWorkspace()
+    const stored = structuredClone(state) as unknown as {
+      groups: Array<{ windows: Array<Record<string, unknown>> }>
+    }
+    delete stored.groups[0].windows[0].presentation
+    stored.groups[0].windows[1].presentation = {
+      mode: 'popped-out', geometry: { x: 0, y: 0, width: 20, height: 20 },
+    }
+    window.localStorage.setItem(workspaceStorageKey, JSON.stringify(stored))
+
+    const restored = loadWorkspace().groups[0].windows
+    expect(restored[0].presentation).toEqual({ mode: 'docked' })
+    expect(restored[1].presentation).toEqual({ mode: 'popped-out' })
+  })
+
   it('appends a screener instrument only to writable manual lists and persists it', () => {
     const state = createDefaultWorkspace()
     const group = state.groups[0]
@@ -291,6 +321,7 @@ describe('workspace persistence', () => {
       type: 'chart',
       title: '表3',
       mode: 'detached',
+      presentation: { mode: 'docked' },
       instrument: instrument('510300.SH'),
       chart: { range: '1Y', priceMode: 'normal', volumeVisible: true, indicator: 'macd', settlementVisible: false, openInterestVisible: false, drawingToolbarCollapsed: false, tradingSystems: createTradingSystemWindowStates() },
     })
