@@ -311,6 +311,59 @@ def test_allowed_mcp_tool_events_are_persisted_and_replayed() -> None:
     store.close()
 
 
+def test_pre_mcp_conversation_migrates_to_versioned_thread_with_bounded_history() -> None:
+    class McpPolicyBridge(FakeCodexBridge):
+        def __init__(self) -> None:
+            super().__init__()
+            self.started = 0
+            self.resumed: list[str] = []
+
+        def thread_policy_version(self) -> str:
+            return "stockharness-embedded-mcp-v1"
+
+        def start_thread(self, _workdir: Path) -> str:
+            self.started += 1
+            return "mcp-enabled-thread"
+
+        def ensure_thread(self, thread_id: str, _workdir: Path) -> None:
+            self.resumed.append(thread_id)
+
+    store, run_id = _store_with_run()
+    with TestClient(create_app(store, codex_bridge=FakeCodexBridge())) as client:
+        conversation = client.post("/api/ai/conversations", json={
+            "symbol": "000001.SZ", "timeframe": "daily", "source_run_id": run_id,
+        }).json()
+        first = client.post(
+            f"/api/ai/conversations/{conversation['conversation_id']}/turns",
+            json={"content": "first question", "template_id": None},
+        ).json()
+        client.get(f"/api/ai/turns/{first['turn_id']}/events")
+
+    store.set_chat_codex_thread(
+        conversation["conversation_id"], "pre-mcp-thread", None
+    )
+    bridge = McpPolicyBridge()
+    with TestClient(create_app(store, codex_bridge=bridge)) as client:
+        second = client.post(
+            f"/api/ai/conversations/{conversation['conversation_id']}/turns",
+            json={"content": "compare another symbol", "template_id": None},
+        ).json()
+        events = client.get(f"/api/ai/turns/{second['turn_id']}/events").text
+        migrated = client.get(
+            f"/api/ai/conversations/{conversation['conversation_id']}"
+        ).json()
+
+    assert bridge.started == 1
+    assert bridge.resumed == []
+    assert migrated["codex_thread_id"] == "mcp-enabled-thread"
+    assert migrated["codex_policy_version"] == "stockharness-embedded-mcp-v1"
+    assert "权限策略已升级" in events
+    assert "<prior_conversation_history>" in bridge.prompts[0]
+    assert "first question" in bridge.prompts[0]
+    assert "compare another symbol" in bridge.prompts[0]
+    store.close()
+
+
 def test_pinned_codex_protocol_contract_matches_runtime_adapter() -> None:
     from stock_harness.codex_app_server import (
         ALLOWED_MCP_SERVER, ALLOWED_MCP_TOOLS, DENIED_ITEM_TYPES, SUPPORTED_VERSION,

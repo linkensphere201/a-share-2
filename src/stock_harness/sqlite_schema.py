@@ -428,6 +428,7 @@ CREATE TABLE IF NOT EXISTS ai_chat_conversations (
     source_run_id TEXT NOT NULL,
     title TEXT NOT NULL,
     codex_thread_id TEXT,
+    codex_policy_version TEXT,
     status TEXT NOT NULL CHECK (status IN ('active', 'archived')),
     created_at_ms INTEGER NOT NULL,
     updated_at_ms INTEGER NOT NULL,

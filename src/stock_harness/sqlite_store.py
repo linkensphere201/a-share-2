@@ -116,6 +116,7 @@ class SQLiteMarketDataStore(
         with self._writer_lock:
             self._connection.executescript(_SCHEMA)
         self._ensure_chat_conversation_sessions()
+        self._ensure_chat_policy_version()
         self._ensure_chat_template_version()
         self._futures_storage_ready = False
         self._futures_storage_error: str | None = None
@@ -146,14 +147,21 @@ class SQLiteMarketDataStore(
                         source_run_id TEXT NOT NULL,
                         title TEXT NOT NULL,
                         codex_thread_id TEXT,
+                        codex_policy_version TEXT,
                         status TEXT NOT NULL CHECK (status IN ('active', 'archived')),
                         created_at_ms INTEGER NOT NULL,
                         updated_at_ms INTEGER NOT NULL,
                         FOREIGN KEY (instrument_id) REFERENCES instruments(instrument_id),
                         FOREIGN KEY (source_run_id) REFERENCES generated_analysis_runs(run_id)
                     );
-                    INSERT INTO ai_chat_conversations_v2
-                    SELECT * FROM ai_chat_conversations;
+                    INSERT INTO ai_chat_conversations_v2(
+                        conversation_id, instrument_id, timeframe, source_run_id,
+                        title, codex_thread_id, codex_policy_version, status,
+                        created_at_ms, updated_at_ms
+                    )
+                    SELECT conversation_id, instrument_id, timeframe, source_run_id,
+                           title, codex_thread_id, NULL, status, created_at_ms, updated_at_ms
+                    FROM ai_chat_conversations;
                     DROP TABLE ai_chat_conversations;
                     ALTER TABLE ai_chat_conversations_v2 RENAME TO ai_chat_conversations;
                     CREATE INDEX ai_chat_conversations_latest
@@ -167,6 +175,19 @@ class SQLiteMarketDataStore(
                 raise
             finally:
                 self._connection.execute("PRAGMA foreign_keys = ON")
+
+    def _ensure_chat_policy_version(self) -> None:
+        with self._lock, self._writer_lock:
+            columns = {
+                str(row[1])
+                for row in self._connection.execute(
+                    "PRAGMA table_info(ai_chat_conversations)"
+                )
+            }
+            if "codex_policy_version" not in columns:
+                self._connection.execute(
+                    "ALTER TABLE ai_chat_conversations ADD COLUMN codex_policy_version TEXT"
+                )
 
     def _ensure_chat_template_version(self) -> None:
         with self._lock, self._writer_lock:

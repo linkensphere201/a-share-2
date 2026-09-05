@@ -186,6 +186,7 @@ class SQLiteChatStoreMixin:
                 SELECT conversation.conversation_id, instrument.symbol,
                        conversation.timeframe, conversation.source_run_id,
                        conversation.title, conversation.codex_thread_id,
+                       conversation.codex_policy_version,
                        conversation.status, conversation.created_at_ms,
                        conversation.updated_at_ms, run.as_of_date,
                        run.algorithm_version, run.config_version,
@@ -234,24 +235,31 @@ class SQLiteChatStoreMixin:
             "conversation_id": str(row[0]), "symbol": str(row[1]),
             "timeframe": str(row[2]), "source_run_id": str(row[3]),
             "title": str(row[4]), "codex_thread_id": row[5],
-            "status": str(row[6]), "created_at_ms": int(row[7]),
-            "updated_at_ms": int(row[8]), "as_of_date": _date_from_key(int(row[9])),
-            "algorithm_version": str(row[10]), "config_version": str(row[11]),
-            "completion_state": str(row[12]), "preview": row[13] is not None,
-            "input_digest": bytes(row[14]).hex(), "source_observed_at_ms": row[15],
+            "codex_policy_version": row[6],
+            "status": str(row[7]), "created_at_ms": int(row[8]),
+            "updated_at_ms": int(row[9]), "as_of_date": _date_from_key(int(row[10])),
+            "algorithm_version": str(row[11]), "config_version": str(row[12]),
+            "completion_state": str(row[13]), "preview": row[14] is not None,
+            "input_digest": bytes(row[15]).hex(), "source_observed_at_ms": row[16],
             "turns": turns,
         }
 
-    def set_chat_codex_thread(self, conversation_id: str, codex_thread_id: str) -> None:
+    def set_chat_codex_thread(
+        self,
+        conversation_id: str,
+        codex_thread_id: str,
+        policy_version: str | None = None,
+    ) -> None:
         with self._lock, self._transaction():
             self._connection.execute(
                 """
                 UPDATE ai_chat_conversations
-                SET codex_thread_id = ?, updated_at_ms = ?
+                SET codex_thread_id = ?, codex_policy_version = ?, updated_at_ms = ?
                 WHERE conversation_id = ?
                 """,
                 (
                     codex_thread_id,
+                    policy_version,
                     int(datetime.now(timezone.utc).timestamp() * 1000),
                     conversation_id,
                 ),

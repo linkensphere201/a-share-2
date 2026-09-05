@@ -30,6 +30,7 @@ DENIED_ITEM_TYPES = {
     "computerAction", "dynamicToolCall", "collabAgentToolCall",
 }
 ALLOWED_MCP_SERVER = "stock_harness_embedded"
+THREAD_POLICY_VERSION = "stockharness-embedded-mcp-v1"
 ALLOWED_MCP_TOOLS = frozenset({
     "stock_harness_health", "get_active_workspace", "search_instruments",
     "get_instrument", "list_custom_groups", "get_custom_group",
@@ -84,6 +85,7 @@ class CodexAppServerClient:
                 "transport": "stdio-jsonl", "sandbox": "read-only",
                 "approval_policy": "never", "mcp_enabled": True,
                 "mcp_server": ALLOWED_MCP_SERVER,
+                "thread_policy_version": THREAD_POLICY_VERSION,
                 "mcp_tools": sorted(ALLOWED_MCP_TOOLS),
                 "builtin_tools_disabled": list(DISABLED_FEATURES),
                 "tool_event_tripwire": True, "restart_count": self._restart_count,
@@ -97,11 +99,15 @@ class CodexAppServerClient:
                 "process_running": False, "transport": "stdio-jsonl",
                 "sandbox": "read-only", "approval_policy": "never",
                 "mcp_enabled": True, "mcp_server": ALLOWED_MCP_SERVER,
+                "thread_policy_version": THREAD_POLICY_VERSION,
                 "mcp_tools": sorted(ALLOWED_MCP_TOOLS),
                 "builtin_tools_disabled": list(DISABLED_FEATURES),
                 "tool_event_tripwire": True, "restart_count": self._restart_count,
                 "error": _bounded_error(error),
             }
+
+    def thread_policy_version(self) -> str:
+        return THREAD_POLICY_VERSION
 
     def start_thread(self, workdir: Path) -> str:
         self._ensure_started()
