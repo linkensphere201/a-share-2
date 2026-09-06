@@ -83,11 +83,25 @@ def create_analysis_router() -> APIRouter:
         return result
 
     @router.get("/api/signals/runs/{run_id}/items")
-    def list_signal_items(run_id: str, request: Request) -> dict[str, object]:
+    def list_signal_items(
+        run_id: str, request: Request,
+        limit: int = Query(default=5000, ge=1, le=5000),
+        offset: int = Query(default=0, ge=0),
+    ) -> dict[str, object]:
         selected_store = store(request)
         if selected_store.get_signal_review_run(run_id) is None:
             raise HTTPException(status_code=404, detail="signal review run not found")
-        return {"items": selected_store.list_signal_review_items(run_id)}
+        return {
+            "items": selected_store.list_signal_review_items(run_id, limit, offset),
+            "total": selected_store.count_signal_review_items(run_id),
+        }
+
+    @router.get("/api/signals/runs/{run_id}/items/{item_id}")
+    def get_signal_item(run_id: str, item_id: str, request: Request) -> dict[str, object]:
+        result = store(request).get_signal_review_item(run_id, item_id)
+        if result is None:
+            raise HTTPException(status_code=404, detail="signal review item not found")
+        return result
 
     @router.post("/api/screener/runs", status_code=status.HTTP_202_ACCEPTED)
     def start_screener_run(

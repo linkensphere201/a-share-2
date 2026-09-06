@@ -14,6 +14,7 @@ EXPECTED_API_OPERATIONS = {
     ("GET", "/api/signals/runs", "200"),
     ("GET", "/api/signals/runs/{run_id}", "200"),
     ("GET", "/api/signals/runs/{run_id}/items", "200"),
+    ("GET", "/api/signals/runs/{run_id}/items/{item_id}", "200"),
     ("GET", "/api/analysis/runs/{run_id}", "200"),
     ("GET", "/api/analysis/trend/{symbol}/runs", "200"),
     ("POST", "/api/analysis/trend/recalculate", "200"),

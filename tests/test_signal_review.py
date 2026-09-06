@@ -4,7 +4,10 @@ from fastapi.testclient import TestClient
 
 from stock_harness.api import create_app
 from stock_harness.models import Instrument, InstrumentKind
-from stock_harness.signal_review import WEEKLY_RECOGNITION_SIGNAL, _aggregate_assignments
+from stock_harness.signal_review import (
+    WEEKLY_RECOGNITION_SIGNAL, _aggregate_assignments, _assign_evidence_aliases,
+    _compare_items, _result_digest,
+)
 from stock_harness.sqlite_store import SQLiteMarketDataStore
 from stock_harness.chat_context import build_signal_chat_context
 
@@ -45,6 +48,80 @@ def test_signal_review_snapshots_preserve_revisions_and_diffs() -> None:
     items = store.list_signal_review_items(str(second["run_id"]))
     assert [item["symbol"] for item in items] == ["000001.SZ", "000002.SZ"]
     assert items[0]["evidence"][0]["alias"] == "S1"
+    store.close()
+
+
+def test_signal_review_only_compares_compatible_runs() -> None:
+    store = SQLiteMarketDataStore(":memory:")
+    compatible = store.create_signal_review_run(
+        signal_id=WEEKLY_RECOGNITION_SIGNAL,
+        definition_version="definition-v1", algorithm_version="algorithm-v1",
+        cadence="weekly", effective_date=date(2026, 9, 1), parameters={"window": 10},
+    )
+    store.complete_signal_review_run(
+        str(compatible["run_id"]), items=[], summary={}, input_digest="first",
+    )
+    incompatible = store.create_signal_review_run(
+        signal_id=WEEKLY_RECOGNITION_SIGNAL,
+        definition_version="definition-v1", algorithm_version="algorithm-v2",
+        cadence="weekly", effective_date=date(2026, 9, 2), parameters={"window": 10},
+    )
+    assert incompatible["prior_run_id"] is None
+    store.fail_signal_review_run(str(incompatible["run_id"]), "test")
+    changed_parameters = store.create_signal_review_run(
+        signal_id=WEEKLY_RECOGNITION_SIGNAL,
+        definition_version="definition-v1", algorithm_version="algorithm-v1",
+        cadence="weekly", effective_date=date(2026, 9, 3), parameters={"window": 20},
+    )
+    assert changed_parameters["prior_run_id"] is None
+    store.fail_signal_review_run(str(changed_parameters["run_id"]), "test")
+    next_compatible = store.create_signal_review_run(
+        signal_id=WEEKLY_RECOGNITION_SIGNAL,
+        definition_version="definition-v1", algorithm_version="algorithm-v1",
+        cadence="weekly", effective_date=date(2026, 9, 4), parameters={"window": 10},
+    )
+    assert next_compatible["prior_run_id"] == compatible["run_id"]
+    store.close()
+
+
+def test_removed_signal_evidence_is_realiased_after_current_items() -> None:
+    current = [_item("000001.SZ", "added")]
+    previous_item = _item("000002.SZ", "added")
+    result = _compare_items(current, {str(previous_item["item_key"]): previous_item})
+    _assign_evidence_aliases(result)
+    assert [evidence["alias"] for item in result for evidence in item["evidence"]] == [
+        "S1", "S2",
+    ]
+
+
+def test_signal_result_digest_covers_payload_and_evidence() -> None:
+    first = [_item("000001.SZ", "added")]
+    second = [_item("000001.SZ", "added")]
+    second[0]["evidence"][0]["payload"] = {"board_name": "Changed"}
+    assert _result_digest(first) != _result_digest(second)
+
+
+def test_signal_review_rejects_duplicate_evidence_aliases() -> None:
+    import pytest
+
+    store = SQLiteMarketDataStore(":memory:")
+    store.upsert_instruments([
+        Instrument("000001.SZ", "Alpha", InstrumentKind.STOCK, "SZ"),
+        Instrument("000002.SZ", "Beta", InstrumentKind.STOCK, "SZ"),
+    ])
+    run = store.create_signal_review_run(
+        signal_id=WEEKLY_RECOGNITION_SIGNAL,
+        definition_version="definition-v1", algorithm_version="algorithm-v1",
+        cadence="weekly", effective_date=date(2026, 9, 4), parameters={},
+    )
+    with pytest.raises(ValueError, match="aliases"):
+        duplicate = _item("000002.SZ", "added", 2)
+        duplicate["evidence"][0]["alias"] = "S1"
+        store.complete_signal_review_run(
+            str(run["run_id"]),
+            items=[_item("000001.SZ", "added"), duplicate],
+            summary={}, input_digest="duplicate",
+        )
     store.close()
 
 
@@ -92,7 +169,7 @@ def test_signal_chat_is_run_bound_and_snapshots_only_selected_items() -> None:
     persisted = store.get_chat_turn_context(str(turn["turn_id"]))
     assert persisted is not None
     assert persisted["context_kind"] == "signal_run"
-    assert persisted["evidence"][0]["code"] == "S1"
+    assert persisted["evidence"][0]["code"] == "S2"
     assert store.get_signal_review_run(str(run["run_id"]))["summary"] == {"note": "frozen"}
     store.close()
 
@@ -151,7 +228,7 @@ def _item(symbol: str, change_type: str, rank: int = 1) -> dict[str, object]:
         "score": 0.91, "confidence": 0.72,
         "payload": {"board_count": 2},
         "evidence": [{
-            "evidence_id": f"evidence-{symbol}", "alias": "S1",
+            "evidence_id": f"evidence-{symbol}", "alias": f"S{rank}",
             "evidence_type": "board-recognition-ranking",
             "payload": {"board_name": "CPO"},
         }],

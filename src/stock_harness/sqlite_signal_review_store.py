@@ -17,13 +17,17 @@ class SQLiteSignalReviewStoreMixin:
     ) -> dict[str, object]:
         run_id = str(uuid4())
         now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        parameters_json = json.dumps(parameters, ensure_ascii=False, sort_keys=True)
         with self._lock, self._transaction():
             prior = self._connection.execute(
                 """
                 SELECT run_id FROM signal_review_runs
-                WHERE signal_id = ? AND status = 'succeeded'
+                WHERE signal_id = ? AND definition_version = ?
+                  AND algorithm_version = ? AND cadence = ?
+                  AND parameters_json = ? AND status = 'succeeded'
                 ORDER BY effective_date DESC, revision DESC LIMIT 1
-                """, (signal_id,),
+                """, (signal_id, definition_version, algorithm_version, cadence,
+                      parameters_json),
             ).fetchone()
             revision = int(self._connection.execute(
                 "SELECT coalesce(max(revision), 0) + 1 FROM signal_review_runs "
@@ -40,7 +44,7 @@ class SQLiteSignalReviewStoreMixin:
                 """,
                 (run_id, signal_id, definition_version, algorithm_version, cadence,
                  _date_key(effective_date), revision, str(prior[0]) if prior else None,
-                 json.dumps(parameters, ensure_ascii=False, sort_keys=True), now_ms),
+                 parameters_json, now_ms),
             )
         return self.get_signal_review_run(run_id)  # type: ignore[return-value]
 
@@ -64,6 +68,12 @@ class SQLiteSignalReviewStoreMixin:
         now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
         counts = {name: sum(item["change_type"] == name for item in items)
                   for name in ("added", "retained", "removed")}
+        aliases = [
+            str(evidence["alias"])
+            for item in items for evidence in item.get("evidence", [])
+        ]
+        if not all(alias for alias in aliases) or len(aliases) != len(set(aliases)):
+            raise ValueError("signal evidence aliases must be non-empty and unique per run")
         with self._lock, self._transaction():
             status = self._connection.execute(
                 "SELECT status FROM signal_review_runs WHERE run_id = ?", (run_id,),
@@ -160,7 +170,17 @@ class SQLiteSignalReviewStoreMixin:
             ).fetchone()
         return _run_row(row) if row else None
 
-    def list_signal_review_items(self, run_id: str) -> list[dict[str, object]]:
+    def list_signal_review_items(
+        self, run_id: str, limit: int | None = None, offset: int = 0,
+    ) -> list[dict[str, object]]:
+        if limit is not None and limit <= 0:
+            raise ValueError("limit must be positive")
+        if offset < 0:
+            raise ValueError("offset must be non-negative")
+        paging = " LIMIT ? OFFSET ?" if limit is not None else ""
+        parameters: tuple[object, ...] = (
+            (run_id, limit, offset) if limit is not None else (run_id,)
+        )
         with self._lock:
             rows = self._connection.execute(
                 """
@@ -172,15 +192,19 @@ class SQLiteSignalReviewStoreMixin:
                 JOIN instruments AS instrument USING (instrument_id)
                 WHERE item.run_id = ?
                 ORDER BY item.active DESC, item.profile, item.rank, instrument.symbol
-                """, (run_id,),
+                """ + paging, parameters,
             ).fetchall()
+            item_ids = [str(row[0]) for row in rows]
+            placeholders = ",".join("?" for _ in item_ids)
             evidence_rows = self._connection.execute(
-                """
+                f"""
                 SELECT item_id, evidence_id, alias, evidence_type, source_run_id,
                        source_item_id, payload_json
-                FROM signal_review_evidence WHERE run_id = ? ORDER BY item_id, position
-                """, (run_id,),
-            ).fetchall()
+                FROM signal_review_evidence
+                WHERE run_id = ? AND item_id IN ({placeholders})
+                ORDER BY item_id, position
+                """, (run_id, *item_ids),
+            ).fetchall() if item_ids else []
         evidence: dict[str, list[dict[str, object]]] = {}
         for row in evidence_rows:
             evidence.setdefault(str(row[0]), []).append({
@@ -196,6 +220,51 @@ class SQLiteSignalReviewStoreMixin:
             "score": float(row[10]), "confidence": float(row[11]),
             "payload": json.loads(str(row[12])), "evidence": evidence.get(str(row[0]), []),
         } for row in rows]
+
+    def count_signal_review_items(self, run_id: str) -> int:
+        with self._lock:
+            return int(self._connection.execute(
+                "SELECT count(*) FROM signal_review_items WHERE run_id = ?", (run_id,),
+            ).fetchone()[0])
+
+    def get_signal_review_item(
+        self, run_id: str, item_id: str,
+    ) -> dict[str, object] | None:
+        with self._lock:
+            row = self._connection.execute(
+                """
+                SELECT item.item_id, item.item_key, item.rank, instrument.symbol,
+                       instrument.name, instrument.kind, instrument.exchange,
+                       item.profile, item.change_type, item.active, item.score,
+                       item.confidence, item.payload_json
+                FROM signal_review_items AS item
+                JOIN instruments AS instrument USING (instrument_id)
+                WHERE item.run_id = ? AND item.item_id = ?
+                """, (run_id, item_id),
+            ).fetchone()
+            if row is None:
+                return None
+            evidence_rows = self._connection.execute(
+                """
+                SELECT evidence_id, alias, evidence_type, source_run_id,
+                       source_item_id, payload_json
+                FROM signal_review_evidence
+                WHERE run_id = ? AND item_id = ? ORDER BY position
+                """, (run_id, item_id),
+            ).fetchall()
+        return {
+            "item_id": str(row[0]), "item_key": str(row[1]), "rank": int(row[2]),
+            "symbol": str(row[3]), "name": str(row[4]), "kind": str(row[5]),
+            "exchange": str(row[6]), "profile": str(row[7]),
+            "change_type": str(row[8]), "active": bool(row[9]),
+            "score": float(row[10]), "confidence": float(row[11]),
+            "payload": json.loads(str(row[12])),
+            "evidence": [{
+                "evidence_id": str(value[0]), "alias": str(value[1]),
+                "evidence_type": str(value[2]), "source_run_id": value[3],
+                "source_item_id": value[4], "payload": json.loads(str(value[5])),
+            } for value in evidence_rows],
+        }
 
     def get_prior_signal_review_items(self, run_id: str) -> list[dict[str, object]]:
         with self._lock:

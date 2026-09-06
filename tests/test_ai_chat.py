@@ -278,6 +278,45 @@ def test_typed_chat_context_migration_preserves_legacy_conversation(tmp_path: Pa
     migrated.close()
 
 
+def test_legacy_chat_session_migration_adds_missing_policy_column(tmp_path: Path) -> None:
+    database = tmp_path / "legacy-chat-no-policy.sqlite3"
+    store = SQLiteMarketDataStore(database)
+    store.close()
+
+    connection = sqlite3.connect(database)
+    connection.execute("PRAGMA foreign_keys = OFF")
+    connection.executescript("""
+        CREATE TABLE legacy_ai_chat_conversations (
+            conversation_id TEXT PRIMARY KEY,
+            instrument_id INTEGER NOT NULL,
+            timeframe TEXT NOT NULL,
+            source_run_id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            codex_thread_id TEXT,
+            status TEXT NOT NULL,
+            created_at_ms INTEGER NOT NULL,
+            updated_at_ms INTEGER NOT NULL,
+            UNIQUE (instrument_id, timeframe, source_run_id)
+        );
+        DROP TABLE ai_chat_conversations;
+        ALTER TABLE legacy_ai_chat_conversations RENAME TO ai_chat_conversations;
+    """)
+    connection.close()
+
+    migrated = SQLiteMarketDataStore(database)
+    columns = {
+        str(row[1]) for row in migrated._connection.execute(
+            "PRAGMA table_info(ai_chat_conversations)"
+        )
+    }
+    table_sql = str(migrated._connection.execute(
+        "SELECT sql FROM sqlite_master WHERE name = 'ai_chat_conversations'"
+    ).fetchone()[0])
+    assert "codex_policy_version" in columns
+    assert "UNIQUE (instrument_id, timeframe, source_run_id)" not in table_sql
+    migrated.close()
+
+
 def test_chat_rejects_cross_symbol_run_binding_and_unknown_template() -> None:
     store, run_id = _store_with_run()
     bridge = FakeCodexBridge()

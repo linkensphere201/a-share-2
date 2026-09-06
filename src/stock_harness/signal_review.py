@@ -73,17 +73,7 @@ class SignalReviewService:
                 algorithm_version=ALGORITHM_VERSION,
                 cadence="weekly",
                 effective_date=cutoff,
-                parameters={
-                    "lookback_years": 10,
-                    "recent_rank": 1,
-                    "historical_rank_limit": HISTORICAL_LIMIT,
-                    "historical_gate": {
-                        "has_rank_one": True, "minimum_score": 0.80,
-                        "minimum_confidence": 0.60, "minimum_board_count": 2,
-                    },
-                    "manual_trigger": True,
-                    "membership_semantics": "current-membership-snapshot",
-                },
+                parameters=_run_parameters(),
             )
             self._thread = threading.Thread(
                 target=self._run_guarded,
@@ -100,7 +90,7 @@ class SignalReviewService:
             signal_id=signal_id, definition_version=DEFINITION_VERSION,
             algorithm_version=ALGORITHM_VERSION, cadence="weekly",
             effective_date=effective_date,
-            parameters={"lookback_years": 10, "manual_trigger": True},
+            parameters=_run_parameters(),
         )
         self._execute(str(run["run_id"]), effective_date)
         return self._store.get_signal_review_run(str(run["run_id"]))  # type: ignore[return-value]
@@ -190,11 +180,8 @@ class SignalReviewService:
             if bool(item["active"])
         }
         items = _compare_items(current, previous)
-        digest = hashlib.sha256(json.dumps(
-            [{"key": item["item_key"], "score": item["score"]}
-             for item in items if item["active"]],
-            ensure_ascii=False, sort_keys=True,
-        ).encode("utf-8")).hexdigest()
+        _assign_evidence_aliases(items)
+        digest = _result_digest(items)
         summary = {
             "board_count": len(boards), "stock_count": len(stocks),
             "ranked_board_count": ranked_boards,
@@ -248,6 +235,20 @@ def _classification(board: dict[str, object]) -> str:
     return str(board.get("signal_classification") or "concept")
 
 
+def _run_parameters() -> dict[str, object]:
+    return {
+        "lookback_years": 10,
+        "recent_rank": 1,
+        "historical_rank_limit": HISTORICAL_LIMIT,
+        "historical_gate": {
+            "has_rank_one": True, "minimum_score": 0.80,
+            "minimum_confidence": 0.60, "minimum_board_count": 2,
+        },
+        "manual_trigger": True,
+        "membership_semantics": "current-membership-snapshot",
+    }
+
+
 def _aggregate_assignments(assignments: list[dict[str, object]]) -> list[dict[str, object]]:
     grouped: dict[tuple[str, str], list[dict[str, object]]] = defaultdict(list)
     for item in assignments:
@@ -295,13 +296,10 @@ def _aggregate_assignments(assignments: list[dict[str, object]]) -> list[dict[st
         -float(item["score"]), -float(item["confidence"]), str(item["symbol"]),
     ))
     counters = defaultdict(int)
-    evidence_sequence = 0
     for item in selected:
         counters[str(item["profile"])] += 1
         item["rank"] = counters[str(item["profile"])]
-        for evidence in item["evidence"]:
-            evidence_sequence += 1
-            evidence["alias"] = f"S{evidence_sequence}"
+    _assign_evidence_aliases(selected)
     return selected
 
 
@@ -327,3 +325,32 @@ def _compare_items(
             "payload": item["payload"], "evidence": item["evidence"],
         })
     return result
+
+
+def _assign_evidence_aliases(items: list[dict[str, object]]) -> None:
+    sequence = 0
+    for item in items:
+        for evidence in item.get("evidence", []):
+            sequence += 1
+            evidence["alias"] = f"S{sequence}"
+
+
+def _result_digest(items: list[dict[str, object]]) -> str:
+    normalized = []
+    for item in items:
+        if not bool(item["active"]):
+            continue
+        normalized.append({
+            "item_key": item["item_key"], "rank": item["rank"],
+            "score": item["score"], "confidence": item["confidence"],
+            "payload": item.get("payload", {}),
+            "evidence": [{
+                "evidence_type": evidence["evidence_type"],
+                "source_run_id": evidence.get("source_run_id"),
+                "source_item_id": evidence.get("source_item_id"),
+                "payload": evidence.get("payload", {}),
+            } for evidence in item.get("evidence", [])],
+        })
+    return hashlib.sha256(json.dumps(
+        normalized, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+    ).encode("utf-8")).hexdigest()

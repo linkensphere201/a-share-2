@@ -122,13 +122,15 @@ def build_signal_chat_context(
     run = store.get_signal_review_run(run_id)
     if run is None or run["status"] != "succeeded":
         raise ValueError("signal chat source run does not exist or did not succeed")
-    all_items = store.list_signal_review_items(run_id)
-    requested = set(selected_item_ids or [])
+    requested = list(dict.fromkeys(selected_item_ids or []))
     if len(requested) > 20:
         raise ValueError("signal chat accepts at most 20 selected items")
-    if requested - {str(item["item_id"]) for item in all_items}:
-        raise ValueError("selected signal items do not belong to the source run")
-    items = [item for item in all_items if str(item["item_id"]) in requested]
+    items = []
+    for item_id in requested:
+        item = store.get_signal_review_item(run_id, item_id)
+        if item is None:
+            raise ValueError("selected signal items do not belong to the source run")
+        items.append(item)
     evidence: list[dict[str, object]] = []
     selected: list[dict[str, object]] = []
     for item in items:

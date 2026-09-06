@@ -123,10 +123,10 @@ class SQLiteMarketDataStore(
         self._configure()
         with self._writer_lock:
             self._connection.executescript(_SCHEMA)
+        self._ensure_chat_policy_version()
         self._ensure_chat_conversation_sessions()
         self._ensure_chat_typed_contexts()
         self._ensure_chat_context_index()
-        self._ensure_chat_policy_version()
         self._ensure_chat_template_version()
         self._futures_storage_ready = False
         self._futures_storage_error: str | None = None
@@ -171,7 +171,8 @@ class SQLiteMarketDataStore(
                         created_at_ms, updated_at_ms
                     )
                     SELECT conversation_id, instrument_id, timeframe, source_run_id,
-                           title, codex_thread_id, NULL, status, created_at_ms, updated_at_ms
+                           title, codex_thread_id, codex_policy_version, status,
+                           created_at_ms, updated_at_ms
                     FROM ai_chat_conversations;
                     DROP TABLE ai_chat_conversations;
                     ALTER TABLE ai_chat_conversations_v2 RENAME TO ai_chat_conversations;

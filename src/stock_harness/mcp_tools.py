@@ -188,10 +188,13 @@ class StockHarnessMcpTools:
 
         def load() -> dict[str, object]:
             run = self.api.get(f"/api/signals/runs/{normalized}")
-            payload = self.api.get(f"/api/signals/runs/{normalized}/items")
+            payload = self.api.get(
+                f"/api/signals/runs/{normalized}/items", [("limit", max_items)]
+            )
             items = _items(payload)
-            return {**run, "items": items[:max_items], "items_total": len(items),
-                    "items_truncated": len(items) > max_items}
+            total = int(payload.get("total", len(items)))
+            return {**run, "items": items, "items_total": total,
+                    "items_truncated": total > len(items)}
 
         return self._execute("get_signal_run", load)
 
@@ -203,14 +206,9 @@ class StockHarnessMcpTools:
 
         def load() -> dict[str, object]:
             run = self.api.get(f"/api/signals/runs/{normalized_run}")
-            items = _items(self.api.get(f"/api/signals/runs/{normalized_run}/items"))
-            selected = next(
-                (item for item in items if str(item.get("item_id")) == normalized_item), None
+            selected = self.api.get(
+                f"/api/signals/runs/{normalized_run}/items/{normalized_item}"
             )
-            if selected is None:
-                raise StockHarnessApiError(
-                    "not_found", "signal item was not found in the requested run", status=404
-                )
             return {
                 "run_id": normalized_run, "signal_id": run.get("signal_id"),
                 "effective_date": run.get("effective_date"), "revision": run.get("revision"),

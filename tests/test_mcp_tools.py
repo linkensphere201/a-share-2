@@ -380,9 +380,11 @@ def test_signal_tools_keep_runs_and_items_bounded():
         "/api/signals/definitions": {"items": [{"signal_id": "weekly"}]},
         "/api/signals/runs": {"items": [{"run_id": "run-1"}]},
         "/api/signals/runs/run-1": {"run_id": "run-1", "status": "succeeded"},
-        "/api/signals/runs/run-1/items": {"items": [
-            {"item_id": f"item-{index}"} for index in range(3)
-        ]},
+        "/api/signals/runs/run-1/items": {
+            "items": [{"item_id": f"item-{index}"} for index in range(2)],
+            "total": 3,
+        },
+        "/api/signals/runs/run-1/items/item-2": {"item_id": "item-2"},
     })
     tools = StockHarnessMcpTools(api)
 
@@ -394,5 +396,7 @@ def test_signal_tools_keep_runs_and_items_bounded():
     assert run["items_truncated"] is True
     item = tools.get_signal_item("run-1", "item-2")["data"]
     assert item["item"]["item_id"] == "item-2"
+    assert ("/api/signals/runs/run-1/items", [("limit", 2)]) in api.calls
+    assert ("/api/signals/runs/run-1/items/item-2", []) in api.calls
     with pytest.raises(ValueError, match="max_items"):
         tools.get_signal_run("run-1", max_items=201)
