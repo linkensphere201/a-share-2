@@ -9,6 +9,7 @@ import logging
 from pathlib import Path
 import os
 import time
+import webbrowser
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from stock_harness.api_analysis_routes import create_analysis_router
 from stock_harness.api_chat_routes import create_chat_router
 from stock_harness.api_market_routes import create_market_router
+from stock_harness.api_learning_routes import create_learning_router
 from stock_harness.api_models import (
     AiAnalysisFrameworkInput,
     AiAnalysisReferenceInput,
@@ -56,6 +58,7 @@ from stock_harness.intraday import IntradayQuoteService
 from stock_harness.models import AdjustmentFactor, StockTradeStatus
 from stock_harness.screener import ScreenerService
 from stock_harness.signal_review import SignalReviewService
+from stock_harness.learning_library import LearningLibrary
 from stock_harness.sqlite_store import SQLiteMarketDataStore
 from stock_harness.workspace_context import WorkspaceContextService
 
@@ -94,6 +97,8 @@ def create_app(
         [list[str], date, date], list[StockTradeStatus]
     ] | None = None,
     codex_bridge: CodexBridge | None = None,
+    learning_root: Path = Path("data/trading-system-learning"),
+    learning_browser_opener: Callable[[str], bool] = webbrowser.open_new_tab,
 ) -> FastAPI:
     """Create the API while preserving injectable services for tests and desktop."""
     owned_store = store is None
@@ -146,6 +151,7 @@ def create_app(
         custom_index_factor_loader=custom_index_factor_loader,
         custom_index_status_loader=custom_index_status_loader,
     )
+    app.state.learning_library = LearningLibrary(learning_root)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -184,6 +190,9 @@ def create_app(
     app.include_router(create_chat_router())
     app.include_router(create_operations_router())
     app.include_router(create_market_router())
+    app.include_router(create_learning_router(
+        app.state.learning_library, learning_browser_opener
+    ))
 
     if web_dist is not None:
         index_file = web_dist / "index.html"

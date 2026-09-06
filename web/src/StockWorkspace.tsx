@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Activity, BarChart3, Filter, FolderKanban, Gauge, LayoutGrid, MessageSquare, Palette, PanelRightClose, Radar, RefreshCw, Settings2 } from 'lucide-react'
+import { Activity, BarChart3, BookOpen, Filter, FolderKanban, Gauge, LayoutGrid, MessageSquare, Palette, PanelRightClose, Radar, RefreshCw, Settings2 } from 'lucide-react'
 import type { PriceMode, VisibleRange } from './chartTypes'
 import { InstrumentEditor } from './InstrumentEditor'
 import { CustomIndexManager } from './CustomIndexManager'
@@ -7,6 +7,7 @@ import { DailyNote } from './DailyNote'
 import { IntradaySubscriptionCoordinator, sendIntradaySubscription } from './intradaySubscription'
 import { logInfo, logWarning } from './eventLogger'
 import { LayoutManager } from './LayoutManager'
+import { openDefaultLearningSystem } from './learningClient'
 import { MarketBoardBadge } from './MarketBoardBadge'
 import { ScreenerWorkspace, type ScreenerTargetList } from './ScreenerWorkspace'
 import { SignalReviewWorkspace } from './SignalReviewWorkspace'
@@ -71,6 +72,7 @@ export function StockWorkspace() {
   const [customIndexManagerOpen, setCustomIndexManagerOpen] = useState(false)
   const [screenerOpen, setScreenerOpen] = useState(false)
   const [signalReviewOpen, setSignalReviewOpen] = useState(false)
+  const [learningOpening, setLearningOpening] = useState(false)
   const [instrumentEditor, setInstrumentEditor] = useState<{ windowId?: string; tab: 'instruments' | 'groups' }>()
   const [resolvedWindowSymbols, setResolvedWindowSymbols] = useState<Record<string, string[]>>({})
   const [drawingRevision, setDrawingRevision] = useState(0)
@@ -99,6 +101,22 @@ export function StockWorkspace() {
     () => buildWorkspaceContext(activeGroup, resolvedWindowSymbols),
     [activeGroup, resolvedWindowSymbols, drawingRevision],
   )
+
+  const openLearning = useCallback(async () => {
+    if (learningOpening) return
+    setLearningOpening(true)
+    try {
+      const system = await openDefaultLearningSystem()
+      logInfo('learning', '交易系统教程已在浏览器打开', {
+        system_id: system.system_id,
+        title: system.title,
+      })
+    } catch (error) {
+      logWarning('learning', '交易系统教程打开失败', { error })
+    } finally {
+      setLearningOpening(false)
+    }
+  }, [learningOpening])
 
   useEffect(() => {
     if (isPopoutHost) return
@@ -593,6 +611,7 @@ export function StockWorkspace() {
           <div className="toolbar-actions">
             <button className="command-button" title="选股器" aria-label="选股器" onClick={() => setScreenerOpen(true)}><Filter size={15}/>选股器</button>
             <button className="command-button" title="信号复盘" aria-label="信号复盘" onClick={() => setSignalReviewOpen(true)}><Radar size={15}/>信号复盘</button>
+            <button className="command-button" title="交易系统学习" aria-label="交易系统学习" disabled={learningOpening} onClick={() => void openLearning()}><BookOpen size={15}/>{learningOpening ? '正在打开' : '交易系统学习'}</button>
             <select aria-label="切换窗口组" value={activeGroup.id} onChange={event => {
               const groupId = event.target.value
               logInfo('workspace', '切换活动窗体组', { from: activeGroup.id, to: groupId })

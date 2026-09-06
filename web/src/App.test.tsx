@@ -106,6 +106,7 @@ describe('StockWorkspace', () => {
     expect(within(chartWindow).queryByText('表2')).toBeNull()
     expect(screen.getByText('2/8')).toBeTruthy()
     expect(screen.getByRole('button', { name: '刷新应用' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '交易系统学习' })).toBeTruthy()
     expect(screen.getByRole('combobox', { name: '主题配色' }).querySelectorAll('option')).toHaveLength(20)
     expect(screen.getByRole('button', { name: '编辑 表1 标的' })).toBeTruthy()
     expect(screen.queryByRole('button', { name: '编辑 CPO概念 标的' })).toBeNull()

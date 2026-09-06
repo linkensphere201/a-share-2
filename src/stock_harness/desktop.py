@@ -173,6 +173,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         custom_index_factor_loader=load_custom_index_factors,
         custom_index_status_loader=load_custom_index_statuses,
         codex_bridge=CodexAppServerClient(mcp_api_url=url),
+        learning_root=Path(settings.database_path).resolve().parent / "trading-system-learning",
     )
     server = DesktopServer(app, args.host, port)
     try:
