@@ -216,3 +216,7 @@ class ScreenerRunInput(BaseModel):
     )
     max_results: int = Field(default=200, ge=1, le=500)
     as_of_date: date | None = None
+
+
+class SignalReviewRunInput(BaseModel):
+    effective_date: date | None = None

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Activity, BarChart3, Filter, FolderKanban, Gauge, LayoutGrid, MessageSquare, Palette, PanelRightClose, RefreshCw, Settings2 } from 'lucide-react'
+import { Activity, BarChart3, Filter, FolderKanban, Gauge, LayoutGrid, MessageSquare, Palette, PanelRightClose, Radar, RefreshCw, Settings2 } from 'lucide-react'
 import type { PriceMode, VisibleRange } from './chartTypes'
 import { InstrumentEditor } from './InstrumentEditor'
 import { CustomIndexManager } from './CustomIndexManager'
@@ -9,6 +9,7 @@ import { logInfo, logWarning } from './eventLogger'
 import { LayoutManager } from './LayoutManager'
 import { MarketBoardBadge } from './MarketBoardBadge'
 import { ScreenerWorkspace, type ScreenerTargetList } from './ScreenerWorkspace'
+import { SignalReviewWorkspace } from './SignalReviewWorkspace'
 import type { ScreenerCandidate } from './screenerClient'
 import { RuntimeEventBar } from './RuntimeEventBar'
 import { subscribeDrawingStore } from './drawingStore'
@@ -69,6 +70,7 @@ export function StockWorkspace() {
   const [layoutManagerOpen, setLayoutManagerOpen] = useState(false)
   const [customIndexManagerOpen, setCustomIndexManagerOpen] = useState(false)
   const [screenerOpen, setScreenerOpen] = useState(false)
+  const [signalReviewOpen, setSignalReviewOpen] = useState(false)
   const [instrumentEditor, setInstrumentEditor] = useState<{ windowId?: string; tab: 'instruments' | 'groups' }>()
   const [resolvedWindowSymbols, setResolvedWindowSymbols] = useState<Record<string, string[]>>({})
   const [drawingRevision, setDrawingRevision] = useState(0)
@@ -571,6 +573,9 @@ export function StockWorkspace() {
       onAddCandidateToList={addScreenerCandidateToList}
     />
   }
+  if (signalReviewOpen) {
+    return <SignalReviewWorkspace theme={theme} onClose={() => setSignalReviewOpen(false)}/>
+  }
 
   return (
     <main className={chatOpen ? 'workstation' : 'workstation chat-closed'}>
@@ -587,6 +592,7 @@ export function StockWorkspace() {
           </div>
           <div className="toolbar-actions">
             <button className="command-button" title="选股器" aria-label="选股器" onClick={() => setScreenerOpen(true)}><Filter size={15}/>选股器</button>
+            <button className="command-button" title="信号复盘" aria-label="信号复盘" onClick={() => setSignalReviewOpen(true)}><Radar size={15}/>信号复盘</button>
             <select aria-label="切换窗口组" value={activeGroup.id} onChange={event => {
               const groupId = event.target.value
               logInfo('workspace', '切换活动窗体组', { from: activeGroup.id, to: groupId })

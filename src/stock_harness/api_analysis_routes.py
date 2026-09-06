@@ -13,6 +13,7 @@ from stock_harness.analysis_results import AnalysisNamespace
 from stock_harness.api_models import (
     AiAnalysisReportInput,
     ScreenerRunInput,
+    SignalReviewRunInput,
     TrendAnalysisInput,
     TrendReviewCreateInput,
     TrendReviewUpdateInput,
@@ -26,6 +27,7 @@ from stock_harness.api_support import (
 )
 from stock_harness.major_descending_lines import MajorLinePeriod, MajorLineState
 from stock_harness.screener import ScreenerBusyError
+from stock_harness.signal_review import SignalReviewBusyError
 from stock_harness.trend_analysis import TrendAnalysisService
 from stock_harness.trend_review_set import has_scoreable_expected_labels
 from stock_harness.trend_reviews import (
@@ -46,6 +48,46 @@ def create_analysis_router() -> APIRouter:
     @router.get("/api/screener/strategies")
     def screener_strategies(request: Request) -> dict[str, object]:
         return {"items": request.app.state.screener.strategies()}
+
+    @router.get("/api/signals/definitions")
+    def signal_definitions(request: Request) -> dict[str, object]:
+        return {"items": request.app.state.signal_review.definitions()}
+
+    @router.post(
+        "/api/signals/{signal_id}/runs", status_code=status.HTTP_202_ACCEPTED
+    )
+    def start_signal_run(
+        signal_id: str, payload: SignalReviewRunInput, request: Request,
+    ) -> dict[str, object]:
+        try:
+            return request.app.state.signal_review.start_run(
+                signal_id, payload.effective_date
+            )
+        except SignalReviewBusyError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @router.get("/api/signals/runs")
+    def list_signal_runs(
+        request: Request, signal_id: str | None = None,
+        limit: int = Query(default=50, ge=1, le=100),
+    ) -> dict[str, object]:
+        return {"items": store(request).list_signal_review_runs(signal_id, limit)}
+
+    @router.get("/api/signals/runs/{run_id}")
+    def get_signal_run(run_id: str, request: Request) -> dict[str, object]:
+        result = store(request).get_signal_review_run(run_id)
+        if result is None:
+            raise HTTPException(status_code=404, detail="signal review run not found")
+        return result
+
+    @router.get("/api/signals/runs/{run_id}/items")
+    def list_signal_items(run_id: str, request: Request) -> dict[str, object]:
+        selected_store = store(request)
+        if selected_store.get_signal_review_run(run_id) is None:
+            raise HTTPException(status_code=404, detail="signal review run not found")
+        return {"items": selected_store.list_signal_review_items(run_id)}
 
     @router.post("/api/screener/runs", status_code=status.HTTP_202_ACCEPTED)
     def start_screener_run(

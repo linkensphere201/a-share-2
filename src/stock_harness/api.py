@@ -38,6 +38,7 @@ from stock_harness.api_models import (
     IntradayRefreshInput,
     IntradaySubscriptionInput,
     ScreenerRunInput,
+    SignalReviewRunInput,
     TrendAnalysisInput,
     TrendReviewCreateInput,
     TrendReviewLabelInput,
@@ -54,6 +55,7 @@ from stock_harness.futures_intraday import FuturesProvisionalService
 from stock_harness.intraday import IntradayQuoteService
 from stock_harness.models import AdjustmentFactor, StockTradeStatus
 from stock_harness.screener import ScreenerService
+from stock_harness.signal_review import SignalReviewService
 from stock_harness.sqlite_store import SQLiteMarketDataStore
 from stock_harness.workspace_context import WorkspaceContextService
 
@@ -68,7 +70,7 @@ __all__ = [
     "CustomGroupMemberInput", "CustomGroupRole", "CustomIndexInput",
     "InstrumentTagsInput",
     "CustomIndexMemberInput", "FrontendEventInput", "IntradayRefreshInput",
-    "IntradaySubscriptionInput", "ScreenerRunInput", "TrendAnalysisInput",
+    "IntradaySubscriptionInput", "ScreenerRunInput", "SignalReviewRunInput", "TrendAnalysisInput",
     "TrendReviewCreateInput", "TrendReviewLabelInput", "TrendReviewSourceInput",
     "TrendReviewUpdateInput", "app", "create_app",
 ]
@@ -112,6 +114,7 @@ def create_app(
         else:
             app.state.store = store
         app.state.screener = ScreenerService(app.state.store)
+        app.state.signal_review = SignalReviewService(app.state.store)
         bridge = codex_bridge or CodexAppServerClient(
             mcp_api_url=os.environ.get(
                 "STOCK_HARNESS_EMBEDDED_MCP_API_URL", "http://127.0.0.1:8765"

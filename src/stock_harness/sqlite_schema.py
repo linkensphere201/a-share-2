@@ -795,6 +795,73 @@ CREATE TABLE IF NOT EXISTS screener_candidates (
 CREATE INDEX IF NOT EXISTS screener_candidates_rank
 ON screener_candidates(run_id, rank);
 
+CREATE TABLE IF NOT EXISTS signal_review_runs (
+    run_id TEXT PRIMARY KEY,
+    signal_id TEXT NOT NULL,
+    definition_version TEXT NOT NULL,
+    algorithm_version TEXT NOT NULL,
+    cadence TEXT NOT NULL,
+    effective_date INTEGER NOT NULL,
+    revision INTEGER NOT NULL CHECK (revision > 0),
+    prior_run_id TEXT,
+    parameters_json TEXT NOT NULL,
+    input_digest TEXT,
+    status TEXT NOT NULL CHECK (status IN ('running', 'succeeded', 'failed')),
+    phase TEXT NOT NULL,
+    work_total INTEGER NOT NULL DEFAULT 0,
+    work_done INTEGER NOT NULL DEFAULT 0,
+    item_count INTEGER NOT NULL DEFAULT 0,
+    added_count INTEGER NOT NULL DEFAULT 0,
+    retained_count INTEGER NOT NULL DEFAULT 0,
+    removed_count INTEGER NOT NULL DEFAULT 0,
+    summary_json TEXT NOT NULL DEFAULT '{}',
+    error TEXT,
+    started_at_ms INTEGER NOT NULL,
+    completed_at_ms INTEGER,
+    UNIQUE (signal_id, effective_date, revision),
+    FOREIGN KEY (prior_run_id) REFERENCES signal_review_runs(run_id)
+);
+
+CREATE INDEX IF NOT EXISTS signal_review_runs_latest
+ON signal_review_runs(signal_id, started_at_ms DESC);
+
+CREATE TABLE IF NOT EXISTS signal_review_items (
+    run_id TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    item_key TEXT NOT NULL,
+    rank INTEGER NOT NULL CHECK (rank > 0),
+    instrument_id INTEGER NOT NULL,
+    profile TEXT NOT NULL,
+    change_type TEXT NOT NULL CHECK (change_type IN ('added', 'retained', 'removed')),
+    active INTEGER NOT NULL CHECK (active IN (0, 1)),
+    score REAL NOT NULL,
+    confidence REAL NOT NULL,
+    payload_json TEXT NOT NULL,
+    PRIMARY KEY (run_id, item_id),
+    UNIQUE (run_id, item_key),
+    FOREIGN KEY (run_id) REFERENCES signal_review_runs(run_id) ON DELETE CASCADE,
+    FOREIGN KEY (instrument_id) REFERENCES instruments(instrument_id)
+) WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS signal_review_items_rank
+ON signal_review_items(run_id, profile, active DESC, rank);
+
+CREATE TABLE IF NOT EXISTS signal_review_evidence (
+    run_id TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    evidence_id TEXT NOT NULL,
+    alias TEXT NOT NULL,
+    evidence_type TEXT NOT NULL,
+    source_run_id TEXT,
+    source_item_id TEXT,
+    payload_json TEXT NOT NULL,
+    position INTEGER NOT NULL CHECK (position > 0),
+    PRIMARY KEY (run_id, item_id, evidence_id),
+    UNIQUE (run_id, item_id, alias),
+    FOREIGN KEY (run_id, item_id) REFERENCES signal_review_items(run_id, item_id)
+        ON DELETE CASCADE
+) WITHOUT ROWID;
+
 CREATE TABLE IF NOT EXISTS generated_analysis_targets (
     target_id INTEGER PRIMARY KEY,
     instrument_id INTEGER NOT NULL,
