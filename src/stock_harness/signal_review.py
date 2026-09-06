@@ -21,12 +21,21 @@ from stock_harness.board_leader_scan import (
     is_risk_name,
     rank_board_leaders,
 )
+from stock_harness.daily_signal_analysis import (
+    ALGORITHM_VERSION as DAILY_ALGORITHM_VERSION,
+    CONFIG_VERSION as DAILY_CONFIG_VERSION,
+    LOOKBACK_BARS as DAILY_LOOKBACK_BARS,
+    analyze_daily_series,
+    render_board_summary,
+)
 from stock_harness.sqlite_store import SQLiteMarketDataStore
 
 
 LOGGER = logging.getLogger(__name__)
 WEEKLY_RECOGNITION_SIGNAL = "weekly-board-recognition"
 DEFINITION_VERSION = "weekly-board-recognition-v1"
+DAILY_MARKET_BOARD_SIGNAL = "daily-market-board-review"
+DAILY_DEFINITION_VERSION = "daily-market-board-review-v1"
 HISTORICAL_LIMIT = 5
 
 
@@ -54,12 +63,21 @@ class SignalReviewService:
             "algorithm_version": ALGORITHM_VERSION,
             "manual_only": True,
             "profiles": [RECENT_PROFILE, HISTORICAL_PROFILE],
+        }, {
+            "signal_id": DAILY_MARKET_BOARD_SIGNAL,
+            "name": "每日大盘与板块复盘",
+            "description": "保存全板块一级固定分析，并筛选值得持续关注的异动。",
+            "cadence": "daily",
+            "definition_version": DAILY_DEFINITION_VERSION,
+            "algorithm_version": DAILY_ALGORITHM_VERSION,
+            "manual_only": True,
+            "profiles": ["market", "attention"],
         }]
 
     def start_run(
         self, signal_id: str, effective_date: date | None = None,
     ) -> dict[str, object]:
-        if signal_id != WEEKLY_RECOGNITION_SIGNAL:
+        if signal_id not in {WEEKLY_RECOGNITION_SIGNAL, DAILY_MARKET_BOARD_SIGNAL}:
             raise ValueError(f"unknown signal: {signal_id}")
         with self._lock:
             if self._thread is not None and self._thread.is_alive():
@@ -67,40 +85,225 @@ class SignalReviewService:
             cutoff = effective_date or self._store.get_latest_stock_daily_bar_date()
             if cutoff is None:
                 raise ValueError("no completed stock daily bars are available")
+            daily = signal_id == DAILY_MARKET_BOARD_SIGNAL
             run = self._store.create_signal_review_run(
                 signal_id=signal_id,
-                definition_version=DEFINITION_VERSION,
-                algorithm_version=ALGORITHM_VERSION,
-                cadence="weekly",
+                definition_version=(DAILY_DEFINITION_VERSION if daily else DEFINITION_VERSION),
+                algorithm_version=(DAILY_ALGORITHM_VERSION if daily else ALGORITHM_VERSION),
+                cadence="daily" if daily else "weekly",
                 effective_date=cutoff,
-                parameters=_run_parameters(),
+                parameters=_daily_run_parameters() if daily else _run_parameters(),
             )
             self._thread = threading.Thread(
                 target=self._run_guarded,
-                args=(str(run["run_id"]), cutoff),
+                args=(str(run["run_id"]), cutoff, signal_id),
                 name="stock-harness-signal-review", daemon=True,
             )
             self._thread.start()
             return run
 
     def run_sync(self, signal_id: str, effective_date: date) -> dict[str, object]:
-        if signal_id != WEEKLY_RECOGNITION_SIGNAL:
+        if signal_id not in {WEEKLY_RECOGNITION_SIGNAL, DAILY_MARKET_BOARD_SIGNAL}:
             raise ValueError(f"unknown signal: {signal_id}")
+        daily = signal_id == DAILY_MARKET_BOARD_SIGNAL
         run = self._store.create_signal_review_run(
-            signal_id=signal_id, definition_version=DEFINITION_VERSION,
-            algorithm_version=ALGORITHM_VERSION, cadence="weekly",
+            signal_id=signal_id,
+            definition_version=DAILY_DEFINITION_VERSION if daily else DEFINITION_VERSION,
+            algorithm_version=DAILY_ALGORITHM_VERSION if daily else ALGORITHM_VERSION,
+            cadence="daily" if daily else "weekly",
             effective_date=effective_date,
-            parameters=_run_parameters(),
+            parameters=_daily_run_parameters() if daily else _run_parameters(),
         )
-        self._execute(str(run["run_id"]), effective_date)
+        if daily:
+            self._execute_daily(str(run["run_id"]), effective_date)
+        else:
+            self._execute(str(run["run_id"]), effective_date)
         return self._store.get_signal_review_run(str(run["run_id"]))  # type: ignore[return-value]
 
-    def _run_guarded(self, run_id: str, cutoff: date) -> None:
+    def _run_guarded(self, run_id: str, cutoff: date, signal_id: str) -> None:
         try:
-            self._execute(run_id, cutoff)
+            if signal_id == DAILY_MARKET_BOARD_SIGNAL:
+                self._execute_daily(run_id, cutoff)
+            else:
+                self._execute(run_id, cutoff)
         except Exception as error:
             self._store.fail_signal_review_run(run_id, str(error))
             LOGGER.exception("signal_review_run_failed run_id=%s", run_id)
+
+    def _execute_daily(self, run_id: str, cutoff: date) -> None:
+        started = time.perf_counter()
+        boards = self._boards()
+        benchmark = self._store.get_recent_daily_bars(
+            "000001.SH", cutoff, DAILY_LOOKBACK_BARS,
+        )
+        run = self._store.get_signal_review_run(run_id)
+        prior_run_id = str(run["prior_run_id"]) if run and run.get("prior_run_id") else None
+        prior_observations = {
+            str(item["symbol"]): item
+            for item in self._store.list_board_daily_observations(
+                run_id=prior_run_id, limit=5000,
+            )
+        } if prior_run_id else {}
+        observations: list[dict[str, object]] = []
+        self._progress(run_id, "board-observations", len(boards), 0)
+        for offset in range(0, len(boards), 100):
+            page = boards[offset:offset + 100]
+            series = self._store.get_recent_daily_bars_many(
+                [str(board["symbol"]) for board in page], cutoff, DAILY_LOOKBACK_BARS,
+            )
+            batch = [
+                analyze_daily_series(
+                    str(board["symbol"]), series.get(str(board["symbol"]), []), cutoff,
+                    benchmark_bars=benchmark,
+                )
+                for board in page
+            ]
+            self._store.save_board_daily_observations(run_id, batch)
+            observations.extend(batch)
+            done = min(offset + len(page), len(boards))
+            self._progress(run_id, "board-observations", len(boards), done)
+
+        attention_registry = {
+            str(item["symbol"]): item
+            for item in self._store.list_signal_attention(DAILY_MARKET_BOARD_SIGNAL)
+        }
+        promoted = []
+        for observation in observations:
+            symbol = str(observation["symbol"])
+            registry = attention_registry.get(symbol)
+            if bool(observation["attention_eligible"]):
+                self._store.promote_signal_attention(
+                    DAILY_MARKET_BOARD_SIGNAL, symbol, cutoff,
+                    [str(item) for item in observation["attention_reasons"]],
+                )
+            if bool(observation["attention_eligible"]) or (
+                registry is not None and str(registry["status"]) != "inactive"
+            ):
+                promoted.append(observation)
+
+        board_names = {str(board["symbol"]): str(board["name"]) for board in boards}
+        previous_items = {
+            str(item["item_key"]): item
+            for item in self._store.get_prior_signal_review_items(run_id)
+            if bool(item["active"])
+        }
+        emotion = self._store.calculate_market_emotion_snapshot(run_id, cutoff)
+        items = self._daily_market_items(cutoff, previous_items, emotion)
+        for observation in promoted:
+            symbol = str(observation["symbol"])
+            item_key = f"attention:{symbol}"
+            prior_observation = prior_observations.get(symbol)
+            prior_payload = None
+            if prior_observation is not None:
+                prior_code, _ = render_board_summary(prior_observation, None)
+                prior_payload = {
+                    "payload": {"conclusion_code": prior_code},
+                    "effective_date": prior_observation["effective_date"],
+                }
+            conclusion_code, rendered = render_board_summary(observation, prior_payload)
+            metrics = observation.get("metrics", {})
+            reasons = list(observation.get("attention_reasons", []))
+            score = _daily_attention_score(observation)
+            items.append({
+                "item_id": str(uuid4()), "item_key": item_key,
+                "rank": 0, "symbol": symbol, "profile": "attention",
+                "change_type": "retained" if item_key in previous_items else "added",
+                "active": True, "score": score,
+                "confidence": _daily_confidence(observation),
+                "payload": {
+                    "conclusion_code": conclusion_code,
+                    "state_codes": observation["state_codes"],
+                    "attention_reasons": reasons,
+                    "rendered_summary": rendered,
+                    "metrics": metrics,
+                    "effective_date": cutoff.isoformat(),
+                    "observation_input_digest": observation["input_digest"],
+                    "deep_analysis_state": observation["deep_analysis_state"],
+                    "board_name": board_names.get(symbol, symbol),
+                },
+                "evidence": [{
+                    "evidence_id": str(uuid4()), "alias": "",
+                    "evidence_type": "board-daily-observation",
+                    "payload": {
+                        "symbol": symbol, "effective_date": cutoff.isoformat(),
+                        "input_digest": observation["input_digest"],
+                        "state_codes": observation["state_codes"],
+                    },
+                }],
+            })
+        items.extend(_removed_daily_items(items, previous_items))
+        _rank_daily_items(items)
+        _assign_evidence_aliases(items)
+        complete_count = sum(item["coverage_state"] == "complete" for item in observations)
+        missing_count = len(observations) - complete_count
+        summary = {
+            "expected_board_count": len(boards),
+            "saved_observation_count": len(observations),
+            "complete_observation_count": complete_count,
+            "missing_observation_count": missing_count,
+            "promoted_board_count": len(promoted),
+            "displayed_item_count": sum(bool(item["active"]) for item in items),
+            "attention_registry_count": len(self._store.list_signal_attention(
+                DAILY_MARKET_BOARD_SIGNAL,
+            )),
+            "emotion": emotion,
+            "elapsed_seconds": round(time.perf_counter() - started, 3),
+            "ai_used": False,
+        }
+        digest = _result_digest(items + [{
+            "active": True, "item_key": "all-board-observations",
+            "rank": 0, "score": 0, "confidence": 1,
+            "payload": {"digests": sorted(str(item["input_digest"]) for item in observations)},
+            "evidence": [],
+        }])
+        self._store.complete_signal_review_run(
+            run_id, items=items, summary=summary, input_digest=digest,
+        )
+        LOGGER.info(
+            "daily_signal_review_completed run_id=%s date=%s observations=%s promoted=%s elapsed_ms=%.1f",
+            run_id, cutoff, len(observations), len(promoted),
+            (time.perf_counter() - started) * 1000,
+        )
+
+    def _daily_market_items(
+        self, cutoff: date, previous: dict[str, dict[str, object]],
+        emotion: dict[str, object],
+    ) -> list[dict[str, object]]:
+        items = []
+        for rank, symbol in enumerate(("000001.SH", "SHAMV.A"), 1):
+            bars = self._store.get_recent_daily_bars(symbol, cutoff, DAILY_LOOKBACK_BARS)
+            observation = analyze_daily_series(
+                symbol, bars, cutoff,
+                benchmark_bars=bars if symbol == "000001.SH" else self._store.get_recent_daily_bars(
+                    "000001.SH", cutoff, DAILY_LOOKBACK_BARS,
+                ),
+            )
+            code, rendered = render_board_summary(observation, previous.get(f"market:{symbol}"))
+            if symbol == "000001.SH":
+                rendered = rendered.replace(
+                    "- 近期对比：", f"- 情绪：{_render_emotion(emotion)}\n- 近期对比：",
+                )
+            items.append({
+                "item_id": str(uuid4()), "item_key": f"market:{symbol}",
+                "rank": rank, "symbol": symbol, "profile": "market",
+                "change_type": "retained" if f"market:{symbol}" in previous else "added",
+                "active": True, "score": _daily_attention_score(observation),
+                "confidence": _daily_confidence(observation),
+                "payload": {
+                    "conclusion_code": code, "state_codes": observation["state_codes"],
+                    "rendered_summary": rendered, "metrics": observation["metrics"],
+                    "effective_date": cutoff.isoformat(),
+                    "emotion": emotion if symbol == "000001.SH" else {
+                        "status": "represented-by-market-overview",
+                    },
+                },
+                "evidence": [{
+                    "evidence_id": str(uuid4()), "alias": "",
+                    "evidence_type": "market-daily-series",
+                    "payload": {"symbol": symbol, "effective_date": cutoff.isoformat()},
+                }],
+            })
+        return items
 
     def _execute(self, run_id: str, cutoff: date) -> None:
         started = time.perf_counter()
@@ -249,6 +452,100 @@ def _run_parameters() -> dict[str, object]:
     }
 
 
+def _daily_run_parameters() -> dict[str, object]:
+    return {
+        "lookback_bars": DAILY_LOOKBACK_BARS,
+        "minimum_bars": 120,
+        "attention_filter": DAILY_CONFIG_VERSION,
+        "manual_trigger": True,
+        "full_observation_persistence": True,
+        "deep_analysis_limit": 60,
+    }
+
+
+def _daily_attention_score(observation: dict[str, object]) -> float:
+    reasons = {str(item) for item in observation.get("attention_reasons", [])}
+    weights = {
+        "1y-descending-envelope-broken": .28,
+        "6m-descending-envelope-broken": .24,
+        "3m-descending-envelope-broken": .20,
+        "bullish-boundary-proximity": .20,
+        "downside-exhaustion": .20,
+        "sudden-volume-expansion": .16,
+        "boundary-volume-contraction": .12,
+        "relative-strength-regime": .10,
+    }
+    return min(1.0, round(sum(weights.get(reason, .08) for reason in reasons), 6))
+
+
+def _daily_confidence(observation: dict[str, object]) -> float:
+    if observation.get("coverage_state") != "complete":
+        return 0.0
+    reasons = len(observation.get("attention_reasons", []))
+    disqualifiers = len(observation.get("disqualifiers", []))
+    return max(0.0, min(1.0, round(.55 + min(reasons, 3) * .1 - disqualifiers * .2, 6)))
+
+
+def _render_emotion(emotion: dict[str, object]) -> str:
+    metrics = emotion.get("metrics")
+    if not isinstance(metrics, dict) or emotion.get("status") == "unavailable":
+        return "正式收盘情绪输入不可用，不以零值替代。"
+    breadth = metrics.get("breadth")
+    breadth_text = "不可用" if breadth is None else f"{float(breadth):+.2f}"
+    if metrics.get("limit_up_count") is None:
+        limit_text = "涨跌停价格覆盖不足"
+    else:
+        sealing = metrics.get("sealing_rate")
+        sealing_text = "不可用" if sealing is None else f"{float(sealing) * 100:.1f}%"
+        limit_text = (
+            f"涨停{metrics['limit_up_count']}、跌停{metrics['limit_down_count']}、"
+            f"破板{metrics['broken_up_count']}、封板率{sealing_text}"
+        )
+    return (
+        f"上涨{metrics.get('advance_count', 0)}、下跌{metrics.get('decline_count', 0)}，"
+        f"宽度{breadth_text}；{limit_text}。"
+    )
+
+
+def _removed_daily_items(
+    current: list[dict[str, object]], previous: dict[str, dict[str, object]],
+) -> list[dict[str, object]]:
+    current_keys = {str(item["item_key"]) for item in current}
+    removed = []
+    for key, item in previous.items():
+        if key in current_keys or str(item.get("profile")) == "market":
+            continue
+        removed.append({
+            "item_id": str(uuid4()), "item_key": key, "rank": 0,
+            "symbol": item["symbol"], "profile": item["profile"],
+            "change_type": "removed", "active": False,
+            "score": item["score"], "confidence": item["confidence"],
+            "payload": {
+                **dict(item.get("payload", {})),
+                "transition": "invalidated-or-left-attention",
+            },
+            "evidence": [{
+                **evidence, "evidence_id": str(uuid4()), "alias": "",
+            } for evidence in item.get("evidence", [])],
+        })
+    return removed
+
+
+def _rank_daily_items(items: list[dict[str, object]]) -> None:
+    market_rank = 0
+    attention_rank = 0
+    for item in sorted(items, key=lambda value: (
+        0 if value["profile"] == "market" else 1,
+        not bool(value["active"]), -float(value["score"]), str(value["symbol"]),
+    )):
+        if item["profile"] == "market":
+            market_rank += 1
+            item["rank"] = market_rank
+        else:
+            attention_rank += 1
+            item["rank"] = attention_rank
+
+
 def _aggregate_assignments(assignments: list[dict[str, object]]) -> list[dict[str, object]]:
     grouped: dict[tuple[str, str], list[dict[str, object]]] = defaultdict(list)
     for item in assignments:
@@ -353,4 +650,5 @@ def _result_digest(items: list[dict[str, object]]) -> str:
         })
     return hashlib.sha256(json.dumps(
         normalized, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        default=lambda value: value.isoformat() if isinstance(value, date) else str(value),
     ).encode("utf-8")).hexdigest()

@@ -21,6 +21,7 @@ from stock_harness.models import (
     Instrument,
     InstrumentKind,
     MarketSnapshot,
+    StockDailyLimit,
     ProviderBarRejection,
     StockTradeStatus,
 )
@@ -392,6 +393,32 @@ class TushareDailyProvider:
                 amount=float(_field(row, "amount")) * 1_000,
             ))
         return snapshots
+
+    def fetch_stock_daily_limits(self, trade_date: date) -> Sequence[StockDailyLimit]:
+        rows = _iter_rows(self._call(
+            "stk_limit",
+            trade_date=_compact_date(trade_date),
+            fields="trade_date,ts_code,up_limit,down_limit",
+        ))
+        limits: list[StockDailyLimit] = []
+        for row in rows:
+            values = {
+                key: _field(row, key)
+                for key in ("trade_date", "ts_code", "up_limit", "down_limit")
+            }
+            if any(value in (None, "") for value in values.values()):
+                continue
+            row_date = _parse_compact_date(str(values["trade_date"]))
+            if row_date != trade_date:
+                raise ValueError("stock daily limits returned an unexpected trade date")
+            item = StockDailyLimit(
+                symbol=str(values["ts_code"]), trade_date=row_date,
+                up_limit=float(values["up_limit"]),
+                down_limit=float(values["down_limit"]),
+            )
+            item.validate()
+            limits.append(item)
+        return limits
 
     def fetch_active_market_value_features(
         self, trade_date: date

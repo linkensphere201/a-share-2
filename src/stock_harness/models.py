@@ -315,6 +315,22 @@ class DailyBar:
 
 
 @dataclass(frozen=True, slots=True)
+class StockDailyLimit:
+    symbol: str
+    trade_date: date
+    up_limit: float
+    down_limit: float
+
+    def validate(self) -> None:
+        if not self.symbol:
+            raise ValueError("stock daily limit symbol is required")
+        if not all(isfinite(value) and value > 0 for value in (self.up_limit, self.down_limit)):
+            raise ValueError("stock daily limit prices must be finite and positive")
+        if self.down_limit >= self.up_limit:
+            raise ValueError("stock daily down limit must be below up limit")
+
+
+@dataclass(frozen=True, slots=True)
 class StoredDailyBar:
     symbol: str
     trade_date: date

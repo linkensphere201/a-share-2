@@ -8,8 +8,8 @@ import time
 from stock_harness.auto_update import AutoUpdateService, IncrementalUpdater, UpdateResult
 from stock_harness.config import load_runtime_settings
 from stock_harness.models import (
-    ActiveMarketValueFeature, CatalogEntry, DailyBar, EtfHolding, Instrument, InstrumentKind, MarketSnapshot,
-    ProviderBarRejection,
+    ActiveMarketValueFeature, CatalogEntry, DailyBar, EtfHolding, Instrument,
+    InstrumentKind, MarketSnapshot, ProviderBarRejection, StockDailyLimit,
 )
 from stock_harness.sqlite_store import SQLiteMarketDataStore
 
@@ -69,6 +69,9 @@ class FakeProvider:
 
     def fetch_stock_market_snapshots(self, trade_date):
         return [MarketSnapshot("600519.SH", trade_date, 10.0, 2_000_000_000)]
+
+    def fetch_stock_daily_limits(self, trade_date):
+        return [StockDailyLimit("600519.SH", trade_date, 12.1, 9.9)]
 
     def fetch_active_market_value_features(self, trade_date):
         return [ActiveMarketValueFeature(

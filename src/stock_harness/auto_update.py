@@ -150,6 +150,27 @@ class IncrementalUpdater:
                             trade_date,
                         )
                         errors.append(f"{scope} {trade_date}: {exc}")
+            for trade_date in open_dates:
+                if (
+                    not store.has_daily_snapshot(provider.code, "stock", trade_date)
+                    or store.has_stock_daily_limits(trade_date)
+                ):
+                    continue
+                try:
+                    limits = provider.fetch_stock_daily_limits(trade_date)
+                    if not limits:
+                        errors.append(f"stock daily limits {trade_date}: empty snapshot")
+                        continue
+                    stored = store.upsert_stock_daily_limits(provider.code, limits)
+                    LOGGER.info(
+                        "stock_daily_limits_increment date=%s rows=%s",
+                        trade_date, stored,
+                    )
+                except Exception as exc:
+                    LOGGER.exception(
+                        "stock_daily_limits_increment_failed date=%s", trade_date,
+                    )
+                    errors.append(f"stock daily limits {trade_date}: {exc}")
             amv_feature_dates = 0
             for trade_date in open_dates:
                 if (

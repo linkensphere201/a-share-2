@@ -48,6 +48,10 @@ class _Client:
         Row = namedtuple("Row", "ts_code trade_date suspend_type")
         return _Frame([Row("600519.SH", "20260731", "S")])
 
+    def stk_limit(self, **kwargs):
+        Row = namedtuple("Row", "trade_date ts_code up_limit down_limit")
+        return _Frame([Row(kwargs["trade_date"], "600519.SH", 12.1, 9.9)])
+
 
 class _JsonClient:
     def stock_basic(self, **kwargs):
@@ -235,6 +239,15 @@ class TushareDailyProviderTests(unittest.TestCase):
 
         self.assertEqual(bar.trade_date, date(2026, 7, 31))
         self.assertEqual(bar.volume, 12_300)
+
+    def test_maps_official_stock_daily_limits(self) -> None:
+        provider = TushareDailyProvider(_settings(), client=_Client())
+
+        item = provider.fetch_stock_daily_limits(date(2026, 7, 31))[0]
+
+        self.assertEqual(item.symbol, "600519.SH")
+        self.assertEqual(item.trade_date, date(2026, 7, 31))
+        self.assertEqual((item.up_limit, item.down_limit), (12.1, 9.9))
 
     def test_fetches_sorted_adjustment_factors_without_pandas(self) -> None:
         provider = TushareDailyProvider(_settings(), client=_Client())

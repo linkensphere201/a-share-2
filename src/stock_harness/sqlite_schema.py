@@ -396,6 +396,21 @@ CREATE TABLE IF NOT EXISTS daily_bars (
 CREATE INDEX IF NOT EXISTS daily_bars_trade_date
 ON daily_bars(trade_date, instrument_id);
 
+CREATE TABLE IF NOT EXISTS stock_daily_limits (
+    instrument_id INTEGER NOT NULL,
+    trade_date INTEGER NOT NULL,
+    up_limit REAL NOT NULL CHECK (up_limit > 0),
+    down_limit REAL NOT NULL CHECK (down_limit > 0 AND down_limit < up_limit),
+    source_id INTEGER NOT NULL,
+    updated_at_ms INTEGER NOT NULL,
+    PRIMARY KEY (instrument_id, trade_date),
+    FOREIGN KEY (instrument_id) REFERENCES instruments(instrument_id),
+    FOREIGN KEY (source_id) REFERENCES sources(source_id)
+) WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS stock_daily_limits_date
+ON stock_daily_limits(trade_date, instrument_id);
+
 CREATE TRIGGER IF NOT EXISTS active_market_value_stock_bar_insert_marks_dirty
 AFTER INSERT ON daily_bars
 WHEN EXISTS (
@@ -851,6 +866,64 @@ CREATE TABLE IF NOT EXISTS signal_review_items (
 
 CREATE INDEX IF NOT EXISTS signal_review_items_rank
 ON signal_review_items(run_id, profile, active DESC, rank);
+
+CREATE TABLE IF NOT EXISTS board_daily_observations (
+    run_id TEXT NOT NULL,
+    instrument_id INTEGER NOT NULL,
+    effective_date INTEGER NOT NULL,
+    coverage_state TEXT NOT NULL,
+    state_codes_json TEXT NOT NULL,
+    metrics_json TEXT NOT NULL,
+    disqualifiers_json TEXT NOT NULL,
+    attention_reasons_json TEXT NOT NULL,
+    attention_eligible INTEGER NOT NULL CHECK (attention_eligible IN (0, 1)),
+    deep_analysis_state TEXT NOT NULL,
+    input_digest TEXT NOT NULL,
+    algorithm_version TEXT NOT NULL,
+    config_version TEXT NOT NULL,
+    created_at_ms INTEGER NOT NULL,
+    PRIMARY KEY (run_id, instrument_id),
+    FOREIGN KEY (run_id) REFERENCES signal_review_runs(run_id) ON DELETE CASCADE,
+    FOREIGN KEY (instrument_id) REFERENCES instruments(instrument_id)
+) WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS board_daily_observations_history
+ON board_daily_observations(instrument_id, effective_date DESC, run_id);
+
+CREATE INDEX IF NOT EXISTS board_daily_observations_attention
+ON board_daily_observations(run_id, attention_eligible, instrument_id);
+
+CREATE TABLE IF NOT EXISTS market_emotion_snapshots (
+    run_id TEXT PRIMARY KEY,
+    effective_date INTEGER NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('complete', 'partial', 'unavailable')),
+    metrics_json TEXT NOT NULL,
+    source_json TEXT NOT NULL,
+    coverage_json TEXT NOT NULL,
+    algorithm_version TEXT NOT NULL,
+    input_digest TEXT NOT NULL,
+    created_at_ms INTEGER NOT NULL,
+    FOREIGN KEY (run_id) REFERENCES signal_review_runs(run_id) ON DELETE CASCADE
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS signal_attention_registry (
+    signal_id TEXT NOT NULL,
+    instrument_id INTEGER NOT NULL,
+    status TEXT NOT NULL CHECK (
+        status IN ('manual-pinned', 'auto-promoted', 'cooldown', 'inactive')
+    ),
+    manual_pinned INTEGER NOT NULL CHECK (manual_pinned IN (0, 1)),
+    first_observed_date INTEGER NOT NULL,
+    last_observed_date INTEGER NOT NULL,
+    cooldown_through_date INTEGER,
+    reasons_json TEXT NOT NULL,
+    updated_at_ms INTEGER NOT NULL,
+    PRIMARY KEY (signal_id, instrument_id),
+    FOREIGN KEY (instrument_id) REFERENCES instruments(instrument_id)
+) WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS signal_attention_registry_status
+ON signal_attention_registry(signal_id, status, last_observed_date DESC);
 
 CREATE TABLE IF NOT EXISTS signal_review_evidence (
     run_id TEXT NOT NULL,

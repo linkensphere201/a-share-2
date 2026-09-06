@@ -12,6 +12,7 @@ from stock_harness.models import (
     Instrument,
     EtfHolding,
     MarketSnapshot,
+    StockDailyLimit,
     RepairBatch,
     StoredDailyBar,
     SymbolSyncState,
@@ -26,6 +27,8 @@ class DailyMarketDataProvider(Protocol):
     def list_instruments(self) -> Sequence[Instrument]: ...
 
     def fetch_daily_bars(self, trade_date: date) -> Sequence[DailyBar]: ...
+
+    def fetch_stock_daily_limits(self, trade_date: date) -> Sequence[StockDailyLimit]: ...
 
 
 class DailyBarValidationProvider(Protocol):

@@ -232,3 +232,8 @@ class ScreenerRunInput(BaseModel):
 
 class SignalReviewRunInput(BaseModel):
     effective_date: date | None = None
+
+
+class SignalAttentionInput(BaseModel):
+    manual_pinned: bool
+    effective_date: date | None = None

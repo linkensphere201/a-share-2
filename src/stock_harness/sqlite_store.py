@@ -51,6 +51,7 @@ from stock_harness.sqlite_active_market_value_store import SQLiteActiveMarketVal
 from stock_harness.sqlite_provider_quality_store import SQLiteProviderQualityStoreMixin
 from stock_harness.sqlite_screener_store import SQLiteScreenerStoreMixin
 from stock_harness.sqlite_signal_review_store import SQLiteSignalReviewStoreMixin
+from stock_harness.sqlite_signal_observation_store import SQLiteSignalObservationStoreMixin
 
 
 from stock_harness.sqlite_schema import (
@@ -64,6 +65,7 @@ LOGGER = logging.getLogger(__name__)
 
 
 class SQLiteMarketDataStore(
+    SQLiteSignalObservationStoreMixin,
     SQLiteSignalReviewStoreMixin,
     SQLiteFuturesStoreMixin,
     SQLiteActiveMarketValueStoreMixin,

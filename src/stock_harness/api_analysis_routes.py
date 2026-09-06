@@ -13,6 +13,7 @@ from stock_harness.analysis_results import AnalysisNamespace
 from stock_harness.api_models import (
     AiAnalysisReportInput,
     ScreenerRunInput,
+    SignalAttentionInput,
     SignalReviewRunInput,
     TrendAnalysisInput,
     TrendReviewCreateInput,
@@ -102,6 +103,49 @@ def create_analysis_router() -> APIRouter:
         if result is None:
             raise HTTPException(status_code=404, detail="signal review item not found")
         return result
+
+    @router.get("/api/signals/runs/{run_id}/board-observations")
+    def list_board_observations(
+        run_id: str, request: Request, symbol: str | None = None,
+        attention_only: bool = False,
+        limit: int = Query(default=200, ge=1, le=5000),
+        offset: int = Query(default=0, ge=0),
+    ) -> dict[str, object]:
+        selected_store = store(request)
+        if selected_store.get_signal_review_run(run_id) is None:
+            raise HTTPException(status_code=404, detail="signal review run not found")
+        return {
+            "items": selected_store.list_board_daily_observations(
+                run_id=run_id, symbol=symbol, attention_only=attention_only,
+                limit=limit, offset=offset,
+            ),
+            "total": selected_store.count_board_daily_observations(run_id),
+        }
+
+    @router.get("/api/signals/{signal_id}/attention")
+    def list_signal_attention(
+        signal_id: str, request: Request, include_inactive: bool = False,
+    ) -> dict[str, object]:
+        return {"items": store(request).list_signal_attention(
+            signal_id, include_inactive=include_inactive,
+        )}
+
+    @router.put("/api/signals/{signal_id}/attention/{symbol}")
+    def set_signal_attention(
+        signal_id: str, symbol: str, payload: SignalAttentionInput, request: Request,
+    ) -> dict[str, object]:
+        selected_store = store(request)
+        effective_date = payload.effective_date or selected_store.get_latest_stock_daily_bar_date()
+        if effective_date is None:
+            raise HTTPException(status_code=422, detail="no completed stock daily bars are available")
+        try:
+            return selected_store.set_signal_attention(
+                signal_id, symbol, manual_pinned=payload.manual_pinned,
+                effective_date=effective_date,
+                reasons=("manual-user-selection",) if payload.manual_pinned else (),
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
 
     @router.post("/api/screener/runs", status_code=status.HTTP_202_ACCEPTED)
     def start_screener_run(

@@ -40,6 +40,7 @@ from stock_harness.api_models import (
     IntradayRefreshInput,
     IntradaySubscriptionInput,
     ScreenerRunInput,
+    SignalAttentionInput,
     SignalReviewRunInput,
     TrendAnalysisInput,
     TrendReviewCreateInput,
@@ -73,7 +74,8 @@ __all__ = [
     "CustomGroupMemberInput", "CustomGroupRole", "CustomIndexInput",
     "InstrumentTagsInput",
     "CustomIndexMemberInput", "FrontendEventInput", "IntradayRefreshInput",
-    "IntradaySubscriptionInput", "ScreenerRunInput", "SignalReviewRunInput", "TrendAnalysisInput",
+    "IntradaySubscriptionInput", "ScreenerRunInput", "SignalAttentionInput",
+    "SignalReviewRunInput", "TrendAnalysisInput",
     "TrendReviewCreateInput", "TrendReviewLabelInput", "TrendReviewSourceInput",
     "TrendReviewUpdateInput", "app", "create_app",
 ]
