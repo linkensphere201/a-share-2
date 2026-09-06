@@ -17,6 +17,9 @@ def _create_library(root: Path) -> None:
     site = root / "systems" / "trend-genggui" / "site"
     site.mkdir(parents=True)
     (site / "index.html").write_text("<h1>course</h1>", encoding="utf-8")
+    media = root / "systems" / "trend-genggui" / "media"
+    media.mkdir()
+    (media / "episode.mp4").write_bytes(b"0123456789")
     write_json(root / "catalog.json", {
         "schema_version": "1.0",
         "systems": [{
@@ -75,6 +78,11 @@ def test_learning_api_opens_loopback_course_and_serves_assets(tmp_path: Path) ->
         catalog = client.get("/api/learning/systems")
         opened_response = client.post("/api/learning/systems/trend-genggui/open")
         page = client.get("/learning/systems/trend-genggui/site/index.html")
+        media = client.get(
+            "/learning/systems/trend-genggui/media/episode.mp4",
+            headers={"Range": "bytes=2-5"},
+        )
+        missing = client.post("/api/learning/systems/not-published/open")
 
     store.close()
     assert catalog.json()["items"][0]["available"] is True
@@ -83,3 +91,7 @@ def test_learning_api_opens_loopback_course_and_serves_assets(tmp_path: Path) ->
         "http://testserver/learning/systems/trend-genggui/site/index.html"
     ]
     assert page.text == "<h1>course</h1>"
+    assert media.status_code == 206
+    assert media.content == b"2345"
+    assert media.headers["content-range"] == "bytes 2-5/10"
+    assert missing.status_code == 404
