@@ -256,6 +256,62 @@ CREATE TABLE IF NOT EXISTS active_market_value_stock_states (
     FOREIGN KEY (instrument_id) REFERENCES instruments(instrument_id)
 ) WITHOUT ROWID;
 
+CREATE TABLE IF NOT EXISTS active_market_value_dirty_ranges (
+    definition_id TEXT PRIMARY KEY,
+    dirty_from INTEGER NOT NULL,
+    dirty_through INTEGER NOT NULL,
+    reason TEXT NOT NULL,
+    updated_at_ms INTEGER NOT NULL,
+    FOREIGN KEY (definition_id) REFERENCES active_market_value_definitions(definition_id)
+) WITHOUT ROWID;
+
+CREATE TRIGGER IF NOT EXISTS active_market_value_feature_insert_marks_dirty
+AFTER INSERT ON active_market_value_features
+WHEN NOT EXISTS (
+    SELECT 1 FROM active_market_value_dirty_ranges
+    WHERE dirty_from <= NEW.trade_date AND dirty_through >= NEW.trade_date
+      AND updated_at_ms >= NEW.updated_at_ms
+)
+BEGIN
+    INSERT INTO active_market_value_dirty_ranges(
+        definition_id, dirty_from, dirty_through, reason, updated_at_ms
+    )
+    SELECT definition_id, NEW.trade_date, NEW.trade_date,
+           'feature_inserted', NEW.updated_at_ms
+    FROM active_market_value_definitions WHERE 1
+    ON CONFLICT(definition_id) DO UPDATE SET
+        dirty_from = min(dirty_from, excluded.dirty_from),
+        dirty_through = max(dirty_through, excluded.dirty_through),
+        reason = excluded.reason,
+        updated_at_ms = max(updated_at_ms, excluded.updated_at_ms);
+END;
+
+CREATE TRIGGER IF NOT EXISTS active_market_value_feature_update_marks_dirty
+AFTER UPDATE ON active_market_value_features
+WHEN (
+    OLD.turnover_rate_f IS NOT NEW.turnover_rate_f
+    OR OLD.free_share IS NOT NEW.free_share
+    OR OLD.close IS NOT NEW.close
+)
+AND NOT EXISTS (
+    SELECT 1 FROM active_market_value_dirty_ranges
+    WHERE dirty_from <= NEW.trade_date AND dirty_through >= NEW.trade_date
+      AND updated_at_ms >= NEW.updated_at_ms
+)
+BEGIN
+    INSERT INTO active_market_value_dirty_ranges(
+        definition_id, dirty_from, dirty_through, reason, updated_at_ms
+    )
+    SELECT definition_id, NEW.trade_date, NEW.trade_date,
+           'feature_corrected', NEW.updated_at_ms
+    FROM active_market_value_definitions WHERE 1
+    ON CONFLICT(definition_id) DO UPDATE SET
+        dirty_from = min(dirty_from, excluded.dirty_from),
+        dirty_through = max(dirty_through, excluded.dirty_through),
+        reason = excluded.reason,
+        updated_at_ms = max(updated_at_ms, excluded.updated_at_ms);
+END;
+
 CREATE TABLE IF NOT EXISTS etf_holdings (
     source_id INTEGER NOT NULL,
     etf_instrument_id INTEGER NOT NULL,
@@ -318,6 +374,60 @@ CREATE TABLE IF NOT EXISTS daily_bars (
 
 CREATE INDEX IF NOT EXISTS daily_bars_trade_date
 ON daily_bars(trade_date, instrument_id);
+
+CREATE TRIGGER IF NOT EXISTS active_market_value_stock_bar_insert_marks_dirty
+AFTER INSERT ON daily_bars
+WHEN EXISTS (
+    SELECT 1 FROM instruments
+    WHERE instrument_id = NEW.instrument_id AND kind = 'stock'
+)
+AND NOT EXISTS (
+    SELECT 1 FROM active_market_value_dirty_ranges
+    WHERE dirty_from <= NEW.trade_date AND dirty_through >= NEW.trade_date
+      AND updated_at_ms >= NEW.updated_at_ms
+)
+BEGIN
+    INSERT INTO active_market_value_dirty_ranges(
+        definition_id, dirty_from, dirty_through, reason, updated_at_ms
+    )
+    SELECT definition_id, NEW.trade_date, NEW.trade_date,
+           'stock_bar_inserted', NEW.updated_at_ms
+    FROM active_market_value_definitions WHERE 1
+    ON CONFLICT(definition_id) DO UPDATE SET
+        dirty_from = min(dirty_from, excluded.dirty_from),
+        dirty_through = max(dirty_through, excluded.dirty_through),
+        reason = excluded.reason,
+        updated_at_ms = max(updated_at_ms, excluded.updated_at_ms);
+END;
+
+CREATE TRIGGER IF NOT EXISTS active_market_value_stock_bar_update_marks_dirty
+AFTER UPDATE ON daily_bars
+WHEN EXISTS (
+    SELECT 1 FROM instruments
+    WHERE instrument_id = NEW.instrument_id AND kind = 'stock'
+)
+AND (
+    OLD.open IS NOT NEW.open OR OLD.high IS NOT NEW.high
+    OR OLD.low IS NOT NEW.low OR OLD.close IS NOT NEW.close
+)
+AND NOT EXISTS (
+    SELECT 1 FROM active_market_value_dirty_ranges
+    WHERE dirty_from <= NEW.trade_date AND dirty_through >= NEW.trade_date
+      AND updated_at_ms >= NEW.updated_at_ms
+)
+BEGIN
+    INSERT INTO active_market_value_dirty_ranges(
+        definition_id, dirty_from, dirty_through, reason, updated_at_ms
+    )
+    SELECT definition_id, NEW.trade_date, NEW.trade_date,
+           'stock_bar_corrected', NEW.updated_at_ms
+    FROM active_market_value_definitions WHERE 1
+    ON CONFLICT(definition_id) DO UPDATE SET
+        dirty_from = min(dirty_from, excluded.dirty_from),
+        dirty_through = max(dirty_through, excluded.dirty_through),
+        reason = excluded.reason,
+        updated_at_ms = max(updated_at_ms, excluded.updated_at_ms);
+END;
 
 CREATE TABLE IF NOT EXISTS stock_adjustment_factors (
     instrument_id INTEGER NOT NULL,

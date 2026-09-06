@@ -19,6 +19,7 @@ import { dockNativeWindow, focusNativeWindow, popOutNativeWindow, readPopoutTarg
 import { createWorkspaceSync, type WorkspaceSync } from './workspaceSync'
 import { buildWorkspaceContext, publishWorkspaceContext } from './workspaceContext'
 import type { TradingSystemWindowStates } from './tradingSystems'
+import { middleMovingAveragePeriod } from './chartData'
 import { useWorkspaceTrendRecalculation } from './useWorkspaceTrendRecalculation'
 import {
   chartRanges,
@@ -681,7 +682,7 @@ export function StockWorkspace() {
                 >持仓</button>
               </>}
             </div>
-            <span className="ma ma-short">MA 5</span><span className="ma ma-mid">MA 20</span><span className="ma ma-long">MA 60</span>
+            <span className="ma ma-short">MA 5</span><span className="ma ma-mid">MA {middleMovingAveragePeriod(activeChart.instrument.symbol)}</span><span className="ma ma-long">MA 60</span>
           </>}
           <span className="window-count">{activeGroup.windows.length}/8</span>
         </div>

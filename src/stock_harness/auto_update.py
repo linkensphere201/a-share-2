@@ -173,12 +173,15 @@ class IncrementalUpdater:
                         "active_market_value_feature_increment_failed date=%s", trade_date
                     )
                     errors.append(f"active market value feature {trade_date}: {exc}")
-            if amv_feature_dates:
+            active_value_state = store.get_active_market_value_index()
+            active_value_dirty = active_value_state.get("dirty_from_date") is not None
+            if amv_feature_dates or active_value_dirty:
                 try:
                     result = store.build_active_market_value_index(mode="incremental")
                     LOGGER.info(
-                        "active_market_value_increment_complete rows=%s through=%s",
+                        "active_market_value_increment_complete rows=%s through=%s corrected_from=%s",
                         result["rows"], result.get("last_trade_date"),
+                        active_value_state.get("dirty_from_date"),
                     )
                 except Exception as exc:
                     LOGGER.exception("active_market_value_increment_failed")

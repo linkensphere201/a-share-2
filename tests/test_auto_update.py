@@ -159,6 +159,37 @@ def test_incremental_update_persists_calendar_and_skips_completed_snapshots(tmp_
         ) == [date(2026, 7, 31), date(2026, 8, 3)]
 
 
+def test_auto_update_rebuilds_active_value_after_historical_correction(tmp_path: Path):
+    settings = _settings(tmp_path)
+    IncrementalUpdater(settings, FakeProvider).run_once(datetime(2026, 8, 3, 19, 0))
+
+    corrected_date = date(2026, 8, 3)
+    with SQLiteMarketDataStore(settings.database_path, mmap_size_mib=0) as store:
+        before = store.get_daily_bars("SHAMV.A")
+        store.upsert_active_market_value_features("tushare", corrected_date, [
+            ActiveMarketValueFeature(
+                "600519.SH", corrected_date, 25, 100_000_000,
+                1_100_000_000, 2_000_000_000, 11,
+            )
+        ])
+        assert store.get_active_market_value_index()["dirty_from_date"] == corrected_date
+
+    result = IncrementalUpdater(settings, FakeProvider).run_once(
+        datetime(2026, 8, 3, 19, 5)
+    )
+
+    assert result.errors == ()
+    with SQLiteMarketDataStore(settings.database_path, mmap_size_mib=0) as store:
+        after = store.get_daily_bars("SHAMV.A")
+        assert store.get_active_market_value_index()["dirty_from_date"] is None
+        assert after[0].close == before[0].close
+        assert after[1].close != before[1].close
+        run_mode = store._connection.execute(
+            "SELECT mode FROM active_market_value_build_runs ORDER BY run_id DESC LIMIT 1"
+        ).fetchone()[0]
+        assert run_mode == "correction"
+
+
 def test_manual_after_close_update_includes_current_trading_day(tmp_path: Path):
     settings = _settings(tmp_path)
     scheduled_provider = FakeProvider()

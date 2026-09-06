@@ -43,6 +43,7 @@ import {
   createRangeMeasurement,
   detectPriceGaps,
   latestReadout,
+  middleMovingAveragePeriod,
   movingAverage,
   previousCloseByDate,
   remapLogicalRange,
@@ -259,7 +260,7 @@ export function ChartCanvas({
   supplementalAnalysisItems = [],
   supplementalAnalysisOnly = false,
 }: ChartCanvasProps) {
-  const middleAveragePeriod = symbol === 'SHAMV.A' ? 13 : 20
+  const middleAveragePeriod = middleMovingAveragePeriod(symbol)
   const middleAveragePeriodRef = useRef(middleAveragePeriod)
   middleAveragePeriodRef.current = middleAveragePeriod
   const hostRef = useRef<HTMLDivElement>(null)

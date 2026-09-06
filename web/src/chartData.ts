@@ -71,6 +71,10 @@ export function movingAverage(bars: DailyBar[], window: number): LineData<Time>[
   return output
 }
 
+export function middleMovingAveragePeriod(symbol: string): number {
+  return symbol === 'SHAMV.A' ? 13 : 20
+}
+
 export function calculateMacd(
   bars: Pick<DailyBar, 'trade_date' | 'close'>[],
   fastPeriod = 12,

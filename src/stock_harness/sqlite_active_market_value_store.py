@@ -102,16 +102,18 @@ class SQLiteActiveMarketValueStoreMixin:
         turnover_cap: float = 1, base_value: float = 1000,
         mode: str = "backfill",
     ) -> dict[str, object]:
-        if mode not in {"backfill", "incremental"}:
+        if mode not in {"backfill", "incremental", "correction"}:
             raise ValueError("invalid active-market-value build mode")
         initial_state: dict[int, float] = {}
         existing_base_close: float | None = None
         latest: int | None = None
-        if mode == "incremental":
+        dirty_from: int | None = None
+        dirty_through: int | None = None
+        if mode in {"incremental", "correction"}:
             with self._lock:
                 definition = self._connection.execute(
                     """
-                    SELECT smoothing_period, scale_k, turnover_cap, base_value
+                    SELECT smoothing_period, scale_k, turnover_cap, base_value, base_date
                     FROM active_market_value_definitions WHERE definition_id = ?
                     """,
                     (DEFAULT_DEFINITION_ID,),
@@ -128,6 +130,12 @@ class SQLiteActiveMarketValueStoreMixin:
                     "SELECT absolute_close FROM active_market_value_daily_bars WHERE definition_id = ? ORDER BY trade_date LIMIT 1",
                     (DEFAULT_DEFINITION_ID,),
                 ).fetchone()
+                dirty = self._connection.execute(
+                    "SELECT dirty_from, dirty_through FROM active_market_value_dirty_ranges WHERE definition_id = ?",
+                    (DEFAULT_DEFINITION_ID,),
+                ).fetchone()
+            if dirty is not None:
+                dirty_from, dirty_through = int(dirty[0]), int(dirty[1])
             if definition is not None and any((
                 int(definition[0]) != smoothing_period,
                 float(definition[1]) != scale_k,
@@ -138,8 +146,22 @@ class SQLiteActiveMarketValueStoreMixin:
             if definition is None or latest is None or not states or base_row is None:
                 mode = "backfill"
             else:
-                initial_state = {int(row[0]): float(row[1]) for row in states}
                 existing_base_close = float(base_row[0])
+                if dirty_from is not None and dirty_from <= latest:
+                    mode = "correction"
+                if mode == "correction":
+                    base_date = int(definition[4]) if definition[4] is not None else None
+                    if dirty_from is None:
+                        dirty_from = _date_key(start_date) if start_date else None
+                    if dirty_from is None:
+                        raise ValueError("correction build requires a dirty range or start_date")
+                    if base_date is None or dirty_from <= base_date:
+                        mode = "backfill"
+                if mode == "incremental":
+                    initial_state = {int(row[0]): float(row[1]) for row in states}
+        if mode == "backfill":
+            initial_state = {}
+            existing_base_close = None
         started_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
         with self._lock, self._transaction():
             self._connection.execute(
@@ -183,10 +205,17 @@ class SQLiteActiveMarketValueStoreMixin:
             ).fetchone()[0])
 
         start_key = _date_key(start_date) if start_date else 0
+        emit_start_key = start_key
         end_key = _date_key(end_date) if end_date else 99_991_231
         if mode == "incremental":
             assert latest is not None
             start_key = max(start_key, _date_key(_date_from_key(latest) + timedelta(days=1)))
+            emit_start_key = start_key
+        elif mode == "correction":
+            assert dirty_from is not None
+            emit_start_key = dirty_from
+            start_key = 0
+            end_key = 99_991_231
         calculator = ActiveMarketValueCalculator(
             smoothing_period, scale_k, turnover_cap, initial_state
         )
@@ -249,18 +278,29 @@ class SQLiteActiveMarketValueStoreMixin:
                     if calculated is not None:
                         absolute_rows.append(calculated)
             bars = normalize_bars(absolute_rows, base_value, existing_base_close)
+            if mode == "correction":
+                bars = [item for item in bars if item.trade_date >= emit_start_key]
             completed_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
             with self._lock, self._transaction():
                 source_id = self._source_id(
                     "stock_harness_amv", acquired_via="derived", source_system="stock_harness"
                 )
-                if mode != "incremental":
+                if mode == "backfill":
                     self._connection.execute(
                         "DELETE FROM active_market_value_daily_bars WHERE definition_id = ?",
                         (DEFAULT_DEFINITION_ID,),
                     )
                     self._connection.execute(
                         "DELETE FROM daily_bars WHERE instrument_id = ?", (instrument_id,)
+                    )
+                elif mode == "correction":
+                    self._connection.execute(
+                        "DELETE FROM active_market_value_daily_bars WHERE definition_id = ? AND trade_date >= ?",
+                        (DEFAULT_DEFINITION_ID, emit_start_key),
+                    )
+                    self._connection.execute(
+                        "DELETE FROM daily_bars WHERE instrument_id = ? AND trade_date >= ?",
+                        (instrument_id, emit_start_key),
                     )
                 self._connection.executemany(
                     """
@@ -308,7 +348,7 @@ class SQLiteActiveMarketValueStoreMixin:
                         item.low, item.close, source_id, completed_ms,
                     ) for item in bars),
                 )
-                if mode == "incremental":
+                if mode in {"incremental", "correction"}:
                     self._connection.execute(
                         """
                         UPDATE active_market_value_definitions
@@ -360,6 +400,14 @@ class SQLiteActiveMarketValueStoreMixin:
                         len(bars), completed_ms, run_id,
                     ),
                 )
+                if state_date is not None:
+                    self._connection.execute(
+                        """
+                        DELETE FROM active_market_value_dirty_ranges
+                        WHERE definition_id = ? AND dirty_through <= ? AND updated_at_ms <= ?
+                        """,
+                        (DEFAULT_DEFINITION_ID, state_date, started_ms),
+                    )
             return self.get_active_market_value_index()
         except Exception as exc:
             failed_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
@@ -399,7 +447,16 @@ class SQLiteActiveMarketValueStoreMixin:
                        (SELECT previous.close
                         FROM active_market_value_daily_bars AS previous
                         WHERE previous.definition_id = definition.definition_id
-                        ORDER BY previous.trade_date DESC LIMIT 1 OFFSET 1)
+                        ORDER BY previous.trade_date DESC LIMIT 1 OFFSET 1),
+                       (SELECT dirty.dirty_from
+                        FROM active_market_value_dirty_ranges AS dirty
+                        WHERE dirty.definition_id = definition.definition_id),
+                       (SELECT dirty.dirty_through
+                        FROM active_market_value_dirty_ranges AS dirty
+                        WHERE dirty.definition_id = definition.definition_id),
+                       (SELECT dirty.reason
+                        FROM active_market_value_dirty_ranges AS dirty
+                        WHERE dirty.definition_id = definition.definition_id)
                 FROM active_market_value_definitions AS definition
                 JOIN instruments AS instrument USING (instrument_id)
                 LEFT JOIN active_market_value_daily_bars AS bar USING (definition_id)
@@ -429,6 +486,9 @@ class SQLiteActiveMarketValueStoreMixin:
                 (latest_close / previous_close - 1) * 100
                 if latest_close is not None and previous_close not in (None, 0) else None
             ),
+            "dirty_from_date": _date_from_key(int(row[19])) if row[19] is not None else None,
+            "dirty_through_date": _date_from_key(int(row[20])) if row[20] is not None else None,
+            "dirty_reason": str(row[21]) if row[21] is not None else None,
         }
 
     def list_active_market_value_diagnostics(

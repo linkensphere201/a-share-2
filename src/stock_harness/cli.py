@@ -249,7 +249,7 @@ def main() -> None:
     amv_build.add_argument("--scale-k", type=float, default=100)
     amv_build.add_argument("--turnover-cap", type=float, default=1)
     amv_build.add_argument(
-        "--mode", choices=("backfill", "incremental"), default="backfill"
+        "--mode", choices=("backfill", "incremental", "correction"), default="backfill"
     )
     args = parser.parse_args()
 

@@ -410,11 +410,18 @@ def create_market_router() -> APIRouter:
         return {"items": store(request).list_active_market_value_diagnostics(start_date, end_date)}
 
     @router.post("/api/active-market-value/rebuild")
-    def rebuild_active_market_value(request: Request) -> dict[str, object]:
-        result = store(request).build_active_market_value_index()
+    def rebuild_active_market_value(
+        request: Request,
+        mode: Literal["backfill", "incremental", "correction"] = "backfill",
+        start_date: date | None = None,
+    ) -> dict[str, object]:
+        result = store(request).build_active_market_value_index(
+            start_date=start_date, mode=mode
+        )
         LOGGER.info(
-            "active_market_value_rebuilt rows=%s through=%s version=%s",
-            result["rows"], result.get("last_trade_date"), result.get("algorithm_version"),
+            "active_market_value_rebuilt mode=%s rows=%s through=%s version=%s",
+            mode, result["rows"], result.get("last_trade_date"),
+            result.get("algorithm_version"),
         )
         return result
 

@@ -133,11 +133,51 @@ def test_build_is_causal_when_future_features_are_already_stored():
     store.close()
 
 
+def test_historical_feature_change_is_rebuilt_from_dirty_date():
+    store = SQLiteMarketDataStore(":memory:")
+    days = [date(2026, 9, 2), date(2026, 9, 3), date(2026, 9, 4)]
+    store.upsert_instruments([
+        Instrument("000001.SZ", "A", InstrumentKind.STOCK, "SZ"),
+    ])
+    for offset, trade_date in enumerate(days):
+        close = 10 + offset
+        store.upsert_daily_bars("tushare", [
+            DailyBar("000001.SZ", trade_date, close - 1, close + 1, close - 2, close, 100),
+        ])
+        store.upsert_active_market_value_features("tushare", trade_date, [
+            feature("000001.SZ", trade_date, 1 + offset, 1_000, close),
+        ])
+    store.build_active_market_value_index()
+    before = store.get_daily_bars(DEFAULT_SYMBOL)
+
+    store.upsert_active_market_value_features("tushare", days[1], [
+        feature("000001.SZ", days[1], 25, 1_000, 11),
+    ])
+    dirty = store.get_active_market_value_index()
+    assert dirty["dirty_from_date"] == days[1]
+    assert dirty["dirty_reason"] == "feature_corrected"
+
+    result = store.build_active_market_value_index(mode="incremental")
+    after = store.get_daily_bars(DEFAULT_SYMBOL)
+    run_mode = store._connection.execute(
+        "SELECT mode FROM active_market_value_build_runs ORDER BY run_id DESC LIMIT 1"
+    ).fetchone()[0]
+
+    assert run_mode == "correction"
+    assert result["dirty_from_date"] is None
+    assert after[0] == before[0]
+    assert after[1].close > before[1].close
+    assert after[2].close > before[2].close
+    with pytest.raises(ValueError, match="requires a dirty range or start_date"):
+        store.build_active_market_value_index(mode="correction")
+    store.close()
+
+
 def test_empty_summary_and_invalid_mode_are_explicit():
     store = SQLiteMarketDataStore(":memory:")
     assert store.get_active_market_value_index() == {
         "status": "missing", "symbol": DEFAULT_SYMBOL, "rows": 0,
     }
     with pytest.raises(ValueError, match="invalid active-market-value build mode"):
-        store.build_active_market_value_index(mode="correction")
+        store.build_active_market_value_index(mode="unsupported")
     store.close()

@@ -130,12 +130,16 @@ def test_active_market_value_is_chartable_with_diagnostics():
     ])
     with client:
         rebuilt = client.post("/api/active-market-value/rebuild")
+        invalid_rebuild = client.post(
+            "/api/active-market-value/rebuild", params={"mode": "invalid"}
+        )
         summary = client.get("/api/active-market-value")
         diagnostics = client.get("/api/active-market-value/daily")
         chart = client.get("/api/instruments/SHAMV.A/daily-bars")
     store.close()
 
     assert rebuilt.status_code == 200
+    assert invalid_rebuild.status_code == 422
     assert summary.json()["symbol"] == "SHAMV.A"
     assert summary.json()["latest_coverage_ratio"] == 1
     assert diagnostics.json()["items"][0]["absolute_close"] > 0

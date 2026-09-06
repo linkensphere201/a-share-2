@@ -18,6 +18,7 @@ import {
   createRangeMeasurement,
   detectPriceGaps,
   latestReadout,
+  middleMovingAveragePeriod,
   movingAverage,
   mergeProvisionalBar,
   millisecondsUntilMarketSession,
@@ -31,6 +32,11 @@ import {
 describe('chart layout', () => {
   it('does not render the TradingView attribution over the chart', () => {
     expect(chartLayoutOptions.attributionLogo).toBe(false)
+  })
+
+  it('uses MA13 only for the active-market-value index', () => {
+    expect(middleMovingAveragePeriod('SHAMV.A')).toBe(13)
+    expect(middleMovingAveragePeriod('000001.SZ')).toBe(20)
   })
 
   it('physically bounds review-mode bar requests at the causal cutoff', () => {
