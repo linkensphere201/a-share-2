@@ -332,14 +332,17 @@ class CodexChatService:
         try:
             conversation = self._store.get_chat_conversation(conversation_id)
             assert conversation is not None
+            access_profile = str(conversation.get("context_kind") or "trend_analysis")
             codex_thread_id = conversation.get("codex_thread_id")
-            policy_version = _thread_policy_version(self._bridge)
+            policy_version = _thread_policy_version(self._bridge, access_profile)
             stored_policy = str(conversation.get("codex_policy_version") or "")
             policy_migrated = bool(
                 codex_thread_id and stored_policy != policy_version
             )
             if not codex_thread_id or policy_migrated:
-                codex_thread_id = self._bridge.start_thread(self._workdir)
+                codex_thread_id = _start_thread(
+                    self._bridge, self._workdir, access_profile
+                )
                 self._store.set_chat_codex_thread(
                     conversation_id, str(codex_thread_id), policy_version
                 )
@@ -349,7 +352,9 @@ class CodexChatService:
                         "policy_version": policy_version,
                     })
             else:
-                self._bridge.ensure_thread(str(codex_thread_id), self._workdir)
+                _ensure_thread(
+                    self._bridge, str(codex_thread_id), self._workdir, access_profile
+                )
             self._store.update_chat_turn(turn_id, "running")
             stream.publish("started", {"turn_id": turn_id})
             renderer = render_signal_chat_prompt if context.get("context_kind") == "signal_run" else render_chat_prompt
@@ -409,12 +414,35 @@ class CodexChatService:
                 self._workers.discard(threading.current_thread())
 
 
-def _thread_policy_version(bridge: AiConversationProvider) -> str:
+def _thread_policy_version(
+    bridge: AiConversationProvider, access_profile: str = "trend_analysis",
+) -> str:
     callback = getattr(bridge, "thread_policy_version", None)
     if not callable(callback):
         return _LEGACY_THREAD_POLICY
-    value = str(callback()).strip()
+    try:
+        value = str(callback(access_profile)).strip()
+    except TypeError:
+        value = str(callback()).strip()
     return value or _LEGACY_THREAD_POLICY
+
+
+def _start_thread(
+    bridge: AiConversationProvider, workdir: Path, access_profile: str,
+) -> str:
+    try:
+        return bridge.start_thread(workdir, access_profile)
+    except TypeError:
+        return bridge.start_thread(workdir)
+
+
+def _ensure_thread(
+    bridge: AiConversationProvider, thread_id: str, workdir: Path, access_profile: str,
+) -> None:
+    try:
+        bridge.ensure_thread(thread_id, workdir, access_profile)
+    except TypeError:
+        bridge.ensure_thread(thread_id, workdir)
 
 
 def _with_migration_history(

@@ -27,6 +27,7 @@ class FakeCodexBridge:
         self.prompts: list[str] = []
         self.closed = False
         self.interrupts: list[tuple[str, str]] = []
+        self.access_profiles: list[str] = []
 
     def status(self) -> dict[str, object]:
         return {
@@ -34,10 +35,17 @@ class FakeCodexBridge:
             "experimental": True, "error": None,
         }
 
-    def start_thread(self, _workdir: Path) -> str:
+    def start_thread(
+        self, _workdir: Path, access_profile: str = "trend_analysis",
+    ) -> str:
+        self.access_profiles.append(access_profile)
         return "codex-thread-1"
 
-    def ensure_thread(self, _thread_id: str, _workdir: Path) -> None:
+    def ensure_thread(
+        self, _thread_id: str, _workdir: Path,
+        access_profile: str = "trend_analysis",
+    ) -> None:
+        self.access_profiles.append(access_profile)
         return None
 
     def run_turn(
@@ -172,6 +180,7 @@ def test_signal_result_chat_uses_signal_template_and_retries_from_saved_context(
     assert "不可变信号复盘结果" in bridge.prompts[0]
     assert "进入或退出结果" in bridge.prompts[0]
     assert '"code":"S1"' in bridge.prompts[0]
+    assert bridge.access_profiles == ["signal_run", "signal_run"]
     store.close()
 
 
@@ -663,6 +672,65 @@ def test_protocol_allows_only_stock_harness_mcp_items_and_normalizes_events() ->
     except CodexUnavailableError as error:
         assert "denied MCP" in str(error)
     assert denied.calls[-1] == "turn/interrupt"
+
+
+def test_signal_chat_thread_configuration_excludes_recalculation(tmp_path: Path) -> None:
+    from stock_harness.codex_app_server import (
+        ALLOWED_MCP_SERVER, READ_ONLY_MCP_TOOLS, SIGNAL_ACCESS_PROFILE,
+    )
+
+    class ProtocolFixture(CodexAppServerClient):
+        def __init__(self) -> None:
+            super().__init__(executable="fixture")
+            self.params: dict[str, object] = {}
+
+        def _ensure_started(self) -> None:
+            return None
+
+        def _request(self, method: str, params: dict[str, object]) -> dict[str, object]:
+            assert method == "thread/start"
+            self.params = params
+            return {"thread": {"id": "signal-thread"}}
+
+    client = ProtocolFixture()
+    thread_id = client.start_thread(tmp_path, SIGNAL_ACCESS_PROFILE)
+    config = client.params["config"]
+    assert isinstance(config, dict)
+    enabled = config["mcp_servers"][ALLOWED_MCP_SERVER]["enabled_tools"]
+    assert enabled == sorted(READ_ONLY_MCP_TOOLS)
+    assert "recalculate_trend_analysis" not in enabled
+    assert client.thread_policy_version(SIGNAL_ACCESS_PROFILE).endswith(":signal_run")
+    assert thread_id == "signal-thread"
+
+
+def test_signal_chat_tripwire_blocks_recalculation() -> None:
+    from stock_harness.codex_app_server import SIGNAL_ACCESS_PROFILE
+
+    class ProtocolFixture(CodexAppServerClient):
+        def __init__(self) -> None:
+            super().__init__(executable="fixture")
+            self.calls: list[str] = []
+            self._thread_profiles["thread-1"] = SIGNAL_ACCESS_PROFILE
+
+        def _request(self, method: str, _params: dict[str, object]) -> dict[str, object]:
+            self.calls.append(method)
+            if method == "turn/start":
+                def emit() -> None:
+                    self._listeners["thread-1"]("item/started", {
+                        "threadId": "thread-1", "turnId": "turn-1",
+                        "item": {
+                            "type": "mcpToolCall", "server": "stock_harness_embedded",
+                            "tool": "recalculate_trend_analysis",
+                        },
+                    })
+                threading.Timer(0.01, emit).start()
+                return {"turn": {"id": "turn-1"}}
+            return {}
+
+    client = ProtocolFixture()
+    with pytest.raises(CodexUnavailableError, match="denied MCP"):
+        client.run_turn("thread-1", "recalculate", lambda *_args: None)
+    assert client.calls[-1] == "turn/interrupt"
 
 
 def test_position_and_risk_reward_templates_require_validated_structured_inputs() -> None:

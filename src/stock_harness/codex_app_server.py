@@ -30,7 +30,9 @@ DENIED_ITEM_TYPES = {
     "computerAction", "dynamicToolCall", "collabAgentToolCall",
 }
 ALLOWED_MCP_SERVER = "stock_harness_embedded"
-THREAD_POLICY_VERSION = "stockharness-embedded-mcp-v1"
+THREAD_POLICY_VERSION = "stockharness-embedded-mcp-v2"
+TREND_ACCESS_PROFILE = "trend_analysis"
+SIGNAL_ACCESS_PROFILE = "signal_run"
 ALLOWED_MCP_TOOLS = frozenset({
     "stock_harness_health", "get_active_workspace", "search_instruments",
     "get_instrument", "list_custom_groups", "get_custom_group",
@@ -39,6 +41,7 @@ ALLOWED_MCP_TOOLS = frozenset({
     "list_signal_definitions", "list_signal_runs", "get_signal_run", "get_signal_item",
     "list_instrument_members", "list_symbol_boards", "recalculate_trend_analysis",
 })
+READ_ONLY_MCP_TOOLS = ALLOWED_MCP_TOOLS - {"recalculate_trend_analysis"}
 
 
 class CodexUnavailableError(RuntimeError):
@@ -66,6 +69,7 @@ class CodexAppServerClient:
         self._start_lock = threading.Lock()
         self._version: str | None = None
         self._loaded_threads: set[str] = set()
+        self._thread_profiles: dict[str, str] = {}
         self._listeners: dict[str, Callable[[str, dict[str, object]], None]] = {}
         self._listeners_lock = threading.Lock()
         self._start_attempts: list[float] = []
@@ -107,23 +111,29 @@ class CodexAppServerClient:
                 "error": _bounded_error(error),
             }
 
-    def thread_policy_version(self) -> str:
-        return THREAD_POLICY_VERSION
+    def thread_policy_version(self, access_profile: str = TREND_ACCESS_PROFILE) -> str:
+        return f"{THREAD_POLICY_VERSION}:{_access_profile(access_profile)}"
 
-    def start_thread(self, workdir: Path) -> str:
+    def start_thread(
+        self, workdir: Path, access_profile: str = TREND_ACCESS_PROFILE,
+    ) -> str:
         self._ensure_started()
         workdir.mkdir(parents=True, exist_ok=True)
+        profile = _access_profile(access_profile)
+        allowed_tools = _tools_for_profile(profile)
         result = self._request("thread/start", {
             "cwd": str(workdir.resolve()),
             "approvalPolicy": "never",
             "sandbox": "read-only",
             "ephemeral": False,
+            "config": _thread_mcp_config(allowed_tools),
             "baseInstructions": (
                 "You are the embedded StockHarness market-analysis assistant. "
                 "Use the frozen selected-result context and, when needed, only the allowlisted "
                 "stock_harness MCP tools. Never call shell, filesystem, browser, web, apps, "
                 "other MCP servers, or request permissions. The only permitted computation "
-                "write is recalculate_trend_analysis over already stored market bars."
+                "write is recalculate_trend_analysis over already stored market bars, and it "
+                "is available only in trend-analysis conversations."
             ),
             "developerInstructions": (
                 "Answer in Chinese. Keep facts, rule-based inference, and uncertainty distinct. "
@@ -135,19 +145,26 @@ class CodexAppServerClient:
             raise CodexUnavailableError("Codex did not return a thread ID")
         thread_id = str(thread["id"])
         self._loaded_threads.add(thread_id)
+        self._thread_profiles[thread_id] = profile
         return thread_id
 
-    def ensure_thread(self, thread_id: str, workdir: Path) -> None:
+    def ensure_thread(
+        self, thread_id: str, workdir: Path,
+        access_profile: str = TREND_ACCESS_PROFILE,
+    ) -> None:
         self._ensure_started()
-        if thread_id in self._loaded_threads:
+        profile = _access_profile(access_profile)
+        if thread_id in self._loaded_threads and self._thread_profiles.get(thread_id) == profile:
             return
         self._request("thread/resume", {
             "threadId": thread_id,
             "cwd": str(workdir.resolve()),
             "approvalPolicy": "never",
             "sandbox": "read-only",
+            "config": _thread_mcp_config(_tools_for_profile(profile)),
         })
         self._loaded_threads.add(thread_id)
+        self._thread_profiles[thread_id] = profile
 
     def run_turn(
         self, thread_id: str, prompt: str, on_event: Callable[[str, dict[str, object]], None]
@@ -204,7 +221,10 @@ class CodexAppServerClient:
                     item = params.get("item")
                     item_type = str(item.get("type", "")) if isinstance(item, dict) else ""
                     if item_type == "mcpToolCall":
-                        if not _allowed_mcp_item(item):
+                        allowed_tools = _tools_for_profile(
+                            self._thread_profiles.get(thread_id, SIGNAL_ACCESS_PROFILE)
+                        )
+                        if not _allowed_mcp_item(item, allowed_tools):
                             self.interrupt(thread_id, turn_id)
                             on_event("warning", {
                                 "message": "Codex MCP call was blocked by the StockHarness allow list",
@@ -299,6 +319,7 @@ class CodexAppServerClient:
                 text=True, encoding="utf-8", errors="replace", bufsize=1,
             )
             self._loaded_threads.clear()
+            self._thread_profiles.clear()
             threading.Thread(target=self._read_stdout, name="codex-jsonl", daemon=True).start()
             threading.Thread(target=self._read_stderr, name="codex-stderr", daemon=True).start()
             self._request("initialize", {
@@ -496,11 +517,31 @@ def _configured_mcp_servers(
         ) from error
 
 
-def _allowed_mcp_item(item: dict[str, object]) -> bool:
+def _allowed_mcp_item(
+    item: dict[str, object], allowed_tools: frozenset[str] = ALLOWED_MCP_TOOLS,
+) -> bool:
     return (
         str(item.get("server", "")) == ALLOWED_MCP_SERVER
-        and str(item.get("tool", "")) in ALLOWED_MCP_TOOLS
+        and str(item.get("tool", "")) in allowed_tools
     )
+
+
+def _access_profile(value: str) -> str:
+    if value not in {TREND_ACCESS_PROFILE, SIGNAL_ACCESS_PROFILE}:
+        raise ValueError(f"unsupported Codex access profile: {value}")
+    return value
+
+
+def _tools_for_profile(value: str) -> frozenset[str]:
+    return ALLOWED_MCP_TOOLS if _access_profile(value) == TREND_ACCESS_PROFILE else READ_ONLY_MCP_TOOLS
+
+
+def _thread_mcp_config(allowed_tools: frozenset[str]) -> dict[str, object]:
+    return {
+        "mcp_servers": {
+            ALLOWED_MCP_SERVER: {"enabled_tools": sorted(allowed_tools)}
+        }
+    }
 
 
 def _mcp_event(item: dict[str, object]) -> dict[str, object]:
