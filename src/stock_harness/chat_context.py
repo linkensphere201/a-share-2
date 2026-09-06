@@ -70,6 +70,8 @@ def build_chat_context(
         })
     return {
         "schema_version": CHAT_CONTEXT_SCHEMA_VERSION,
+        "context_kind": "trend_analysis",
+        "context_id": source_run_id,
         "symbol": str(run["symbol"]),
         "timeframe": timeframe,
         "source_run_id": source_run_id,
@@ -111,6 +113,88 @@ def build_chat_context(
         },
         "truncated": len(run.get("items", [])) > MAX_CONTEXT_ITEMS,
     }
+
+
+def build_signal_chat_context(
+    store: "SQLiteMarketDataStore", *, run_id: str,
+    selected_item_ids: list[str] | None = None,
+) -> dict[str, object]:
+    run = store.get_signal_review_run(run_id)
+    if run is None or run["status"] != "succeeded":
+        raise ValueError("signal chat source run does not exist or did not succeed")
+    all_items = store.list_signal_review_items(run_id)
+    requested = set(selected_item_ids or [])
+    if len(requested) > 20:
+        raise ValueError("signal chat accepts at most 20 selected items")
+    if requested - {str(item["item_id"]) for item in all_items}:
+        raise ValueError("selected signal items do not belong to the source run")
+    items = [item for item in all_items if str(item["item_id"]) in requested]
+    evidence: list[dict[str, object]] = []
+    selected: list[dict[str, object]] = []
+    for item in items:
+        item_evidence = []
+        for raw in item["evidence"]:
+            value = {
+                "code": str(raw["alias"]), "signal_item_id": str(item["item_id"]),
+                "signal_evidence_id": str(raw["evidence_id"]),
+                "kind": str(raw["evidence_type"]),
+                "source_run_id": raw.get("source_run_id"),
+                "source_item_id": raw.get("source_item_id"),
+                "payload": raw.get("payload", {}),
+            }
+            evidence.append({**value, "analysis_item_id": str(raw["evidence_id"])})
+            item_evidence.append(value)
+        selected.append({
+            "item_id": item["item_id"], "symbol": item["symbol"],
+            "name": item["name"], "profile": item["profile"],
+            "rank": item["rank"], "change_type": item["change_type"],
+            "active": item["active"], "score": item["score"],
+            "confidence": item["confidence"], "metrics": item["payload"],
+            "evidence": item_evidence,
+        })
+    effective_date = run["effective_date"]
+    assert isinstance(effective_date, date)
+    return {
+        "schema_version": "signal-chat-context-v1",
+        "context_kind": "signal_run", "context_id": run_id,
+        "source_run_id": None,
+        "workspace_reference": f"signal:{run['signal_id']}:{run_id}",
+        "as_of_date": effective_date.isoformat(), "input_start_date": None,
+        "input_end_date": effective_date.isoformat(),
+        "input_digest": str(run.get("input_digest") or ""),
+        "algorithm_version": run["algorithm_version"],
+        "config_version": run["definition_version"],
+        "completion_state": "complete", "preview": False,
+        "stale": False, "stale_reasons": [], "warnings": [],
+        "signal": {
+            "signal_id": run["signal_id"], "cadence": run["cadence"],
+            "effective_date": effective_date.isoformat(), "revision": run["revision"],
+            "prior_run_id": run["prior_run_id"], "parameters": run["parameters"],
+            "summary": run["summary"],
+            "diff": {"added": run["added_count"], "retained": run["retained_count"],
+                     "removed": run["removed_count"]},
+        },
+        "selected_items": selected, "evidence": evidence,
+        "visible_evidence_codes": [item["code"] for item in evidence],
+        "truncated": False,
+    }
+
+
+def render_signal_chat_prompt(
+    context: dict[str, object], user_message: str, template_instruction: str | None,
+) -> str:
+    instruction = template_instruction or "直接回答用户关于当前冻结信号结果的问题。"
+    return "\n".join([
+        "你正在分析 StockHarness 的一个不可变信号复盘结果。",
+        "固定算法输出是观察事实；你的回答属于解释或质疑，不得改写信号结果。",
+        "只把 selected_items 当作初始上下文；需要其他标的或证据时，按需调用 stock_harness_embedded MCP 只读工具。",
+        "引用信号证据时使用快照中的 [S*] 代号，并区分算法证据、AI 推断和不确定性。",
+        f"本轮模板要求：{instruction}",
+        "<stockharness_signal_context>",
+        json.dumps(context, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+        "</stockharness_signal_context>",
+        "<user_question>", user_message.strip(), "</user_question>",
+    ])
 
 
 def render_chat_prompt(

@@ -21,6 +21,7 @@ export type CodexCapabilities = {
     error?: string | null
   }
   templates: ChatTemplate[]
+  signal_templates?: ChatTemplate[]
 }
 
 export type ChatMessage = {
@@ -41,9 +42,11 @@ export type ChatTurn = {
 
 export type ChatConversation = {
   conversation_id: string
-  symbol: string
-  timeframe: string
-  source_run_id: string
+  context_kind?: 'trend_analysis' | 'signal_run'
+  context_id?: string
+  symbol: string | null
+  timeframe: string | null
+  source_run_id: string | null
   as_of_date: string
   algorithm_version: string
   config_version: string
@@ -58,7 +61,9 @@ export type ChatConversation = {
 
 export type ChatConversationSummary = {
   conversation_id: string
-  source_run_id: string
+  context_kind?: 'trend_analysis' | 'signal_run'
+  context_id?: string
+  source_run_id: string | null
   title: string
   status: 'active' | 'archived'
   as_of_date: string
@@ -70,7 +75,7 @@ export type ChatConversationSummary = {
 export type ChatTurnContextSummary = {
   schema_version: string
   workspace_reference: string
-  source_run_id: string
+  source_run_id: string | null
   as_of_date: string
   input_start_date: string
   input_end_date: string
@@ -126,6 +131,22 @@ export function listChatConversations(
   return jsonRequest(`/api/ai/conversations?${query}`)
 }
 
+export function openSignalChatConversation(
+  runId: string, forceNew = false,
+): Promise<ChatConversation> {
+  return jsonRequest('/api/ai/conversations', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ context_kind: 'signal_run', context_id: runId, force_new: forceNew }),
+  })
+}
+
+export function listSignalChatConversations(
+  runId: string,
+): Promise<{ items: ChatConversationSummary[] }> {
+  const query = new URLSearchParams({ context_kind: 'signal_run', context_id: runId })
+  return jsonRequest(`/api/ai/conversations?${query}`)
+}
+
 export function updateChatConversation(
   conversationId: string, update: { title?: string; status?: 'active' | 'archived' },
 ): Promise<ChatConversation> {
@@ -152,11 +173,13 @@ export function startChatTurn(
     position?: { direction: 'long' | 'short'; entry_price: number; stop_price?: number; target_price?: number }
     risk_reward?: { direction: 'long' | 'short'; entry_price: number; stop_price: number; target_price: number }
   },
+  selectedSignalItemIds?: string[],
 ): Promise<{ turn_id: string; status: string }> {
   return jsonRequest(`/api/ai/conversations/${encodeURIComponent(conversationId)}/turns`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content, template_id: templateId || null, ...userInputs }),
+    body: JSON.stringify({ content, template_id: templateId || null, ...userInputs,
+      selected_signal_item_ids: selectedSignalItemIds ?? [] }),
   })
 }
 

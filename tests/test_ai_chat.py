@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date
 from pathlib import Path
 import json
+import sqlite3
 import threading
 import sys
 import time
@@ -16,6 +17,7 @@ from stock_harness.analysis_results import (
 )
 from stock_harness.api import create_app
 from stock_harness.models import DailyBar, Instrument, InstrumentKind
+from stock_harness.signal_review import WEEKLY_RECOGNITION_SIGNAL
 from stock_harness.sqlite_store import SQLiteMarketDataStore
 from stock_harness.codex_app_server import CodexAppServerClient, CodexUnavailableError
 
@@ -126,6 +128,53 @@ def test_result_bound_chat_streams_and_persists_a_completed_turn() -> None:
     store.close()
 
 
+def test_signal_result_chat_uses_signal_template_and_retries_from_saved_context() -> None:
+    store = SQLiteMarketDataStore(":memory:")
+    store.upsert_instruments([
+        Instrument("000001.SZ", "平安银行", InstrumentKind.STOCK, "SZ")
+    ])
+    run = store.create_signal_review_run(
+        signal_id=WEEKLY_RECOGNITION_SIGNAL,
+        definition_version="signal-v1", algorithm_version="recognition-v1",
+        cadence="weekly", effective_date=date(2026, 9, 4), parameters={},
+    )
+    store.complete_signal_review_run(str(run["run_id"]), items=[{
+        "item_id": "signal-item-1", "item_key": "recent:000001.SZ", "rank": 1,
+        "symbol": "000001.SZ", "profile": "recent", "change_type": "added",
+        "active": True, "score": .9, "confidence": .8, "payload": {},
+        "evidence": [{
+            "evidence_id": "signal-evidence-1", "alias": "S1",
+            "evidence_type": "board-recognition-ranking",
+            "payload": {"board_name": "银行"},
+        }],
+    }], summary={"added": 1}, input_digest="signal-digest")
+    bridge = FakeCodexBridge()
+    with TestClient(create_app(store, codex_bridge=bridge)) as client:
+        conversation = client.post("/api/ai/conversations", json={
+            "context_kind": "signal_run", "context_id": run["run_id"],
+        }).json()
+        turn = client.post(
+            f"/api/ai/conversations/{conversation['conversation_id']}/turns",
+            json={"content": "为什么进入？", "template_id": "signal-entry-exit",
+                  "selected_signal_item_ids": ["signal-item-1"]},
+        ).json()
+        client.get(f"/api/ai/turns/{turn['turn_id']}/events")
+        retried = client.post(f"/api/ai/turns/{turn['turn_id']}/retry").json()
+        client.get(f"/api/ai/turns/{retried['turn_id']}/events")
+        restored = client.get(
+            f"/api/ai/conversations/{conversation['conversation_id']}"
+        ).json()
+
+    assert conversation["context_kind"] == "signal_run"
+    assert len(restored["turns"]) == 2
+    assert all(turn["status"] == "completed" for turn in restored["turns"])
+    assert len(bridge.prompts) == 2
+    assert "不可变信号复盘结果" in bridge.prompts[0]
+    assert "进入或退出结果" in bridge.prompts[0]
+    assert '"code":"S1"' in bridge.prompts[0]
+    store.close()
+
+
 def test_chat_context_excludes_bars_after_the_bound_analysis_date() -> None:
     store, run_id = _store_with_run()
     conversation = store.get_or_create_chat_conversation(
@@ -143,6 +192,90 @@ def test_chat_context_excludes_bars_after_the_bound_analysis_date() -> None:
         {"code": "K1", "analysis_item_id": "support", "kind": "zone"},
     ]
     store.close()
+
+
+def test_typed_chat_context_migration_preserves_legacy_conversation(tmp_path: Path) -> None:
+    database = tmp_path / "legacy-chat.sqlite3"
+    store = SQLiteMarketDataStore(database)
+    store.upsert_instruments([
+        Instrument("000001.SZ", "平安银行", InstrumentKind.STOCK, "SZ")
+    ])
+    run = store.begin_generated_analysis_run(AnalysisRunSpec(
+        system_id="trend", symbol="000001.SZ", timeframe="daily",
+        namespace=AnalysisNamespace.OFFICIAL, as_of_date=date(2026, 8, 31),
+        input_start_date=date(2026, 8, 1), input_end_date=date(2026, 8, 31),
+        input_digest=b"legacy", algorithm_version="trend-v1",
+        config_version="workspace-v1", completion_state="complete",
+    ))
+    store.complete_generated_analysis_run(run.run_id, [], duration_ms=1)
+    conversation = store.get_or_create_chat_conversation(
+        symbol="000001.SZ", timeframe="daily", source_run_id=run.run_id,
+    )
+    store.set_chat_codex_thread(str(conversation["conversation_id"]), "legacy-thread", "policy-v1")
+    from stock_harness.chat_context import build_chat_context
+    context = build_chat_context(
+        store, symbol="000001.SZ", timeframe="daily", source_run_id=run.run_id,
+    )
+    turn = store.create_chat_turn(
+        conversation_id=str(conversation["conversation_id"]), content="旧问题",
+        template_id=None, context=context,
+    )
+    store.update_chat_turn(
+        str(turn["turn_id"]), "completed", codex_turn_id="legacy-turn",
+        assistant_content="旧回答",
+    )
+    store.close()
+
+    connection = sqlite3.connect(database)
+    connection.execute("PRAGMA foreign_keys = OFF")
+    connection.executescript("""
+        CREATE TABLE legacy_ai_chat_conversations (
+            conversation_id TEXT PRIMARY KEY,
+            instrument_id INTEGER NOT NULL,
+            timeframe TEXT NOT NULL,
+            source_run_id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            codex_thread_id TEXT,
+            codex_policy_version TEXT,
+            status TEXT NOT NULL,
+            created_at_ms INTEGER NOT NULL,
+            updated_at_ms INTEGER NOT NULL
+        );
+        INSERT INTO legacy_ai_chat_conversations
+        SELECT conversation_id, instrument_id, timeframe, source_run_id, title,
+               codex_thread_id, codex_policy_version, status, created_at_ms, updated_at_ms
+        FROM ai_chat_conversations;
+        DROP TABLE ai_chat_conversations;
+        ALTER TABLE legacy_ai_chat_conversations RENAME TO ai_chat_conversations;
+
+        CREATE TABLE legacy_ai_chat_turn_contexts (
+            turn_id TEXT PRIMARY KEY,
+            schema_version TEXT NOT NULL,
+            source_run_id TEXT NOT NULL,
+            as_of_date INTEGER NOT NULL,
+            input_digest TEXT NOT NULL,
+            context_json TEXT NOT NULL
+        ) WITHOUT ROWID;
+        INSERT INTO legacy_ai_chat_turn_contexts
+        SELECT turn_id, schema_version, source_run_id, as_of_date, input_digest, context_json
+        FROM ai_chat_turn_contexts;
+        DROP TABLE ai_chat_turn_contexts;
+        ALTER TABLE legacy_ai_chat_turn_contexts RENAME TO ai_chat_turn_contexts;
+    """)
+    connection.close()
+
+    migrated = SQLiteMarketDataStore(database)
+    restored = migrated.get_chat_conversation(str(conversation["conversation_id"]))
+    assert restored is not None
+    assert restored["context_kind"] == "trend_analysis"
+    assert restored["context_id"] == run.run_id
+    assert restored["codex_thread_id"] == "legacy-thread"
+    assert restored["turns"][0]["messages"][0]["content"] == "旧问题"
+    assert restored["turns"][0]["messages"][1]["content"] == "旧回答"
+    restored_context = migrated.get_chat_turn_context(str(turn["turn_id"]))
+    assert restored_context is not None
+    assert restored_context["source_run_id"] == run.run_id
+    migrated.close()
 
 
 def test_chat_rejects_cross_symbol_run_binding_and_unknown_template() -> None:

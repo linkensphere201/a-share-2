@@ -84,6 +84,35 @@ def build_server(
         """Get the active window group, chart views, links, symbols, and trend-line anchors."""
         return await invoke(service.get_active_workspace)
 
+    @server.tool(title="List signal definitions", annotations=READ_ONLY)
+    async def list_signal_definitions() -> dict[str, object]:
+        """List versioned deterministic signal modules and their manual cadence."""
+        return await invoke(service.list_signal_definitions)
+
+    @server.tool(title="List signal review runs", annotations=READ_ONLY)
+    async def list_signal_runs(
+        signal_id: Annotated[str | None, Field(max_length=100)] = None,
+        limit: Annotated[int, Field(ge=1, le=100)] = 20,
+    ) -> dict[str, object]:
+        """List immutable signal revisions and aggregate comparison counts."""
+        return await invoke(service.list_signal_runs, signal_id, limit)
+
+    @server.tool(title="Get signal review run", annotations=READ_ONLY)
+    async def get_signal_run(
+        run_id: Annotated[str, Field(min_length=1, max_length=64)],
+        max_items: Annotated[int, Field(ge=1, le=200)] = 200,
+    ) -> dict[str, object]:
+        """Read one immutable signal run with bounded items and evidence references."""
+        return await invoke(service.get_signal_run, run_id, max_items)
+
+    @server.tool(title="Get signal review item", annotations=READ_ONLY)
+    async def get_signal_item(
+        run_id: Annotated[str, Field(min_length=1, max_length=64)],
+        item_id: Annotated[str, Field(min_length=1, max_length=100)],
+    ) -> dict[str, object]:
+        """Read one exact immutable signal item and all of its stored evidence references."""
+        return await invoke(service.get_signal_item, run_id, item_id)
+
     @server.tool(title="Search StockHarness instruments", annotations=READ_ONLY)
     async def search_instruments(
         query: Annotated[str, Field(max_length=100)] = "",

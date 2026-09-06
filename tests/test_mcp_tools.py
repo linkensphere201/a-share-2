@@ -373,3 +373,26 @@ def test_invalid_dates_and_limits_fail_before_api_call():
     with pytest.raises(ValueError):
         tools.search_instruments(limit=101)
     assert api.calls == []
+
+
+def test_signal_tools_keep_runs_and_items_bounded():
+    api = FakeApi({
+        "/api/signals/definitions": {"items": [{"signal_id": "weekly"}]},
+        "/api/signals/runs": {"items": [{"run_id": "run-1"}]},
+        "/api/signals/runs/run-1": {"run_id": "run-1", "status": "succeeded"},
+        "/api/signals/runs/run-1/items": {"items": [
+            {"item_id": f"item-{index}"} for index in range(3)
+        ]},
+    })
+    tools = StockHarnessMcpTools(api)
+
+    assert tools.list_signal_definitions()["data"]["items"][0]["signal_id"] == "weekly"
+    assert tools.list_signal_runs("weekly", limit=10)["data"]["items"][0]["run_id"] == "run-1"
+    run = tools.get_signal_run("run-1", max_items=2)["data"]
+    assert len(run["items"]) == 2
+    assert run["items_total"] == 3
+    assert run["items_truncated"] is True
+    item = tools.get_signal_item("run-1", "item-2")["data"]
+    assert item["item"]["item_id"] == "item-2"
+    with pytest.raises(ValueError, match="max_items"):
+        tools.get_signal_run("run-1", max_items=201)

@@ -119,10 +119,21 @@ class AiAnalysisReportInput(BaseModel):
 
 
 class AiChatConversationInput(BaseModel):
-    symbol: str = Field(min_length=1, max_length=200)
+    context_kind: Literal["trend_analysis", "signal_run"] = "trend_analysis"
+    context_id: str | None = Field(default=None, min_length=1, max_length=64)
+    symbol: str | None = Field(default=None, min_length=1, max_length=200)
     timeframe: Literal["daily"] = "daily"
-    source_run_id: str = Field(min_length=1, max_length=64)
+    source_run_id: str | None = Field(default=None, min_length=1, max_length=64)
     force_new: bool = False
+
+    @model_validator(mode="after")
+    def validate_context(self) -> "AiChatConversationInput":
+        context_id = self.context_id or self.source_run_id
+        if not context_id:
+            raise ValueError("chat context_id or source_run_id is required")
+        if self.context_kind == "trend_analysis" and not self.symbol:
+            raise ValueError("trend chat requires symbol")
+        return self
 
 
 class AiChatConversationUpdateInput(BaseModel):
@@ -163,6 +174,7 @@ class AiChatTurnInput(BaseModel):
     template_id: str | None = Field(default=None, max_length=80)
     position: AiPositionContextInput | None = None
     risk_reward: AiRiskRewardContextInput | None = None
+    selected_signal_item_ids: list[str] = Field(default_factory=list, max_length=20)
 
 
 class TrendReviewSourceInput(BaseModel):

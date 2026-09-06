@@ -128,6 +128,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .signal-error { position: fixed; z-index: 60; top: 64px; right: 12px; max-width: 520px; padding: 8px 10px; color: #ffd5d5; border: 1px solid #8f4f4f; background: #3e2020; }
 .signal-grid { min-height: 0; display: grid; grid-template-columns: minmax(205px, 240px) minmax(520px, 1fr); }
 .signal-grid.inspector-open { grid-template-columns: minmax(205px, 240px) minmax(330px, 390px) minmax(540px, 1fr); }
+.signal-grid.inspector-open.chat-open { grid-template-columns: 205px 330px minmax(460px, 1fr) 310px; }
 .signal-runs, .signal-results, .signal-inspector { min-width: 0; min-height: 0; border-right: 1px solid var(--theme-border); background: var(--theme-surface); }
 .signal-runs { display: grid; grid-template-rows: 42px minmax(0, 1fr); }
 .signal-results { display: grid; grid-template-rows: 42px 3px 30px 30px 27px minmax(0, 1fr); }
@@ -166,12 +167,30 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .signal-evidence .signal-scroll { display: grid; align-content: start; grid-template-columns: repeat(auto-fill, minmax(185px, 1fr)); gap: 1px; background: var(--theme-border); }
 .signal-evidence button { min-width: 0; display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 5px; padding: 7px 8px; color: var(--theme-text); text-align: left; border: 0; background: var(--theme-surface); }
 .signal-evidence button:hover { background: var(--theme-hover); }
+.signal-evidence button.active { background: var(--theme-accent-soft); }
 .signal-evidence code { color: var(--theme-accent); font-family: Consolas, monospace; font-size: 10px; }
 .signal-evidence button span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
 .signal-evidence button small { display: block; margin-top: 2px; overflow: hidden; color: var(--theme-muted); text-overflow: ellipsis; white-space: nowrap; font-size: 8px; }
 .signal-empty { height: 100%; display: grid; place-items: center; color: var(--theme-muted); font-size: 11px; }
 .signal-empty.compact { min-height: 80px; height: auto; padding: 16px; text-align: center; }
 .signal-empty.error { color: #d98989; }
+.signal-chat-pane { min-width: 0; min-height: 0; display: grid; grid-template-rows: 42px 50px minmax(0, 1fr) auto; border-left: 1px solid var(--theme-border); background: var(--theme-surface); }
+.signal-chat-pane > header { display: flex; align-items: center; justify-content: space-between; padding: 0 9px; border-bottom: 1px solid var(--theme-border); }
+.signal-chat-pane > header > span, .signal-chat-pane > header > div { display: flex; align-items: center; gap: 6px; }
+.signal-chat-pane > header button { width: 25px; height: 25px; display: grid; place-items: center; padding: 0; color: var(--theme-muted); border: 0; background: transparent; }
+.signal-chat-pane > header small { color: var(--theme-muted); font-size: 8px; }
+.signal-chat-pane > header small.available { color: #76c99b; }
+.signal-chat-context { min-width: 0; display: grid; gap: 3px; padding: 6px 8px; border-bottom: 1px solid var(--theme-border); }
+.signal-chat-context select { min-width: 0; color: var(--theme-text); border: 1px solid var(--theme-border); background: var(--theme-raised); font-size: 9px; }
+.signal-chat-context small { overflow: hidden; color: var(--theme-muted); text-overflow: ellipsis; white-space: nowrap; font-size: 8px; }
+.signal-chat-messages { min-height: 0; overflow: auto; padding: 8px; }
+.signal-chat-compose { display: grid; gap: 5px; padding: 7px; border-top: 1px solid var(--theme-border); }
+.signal-chat-templates { display: flex; gap: 3px; overflow-x: auto; }
+.signal-chat-templates button { min-width: max-content; padding: 3px 5px; color: var(--theme-muted); border: 1px solid var(--theme-border); border-radius: 3px; background: transparent; font-size: 8px; }
+.signal-chat-templates button.active { color: var(--theme-text-strong); border-color: var(--theme-accent); background: var(--theme-accent-soft); }
+.signal-chat-compose > div:last-child { display: grid; grid-template-columns: minmax(0, 1fr) 28px; }
+.signal-chat-compose textarea { min-height: 58px; resize: vertical; padding: 6px; color: var(--theme-text); border: 1px solid var(--theme-border); background: var(--theme-base); font-size: 10px; }
+.signal-chat-compose > div:last-child > button { color: var(--theme-text); border: 1px solid var(--theme-border); background: var(--theme-raised); }
 
 @media (max-width: 1180px) {
   .signal-title small, .signal-description { display: none; }

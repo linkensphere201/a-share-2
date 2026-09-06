@@ -26,6 +26,8 @@ def create_chat_router() -> APIRouter:
                 symbol=payload.symbol,
                 timeframe=payload.timeframe,
                 source_run_id=payload.source_run_id,
+                context_kind=payload.context_kind,
+                context_id=payload.context_id,
                 force_new=payload.force_new,
             )
         except ValueError as error:
@@ -33,14 +35,20 @@ def create_chat_router() -> APIRouter:
 
     @router.get("/api/ai/conversations")
     def list_conversations(
-        request: Request, symbol: str, timeframe: str = "daily",
+        request: Request, symbol: str | None = None, timeframe: str = "daily",
         source_run_id: str | None = None,
+        context_kind: str = "trend_analysis", context_id: str | None = None,
         include_archived: bool = Query(default=True),
     ) -> dict[str, object]:
-        return {"items": request.app.state.chat_service.list_conversations(
-            symbol=symbol, timeframe=timeframe, source_run_id=source_run_id,
-            include_archived=include_archived,
-        )}
+        try:
+            items = request.app.state.chat_service.list_conversations(
+                symbol=symbol, timeframe=timeframe, source_run_id=source_run_id,
+                context_kind=context_kind, context_id=context_id,
+                include_archived=include_archived,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        return {"items": items}
 
     @router.get("/api/ai/conversations/{conversation_id}")
     def get_conversation(conversation_id: str, request: Request) -> dict[str, object]:
@@ -92,6 +100,7 @@ def create_chat_router() -> APIRouter:
                         "risk_reward": payload.risk_reward,
                     }.items() if value is not None
                 },
+                selected_signal_item_ids=payload.selected_signal_item_ids,
             )
         except RuntimeError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error

@@ -36,6 +36,7 @@ ALLOWED_MCP_TOOLS = frozenset({
     "get_instrument", "list_custom_groups", "get_custom_group",
     "get_daily_bars", "get_latest_quote", "list_futures_coverage",
     "get_futures_continuous", "get_trend_analysis", "get_ai_analysis",
+    "list_signal_definitions", "list_signal_runs", "get_signal_run", "get_signal_item",
     "list_instrument_members", "list_symbol_boards", "recalculate_trend_analysis",
 })
 

@@ -57,6 +57,50 @@ describe('SignalReviewWorkspace', () => {
     await user.click(screen.getByRole('button', { name: '运行本期信号' }))
     expect(fetchMock.mock.calls.some(call => call[1]?.method === 'POST')).toBe(true)
   })
+
+  it('binds Codex chat to the selected signal result and its run', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url === '/api/signals/definitions') return response({ items: [definition] })
+      if (url.includes('/api/signals/runs?')) return response({ items: [run] })
+      if (url.endsWith('/items')) return response({ items })
+      if (url === '/api/ai/codex/status') return response({
+        codex: { available: true, authenticated: true, experimental: true },
+        templates: [], signal_templates: [{ id: 'signal-challenge', version: 'v1', label: '反例质疑', instruction: 'test' }],
+      })
+      if (url === '/api/ai/conversations' && init?.method === 'POST') return response(conversation, 201)
+      if (url.startsWith('/api/ai/conversations?')) return response({ items: [{
+        ...conversation, turn_count: 0, created_at_ms: 1, updated_at_ms: 1,
+      }] })
+      if (url.endsWith('/turns') && init?.method === 'POST') return response({ turn_id: 'turn-1', status: 'queued' }, 202)
+      throw new Error(`unexpected URL ${url}`)
+    })
+    class FakeEventSource {
+      onerror: (() => void) | null = null
+      constructor(public url: string) {}
+      addEventListener() {}
+      close() {}
+    }
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('EventSource', FakeEventSource)
+    const user = userEvent.setup()
+    render(<SignalReviewWorkspace theme={themes[0]} onClose={() => undefined}/>)
+
+    await user.click((await screen.findByText('000001.SZ')).closest('button')!)
+    await user.click(screen.getByRole('button', { name: 'Codex 信号讨论' }))
+    const input = await screen.findByRole('textbox', { name: '信号讨论输入' })
+    await user.type(input, '复核这个变化')
+    await user.click(screen.getByRole('button', { name: '发送信号问题' }))
+
+    const create = fetchMock.mock.calls.find(call => String(call[0]) === '/api/ai/conversations')
+    expect(JSON.parse(String(create?.[1]?.body))).toMatchObject({
+      context_kind: 'signal_run', context_id: 'run-1',
+    })
+    const turn = fetchMock.mock.calls.find(call => String(call[0]).endsWith('/turns'))
+    expect(JSON.parse(String(turn?.[1]?.body))).toMatchObject({
+      content: '复核这个变化', selected_signal_item_ids: ['item-1'],
+    })
+  })
 })
 
 const definition = {
@@ -85,6 +129,13 @@ const items = [{
   profile: 'historical', change_type: 'removed', active: false, score: .82,
   confidence: .62, payload: { board_count: 2 }, evidence: [],
 }]
+
+const conversation = {
+  conversation_id: 'conversation-1', context_kind: 'signal_run', context_id: 'run-1',
+  symbol: null, timeframe: null, source_run_id: null, as_of_date: '2026-09-04',
+  algorithm_version: 'a1', config_version: 'v1', completion_state: 'complete',
+  preview: false, title: 'weekly · 2026-09-04 R2', status: 'active', turns: [],
+}
 
 function response(payload: unknown, status = 200) {
   return Promise.resolve(new Response(JSON.stringify(payload), {

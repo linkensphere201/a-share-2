@@ -679,17 +679,20 @@ ON ai_analysis_reports(instrument_id, timeframe, revision DESC);
 
 CREATE TABLE IF NOT EXISTS ai_chat_conversations (
     conversation_id TEXT PRIMARY KEY,
-    instrument_id INTEGER NOT NULL,
-    timeframe TEXT NOT NULL CHECK (timeframe IN ('daily', 'weekly', 'monthly')),
-    source_run_id TEXT NOT NULL,
+    context_kind TEXT NOT NULL DEFAULT 'trend_analysis' CHECK (
+        context_kind IN ('trend_analysis', 'signal_run')
+    ),
+    context_id TEXT NOT NULL,
+    instrument_id INTEGER,
+    timeframe TEXT CHECK (timeframe IN ('daily', 'weekly', 'monthly')),
+    source_run_id TEXT,
     title TEXT NOT NULL,
     codex_thread_id TEXT,
     codex_policy_version TEXT,
     status TEXT NOT NULL CHECK (status IN ('active', 'archived')),
     created_at_ms INTEGER NOT NULL,
     updated_at_ms INTEGER NOT NULL,
-    FOREIGN KEY (instrument_id) REFERENCES instruments(instrument_id),
-    FOREIGN KEY (source_run_id) REFERENCES generated_analysis_runs(run_id)
+    FOREIGN KEY (instrument_id) REFERENCES instruments(instrument_id)
 );
 
 CREATE INDEX IF NOT EXISTS ai_chat_conversations_latest
@@ -729,12 +732,15 @@ CREATE TABLE IF NOT EXISTS ai_chat_messages (
 CREATE TABLE IF NOT EXISTS ai_chat_turn_contexts (
     turn_id TEXT PRIMARY KEY,
     schema_version TEXT NOT NULL,
-    source_run_id TEXT NOT NULL,
+    context_kind TEXT NOT NULL DEFAULT 'trend_analysis' CHECK (
+        context_kind IN ('trend_analysis', 'signal_run')
+    ),
+    context_id TEXT NOT NULL,
+    source_run_id TEXT,
     as_of_date INTEGER NOT NULL,
     input_digest TEXT NOT NULL,
     context_json TEXT NOT NULL,
-    FOREIGN KEY (turn_id) REFERENCES ai_chat_turns(turn_id) ON DELETE CASCADE,
-    FOREIGN KEY (source_run_id) REFERENCES generated_analysis_runs(run_id)
+    FOREIGN KEY (turn_id) REFERENCES ai_chat_turns(turn_id) ON DELETE CASCADE
 ) WITHOUT ROWID;
 
 CREATE TABLE IF NOT EXISTS ai_chat_message_references (

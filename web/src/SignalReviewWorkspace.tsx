@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowLeft, Play, Radar, RefreshCw } from 'lucide-react'
+import { ArrowLeft, MessageSquare, Play, Radar, RefreshCw } from 'lucide-react'
 import { ChartCanvas } from './ChartCanvas'
 import { MarketBoardBadge } from './MarketBoardBadge'
 import type { ThemeDefinition } from './themeStore'
@@ -8,6 +8,7 @@ import {
   startSignalRun, type SignalChangeType, type SignalDefinition, type SignalItem,
   type SignalProfile, type SignalRun,
 } from './signalReviewClient'
+import { SignalChatPanel } from './SignalChatPanel'
 
 type Props = { theme: ThemeDefinition; onClose: () => void }
 type ProfileFilter = 'all' | SignalProfile
@@ -31,6 +32,8 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
   const [profile, setProfile] = useState<ProfileFilter>('all')
   const [change, setChange] = useState<ChangeFilter>('all')
   const [error, setError] = useState('')
+  const [chatOpen, setChatOpen] = useState(false)
+  const [highlightedEvidenceId, setHighlightedEvidenceId] = useState<string>()
 
   useEffect(() => {
     const controller = new AbortController()
@@ -87,6 +90,10 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
   }), [items])
   const progress = selectedRun?.work_total
     ? Math.round(selectedRun.work_done / selectedRun.work_total * 100) : 0
+  const highlightReference = (itemId?: string, evidenceId?: string) => {
+    if (itemId) setSelectedItem(items.find(item => item.item_id === itemId))
+    setHighlightedEvidenceId(evidenceId)
+  }
 
   const run = async () => {
     if (!selectedDefinition) return
@@ -112,7 +119,7 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
       </button>
     </header>
     {error && <button className="signal-error" onClick={() => setError('')}>{error}</button>}
-    <section className={selectedItem ? 'signal-grid inspector-open' : 'signal-grid'}>
+    <section className={`${selectedItem ? 'signal-grid inspector-open' : 'signal-grid'}${chatOpen ? ' chat-open' : ''}`}>
       <aside className="signal-runs">
         <header><span>历史轮次</span><small>{runs.length}</small></header>
         <div className="signal-scroll">{runs.length === 0 && <div className="signal-empty compact">尚未运行</div>}{runs.map(item => <button key={item.run_id} className={selectedRun?.run_id === item.run_id ? 'active' : ''} onClick={() => setSelectedRun(item)}>
@@ -136,16 +143,17 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
         </button>)}</div>
       </section>
       {selectedItem && <section className="signal-inspector">
-        <header>{selectedItem ? <><span className="instrument-name-line"><span>{selectedItem.name}</span><MarketBoardBadge instrument={selectedItem}/></span><small>{profileLabels[selectedItem.profile]} · 得分 {(selectedItem.score * 100).toFixed(1)} · 置信 {(selectedItem.confidence * 100).toFixed(1)}</small></> : <span>证据与 K 线</span>}</header>
+        <header>{selectedItem ? <><span className="instrument-name-line"><span>{selectedItem.name}</span><MarketBoardBadge instrument={selectedItem}/></span><small>{profileLabels[selectedItem.profile]} · 得分 {(selectedItem.score * 100).toFixed(1)} · 置信 {(selectedItem.confidence * 100).toFixed(1)}</small><button className="icon-button" title="Codex 信号讨论" aria-label="Codex 信号讨论" onClick={() => setChatOpen(value => !value)}><MessageSquare size={13}/></button></> : <span>证据与 K 线</span>}</header>
         <div className="signal-chart">{selectedItem
           ? <ChartCanvas key={`${selectedRun?.run_id}:${selectedItem.symbol}`} symbol={selectedItem.symbol} instrumentName={selectedItem.name} instrumentKind={selectedItem.kind} focused theme={theme} range="1Y" priceMode="normal" volumeVisible indicator="none" settlementVisible={false} openInterestVisible={false} asOfDate={selectedRun?.effective_date}/>
           : <div className="signal-empty">选择一项结果查看 K 线</div>}</div>
         <div className="signal-evidence"><header><span>引用证据</span><small>{selectedItem?.evidence.length ?? 0}</small></header>
-          <div className="signal-scroll">{selectedItem?.evidence.map(evidence => <button key={evidence.evidence_id} title="该证据为板块排名证据；形态几何证据将在对应信号中联动高亮">
+          <div className="signal-scroll">{selectedItem?.evidence.map(evidence => <button key={evidence.evidence_id} className={highlightedEvidenceId === evidence.evidence_id ? 'active' : ''} onClick={() => setHighlightedEvidenceId(evidence.evidence_id)} title="该证据为板块排名证据；形态几何证据将在对应信号中联动高亮">
             <code>[{evidence.alias}]</code><span>{evidence.payload.board_name ?? evidence.evidence_type}<small>{evidence.payload.board_classification === 'industry' ? '行业板块' : '概念板块'} · 板块第 {evidence.payload.rank ?? '-'} · 得分 {((evidence.payload.score ?? 0) * 100).toFixed(1)}</small></span>
           </button>)}</div>
         </div>
       </section>}
+      {chatOpen && selectedRun && <SignalChatPanel run={selectedRun} items={items} selectedItem={selectedItem} onReference={highlightReference} onClose={() => setChatOpen(false)}/>}
     </section>
   </main>
 }

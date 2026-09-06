@@ -10,7 +10,7 @@ from uuid import uuid4
 from stock_harness.sqlite_mapping import _date_from_key, _date_key
 
 
-_REFERENCE_PATTERN = re.compile(r"\[([KLP]\d+)\]")
+_REFERENCE_PATTERN = re.compile(r"\[([KLPS]\d+)\]")
 
 
 class SQLiteChatStoreMixin:
@@ -81,12 +81,13 @@ class SQLiteChatStoreMixin:
                 self._connection.execute(
                     """
                     INSERT INTO ai_chat_conversations(
-                        conversation_id, instrument_id, timeframe, source_run_id,
+                        conversation_id, context_kind, context_id,
+                        instrument_id, timeframe, source_run_id,
                         title, status, created_at_ms, updated_at_ms
-                    ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?)
+                    ) VALUES (?, 'trend_analysis', ?, ?, ?, ?, ?, 'active', ?, ?)
                     """,
                     (
-                        conversation_id, instrument_id, timeframe, source_run_id,
+                        conversation_id, source_run_id, instrument_id, timeframe, source_run_id,
                         f"{canonical_symbol} · {_date_from_key(int(source[2])).isoformat()}",
                         now_ms, now_ms,
                     ),
@@ -104,6 +105,109 @@ class SQLiteChatStoreMixin:
         result = self.get_chat_conversation(conversation_id)
         assert result is not None
         return result
+
+    def get_or_create_signal_chat_conversation(
+        self, *, run_id: str, force_new: bool = False,
+    ) -> dict[str, object]:
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        with self._lock, self._transaction():
+            source = self._connection.execute(
+                """SELECT signal_id, effective_date, revision
+                   FROM signal_review_runs
+                   WHERE run_id = ? AND status = 'succeeded'""",
+                (run_id,),
+            ).fetchone()
+            if source is None:
+                raise ValueError("signal chat source run does not exist or did not succeed")
+            existing = None if force_new else self._connection.execute(
+                """SELECT conversation_id FROM ai_chat_conversations
+                   WHERE context_kind = 'signal_run' AND context_id = ?
+                     AND status = 'active'
+                   ORDER BY updated_at_ms DESC LIMIT 1""",
+                (run_id,),
+            ).fetchone()
+            if existing is None:
+                conversation_id = str(uuid4())
+                title = (
+                    f"{str(source[0])} · {_date_from_key(int(source[1])).isoformat()} "
+                    f"R{int(source[2])}"
+                )
+                self._connection.execute(
+                    """INSERT INTO ai_chat_conversations(
+                           conversation_id, context_kind, context_id, title,
+                           status, created_at_ms, updated_at_ms
+                       ) VALUES (?, 'signal_run', ?, ?, 'active', ?, ?)""",
+                    (conversation_id, run_id, title, now_ms, now_ms),
+                )
+            else:
+                conversation_id = str(existing[0])
+                self._connection.execute(
+                    "UPDATE ai_chat_conversations SET updated_at_ms = ? WHERE conversation_id = ?",
+                    (now_ms, conversation_id),
+                )
+        result = self.get_signal_chat_conversation(conversation_id)
+        assert result is not None
+        return result
+
+    def list_signal_chat_conversations(
+        self, *, run_id: str, include_archived: bool = True,
+    ) -> list[dict[str, object]]:
+        archived = "" if include_archived else "AND conversation.status = 'active'"
+        with self._lock:
+            rows = self._connection.execute(
+                f"""SELECT conversation.conversation_id, conversation.context_id,
+                           conversation.title, conversation.status,
+                           conversation.created_at_ms, conversation.updated_at_ms,
+                           signal.effective_date,
+                           (SELECT count(*) FROM ai_chat_turns AS turn
+                            WHERE turn.conversation_id = conversation.conversation_id)
+                    FROM ai_chat_conversations AS conversation
+                    JOIN signal_review_runs AS signal ON signal.run_id = conversation.context_id
+                    WHERE conversation.context_kind = 'signal_run'
+                      AND conversation.context_id = ? {archived}
+                    ORDER BY conversation.updated_at_ms DESC""",
+                (run_id,),
+            ).fetchall()
+        return [{
+            "conversation_id": str(row[0]), "context_kind": "signal_run",
+            "context_id": str(row[1]), "source_run_id": None,
+            "title": str(row[2]), "status": str(row[3]),
+            "created_at_ms": int(row[4]), "updated_at_ms": int(row[5]),
+            "as_of_date": _date_from_key(int(row[6])), "turn_count": int(row[7]),
+        } for row in rows]
+
+    def get_signal_chat_conversation(
+        self, conversation_id: str,
+    ) -> dict[str, object] | None:
+        with self._lock:
+            row = self._connection.execute(
+                """SELECT conversation.conversation_id, conversation.context_id,
+                          conversation.title, conversation.codex_thread_id,
+                          conversation.codex_policy_version, conversation.status,
+                          conversation.created_at_ms, conversation.updated_at_ms,
+                          signal.effective_date, signal.algorithm_version,
+                          signal.input_digest
+                   FROM ai_chat_conversations AS conversation
+                   JOIN signal_review_runs AS signal ON signal.run_id = conversation.context_id
+                   WHERE conversation.conversation_id = ?
+                     AND conversation.context_kind = 'signal_run'""",
+                (conversation_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            turns = self._load_chat_turns_locked(conversation_id)
+        return {
+            "conversation_id": str(row[0]), "context_kind": "signal_run",
+            "context_id": str(row[1]), "symbol": None, "timeframe": None,
+            "source_run_id": None, "title": str(row[2]),
+            "codex_thread_id": row[3], "codex_policy_version": row[4],
+            "status": str(row[5]), "created_at_ms": int(row[6]),
+            "updated_at_ms": int(row[7]), "as_of_date": _date_from_key(int(row[8])),
+            "algorithm_version": str(row[9]), "config_version": "",
+            "completion_state": "complete", "preview": False,
+            "input_digest": str(row[10] or ""), "source_observed_at_ms": None,
+            "turns": turns,
+        }
 
     def list_chat_conversations(
         self, *, symbol: str, timeframe: str, source_run_id: str | None = None,
@@ -181,6 +285,12 @@ class SQLiteChatStoreMixin:
 
     def get_chat_conversation(self, conversation_id: str) -> dict[str, object] | None:
         with self._lock:
+            kind = self._connection.execute(
+                "SELECT context_kind FROM ai_chat_conversations WHERE conversation_id = ?",
+                (conversation_id,),
+            ).fetchone()
+            if kind is not None and str(kind[0]) == "signal_run":
+                return self.get_signal_chat_conversation(conversation_id)
             row = self._connection.execute(
                 """
                 SELECT conversation.conversation_id, instrument.symbol,
@@ -232,7 +342,8 @@ class SQLiteChatStoreMixin:
                     } for message in message_rows],
                 })
         return {
-            "conversation_id": str(row[0]), "symbol": str(row[1]),
+            "conversation_id": str(row[0]), "context_kind": "trend_analysis",
+            "context_id": str(row[3]), "symbol": str(row[1]),
             "timeframe": str(row[2]), "source_run_id": str(row[3]),
             "title": str(row[4]), "codex_thread_id": row[5],
             "codex_policy_version": row[6],
@@ -243,6 +354,34 @@ class SQLiteChatStoreMixin:
             "input_digest": bytes(row[15]).hex(), "source_observed_at_ms": row[16],
             "turns": turns,
         }
+
+    def _load_chat_turns_locked(self, conversation_id: str) -> list[dict[str, object]]:
+        rows = self._connection.execute(
+            """SELECT turn_id, codex_turn_id, template_id, template_version,
+                      status, error, created_at_ms, completed_at_ms
+               FROM ai_chat_turns WHERE conversation_id = ?
+               ORDER BY created_at_ms, turn_id""",
+            (conversation_id,),
+        ).fetchall()
+        result = []
+        for turn in rows:
+            messages = self._connection.execute(
+                """SELECT message_id, role, sequence, content, incomplete, created_at_ms
+                   FROM ai_chat_messages WHERE turn_id = ? ORDER BY sequence""",
+                (turn[0],),
+            ).fetchall()
+            result.append({
+                "turn_id": str(turn[0]), "codex_turn_id": turn[1],
+                "template_id": turn[2], "template_version": turn[3],
+                "status": str(turn[4]), "error": turn[5],
+                "created_at_ms": int(turn[6]), "completed_at_ms": turn[7],
+                "messages": [{
+                    "message_id": str(message[0]), "role": str(message[1]),
+                    "sequence": int(message[2]), "content": str(message[3]),
+                    "incomplete": bool(message[4]), "created_at_ms": int(message[5]),
+                } for message in messages],
+            })
+        return result
 
     def set_chat_codex_thread(
         self,
@@ -277,19 +416,21 @@ class SQLiteChatStoreMixin:
         turn_id = str(uuid4())
         message_id = str(uuid4())
         now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
-        source_run_id = str(context["source_run_id"])
+        context_kind = str(context.get("context_kind") or "trend_analysis")
+        context_id = str(context.get("context_id") or context["source_run_id"])
+        source_run_id = context.get("source_run_id")
         as_of_date = date.fromisoformat(str(context["as_of_date"]))
         with self._lock, self._transaction():
             conversation = self._connection.execute(
                 """
-                SELECT source_run_id FROM ai_chat_conversations
+                SELECT context_kind, context_id FROM ai_chat_conversations
                 WHERE conversation_id = ? AND status = 'active'
                 """,
                 (conversation_id,),
             ).fetchone()
             if conversation is None:
                 raise ValueError("chat conversation does not exist or is archived")
-            if str(conversation[0]) != source_run_id:
+            if str(conversation[0]) != context_kind or str(conversation[1]) != context_id:
                 raise ValueError("chat turn context does not match its conversation")
             active = self._connection.execute(
                 """
@@ -320,12 +461,14 @@ class SQLiteChatStoreMixin:
             self._connection.execute(
                 """
                 INSERT INTO ai_chat_turn_contexts(
-                    turn_id, schema_version, source_run_id, as_of_date,
+                    turn_id, schema_version, context_kind, context_id,
+                    source_run_id, as_of_date,
                     input_digest, context_json
-                ) VALUES (?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    turn_id, str(context["schema_version"]), source_run_id,
+                    turn_id, str(context["schema_version"]), context_kind, context_id,
+                    str(source_run_id) if source_run_id else None,
                     _date_key(as_of_date),
                     str(context["input_digest"]),
                     json.dumps(context, ensure_ascii=False, sort_keys=True),

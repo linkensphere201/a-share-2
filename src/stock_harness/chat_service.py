@@ -9,13 +9,16 @@ import re
 import threading
 from typing import Callable, Iterator
 
-from stock_harness.chat_context import build_chat_context, render_chat_prompt
+from stock_harness.chat_context import (
+    build_chat_context, build_signal_chat_context, render_chat_prompt,
+    render_signal_chat_prompt,
+)
 from stock_harness.ai_provider import AiConversationProvider, PROVIDER_EVENT_TYPES
 from stock_harness.sqlite_store import SQLiteMarketDataStore
 
 
 LOGGER = logging.getLogger(__name__)
-_REFERENCE_PATTERN = re.compile(r"\[([KLP]\d+)\]")
+_REFERENCE_PATTERN = re.compile(r"\[([KLPS]\d+)\]")
 _LEGACY_THREAD_POLICY = "legacy-no-tools"
 _MAX_MIGRATION_HISTORY_CHARS = 12_000
 
@@ -26,6 +29,15 @@ CHAT_TEMPLATES: tuple[dict[str, str], ...] = (
     {"id": "position-tracking", "version": "1.0", "label": "持仓跟踪", "instruction": "基于用户提供的持仓信息分析趋势是否延续、何处失效以及需要跟踪的证据。"},
     {"id": "exit", "version": "1.0", "label": "止盈止损", "instruction": "区分结构失效、保护性止损和情景止盈，明确各自依据和不确定性。"},
     {"id": "risk-reward", "version": "1.0", "label": "盈亏比", "instruction": "只使用用户明确给出的或快照可验证的入场、止损、目标价格计算盈亏比，并列出假设。"},
+)
+
+SIGNAL_CHAT_TEMPLATES: tuple[dict[str, str], ...] = (
+    {"id": "signal-weekly-change", "version": "1.0", "label": "本期变化", "instruction": "解释本轮相对上一兼容轮次的新增、保留和移除，优先引用证据。"},
+    {"id": "signal-entry-exit", "version": "1.0", "label": "进出复核", "instruction": "复核所选标的进入或退出结果的固定算法依据及其局限。"},
+    {"id": "signal-challenge", "version": "1.0", "label": "反例质疑", "instruction": "主动寻找误判、板块别名重复、样本偏差和证据不足，不得迎合结论。"},
+    {"id": "signal-market-divergence", "version": "1.0", "label": "市场背离", "instruction": "比较市场指数与活跃市值等已存信号证据，明确同向、背离、数据缺口和不能下结论的部分。"},
+    {"id": "signal-board-drilldown", "version": "1.0", "label": "板块下钻", "instruction": "沿所选板块及标的证据下钻，区分板块整体变化、核心标的贡献与扩散噪声。"},
+    {"id": "signal-next-check", "version": "1.0", "label": "下期条件", "instruction": "给出下一期应观察的可验证条件，不生成交易指令。"},
 )
 
 
@@ -99,18 +111,38 @@ class CodexChatService:
             LOGGER.warning("codex_chat_interrupted_turns_recovered count=%s", recovered)
 
     def capabilities(self) -> dict[str, object]:
-        return {"codex": self._bridge.status(), "templates": list(CHAT_TEMPLATES)}
+        return {"codex": self._bridge.status(), "templates": list(CHAT_TEMPLATES),
+                "signal_templates": list(SIGNAL_CHAT_TEMPLATES)}
 
     def conversation(
-        self, *, symbol: str, timeframe: str, source_run_id: str,
-        force_new: bool = False,
+        self, *, symbol: str | None = None, timeframe: str = "daily",
+        source_run_id: str | None = None, context_kind: str = "trend_analysis",
+        context_id: str | None = None, force_new: bool = False,
     ) -> dict[str, object]:
+        if context_kind == "signal_run":
+            return self._store.get_or_create_signal_chat_conversation(
+                run_id=str(context_id or source_run_id or ""), force_new=force_new,
+            )
         return self._store.get_or_create_chat_conversation(
-            symbol=symbol, timeframe=timeframe, source_run_id=source_run_id,
+            symbol=str(symbol or ""), timeframe=timeframe,
+            source_run_id=str(source_run_id or context_id or ""),
             force_new=force_new,
         )
 
     def list_conversations(self, **filters: object) -> list[dict[str, object]]:
+        if filters.get("context_kind") == "signal_run":
+            if not filters.get("context_id"):
+                raise ValueError("signal chat requires context_id")
+            return self._store.list_signal_chat_conversations(
+                run_id=str(filters.get("context_id") or ""),
+                include_archived=bool(filters.get("include_archived", True)),
+            )
+        if filters.get("context_kind") != "trend_analysis":
+            raise ValueError("unsupported chat context_kind")
+        if not filters.get("symbol"):
+            raise ValueError("trend chat requires symbol")
+        filters.pop("context_kind", None)
+        filters.pop("context_id", None)
         return self._store.list_chat_conversations(**filters)
 
     def update_conversation(
@@ -133,24 +165,31 @@ class CodexChatService:
         content: str,
         template_id: str | None,
         user_inputs: dict[str, object] | None = None,
+        selected_signal_item_ids: list[str] | None = None,
     ) -> dict[str, object]:
         self._ensure_stream_capacity()
         conversation = self._store.get_chat_conversation(conversation_id)
         if conversation is None:
             raise ValueError("chat conversation not found")
-        template = next((item for item in CHAT_TEMPLATES if item["id"] == template_id), None)
+        templates = SIGNAL_CHAT_TEMPLATES if conversation.get("context_kind") == "signal_run" else CHAT_TEMPLATES
+        template = next((item for item in templates if item["id"] == template_id), None)
         if template_id is not None and template is None:
             raise ValueError("unknown chat template")
         if template_id == "position-tracking" and not (user_inputs or {}).get("position"):
             raise ValueError("position tracking requires explicit position context")
         if template_id == "risk-reward" and not (user_inputs or {}).get("risk_reward"):
             raise ValueError("risk/reward analysis requires validated price inputs")
-        context = build_chat_context(
-            self._store,
-            symbol=str(conversation["symbol"]),
-            timeframe=str(conversation["timeframe"]),
-            source_run_id=str(conversation["source_run_id"]),
-        )
+        if conversation.get("context_kind") == "signal_run":
+            context = build_signal_chat_context(
+                self._store, run_id=str(conversation["context_id"]),
+                selected_item_ids=selected_signal_item_ids,
+            )
+        else:
+            context = build_chat_context(
+                self._store, symbol=str(conversation["symbol"]),
+                timeframe=str(conversation["timeframe"]),
+                source_run_id=str(conversation["source_run_id"]),
+            )
         context["user_inputs"] = user_inputs or {}
         return self._enqueue_turn(
             conversation_id, content, template, context,
@@ -196,7 +235,10 @@ class CodexChatService:
         if context is None:
             raise ValueError("chat turn context not found")
         template_id = str(previous["template_id"]) if previous["template_id"] else None
-        template = next((item for item in CHAT_TEMPLATES if item["id"] == template_id), None)
+        templates = (SIGNAL_CHAT_TEMPLATES
+                     if context.get("context_kind") == "signal_run"
+                     else CHAT_TEMPLATES)
+        template = next((item for item in templates if item["id"] == template_id), None)
         if template_id is not None and template is None:
             raise ValueError("chat turn template is no longer supported")
         return self._enqueue_turn(
@@ -310,9 +352,8 @@ class CodexChatService:
                 self._bridge.ensure_thread(str(codex_thread_id), self._workdir)
             self._store.update_chat_turn(turn_id, "running")
             stream.publish("started", {"turn_id": turn_id})
-            prompt = render_chat_prompt(
-                context, content, template["instruction"] if template else None
-            )
+            renderer = render_signal_chat_prompt if context.get("context_kind") == "signal_run" else render_chat_prompt
+            prompt = renderer(context, content, template["instruction"] if template else None)
             if policy_migrated:
                 prompt = _with_migration_history(
                     prompt, conversation, current_turn_id=turn_id

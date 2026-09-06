@@ -388,7 +388,7 @@ function buildReferenceMap(run: TrendAnalysisRun): Map<string, string> {
   return result
 }
 
-function ChatMarkdown({
+export function ChatMarkdown({
   text, references, onHighlight,
 }: {
   text: string
@@ -414,9 +414,9 @@ function ReferenceText({
   references: Map<string, string>
   onHighlight: (itemId?: string) => void
 }) {
-  const parts = text.split(/(\[[KLP]\d+\])/g)
+  const parts = text.split(/(\[[KLPS]\d+\])/g)
   return <>{parts.map((part, index) => {
-    const code = /^\[([KLP]\d+)\]$/.exec(part)?.[1]
+    const code = /^\[([KLPS]\d+)\]$/.exec(part)?.[1]
     const itemId = code ? references.get(code) : undefined
     return itemId ? <button
       key={`${part}-${index}`}
@@ -425,6 +425,7 @@ function ReferenceText({
       onPointerLeave={() => onHighlight(undefined)}
       onFocus={() => onHighlight(itemId)}
       onBlur={() => onHighlight(undefined)}
+      onClick={() => onHighlight(itemId)}
     >{part}</button> : <span key={`${index}-${part.slice(0, 8)}`}>{part}</span>
   })}</>
 }

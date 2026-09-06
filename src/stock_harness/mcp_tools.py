@@ -23,6 +23,7 @@ MAX_GROUP_MEMBERS = 500
 MAX_MEMBERSHIPS = 500
 MAX_DAILY_BARS = 8_000
 MAX_FUTURES_ROWS = 500
+MAX_SIGNAL_ITEMS = 200
 MIN_SHORT_HORIZON = 5
 MAX_LONG_HORIZON = 1_000
 LOGGER = logging.getLogger(__name__)
@@ -160,6 +161,63 @@ class StockHarnessMcpTools:
         return self._execute(
             "get_active_workspace", lambda: self.api.get("/api/workspace-context")
         )
+
+    def list_signal_definitions(self) -> dict[str, object]:
+        return self._execute(
+            "list_signal_definitions", lambda: self.api.get("/api/signals/definitions")
+        )
+
+    def list_signal_runs(
+        self, signal_id: str | None = None, limit: int = 20,
+    ) -> dict[str, object]:
+        limit = _bounded(limit, 1, 100, "limit")
+        params: list[tuple[str, object]] = [("limit", limit)]
+        if signal_id:
+            params.append(("signal_id", signal_id.strip()))
+        return self._execute(
+            "list_signal_runs", lambda: self.api.get("/api/signals/runs", params)
+        )
+
+    def get_signal_run(
+        self, run_id: str, max_items: int = MAX_SIGNAL_ITEMS,
+    ) -> dict[str, object]:
+        normalized = run_id.strip()
+        if not normalized:
+            raise ValueError("run_id is required")
+        max_items = _bounded(max_items, 1, MAX_SIGNAL_ITEMS, "max_items")
+
+        def load() -> dict[str, object]:
+            run = self.api.get(f"/api/signals/runs/{normalized}")
+            payload = self.api.get(f"/api/signals/runs/{normalized}/items")
+            items = _items(payload)
+            return {**run, "items": items[:max_items], "items_total": len(items),
+                    "items_truncated": len(items) > max_items}
+
+        return self._execute("get_signal_run", load)
+
+    def get_signal_item(self, run_id: str, item_id: str) -> dict[str, object]:
+        normalized_run = run_id.strip()
+        normalized_item = item_id.strip()
+        if not normalized_run or not normalized_item:
+            raise ValueError("run_id and item_id are required")
+
+        def load() -> dict[str, object]:
+            run = self.api.get(f"/api/signals/runs/{normalized_run}")
+            items = _items(self.api.get(f"/api/signals/runs/{normalized_run}/items"))
+            selected = next(
+                (item for item in items if str(item.get("item_id")) == normalized_item), None
+            )
+            if selected is None:
+                raise StockHarnessApiError(
+                    "not_found", "signal item was not found in the requested run", status=404
+                )
+            return {
+                "run_id": normalized_run, "signal_id": run.get("signal_id"),
+                "effective_date": run.get("effective_date"), "revision": run.get("revision"),
+                "item": selected,
+            }
+
+        return self._execute("get_signal_item", load)
 
     def search_instruments(
         self,

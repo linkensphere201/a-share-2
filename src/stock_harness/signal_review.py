@@ -270,7 +270,7 @@ def _aggregate_assignments(assignments: list[dict[str, object]]) -> list[dict[st
             int(item["rank"]), -float(item["score"]), str(item["board_name"])
         ))
         evidence = [{
-            "evidence_id": str(uuid4()), "alias": f"S{index}",
+            "evidence_id": str(uuid4()), "alias": "",
             "evidence_type": "board-recognition-ranking",
             "payload": {
                 "board_symbol": row["board_symbol"], "board_name": row["board_name"],
@@ -295,9 +295,13 @@ def _aggregate_assignments(assignments: list[dict[str, object]]) -> list[dict[st
         -float(item["score"]), -float(item["confidence"]), str(item["symbol"]),
     ))
     counters = defaultdict(int)
+    evidence_sequence = 0
     for item in selected:
         counters[str(item["profile"])] += 1
         item["rank"] = counters[str(item["profile"])]
+        for evidence in item["evidence"]:
+            evidence_sequence += 1
+            evidence["alias"] = f"S{evidence_sequence}"
     return selected
 
 
