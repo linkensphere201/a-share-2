@@ -11,6 +11,38 @@ from stock_harness.sqlite_mapping import _date_from_key, _date_key
 
 
 class SQLiteSignalObservationStoreMixin:
+    def _ensure_signal_observation_columns(self) -> None:
+        with self._lock, self._writer_lock:
+            columns = {
+                str(row[1]) for row in self._connection.execute(
+                    "PRAGMA table_info(board_daily_observations)"
+                )
+            }
+            if "deep_analysis_run_id" not in columns:
+                self._connection.execute(
+                    "ALTER TABLE board_daily_observations ADD COLUMN deep_analysis_run_id TEXT"
+                )
+            if "deep_analysis_summary_json" not in columns:
+                self._connection.execute(
+                    "ALTER TABLE board_daily_observations ADD COLUMN "
+                    "deep_analysis_summary_json TEXT NOT NULL DEFAULT '{}'"
+                )
+            if "conclusion_code" not in columns:
+                self._connection.execute(
+                    "ALTER TABLE board_daily_observations ADD COLUMN "
+                    "conclusion_code TEXT NOT NULL DEFAULT 'data-unavailable'"
+                )
+            if "rendered_summary" not in columns:
+                self._connection.execute(
+                    "ALTER TABLE board_daily_observations ADD COLUMN "
+                    "rendered_summary TEXT NOT NULL DEFAULT ''"
+                )
+            if "comparison_json" not in columns:
+                self._connection.execute(
+                    "ALTER TABLE board_daily_observations ADD COLUMN "
+                    "comparison_json TEXT NOT NULL DEFAULT '{}'"
+                )
+
     def upsert_stock_daily_limits(
         self, source: str, limits: Sequence[StockDailyLimit],
     ) -> int:
@@ -256,9 +288,10 @@ class SQLiteSignalObservationStoreMixin:
                     run_id, instrument_id, effective_date, coverage_state,
                     state_codes_json, metrics_json, disqualifiers_json,
                     attention_reasons_json, attention_eligible,
+                    conclusion_code, rendered_summary, comparison_json,
                     deep_analysis_state, input_digest, algorithm_version,
                     config_version, created_at_ms
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 ((
                     run_id, instrument_ids[str(item["symbol"]).upper()],
@@ -267,6 +300,9 @@ class SQLiteSignalObservationStoreMixin:
                     _json(item.get("disqualifiers", [])),
                     _json(item.get("attention_reasons", [])),
                     int(bool(item.get("attention_eligible"))),
+                    item.get("conclusion_code", "data-unavailable"),
+                    item.get("rendered_summary", ""),
+                    _json(item.get("comparison", {})),
                     item.get("deep_analysis_state", "not-requested"),
                     item["input_digest"], item["algorithm_version"],
                     item["config_version"], now_ms,
@@ -276,7 +312,8 @@ class SQLiteSignalObservationStoreMixin:
 
     def list_board_daily_observations(
         self, *, run_id: str | None = None, symbol: str | None = None,
-        attention_only: bool = False, limit: int = 200, offset: int = 0,
+        query: str | None = None, attention_only: bool = False,
+        limit: int = 200, offset: int = 0,
     ) -> list[dict[str, object]]:
         if not 1 <= limit <= 5000:
             raise ValueError("observation limit must be between 1 and 5000")
@@ -288,6 +325,10 @@ class SQLiteSignalObservationStoreMixin:
         if symbol:
             clauses.append("instrument.symbol = ? COLLATE NOCASE")
             parameters.append(symbol.upper())
+        if query and query.strip():
+            pattern = f"%{query.strip()}%"
+            clauses.append("(instrument.symbol LIKE ? OR instrument.name LIKE ?)")
+            parameters.extend((pattern.upper(), pattern))
         if attention_only:
             clauses.append("observation.attention_eligible = 1")
         where = "WHERE " + " AND ".join(clauses) if clauses else ""
@@ -300,7 +341,12 @@ class SQLiteSignalObservationStoreMixin:
                        observation.metrics_json, observation.disqualifiers_json,
                        observation.attention_reasons_json,
                        observation.attention_eligible,
+                       observation.conclusion_code,
+                       observation.rendered_summary,
+                       observation.comparison_json,
                        observation.deep_analysis_state,
+                       observation.deep_analysis_run_id,
+                       observation.deep_analysis_summary_json,
                        observation.input_digest, observation.algorithm_version,
                        observation.config_version, observation.created_at_ms
                 FROM board_daily_observations AS observation
@@ -311,6 +357,25 @@ class SQLiteSignalObservationStoreMixin:
                 """, (*parameters, limit, offset),
             ).fetchall()
         return [_observation_row(row) for row in rows]
+
+    def update_board_daily_deep_analysis(
+        self, run_id: str, symbol: str, *, state: str,
+        source_run_id: str | None, summary: dict[str, object],
+    ) -> None:
+        with self._lock, self._transaction():
+            cursor = self._connection.execute(
+                """
+                UPDATE board_daily_observations
+                SET deep_analysis_state = ?, deep_analysis_run_id = ?,
+                    deep_analysis_summary_json = ?
+                WHERE run_id = ? AND instrument_id = (
+                    SELECT instrument_id FROM instruments
+                    WHERE symbol = ? COLLATE NOCASE
+                )
+                """, (state, source_run_id, _json(summary), run_id, symbol.upper()),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("board daily observation was not found")
 
     def count_board_daily_observations(self, run_id: str) -> int:
         with self._lock:
@@ -394,6 +459,49 @@ class SQLiteSignalObservationStoreMixin:
                  _date_key(effective_date), _json(list(reasons)), now_ms),
             )
 
+    def advance_signal_attention_lifecycle(
+        self, signal_id: str, symbol: str, effective_date: date,
+        cooldown_through: date,
+    ) -> dict[str, object] | None:
+        normalized = symbol.upper()
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        with self._lock, self._transaction():
+            row = self._connection.execute(
+                """
+                SELECT registry.instrument_id, registry.status,
+                       registry.manual_pinned, registry.cooldown_through_date
+                FROM signal_attention_registry AS registry
+                JOIN instruments AS instrument USING (instrument_id)
+                WHERE registry.signal_id = ? AND instrument.symbol = ? COLLATE NOCASE
+                """, (signal_id, normalized),
+            ).fetchone()
+            if row is None or bool(row[2]):
+                return self.get_signal_attention(signal_id, normalized)
+            status = str(row[1])
+            if status == "auto-promoted":
+                next_status = "cooldown"
+                next_cooldown = _date_key(cooldown_through)
+                reasons = ["automatic-signal-resolved", "cooldown-observation"]
+            elif status == "cooldown" and (
+                row[3] is not None and _date_key(effective_date) >= int(row[3])
+            ):
+                next_status = "inactive"
+                next_cooldown = int(row[3])
+                reasons = ["cooldown-completed"]
+            else:
+                return self.get_signal_attention(signal_id, normalized)
+            self._connection.execute(
+                """
+                UPDATE signal_attention_registry
+                SET status = ?, last_observed_date = ?, cooldown_through_date = ?,
+                    reasons_json = ?, updated_at_ms = ?
+                WHERE signal_id = ? AND instrument_id = ?
+                """,
+                (next_status, _date_key(effective_date), next_cooldown,
+                 _json(reasons), now_ms, signal_id, int(row[0])),
+            )
+        return self.get_signal_attention(signal_id, normalized)
+
     def list_signal_attention(
         self, signal_id: str, *, include_inactive: bool = False,
     ) -> list[dict[str, object]]:
@@ -446,9 +554,12 @@ def _observation_row(row) -> dict[str, object]:
         "metrics": json.loads(str(row[7])),
         "disqualifiers": json.loads(str(row[8])),
         "attention_reasons": json.loads(str(row[9])),
-        "attention_eligible": bool(row[10]), "deep_analysis_state": str(row[11]),
-        "input_digest": str(row[12]), "algorithm_version": str(row[13]),
-        "config_version": str(row[14]), "created_at_ms": int(row[15]),
+        "attention_eligible": bool(row[10]), "conclusion_code": str(row[11]),
+        "rendered_summary": str(row[12]), "comparison": json.loads(str(row[13])),
+        "deep_analysis_state": str(row[14]), "deep_analysis_run_id": row[15],
+        "deep_analysis_summary": json.loads(str(row[16])),
+        "input_digest": str(row[17]), "algorithm_version": str(row[18]),
+        "config_version": str(row[19]), "created_at_ms": int(row[20]),
     }
 
 

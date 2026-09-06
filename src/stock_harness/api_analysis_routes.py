@@ -107,6 +107,7 @@ def create_analysis_router() -> APIRouter:
     @router.get("/api/signals/runs/{run_id}/board-observations")
     def list_board_observations(
         run_id: str, request: Request, symbol: str | None = None,
+        query: str | None = None,
         attention_only: bool = False,
         limit: int = Query(default=200, ge=1, le=5000),
         offset: int = Query(default=0, ge=0),
@@ -116,7 +117,8 @@ def create_analysis_router() -> APIRouter:
             raise HTTPException(status_code=404, detail="signal review run not found")
         return {
             "items": selected_store.list_board_daily_observations(
-                run_id=run_id, symbol=symbol, attention_only=attention_only,
+                run_id=run_id, symbol=symbol, query=query,
+                attention_only=attention_only,
                 limit=limit, offset=offset,
             ),
             "total": selected_store.count_board_daily_observations(run_id),

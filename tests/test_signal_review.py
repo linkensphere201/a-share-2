@@ -84,6 +84,17 @@ def test_signal_review_only_compares_compatible_runs() -> None:
         cadence="weekly", effective_date=date(2026, 9, 4), parameters={"window": 10},
     )
     assert next_compatible["prior_run_id"] == compatible["run_id"]
+    store.complete_signal_review_run(
+        str(next_compatible["run_id"]), items=[], summary={}, input_digest="future",
+    )
+    historical_replay = store.create_signal_review_run(
+        signal_id=WEEKLY_RECOGNITION_SIGNAL,
+        definition_version="definition-v1", algorithm_version="algorithm-v1",
+        cadence="weekly", effective_date=date(2026, 9, 2),
+        parameters={"window": 10},
+    )
+    assert historical_replay["prior_run_id"] == compatible["run_id"]
+    store.fail_signal_review_run(str(historical_replay["run_id"]), "test")
     store.close()
 
 
@@ -275,9 +286,30 @@ def test_daily_signal_persists_every_board_but_displays_attention_only() -> None
     assert store.count_board_daily_observations(str(run["run_id"])) == 2
     observations = store.list_board_daily_observations(run_id=str(run["run_id"]), limit=10)
     assert {item["symbol"] for item in observations} == {"BK001.DC", "BK002.DC"}
+    assert all(item["conclusion_code"] for item in observations)
+    assert all("近期对比" in item["rendered_summary"] for item in observations)
+    assert all(item["comparison"]["transition"] == "new" for item in observations)
+    loud_observation = next(item for item in observations if item["symbol"] == "BK002.DC")
+    assert loud_observation["deep_analysis_state"] in {
+        "confirmed", "completed-no-structural-evidence",
+    }
+    assert loud_observation["deep_analysis_run_id"]
     items = store.list_signal_review_items(str(run["run_id"]))
     assert {item["symbol"] for item in items if item["profile"] == "attention"} == {"BK002.DC"}
     assert run["summary"]["ai_used"] is False
+
+    replay = service.run_sync(DAILY_MARKET_BOARD_SIGNAL, baseline[-1].trade_date)
+    replay_observations = store.list_board_daily_observations(
+        run_id=str(replay["run_id"]), limit=10,
+    )
+    assert all(
+        item["comparison"]["prior_run_id"] == run["run_id"]
+        for item in replay_observations
+    )
+    assert all(
+        item["comparison"]["transition"] == "unchanged"
+        for item in replay_observations
+    )
     store.close()
 
 
@@ -384,6 +416,42 @@ def test_signal_observation_and_attention_api() -> None:
             f"/api/signals/{DAILY_MARKET_BOARD_SIGNAL}/attention"
         ).json()["items"]
         assert attention[0]["status"] == "manual-pinned"
+    store.close()
+
+
+def test_automatic_attention_moves_through_cooldown_without_touching_manual_pins() -> None:
+    from datetime import timedelta
+
+    store = SQLiteMarketDataStore(":memory:")
+    store.upsert_instruments([
+        Instrument("BK001.DC", "自动板块", InstrumentKind.SECTOR, "DC"),
+        Instrument("BK002.DC", "固定板块", InstrumentKind.SECTOR, "DC"),
+    ])
+    start = date(2026, 9, 4)
+    store.promote_signal_attention(
+        DAILY_MARKET_BOARD_SIGNAL, "BK001.DC", start, ["sudden-volume-expansion"],
+    )
+    store.set_signal_attention(
+        DAILY_MARKET_BOARD_SIGNAL, "BK002.DC", manual_pinned=True,
+        effective_date=start,
+    )
+
+    cooling = store.advance_signal_attention_lifecycle(
+        DAILY_MARKET_BOARD_SIGNAL, "BK001.DC", start + timedelta(days=1),
+        start + timedelta(days=7),
+    )
+    inactive = store.advance_signal_attention_lifecycle(
+        DAILY_MARKET_BOARD_SIGNAL, "BK001.DC", start + timedelta(days=7),
+        start + timedelta(days=14),
+    )
+    manual = store.advance_signal_attention_lifecycle(
+        DAILY_MARKET_BOARD_SIGNAL, "BK002.DC", start + timedelta(days=7),
+        start + timedelta(days=14),
+    )
+
+    assert cooling["status"] == "cooldown"
+    assert inactive["status"] == "inactive"
+    assert manual["status"] == "manual-pinned"
     store.close()
 
 

@@ -58,6 +58,8 @@ def analyze_daily_series(
     volume_ratio = latest.volume / median_volume20 if median_volume20 > 0 else None
     recent_volume_ratio = _safe_ratio(fmean(volumes[-5:]), fmean(volumes[-10:-5]))
     atr_compression = _safe_ratio(atr5, atr20)
+    short_shape = _shape(closes, 14)
+    medium_shape = _shape(closes, 28)
     envelopes = {
         label: _descending_upper_envelope(visible, period, atr14)
         for label, period in (("3m", 63), ("6m", 126), ("1y", 250))
@@ -73,17 +75,34 @@ def analyze_daily_series(
         state = str(envelope["state"])
         if state == "approaching":
             states.append(f"descending-envelope-{label}-approaching")
-            attention.append(f"{label}-descending-envelope-approaching")
         elif state == "broken":
             states.append(f"descending-envelope-{label}-broken")
-            attention.append(f"{label}-descending-envelope-broken")
+            if label in {"6m", "1y"} or (
+                volume_ratio is not None and volume_ratio >= 1.2
+            ):
+                attention.append(f"{label}-descending-envelope-broken")
 
     valid_distances = [
         float(item["distance_atr"]) for item in envelopes.values()
         if item is not None and item.get("distance_atr") is not None
     ]
     nearest_distance = min(valid_distances, default=None)
-    if nearest_distance is not None and 0 <= nearest_distance <= 1:
+    structure_ready = (
+        latest.close > min(closes[-5:])
+        and short_shape.get("state") != "falling"
+    )
+    contraction_ready = (
+        atr_compression is not None and atr_compression <= .85
+    ) or (volume_ratio is not None and volume_ratio <= .90)
+    major_approaching = any(
+        label in {"6m", "1y"} and item is not None
+        and item.get("state") == "approaching"
+        for label, item in envelopes.items()
+    )
+    if (
+        nearest_distance is not None and 0 <= nearest_distance <= 1
+        and major_approaching and structure_ready and contraction_ready
+    ):
         states.append("bullish-transition-candidate")
         attention.append("bullish-boundary-proximity")
     if any(item and item["state"] == "broken" for item in envelopes.values()):
@@ -103,7 +122,8 @@ def analyze_daily_series(
         attention.append("boundary-volume-contraction")
     if relative_strength["20"] is not None and abs(float(relative_strength["20"])) >= .08:
         states.append("relative-strength-regime")
-        attention.append("relative-strength-regime")
+        if volume_ratio is not None and volume_ratio >= 1.2:
+            attention.append("relative-strength-regime")
 
     if not attention:
         states.append("neutral")
@@ -124,8 +144,8 @@ def analyze_daily_series(
         "median_volume20": _round(median_volume20),
         "volume_ratio20": _round(volume_ratio),
         "recent_volume_ratio_5_5": _round(recent_volume_ratio),
-        "short_shape": _shape(closes, 14),
-        "medium_shape": _shape(closes, 28),
+        "short_shape": short_shape,
+        "medium_shape": medium_shape,
         "downside": downside,
         "descending_envelopes": envelopes,
     }
@@ -161,6 +181,28 @@ def render_board_summary(
         f"- 近期对比：{_transition_sentence(transition, prior)}",
         f"- 确认/失效：{_conditions(primary, nearest)}",
     ))
+
+
+def build_board_analysis_record(
+    observation: dict[str, object], prior: dict[str, object] | None,
+) -> dict[str, object]:
+    """Build the persisted level-one conclusion and its causal comparison."""
+    conclusion_code, rendered_summary = render_board_summary(observation, prior)
+    transition = _transition(conclusion_code, prior)
+    prior_effective_date = prior.get("effective_date") if prior else None
+    return {
+        "conclusion_code": conclusion_code,
+        "rendered_summary": rendered_summary,
+        "comparison": {
+            "transition": transition,
+            "prior_run_id": prior.get("run_id") if prior else None,
+            "prior_effective_date": (
+                prior_effective_date.isoformat()
+                if isinstance(prior_effective_date, date)
+                else prior_effective_date
+            ),
+        },
+    }
 
 
 def observation_digest(observation: dict[str, object]) -> str:
@@ -374,7 +416,9 @@ def _transition_label(value: str) -> str:
 def _transition_sentence(value: str, prior: dict[str, object] | None) -> str:
     if prior is None:
         return "没有兼容的历史运行，建立首个比较基线。"
-    prior_date = prior.get("effective_date") or prior.get("payload", {}).get("effective_date") if isinstance(prior.get("payload"), dict) else None
+    prior_date = prior.get("effective_date")
+    if prior_date is None and isinstance(prior.get("payload"), dict):
+        prior_date = prior["payload"].get("effective_date")
     label = str(prior_date) if prior_date else "上一兼容运行"
     return f"较{label}{_transition_label(value)}。"
 

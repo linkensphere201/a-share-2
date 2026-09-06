@@ -138,6 +138,7 @@ class SQLiteMarketDataStore(
         self._ensure_market_snapshot_metrics()
         self._ensure_generated_analysis_target_settings()
         self._ensure_active_market_value_diagnostics()
+        self._ensure_signal_observation_columns()
         self._backfill_pinyin_aliases()
 
     def _ensure_chat_conversation_sessions(self) -> None:

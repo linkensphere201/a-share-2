@@ -25,9 +25,10 @@ class SQLiteSignalReviewStoreMixin:
                 WHERE signal_id = ? AND definition_version = ?
                   AND algorithm_version = ? AND cadence = ?
                   AND parameters_json = ? AND status = 'succeeded'
+                  AND effective_date <= ?
                 ORDER BY effective_date DESC, revision DESC LIMIT 1
                 """, (signal_id, definition_version, algorithm_version, cadence,
-                      parameters_json),
+                      parameters_json, _date_key(effective_date)),
             ).fetchone()
             revision = int(self._connection.execute(
                 "SELECT coalesce(max(revision), 0) + 1 FROM signal_review_runs "

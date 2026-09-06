@@ -1,4 +1,4 @@
-export type SignalProfile = 'recent' | 'historical'
+export type SignalProfile = 'recent' | 'historical' | 'market' | 'attention'
 export type SignalChangeType = 'added' | 'retained' | 'removed'
 
 export type SignalDefinition = {
@@ -64,8 +64,59 @@ export type SignalItem = {
   active: boolean
   score: number
   confidence: number
-  payload: { board_count?: number; rank_one_count?: number; board_names?: string[] }
+  payload: {
+    board_count?: number
+    rank_one_count?: number
+    board_names?: string[]
+    conclusion_code?: string
+    state_codes?: string[]
+    attention_reasons?: string[]
+    rendered_summary?: string
+    metrics?: Record<string, unknown>
+    deep_analysis_state?: string
+    deep_analysis_run_id?: string | null
+  }
   evidence: SignalEvidence[]
+}
+
+export type BoardDailyObservation = {
+  run_id: string
+  symbol: string
+  name: string
+  exchange: string
+  effective_date: string
+  coverage_state: 'complete' | 'insufficient'
+  state_codes: string[]
+  metrics: Record<string, unknown>
+  disqualifiers: string[]
+  attention_reasons: string[]
+  attention_eligible: boolean
+  conclusion_code: string
+  rendered_summary: string
+  comparison: {
+    transition?: 'new' | 'unchanged' | 'changed' | 'invalidated'
+    prior_run_id?: string | null
+    prior_effective_date?: string | null
+  }
+  deep_analysis_state: string
+  deep_analysis_run_id?: string | null
+  deep_analysis_summary?: Record<string, unknown>
+  input_digest: string
+  algorithm_version: string
+  config_version: string
+}
+
+export type SignalAttention = {
+  signal_id: string
+  symbol: string
+  name: string
+  exchange: string
+  status: 'manual-pinned' | 'auto-promoted' | 'cooldown' | 'inactive'
+  manual_pinned: boolean
+  first_observed_date: string
+  last_observed_date: string
+  cooldown_through_date?: string | null
+  reasons: string[]
 }
 
 async function json<T>(response: Response): Promise<T> {
@@ -102,4 +153,34 @@ export async function startSignalRun(signalId: string): Promise<SignalRun> {
   return json<SignalRun>(await fetch(`/api/signals/${encodeURIComponent(signalId)}/runs`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
   }))
+}
+
+export async function listBoardObservations(
+  runId: string, query = '', signal?: AbortSignal,
+): Promise<{ items: BoardDailyObservation[]; total: number }> {
+  const params = new URLSearchParams({ limit: '200' })
+  if (query.trim()) params.set('query', query.trim())
+  return json<{ items: BoardDailyObservation[]; total: number }>(await fetch(
+    `/api/signals/runs/${encodeURIComponent(runId)}/board-observations?${params}`, { signal },
+  ))
+}
+
+export async function listSignalAttention(
+  signalId: string, signal?: AbortSignal,
+): Promise<SignalAttention[]> {
+  return (await json<{ items: SignalAttention[] }>(await fetch(
+    `/api/signals/${encodeURIComponent(signalId)}/attention`, { signal },
+  ))).items
+}
+
+export async function setSignalAttention(
+  signalId: string, symbol: string, manualPinned: boolean,
+): Promise<SignalAttention> {
+  return json<SignalAttention>(await fetch(
+    `/api/signals/${encodeURIComponent(signalId)}/attention/${encodeURIComponent(symbol)}`,
+    {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ manual_pinned: manualPinned }),
+    },
+  ))
 }

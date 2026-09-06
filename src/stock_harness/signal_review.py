@@ -26,6 +26,7 @@ from stock_harness.daily_signal_analysis import (
     CONFIG_VERSION as DAILY_CONFIG_VERSION,
     LOOKBACK_BARS as DAILY_LOOKBACK_BARS,
     analyze_daily_series,
+    build_board_analysis_record,
     render_board_summary,
 )
 from stock_harness.sqlite_store import SQLiteMarketDataStore
@@ -158,6 +159,13 @@ class SignalReviewService:
                 )
                 for board in page
             ]
+            for observation in batch:
+                prior = prior_observations.get(str(observation["symbol"]))
+                observation.update(
+                    build_board_analysis_record(
+                        observation, _daily_prior_payload(prior),
+                    )
+                )
             self._store.save_board_daily_observations(run_id, batch)
             observations.extend(batch)
             done = min(offset + len(page), len(boards))
@@ -167,19 +175,38 @@ class SignalReviewService:
             str(item["symbol"]): item
             for item in self._store.list_signal_attention(DAILY_MARKET_BOARD_SIGNAL)
         }
-        promoted = []
         for observation in observations:
             symbol = str(observation["symbol"])
-            registry = attention_registry.get(symbol)
             if bool(observation["attention_eligible"]):
                 self._store.promote_signal_attention(
                     DAILY_MARKET_BOARD_SIGNAL, symbol, cutoff,
                     [str(item) for item in observation["attention_reasons"]],
                 )
-            if bool(observation["attention_eligible"]) or (
-                registry is not None and str(registry["status"]) != "inactive"
-            ):
-                promoted.append(observation)
+        active_symbols = {
+            str(observation["symbol"]) for observation in observations
+            if bool(observation["attention_eligible"])
+        }
+        cooldown_through = _cooldown_through(self._store, cutoff, 5)
+        for symbol, registry in attention_registry.items():
+            if symbol in active_symbols or bool(registry.get("manual_pinned")):
+                continue
+            self._store.advance_signal_attention_lifecycle(
+                DAILY_MARKET_BOARD_SIGNAL, symbol, cutoff, cooldown_through,
+            )
+
+        attention_registry = {
+            str(item["symbol"]): item
+            for item in self._store.list_signal_attention(DAILY_MARKET_BOARD_SIGNAL)
+        }
+        promoted = [
+            observation for observation in observations
+            if bool(observation["attention_eligible"])
+            or str(observation["symbol"]) in attention_registry
+        ]
+
+        deep_results = self._run_daily_deep_analysis(
+            run_id, cutoff, promoted, attention_registry,
+        )
 
         board_names = {str(board["symbol"]): str(board["name"]) for board in boards}
         previous_items = {
@@ -192,18 +219,10 @@ class SignalReviewService:
         for observation in promoted:
             symbol = str(observation["symbol"])
             item_key = f"attention:{symbol}"
-            prior_observation = prior_observations.get(symbol)
-            prior_payload = None
-            if prior_observation is not None:
-                prior_code, _ = render_board_summary(prior_observation, None)
-                prior_payload = {
-                    "payload": {"conclusion_code": prior_code},
-                    "effective_date": prior_observation["effective_date"],
-                }
-            conclusion_code, rendered = render_board_summary(observation, prior_payload)
             metrics = observation.get("metrics", {})
             reasons = list(observation.get("attention_reasons", []))
             score = _daily_attention_score(observation)
+            deep_result = deep_results.get(symbol)
             items.append({
                 "item_id": str(uuid4()), "item_key": item_key,
                 "rank": 0, "symbol": symbol, "profile": "attention",
@@ -211,14 +230,17 @@ class SignalReviewService:
                 "active": True, "score": score,
                 "confidence": _daily_confidence(observation),
                 "payload": {
-                    "conclusion_code": conclusion_code,
+                    "conclusion_code": observation["conclusion_code"],
                     "state_codes": observation["state_codes"],
                     "attention_reasons": reasons,
-                    "rendered_summary": rendered,
+                    "rendered_summary": observation["rendered_summary"],
                     "metrics": metrics,
                     "effective_date": cutoff.isoformat(),
                     "observation_input_digest": observation["input_digest"],
                     "deep_analysis_state": observation["deep_analysis_state"],
+                    "deep_analysis_run_id": (
+                        deep_result.get("run_id") if deep_result else None
+                    ),
                     "board_name": board_names.get(symbol, symbol),
                 },
                 "evidence": [{
@@ -229,7 +251,7 @@ class SignalReviewService:
                         "input_digest": observation["input_digest"],
                         "state_codes": observation["state_codes"],
                     },
-                }],
+                }, *_deep_analysis_evidence(deep_result)],
             })
         items.extend(_removed_daily_items(items, previous_items))
         _rank_daily_items(items)
@@ -242,6 +264,13 @@ class SignalReviewService:
             "complete_observation_count": complete_count,
             "missing_observation_count": missing_count,
             "promoted_board_count": len(promoted),
+            "deep_analyzed_count": sum(
+                result.get("status") == "succeeded" for result in deep_results.values()
+            ),
+            "deep_deferred_count": sum(
+                observation.get("deep_analysis_state") == "deferred-resource-limit"
+                for observation in promoted
+            ),
             "displayed_item_count": sum(bool(item["active"]) for item in items),
             "attention_registry_count": len(self._store.list_signal_attention(
                 DAILY_MARKET_BOARD_SIGNAL,
@@ -264,6 +293,79 @@ class SignalReviewService:
             run_id, cutoff, len(observations), len(promoted),
             (time.perf_counter() - started) * 1000,
         )
+
+    def _run_daily_deep_analysis(
+        self, run_id: str, cutoff: date,
+        promoted: list[dict[str, object]],
+        registry: dict[str, dict[str, object]],
+    ) -> dict[str, dict[str, object]]:
+        from stock_harness.analysis_inputs import AnalysisHorizons, AnalysisTimeframe
+        from stock_harness.trend_analysis import TrendAnalysisService
+
+        ordered = sorted(promoted, key=lambda observation: (
+            not bool(registry.get(str(observation["symbol"]), {}).get("manual_pinned")),
+            -_daily_attention_score(observation), str(observation["symbol"]),
+        ))
+        limit = int(_daily_run_parameters()["deep_analysis_limit"])
+        selected = ordered[:limit]
+        for observation in ordered[limit:]:
+            observation["deep_analysis_state"] = "deferred-resource-limit"
+            self._store.update_board_daily_deep_analysis(
+                run_id, str(observation["symbol"]),
+                state="deferred-resource-limit", source_run_id=None,
+                summary={"reason": "daily deep-analysis resource limit", "limit": limit},
+            )
+        results: dict[str, dict[str, object]] = {}
+        service = TrendAnalysisService(self._store)
+        self._progress(run_id, "board-deep-analysis", len(selected), 0)
+        for index, observation in enumerate(selected, 1):
+            symbol = str(observation["symbol"])
+            if observation.get("coverage_state") != "complete":
+                state = "rejected-insufficient-coverage"
+                summary = {"reason": "first-level daily history is incomplete"}
+                self._store.update_board_daily_deep_analysis(
+                    run_id, symbol, state=state, source_run_id=None, summary=summary,
+                )
+                observation["deep_analysis_state"] = state
+                self._progress(run_id, "board-deep-analysis", len(selected), index)
+                continue
+            try:
+                result = service.recalculate(
+                    symbol, [AnalysisTimeframe.DAILY], AnalysisHorizons(14, 28, 250),
+                    config_version="signal-review-daily-v1", include_preview=False,
+                    as_of_date=cutoff,
+                )[0]
+                relevant = [
+                    item for item in result.get("items", [])
+                    if item.get("item_type") in {"line", "zone", "pattern", "transition"}
+                ]
+                summary = {
+                    "status": result.get("status"),
+                    "item_count": len(result.get("items", [])),
+                    "relevant_item_count": len(relevant),
+                    "warning_count": len(result.get("warnings", [])),
+                }
+                state = "confirmed" if relevant else "completed-no-structural-evidence"
+                source_run_id = str(result["run_id"])
+                results[symbol] = result
+                self._store.update_board_daily_deep_analysis(
+                    run_id, symbol, state=state, source_run_id=source_run_id,
+                    summary=summary,
+                )
+                observation["deep_analysis_state"] = state
+            except Exception as error:
+                state = "failed"
+                summary = {"error_type": type(error).__name__, "message": str(error)[:500]}
+                self._store.update_board_daily_deep_analysis(
+                    run_id, symbol, state=state, source_run_id=None, summary=summary,
+                )
+                observation["deep_analysis_state"] = state
+                LOGGER.warning(
+                    "daily_signal_deep_analysis_failed run_id=%s symbol=%s error_type=%s",
+                    run_id, symbol, type(error).__name__,
+                )
+            self._progress(run_id, "board-deep-analysis", len(selected), index)
+        return results
 
     def _daily_market_items(
         self, cutoff: date, previous: dict[str, dict[str, object]],
@@ -463,6 +565,36 @@ def _daily_run_parameters() -> dict[str, object]:
     }
 
 
+def _daily_prior_payload(
+    prior_observation: dict[str, object] | None,
+) -> dict[str, object] | None:
+    if prior_observation is None:
+        return None
+    conclusion_code = str(prior_observation.get("conclusion_code") or "")
+    if not conclusion_code or conclusion_code == "data-unavailable":
+        conclusion_code, _ = render_board_summary(prior_observation, None)
+    return {
+        "run_id": prior_observation.get("run_id"),
+        "payload": {"conclusion_code": conclusion_code},
+        "effective_date": prior_observation.get("effective_date"),
+    }
+
+
+def _cooldown_through(
+    store: SQLiteMarketDataStore, effective_date: date, sessions: int,
+) -> date:
+    candidates = [
+        item for item in store.list_trading_dates(
+            "tushare", effective_date + timedelta(days=1),
+            effective_date + timedelta(days=max(14, sessions * 3)),
+        )
+        if item > effective_date
+    ]
+    return candidates[sessions - 1] if len(candidates) >= sessions else (
+        effective_date + timedelta(days=7)
+    )
+
+
 def _daily_attention_score(observation: dict[str, object]) -> float:
     reasons = {str(item) for item in observation.get("attention_reasons", [])}
     weights = {
@@ -505,6 +637,33 @@ def _render_emotion(emotion: dict[str, object]) -> str:
         f"上涨{metrics.get('advance_count', 0)}、下跌{metrics.get('decline_count', 0)}，"
         f"宽度{breadth_text}；{limit_text}。"
     )
+
+
+def _deep_analysis_evidence(
+    result: dict[str, object] | None,
+) -> list[dict[str, object]]:
+    if not result or result.get("status") != "succeeded":
+        return []
+    source_run_id = str(result["run_id"])
+    evidence = []
+    for item in result.get("items", []):
+        if not isinstance(item, dict) or item.get("item_type") not in {
+            "line", "zone", "pattern", "transition",
+        }:
+            continue
+        evidence.append({
+            "evidence_id": str(uuid4()), "alias": "",
+            "evidence_type": f"m4-{item['item_type']}",
+            "source_run_id": source_run_id,
+            "source_item_id": str(item["item_id"]),
+            "payload": {
+                "item_type": item["item_type"],
+                "geometry": item.get("payload", {}),
+            },
+        })
+        if len(evidence) >= 6:
+            break
+    return evidence
 
 
 def _removed_daily_items(

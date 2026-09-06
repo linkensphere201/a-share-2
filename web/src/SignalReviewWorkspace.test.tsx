@@ -9,7 +9,11 @@ import type { SignalItem } from './signalReviewClient'
 import { themes } from './themeStore'
 
 vi.mock('./ChartCanvas', () => ({
-  ChartCanvas: ({ symbol }: { symbol: string }) => <div data-testid="signal-chart">{symbol}</div>,
+  ChartCanvas: ({ symbol, highlightedAnalysisItemId, trendAnalysisOverride }: {
+    symbol: string
+    highlightedAnalysisItemId?: string
+    trendAnalysisOverride?: { run_id?: string } | null
+  }) => <div data-testid="signal-chart" data-highlight={highlightedAnalysisItemId} data-analysis-run={trendAnalysisOverride?.run_id}>{symbol}</div>,
 }))
 
 afterEach(() => {
@@ -114,6 +118,92 @@ describe('SignalReviewWorkspace', () => {
     expect(JSON.parse(String(turn?.[1]?.body))).toMatchObject({
       content: '复核这个变化', selected_signal_item_ids: ['item-1'],
     })
+  })
+
+  it('searches complete daily observations and pins one into the attention registry', async () => {
+    let pinned = false
+    const dailyDefinition = {
+      ...definition, signal_id: 'daily-market-board-review', name: '每日大盘与板块复盘',
+      cadence: 'daily', profiles: ['market', 'attention'],
+    }
+    const dailyRun = { ...run, signal_id: dailyDefinition.signal_id, cadence: 'daily' }
+    const observation = {
+      run_id: 'run-1', symbol: 'BK001.DC', name: '测试板块', exchange: 'DC',
+      effective_date: '2026-09-04', coverage_state: 'complete',
+      state_codes: ['bullish-transition-candidate'],
+      metrics: { returns: { 5: .03, 20: .08 }, volume_ratio20: 1.2 },
+      disqualifiers: [], attention_reasons: ['bullish-boundary-proximity'],
+      attention_eligible: true, deep_analysis_state: 'pending', input_digest: 'digest',
+      conclusion_code: 'bullish-transition-candidate',
+      rendered_summary: '【临界状态】多头临界\n- 近期对比：首次观察。',
+      comparison: { transition: 'new' },
+      algorithm_version: 'daily-v1', config_version: 'config-v1',
+    }
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url === '/api/signals/definitions') return response({ items: [dailyDefinition] })
+      if (url.includes('/api/signals/runs?')) return response({ items: [dailyRun] })
+      if (url.endsWith('/items')) return response({ items: [] })
+      if (url.includes('/board-observations?')) return response({ items: [observation], total: 1 })
+      if (url.endsWith('/attention') && init?.method !== 'PUT') return response({ items: pinned ? [{
+        signal_id: dailyDefinition.signal_id, symbol: observation.symbol,
+        name: observation.name, exchange: 'DC', status: 'manual-pinned',
+        manual_pinned: true, first_observed_date: '2026-09-04',
+        last_observed_date: '2026-09-04', reasons: ['manual-user-selection'],
+      }] : [] })
+      if (url.includes('/attention/BK001.DC') && init?.method === 'PUT') {
+        pinned = true
+        return response({ symbol: observation.symbol, manual_pinned: true, status: 'manual-pinned' })
+      }
+      throw new Error(`unexpected URL ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+    render(<SignalReviewWorkspace theme={themes[0]} onClose={() => undefined}/>)
+
+    await user.click(await screen.findByRole('button', { name: /全部观察/ }))
+    await user.click((await screen.findByText('BK001.DC')).closest('button')!)
+    expect(screen.getByTestId('signal-chart').textContent).toBe('BK001.DC')
+    expect(screen.getAllByText(/多头临界/).length).toBeGreaterThan(0)
+    await user.click(screen.getByRole('button', { name: '加入手工观察池' }))
+
+    expect(fetchMock.mock.calls.some(call =>
+      String(call[0]).includes('/attention/BK001.DC') && call[1]?.method === 'PUT'
+    )).toBe(true)
+    expect(await screen.findByRole('button', { name: '取消手工固定' })).toBeTruthy()
+  })
+
+  it('loads the exact M4 run and highlights the cited analysis item', async () => {
+    const dailyDefinition = {
+      ...definition, signal_id: 'daily-market-board-review', cadence: 'daily',
+      profiles: ['market', 'attention'],
+    }
+    const dailyRun = { ...run, signal_id: dailyDefinition.signal_id, cadence: 'daily' }
+    const dailyItem = {
+      ...items[0], symbol: 'BK001.DC', name: '测试板块', profile: 'attention',
+      payload: { rendered_summary: '固定结论', deep_analysis_run_id: 'deep-1' },
+      evidence: [{
+        evidence_id: 'm4-e1', alias: 'S1', evidence_type: 'm4-line',
+        source_run_id: 'deep-1', source_item_id: 'line-1', payload: {},
+      }],
+    }
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === '/api/signals/definitions') return response({ items: [dailyDefinition] })
+      if (url.includes('/api/signals/runs?')) return response({ items: [dailyRun] })
+      if (url.endsWith('/items')) return response({ items: [dailyItem] })
+      if (url.endsWith('/attention')) return response({ items: [] })
+      if (url === '/api/analysis/runs/deep-1') return response({ run_id: 'deep-1', items: [] })
+      throw new Error(`unexpected URL ${url}`)
+    }))
+    const user = userEvent.setup()
+    render(<SignalReviewWorkspace theme={themes[0]} onClose={() => undefined}/>)
+
+    await user.click((await screen.findByText('BK001.DC')).closest('button')!)
+    expect(await screen.findByText('固定结论')).toBeTruthy()
+    expect(screen.getByTestId('signal-chart').dataset.analysisRun).toBe('deep-1')
+    await user.click(screen.getByText('[S1]').closest('button')!)
+    expect(screen.getByTestId('signal-chart').dataset.highlight).toBe('line-1')
   })
 })
 

@@ -877,14 +877,20 @@ CREATE TABLE IF NOT EXISTS board_daily_observations (
     disqualifiers_json TEXT NOT NULL,
     attention_reasons_json TEXT NOT NULL,
     attention_eligible INTEGER NOT NULL CHECK (attention_eligible IN (0, 1)),
+    conclusion_code TEXT NOT NULL DEFAULT 'data-unavailable',
+    rendered_summary TEXT NOT NULL DEFAULT '',
+    comparison_json TEXT NOT NULL DEFAULT '{}',
     deep_analysis_state TEXT NOT NULL,
+    deep_analysis_run_id TEXT,
+    deep_analysis_summary_json TEXT NOT NULL DEFAULT '{}',
     input_digest TEXT NOT NULL,
     algorithm_version TEXT NOT NULL,
     config_version TEXT NOT NULL,
     created_at_ms INTEGER NOT NULL,
     PRIMARY KEY (run_id, instrument_id),
     FOREIGN KEY (run_id) REFERENCES signal_review_runs(run_id) ON DELETE CASCADE,
-    FOREIGN KEY (instrument_id) REFERENCES instruments(instrument_id)
+    FOREIGN KEY (instrument_id) REFERENCES instruments(instrument_id),
+    FOREIGN KEY (deep_analysis_run_id) REFERENCES generated_analysis_runs(run_id)
 ) WITHOUT ROWID;
 
 CREATE INDEX IF NOT EXISTS board_daily_observations_history
