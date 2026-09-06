@@ -409,6 +409,10 @@ def create_market_router() -> APIRouter:
             raise HTTPException(status_code=422, detail="start_date must not exceed end_date")
         return {"items": store(request).list_active_market_value_diagnostics(start_date, end_date)}
 
+    @router.get("/api/active-market-value/diagnostics/latest")
+    def active_market_value_latest_diagnostics(request: Request) -> dict[str, object]:
+        return store(request).get_active_market_value_latest_diagnostics()
+
     @router.post("/api/active-market-value/rebuild")
     def rebuild_active_market_value(
         request: Request,

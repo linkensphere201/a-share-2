@@ -467,10 +467,32 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .board-tag-strip i.concept { color: #d8b66c; background: color-mix(in srgb, #a77b26 14%, var(--theme-surface)); border-color: color-mix(in srgb, #d8b66c 36%, var(--theme-border)); }
 .board-tag-strip.compact { max-width: min(48vw, 340px); }
 .instrument-window-header > .board-tag-strip { margin-left: auto; }
-.amv-title-readout { min-width: 0; margin-left: auto; display: inline-flex; align-items: center; gap: 4px; overflow: hidden; }
+.amv-readout-wrap { min-width: 0; margin-left: auto; position: relative; display: inline-flex; }
+.amv-title-readout { min-width: 0; display: inline-flex; align-items: center; gap: 4px; overflow: hidden; padding: 0; border: 0; background: transparent; color: var(--theme-muted); }
 .amv-title-readout i { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 1px 4px; border: 1px solid color-mix(in srgb, #5fc6b2 34%, var(--theme-border)); border-radius: 3px; color: #73d0bd; background: color-mix(in srgb, #2b8f7e 13%, var(--theme-surface)); font-size: 9px; font-style: normal; font-weight: 400; line-height: 13px; }
 .amv-title-readout i.rise { color: #ef7471; }
 .amv-title-readout i.fall { color: #62bc88; }
+.amv-title-readout:hover { color: var(--theme-text-strong); }
+.amv-diagnostics { position: absolute; z-index: 28; top: 23px; right: 0; width: min(430px, 76vw); display: grid; gap: 8px; padding: 9px; border: 1px solid var(--theme-border-strong); border-radius: 4px; background: color-mix(in srgb, var(--theme-raised) 96%, transparent); box-shadow: 0 12px 28px #000a; color: var(--theme-text); font-size: 9px; font-style: normal; font-weight: 400; }
+.amv-diagnostics > header { min-height: 20px; display: flex; align-items: center; justify-content: space-between; color: var(--theme-text-strong); font-size: 11px; font-weight: 500; }
+.amv-diagnostics > header button { width: 20px; height: 20px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 3px; background: transparent; color: var(--theme-muted); }
+.amv-diagnostics > header button:hover { color: var(--theme-text-strong); background: var(--theme-accent-soft); }
+.amv-diagnostics-loading { min-height: 70px; display: grid; place-items: center; color: var(--theme-muted); }
+.amv-diagnostics-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 5px; }
+.amv-diagnostics-metrics > span { min-width: 0; display: grid; gap: 2px; padding: 5px 6px; border-left: 2px solid color-mix(in srgb, #5fc6b2 55%, var(--theme-border)); background: var(--theme-surface); font-variant-numeric: tabular-nums; }
+.amv-diagnostics-metrics small { color: var(--theme-muted); font-size: 8px; }
+.amv-contributor-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+.amv-contributor-columns section { min-width: 0; display: grid; gap: 3px; padding: 6px; border: 1px solid var(--theme-border); background: var(--theme-surface); }
+.amv-contributor-columns strong, .amv-comparators > strong { color: var(--theme-text-strong); font-weight: 500; }
+.amv-contributor-columns section > span, .amv-comparators > span { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 7px; }
+.amv-diagnostics em { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--theme-text); font-style: normal; }
+.amv-diagnostics i { flex: 0 0 auto; font-style: normal; font-variant-numeric: tabular-nums; }
+.amv-diagnostics .rise { color: #ef7471; }
+.amv-diagnostics .fall { color: #62bc88; }
+.amv-diagnostics .empty { color: var(--theme-muted); }
+.amv-comparators { display: grid; grid-template-columns: 62px repeat(4, minmax(0, 1fr)); align-items: center; gap: 5px; padding: 6px; border-top: 1px solid var(--theme-border); border-bottom: 1px solid var(--theme-border); }
+.amv-comparators > span { display: grid; gap: 2px; }
+.amv-diagnostics > footer { color: var(--theme-muted); line-height: 1.45; }
 .list-window-items { min-height: 0; overflow: auto; padding: 2px 5px 6px; }
 .list-window-row { min-height: 42px; border-radius: 3px; border-bottom-color: transparent; }
 .list-window-row:hover, .list-window-row.selected { background: #1b2129; }

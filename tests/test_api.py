@@ -135,6 +135,7 @@ def test_active_market_value_is_chartable_with_diagnostics():
         )
         summary = client.get("/api/active-market-value")
         diagnostics = client.get("/api/active-market-value/daily")
+        latest_diagnostics = client.get("/api/active-market-value/diagnostics/latest")
         chart = client.get("/api/instruments/SHAMV.A/daily-bars")
     store.close()
 
@@ -143,6 +144,8 @@ def test_active_market_value_is_chartable_with_diagnostics():
     assert summary.json()["symbol"] == "SHAMV.A"
     assert summary.json()["latest_coverage_ratio"] == 1
     assert diagnostics.json()["items"][0]["absolute_close"] > 0
+    assert latest_diagnostics.status_code == 200
+    assert latest_diagnostics.json()["eligible_count"] == 1
     assert chart.json()["items"][0]["close"] == 1000
 
 

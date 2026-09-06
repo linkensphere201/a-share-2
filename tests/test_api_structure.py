@@ -65,6 +65,7 @@ EXPECTED_API_OPERATIONS = {
     ("POST", "/api/instrument-board-tags/rebuild", "200"),
     ("GET", "/api/active-market-value", "200"),
     ("GET", "/api/active-market-value/daily", "200"),
+    ("GET", "/api/active-market-value/diagnostics/latest", "200"),
     ("POST", "/api/active-market-value/rebuild", "200"),
     ("GET", "/api/instruments/{symbol}/daily-bars", "200"),
     ("GET", "/api/boards/{symbol}/members", "200"),

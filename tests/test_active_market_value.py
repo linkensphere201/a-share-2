@@ -38,6 +38,7 @@ def test_materializes_causal_active_market_value_bars_and_coverage():
 
     result = store.build_active_market_value_index(first, second)
     diagnostics = store.list_active_market_value_diagnostics(first, second)
+    latest = store.get_active_market_value_latest_diagnostics()
     chart = store.get_daily_bars(DEFAULT_SYMBOL)
     store.close()
 
@@ -49,6 +50,16 @@ def test_materializes_causal_active_market_value_bars_and_coverage():
     assert diagnostics[1]["coverage_ratio"] == pytest.approx(11_000 / 51_000)
     assert diagnostics[0]["absolute_high"] >= diagnostics[0]["absolute_close"]
     assert diagnostics[0]["absolute_low"] <= diagnostics[0]["absolute_close"]
+    assert len(diagnostics[1]["input_digest"]) == 64
+    assert diagnostics[1]["contribution_total"] == pytest.approx(
+        diagnostics[1]["absolute_close"] - diagnostics[0]["absolute_close"]
+    )
+    assert {item["direction"] for item in latest["contributors"]} == {
+        "positive", "negative",
+    }
+    assert latest["contribution_total"] == pytest.approx(
+        diagnostics[1]["contribution_total"]
+    )
     assert diagnostics[0]["close"] == pytest.approx(1000)
     assert [item.close for item in chart] == pytest.approx([
         item["close"] for item in diagnostics

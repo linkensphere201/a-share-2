@@ -87,6 +87,39 @@ class ActiveMarketValueCalculator:
             eligible, total_count, min(1.0, max(0.0, coverage)),
         )
 
+    def active_close_components(
+        self, rows: list[ActiveMarketValueInput]
+    ) -> dict[int, float]:
+        components: dict[int, float] = {}
+        for row in rows:
+            smoothed = self.state.get(row.instrument_id)
+            if smoothed is None or row.close is None or not isfinite(row.close) or row.close <= 0:
+                continue
+            activity = 1 - 1 / (1 + self.scale_k * smoothed)
+            components[row.instrument_id] = row.free_share * activity * row.close
+        return components
+
+
+def rank_active_value_contributions(
+    current: dict[int, float], previous: dict[int, float], limit: int = 10,
+) -> tuple[list[tuple[int, float, float]], list[tuple[int, float, float]]]:
+    if limit <= 0:
+        raise ValueError("active-market-value contribution limit must be positive")
+    changes = [
+        (instrument_id, current.get(instrument_id, 0.0), current.get(instrument_id, 0.0) - prior)
+        for instrument_id, prior in previous.items()
+    ]
+    for instrument_id, active_close in current.items():
+        if instrument_id not in previous:
+            changes.append((instrument_id, active_close, active_close))
+    positive = sorted(
+        (item for item in changes if item[2] > 0), key=lambda item: (-item[2], item[0])
+    )[:limit]
+    negative = sorted(
+        (item for item in changes if item[2] < 0), key=lambda item: (item[2], item[0])
+    )[:limit]
+    return positive, negative
+
 
 def normalize_bars(
     rows: list[tuple[int, tuple[float, float, float, float, int, int, float]]],

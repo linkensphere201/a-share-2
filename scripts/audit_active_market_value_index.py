@@ -66,6 +66,35 @@ def main() -> None:
             """,
             (int(definition[4]) if definition else -1, DEFAULT_DEFINITION_ID),
         ).fetchone()
+        contribution_audit = connection.execute(
+            """
+            WITH changes AS (
+                SELECT trade_date, absolute_close, contribution_total, input_digest,
+                       lag(absolute_close) OVER (ORDER BY trade_date) AS previous_close
+                FROM active_market_value_daily_bars
+                WHERE definition_id = ?
+            )
+            SELECT sum(input_digest = '') AS missing_input_digests,
+                   sum(previous_close IS NOT NULL AND
+                       abs(contribution_total - (absolute_close - previous_close)) >
+                       max(1.0, abs(absolute_close - previous_close) * 1e-10)
+                   ) AS contribution_mismatches
+            FROM changes
+            """,
+            (DEFAULT_DEFINITION_ID,),
+        ).fetchone()
+        contribution_rows = connection.execute(
+            """
+            SELECT count(*) AS rows, count(DISTINCT trade_date) AS dates,
+                   sum((direction = 'positive' AND change_contribution <= 0)
+                       OR (direction = 'negative' AND change_contribution >= 0)) AS invalid_signs,
+                   max(contribution_rank) AS maximum_rank,
+                   max(trade_date) AS last_date
+            FROM active_market_value_daily_contributions
+            WHERE definition_id = ?
+            """,
+            (DEFAULT_DEFINITION_ID,),
+        ).fetchone()
     finally:
         connection.close()
 
@@ -90,6 +119,18 @@ def main() -> None:
         problems.append("invalid_constituent_counts")
     if mirror["rows"] != aggregate["rows"] or mirror["mismatches"]:
         problems.append("chart_materialization_mismatch")
+    if contribution_audit["missing_input_digests"]:
+        problems.append("input_digest_missing")
+    if contribution_audit["contribution_mismatches"]:
+        problems.append("contribution_total_mismatch")
+    if contribution_rows["rows"] == 0:
+        problems.append("contributions_missing")
+    if contribution_rows["invalid_signs"]:
+        problems.append("contribution_direction_invalid")
+    if contribution_rows["maximum_rank"] is not None and contribution_rows["maximum_rank"] > 10:
+        problems.append("contribution_rank_invalid")
+    if contribution_rows["last_date"] != aggregate["last_date"]:
+        problems.append("latest_contributions_missing")
 
     report = {
         "status": "pass" if not problems else "fail",
@@ -111,6 +152,13 @@ def main() -> None:
         "invalid_count_dates": aggregate["invalid_counts"],
         "chart_rows": mirror["rows"],
         "chart_mismatches": mirror["mismatches"],
+        "missing_input_digests": contribution_audit["missing_input_digests"],
+        "contribution_total_mismatches": contribution_audit["contribution_mismatches"],
+        "contribution_rows": contribution_rows["rows"],
+        "contribution_dates": contribution_rows["dates"],
+        "latest_contribution_date": iso_date(contribution_rows["last_date"]),
+        "invalid_contribution_signs": contribution_rows["invalid_signs"],
+        "maximum_contribution_rank": contribution_rows["maximum_rank"],
         "problems": problems,
     }
     print(json.dumps(report, ensure_ascii=False, indent=2))

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import date, datetime, timedelta, timezone
+from hashlib import sha256
 
 from stock_harness.active_market_value import (
     ALGORITHM_VERSION,
@@ -13,12 +14,64 @@ from stock_harness.active_market_value import (
     ActiveMarketValueCalculator,
     ActiveMarketValueInput,
     normalize_bars,
+    rank_active_value_contributions,
 )
 from stock_harness.models import ActiveMarketValueFeature, InstrumentKind
 from stock_harness.sqlite_mapping import _date_from_key, _date_key
 
 
+def _active_market_value_input_digest(
+    rows: list[ActiveMarketValueInput], expected_count: int | None,
+) -> str:
+    digest = sha256()
+    digest.update(f"expected={expected_count or 0}\n".encode("ascii"))
+    for row in rows:
+        values = (
+            row.instrument_id, row.turnover_rate_f, row.free_share,
+            row.feature_close, row.open, row.high, row.low, row.close,
+        )
+        digest.update("|".join(
+            "null" if value is None else format(value, ".17g")
+            for value in values
+        ).encode("ascii"))
+        digest.update(b"\n")
+    return digest.hexdigest()
+
+
 class SQLiteActiveMarketValueStoreMixin:
+    def _ensure_active_market_value_diagnostics(self) -> None:
+        daily_columns = {
+            str(row[1]) for row in self._connection.execute(
+                "PRAGMA table_info(active_market_value_daily_bars)"
+            )
+        }
+        state_columns = {
+            str(row[1]) for row in self._connection.execute(
+                "PRAGMA table_info(active_market_value_stock_states)"
+            )
+        }
+        additions: list[tuple[str, str]] = []
+        if "input_digest" not in daily_columns:
+            additions.append((
+                "active_market_value_daily_bars",
+                "input_digest TEXT NOT NULL DEFAULT ''",
+            ))
+        if "contribution_total" not in daily_columns:
+            additions.append((
+                "active_market_value_daily_bars",
+                "contribution_total REAL NOT NULL DEFAULT 0",
+            ))
+        if "active_close" not in state_columns:
+            additions.append((
+                "active_market_value_stock_states",
+                "active_close REAL NOT NULL DEFAULT 0",
+            ))
+        if not additions:
+            return
+        with self._lock, self._transaction():
+            for table, column in additions:
+                self._connection.execute(f"ALTER TABLE {table} ADD COLUMN {column}")
+
     def upsert_active_market_value_features(
         self, source: str, trade_date: date,
         features: Sequence[ActiveMarketValueFeature],
@@ -105,6 +158,7 @@ class SQLiteActiveMarketValueStoreMixin:
         if mode not in {"backfill", "incremental", "correction"}:
             raise ValueError("invalid active-market-value build mode")
         initial_state: dict[int, float] = {}
+        initial_active_close: dict[int, float] = {}
         existing_base_close: float | None = None
         latest: int | None = None
         dirty_from: int | None = None
@@ -123,7 +177,7 @@ class SQLiteActiveMarketValueStoreMixin:
                     (DEFAULT_DEFINITION_ID,),
                 ).fetchone()[0]
                 states = self._connection.execute(
-                    "SELECT instrument_id, smoothed_turnover FROM active_market_value_stock_states WHERE definition_id = ?",
+                    "SELECT instrument_id, smoothed_turnover, active_close FROM active_market_value_stock_states WHERE definition_id = ?",
                     (DEFAULT_DEFINITION_ID,),
                 ).fetchall()
                 base_row = self._connection.execute(
@@ -159,8 +213,10 @@ class SQLiteActiveMarketValueStoreMixin:
                         mode = "backfill"
                 if mode == "incremental":
                     initial_state = {int(row[0]): float(row[1]) for row in states}
+                    initial_active_close = {int(row[0]): float(row[2]) for row in states}
         if mode == "backfill":
             initial_state = {}
+            initial_active_close = {}
             existing_base_close = None
         started_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
         with self._lock, self._transaction():
@@ -220,6 +276,42 @@ class SQLiteActiveMarketValueStoreMixin:
             smoothing_period, scale_k, turnover_cap, initial_state
         )
         absolute_rows: list[tuple[int, tuple[float, float, float, float, int, int, float]]] = []
+        input_digests: dict[int, str] = {}
+        contribution_rows: list[tuple[int, str, int, int, float, float]] = []
+        contribution_totals: dict[int, float] = {}
+        previous_active_close = initial_active_close
+
+        def append_day(
+            trade_key: int, day_rows: list[ActiveMarketValueInput],
+            expected_count: int | None,
+        ) -> None:
+            nonlocal previous_active_close
+            calculated = calculator.calculate_absolute(trade_key, day_rows, expected_count)
+            if calculated is None:
+                return
+            absolute_rows.append(calculated)
+            input_digests[trade_key] = _active_market_value_input_digest(
+                day_rows, expected_count
+            )
+            current_active_close = calculator.active_close_components(day_rows)
+            if previous_active_close:
+                contribution_totals[trade_key] = (
+                    sum(current_active_close.values()) - sum(previous_active_close.values())
+                )
+                positive, negative = rank_active_value_contributions(
+                    current_active_close, previous_active_close
+                )
+                contribution_rows.extend(
+                    (trade_key, "positive", rank, instrument_id, active_close, change)
+                    for rank, (instrument_id, active_close, change) in enumerate(positive, 1)
+                )
+                contribution_rows.extend(
+                    (trade_key, "negative", rank, instrument_id, active_close, change)
+                    for rank, (instrument_id, active_close, change) in enumerate(negative, 1)
+                )
+            else:
+                contribution_totals[trade_key] = 0.0
+            previous_active_close = current_active_close
         try:
             with self._lock:
                 cursor = self._connection.execute(
@@ -255,11 +347,7 @@ class SQLiteActiveMarketValueStoreMixin:
                 for row in cursor:
                     trade_key = int(row[0])
                     if current_date is not None and trade_key != current_date:
-                        calculated = calculator.calculate_absolute(
-                            current_date, current, current_expected_count
-                        )
-                        if calculated is not None:
-                            absolute_rows.append(calculated)
+                        append_day(current_date, current, current_expected_count)
                         current = []
                     current_date = trade_key
                     current_expected_count = int(row[9]) if row[9] is not None else None
@@ -272,14 +360,13 @@ class SQLiteActiveMarketValueStoreMixin:
                         close=float(row[8]) if row[8] is not None else None,
                     ))
                 if current_date is not None:
-                    calculated = calculator.calculate_absolute(
-                        current_date, current, current_expected_count
-                    )
-                    if calculated is not None:
-                        absolute_rows.append(calculated)
+                    append_day(current_date, current, current_expected_count)
             bars = normalize_bars(absolute_rows, base_value, existing_base_close)
             if mode == "correction":
                 bars = [item for item in bars if item.trade_date >= emit_start_key]
+                contribution_rows = [
+                    item for item in contribution_rows if item[0] >= emit_start_key
+                ]
             completed_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
             with self._lock, self._transaction():
                 source_id = self._source_id(
@@ -293,6 +380,10 @@ class SQLiteActiveMarketValueStoreMixin:
                     self._connection.execute(
                         "DELETE FROM daily_bars WHERE instrument_id = ?", (instrument_id,)
                     )
+                    self._connection.execute(
+                        "DELETE FROM active_market_value_daily_contributions WHERE definition_id = ?",
+                        (DEFAULT_DEFINITION_ID,),
+                    )
                 elif mode == "correction":
                     self._connection.execute(
                         "DELETE FROM active_market_value_daily_bars WHERE definition_id = ? AND trade_date >= ?",
@@ -302,14 +393,18 @@ class SQLiteActiveMarketValueStoreMixin:
                         "DELETE FROM daily_bars WHERE instrument_id = ? AND trade_date >= ?",
                         (instrument_id, emit_start_key),
                     )
+                    self._connection.execute(
+                        "DELETE FROM active_market_value_daily_contributions WHERE definition_id = ? AND trade_date >= ?",
+                        (DEFAULT_DEFINITION_ID, emit_start_key),
+                    )
                 self._connection.executemany(
                     """
                     INSERT INTO active_market_value_daily_bars(
                         definition_id, trade_date, absolute_open, absolute_high,
                         absolute_low, absolute_close, open, high, low, close,
                         eligible_count, total_count, coverage_ratio,
-                        algorithm_version, updated_at_ms
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        input_digest, contribution_total, algorithm_version, updated_at_ms
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(definition_id, trade_date) DO UPDATE SET
                         absolute_open = excluded.absolute_open,
                         absolute_high = excluded.absolute_high,
@@ -320,6 +415,8 @@ class SQLiteActiveMarketValueStoreMixin:
                         eligible_count = excluded.eligible_count,
                         total_count = excluded.total_count,
                         coverage_ratio = excluded.coverage_ratio,
+                        input_digest = excluded.input_digest,
+                        contribution_total = excluded.contribution_total,
                         algorithm_version = excluded.algorithm_version,
                         updated_at_ms = excluded.updated_at_ms
                     """,
@@ -328,8 +425,30 @@ class SQLiteActiveMarketValueStoreMixin:
                         item.absolute_high, item.absolute_low, item.absolute_close,
                         item.open, item.high, item.low, item.close,
                         item.eligible_count, item.total_count, item.coverage_ratio,
+                        input_digests[item.trade_date], contribution_totals[item.trade_date],
                         ALGORITHM_VERSION, completed_ms,
                     ) for item in bars),
+                )
+                self._connection.executemany(
+                    """
+                    INSERT INTO active_market_value_daily_contributions(
+                        definition_id, trade_date, direction, contribution_rank,
+                        instrument_id, active_close, change_contribution,
+                        algorithm_version, updated_at_ms
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(definition_id, trade_date, direction, contribution_rank)
+                    DO UPDATE SET
+                        instrument_id = excluded.instrument_id,
+                        active_close = excluded.active_close,
+                        change_contribution = excluded.change_contribution,
+                        algorithm_version = excluded.algorithm_version,
+                        updated_at_ms = excluded.updated_at_ms
+                    """,
+                    ((
+                        DEFAULT_DEFINITION_ID, trade_key, direction, rank,
+                        stock_id, active_close, change, ALGORITHM_VERSION, completed_ms,
+                    ) for trade_key, direction, rank, stock_id, active_close, change
+                     in contribution_rows),
                 )
                 self._connection.executemany(
                     """
@@ -376,16 +495,18 @@ class SQLiteActiveMarketValueStoreMixin:
                     """
                     INSERT INTO active_market_value_stock_states(
                         definition_id, instrument_id, as_of_date,
-                        smoothed_turnover, updated_at_ms
-                    ) VALUES (?, ?, ?, ?, ?)
+                        smoothed_turnover, active_close, updated_at_ms
+                    ) VALUES (?, ?, ?, ?, ?, ?)
                     ON CONFLICT(definition_id, instrument_id) DO UPDATE SET
                         as_of_date = excluded.as_of_date,
                         smoothed_turnover = excluded.smoothed_turnover,
+                        active_close = excluded.active_close,
                         updated_at_ms = excluded.updated_at_ms
                     """,
                     ((
                         DEFAULT_DEFINITION_ID, instrument_id_value, state_date,
-                        smoothed, completed_ms,
+                        smoothed, previous_active_close.get(instrument_id_value, 0.0),
+                        completed_ms,
                     ) for instrument_id_value, smoothed in calculator.state.items()) if state_date else (),
                 )
                 self._connection.execute(
@@ -499,7 +620,8 @@ class SQLiteActiveMarketValueStoreMixin:
                 """
                 SELECT trade_date, absolute_open, absolute_high, absolute_low,
                        absolute_close, open, high, low, close, eligible_count,
-                       total_count, coverage_ratio, algorithm_version
+                       total_count, coverage_ratio, input_digest,
+                       contribution_total, algorithm_version
                 FROM active_market_value_daily_bars
                 WHERE definition_id = ? AND trade_date BETWEEN ? AND ?
                 ORDER BY trade_date
@@ -513,5 +635,92 @@ class SQLiteActiveMarketValueStoreMixin:
             "open": float(row[5]), "high": float(row[6]), "low": float(row[7]),
             "close": float(row[8]), "eligible_count": int(row[9]),
             "total_count": int(row[10]), "coverage_ratio": float(row[11]),
-            "algorithm_version": str(row[12]),
+            "input_digest": str(row[12]), "contribution_total": float(row[13]),
+            "algorithm_version": str(row[14]),
         } for row in rows]
+
+    def get_active_market_value_latest_diagnostics(self) -> dict[str, object]:
+        with self._lock:
+            row = self._connection.execute(
+                """
+                SELECT bar.trade_date, bar.absolute_close, bar.close,
+                       bar.eligible_count, bar.total_count, bar.coverage_ratio,
+                       bar.input_digest, bar.contribution_total,
+                       (SELECT previous.absolute_close
+                        FROM active_market_value_daily_bars AS previous
+                        WHERE previous.definition_id = bar.definition_id
+                          AND previous.trade_date < bar.trade_date
+                        ORDER BY previous.trade_date DESC LIMIT 1)
+                FROM active_market_value_daily_bars AS bar
+                WHERE bar.definition_id = ?
+                ORDER BY bar.trade_date DESC LIMIT 1
+                """,
+                (DEFAULT_DEFINITION_ID,),
+            ).fetchone()
+            if row is None:
+                return {"status": "missing", "symbol": DEFAULT_SYMBOL}
+            trade_key = int(row[0])
+            contribution_rows = self._connection.execute(
+                """
+                SELECT contribution.direction, contribution.contribution_rank,
+                       instrument.symbol, instrument.name,
+                       contribution.active_close, contribution.change_contribution
+                FROM active_market_value_daily_contributions AS contribution
+                JOIN instruments AS instrument USING (instrument_id)
+                WHERE contribution.definition_id = ? AND contribution.trade_date = ?
+                ORDER BY contribution.direction, contribution.contribution_rank
+                """,
+                (DEFAULT_DEFINITION_ID, trade_key),
+            ).fetchall()
+            comparator_rows = self._connection.execute(
+                """
+                SELECT instrument.symbol, instrument.name, current.close,
+                       (SELECT previous.close FROM daily_bars AS previous
+                        WHERE previous.instrument_id = instrument.instrument_id
+                          AND previous.trade_date < current.trade_date
+                        ORDER BY previous.trade_date DESC LIMIT 1)
+                FROM instruments AS instrument
+                JOIN daily_bars AS current USING (instrument_id)
+                WHERE instrument.symbol IN ('000300.SH', '000905.SH', '000852.SH', '000985.CSI')
+                  AND current.trade_date = ?
+                ORDER BY instrument.symbol
+                """,
+                (trade_key,),
+            ).fetchall()
+        absolute_close = float(row[1])
+        previous_absolute_close = float(row[8]) if row[8] is not None else None
+        change_percent = (
+            (absolute_close / previous_absolute_close - 1) * 100
+            if previous_absolute_close not in (None, 0) else None
+        )
+        comparators = []
+        for comparator in comparator_rows:
+            previous = float(comparator[3]) if comparator[3] is not None else None
+            comparator_change = (
+                (float(comparator[2]) / previous - 1) * 100
+                if previous not in (None, 0) else None
+            )
+            comparators.append({
+                "symbol": str(comparator[0]), "name": str(comparator[1]),
+                "change_percent": comparator_change,
+                "divergence_percent_points": (
+                    change_percent - comparator_change
+                    if change_percent is not None and comparator_change is not None else None
+                ),
+            })
+        return {
+            "status": "ready", "symbol": DEFAULT_SYMBOL,
+            "trade_date": _date_from_key(trade_key),
+            "absolute_close": absolute_close, "index_close": float(row[2]),
+            "change_percent": change_percent,
+            "eligible_count": int(row[3]), "total_count": int(row[4]),
+            "coverage_ratio": float(row[5]), "input_digest": str(row[6]),
+            "contribution_total": float(row[7]),
+            "contributors": [{
+                "direction": str(item[0]), "rank": int(item[1]),
+                "symbol": str(item[2]), "name": str(item[3]),
+                "active_close": float(item[4]),
+                "change_contribution": float(item[5]),
+            } for item in contribution_rows],
+            "comparators": comparators,
+        }

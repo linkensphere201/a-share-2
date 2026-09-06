@@ -222,6 +222,8 @@ CREATE TABLE IF NOT EXISTS active_market_value_daily_bars (
     eligible_count INTEGER NOT NULL,
     total_count INTEGER NOT NULL,
     coverage_ratio REAL NOT NULL CHECK (coverage_ratio BETWEEN 0 AND 1),
+    input_digest TEXT NOT NULL DEFAULT '',
+    contribution_total REAL NOT NULL DEFAULT 0,
     algorithm_version TEXT NOT NULL,
     updated_at_ms INTEGER NOT NULL,
     PRIMARY KEY (definition_id, trade_date),
@@ -250,11 +252,30 @@ CREATE TABLE IF NOT EXISTS active_market_value_stock_states (
     instrument_id INTEGER NOT NULL,
     as_of_date INTEGER NOT NULL,
     smoothed_turnover REAL NOT NULL CHECK (smoothed_turnover >= 0),
+    active_close REAL NOT NULL DEFAULT 0 CHECK (active_close >= 0),
     updated_at_ms INTEGER NOT NULL,
     PRIMARY KEY (definition_id, instrument_id),
     FOREIGN KEY (definition_id) REFERENCES active_market_value_definitions(definition_id),
     FOREIGN KEY (instrument_id) REFERENCES instruments(instrument_id)
 ) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS active_market_value_daily_contributions (
+    definition_id TEXT NOT NULL,
+    trade_date INTEGER NOT NULL,
+    direction TEXT NOT NULL CHECK (direction IN ('positive', 'negative')),
+    contribution_rank INTEGER NOT NULL CHECK (contribution_rank BETWEEN 1 AND 10),
+    instrument_id INTEGER NOT NULL,
+    active_close REAL NOT NULL CHECK (active_close >= 0),
+    change_contribution REAL NOT NULL,
+    algorithm_version TEXT NOT NULL,
+    updated_at_ms INTEGER NOT NULL,
+    PRIMARY KEY (definition_id, trade_date, direction, contribution_rank),
+    FOREIGN KEY (definition_id) REFERENCES active_market_value_definitions(definition_id),
+    FOREIGN KEY (instrument_id) REFERENCES instruments(instrument_id)
+) WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS active_market_value_contributions_instrument
+ON active_market_value_daily_contributions(instrument_id, trade_date DESC);
 
 CREATE TABLE IF NOT EXISTS active_market_value_dirty_ranges (
     definition_id TEXT PRIMARY KEY,
