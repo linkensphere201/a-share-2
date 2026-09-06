@@ -335,7 +335,7 @@ export function visibleBarStats(
   return { count, low: Number.isFinite(low) ? low : undefined, high: Number.isFinite(high) ? high : undefined }
 }
 
-export function latestReadout(bars: DailyBar[]): Readout | null {
+export function latestReadout(bars: DailyBar[], middleAveragePeriod = 20): Readout | null {
   const latest = bars.at(-1)
   if (!latest) return null
   return {
@@ -345,7 +345,7 @@ export function latestReadout(bars: DailyBar[]): Readout | null {
       latest.previous_settlement ?? bars.at(-2)?.close,
     ),
     ma5: latestAverage(bars, 5),
-    ma20: latestAverage(bars, 20),
+    ma20: latestAverage(bars, middleAveragePeriod),
     ma60: latestAverage(bars, 60),
   }
 }

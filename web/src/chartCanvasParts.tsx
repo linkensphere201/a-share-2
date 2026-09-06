@@ -486,10 +486,11 @@ export function MeasurementOverlay({
   )
 }
 
-export function ChartReadout({ value, instrumentName, futures }: {
+export function ChartReadout({ value, instrumentName, futures, middleAveragePeriod = 20 }: {
   value: Readout
   instrumentName?: string
   futures: boolean
+  middleAveragePeriod?: number
 }) {
   const candleTone = value.changePercent === undefined
     ? value.close >= value.open ? 'rise' : 'fall'
@@ -518,7 +519,7 @@ export function ChartReadout({ value, instrumentName, futures }: {
       {futures && value.open_interest_change != null && <span className="futures-detail">增仓 <b className={value.open_interest_change >= 0 ? 'rise' : 'fall'}>{formatSignedVolume(value.open_interest_change)}</b></span>}
       {futures && value.mapped_contract_symbol && <span className="futures-detail">映射 <b>{value.mapped_contract_symbol}</b></span>}
       {value.ma5 !== undefined && <span className="ma5-value">MA5 {formatPrice(value.ma5)}</span>}
-      {value.ma20 !== undefined && <span className="ma20-value">MA20 {formatPrice(value.ma20)}</span>}
+      {value.ma20 !== undefined && <span className="ma20-value">MA{middleAveragePeriod} {formatPrice(value.ma20)}</span>}
       {value.ma60 !== undefined && <span className="ma60-value">MA60 {formatPrice(value.ma60)}</span>}
     </div>
   )

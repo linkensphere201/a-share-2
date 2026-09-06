@@ -182,6 +182,19 @@ describe('provisional daily bars', () => {
     expect(readout?.settlement).toBe(102)
     expect(readout?.mapped_contract_symbol).toBe('FUT:SHFE:CU:202609')
   })
+
+  it('supports a configurable middle moving-average period', () => {
+    const bars = Array.from({ length: 13 }, (_, index) => ({
+      trade_date: `2026-08-${String(index + 1).padStart(2, '0')}`,
+      open: index + 1,
+      high: index + 2,
+      low: index || 0.5,
+      close: index + 1,
+      volume: 0,
+      source: 'stock_harness_amv',
+    }))
+    expect(latestReadout(bars, 13)?.ma20).toBe(7)
+  })
 })
 
 describe('chart level of detail', () => {

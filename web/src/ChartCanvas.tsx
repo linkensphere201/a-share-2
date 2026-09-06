@@ -259,6 +259,9 @@ export function ChartCanvas({
   supplementalAnalysisItems = [],
   supplementalAnalysisOnly = false,
 }: ChartCanvasProps) {
+  const middleAveragePeriod = symbol === 'SHAMV.A' ? 13 : 20
+  const middleAveragePeriodRef = useRef(middleAveragePeriod)
+  middleAveragePeriodRef.current = middleAveragePeriod
   const hostRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const candleRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
@@ -348,8 +351,8 @@ export function ChartCanvas({
   }, [])
   const onBarsChanged = useCallback((next: DailyBar[]) => {
     previousCloseByDateRef.current = previousCloseByDate(next)
-    setReadout(latestReadout(next))
-  }, [])
+    setReadout(latestReadout(next, middleAveragePeriod))
+  }, [middleAveragePeriod])
   const onDailyLoadStart = useCallback(() => {
     selectionDragRef.current = undefined
     setSelectionBox(undefined)
@@ -398,9 +401,9 @@ export function ChartCanvas({
 
   const averages = useMemo(() => ({
     ma5: movingAverage(bars, 5),
-    ma20: movingAverage(bars, 20),
+    ma20: movingAverage(bars, middleAveragePeriod),
     ma60: movingAverage(bars, 60),
-  }), [bars])
+  }), [bars, middleAveragePeriod])
   const priceGaps = useMemo(() => detectPriceGaps(bars), [bars])
   const macd = useMemo(() => calculateMacd(bars), [bars])
 
@@ -548,7 +551,7 @@ export function ChartCanvas({
 
     chart.subscribeCrosshairMove(param => {
       if (!param.time) {
-        setReadout(latestReadout(barsRef.current))
+        setReadout(latestReadout(barsRef.current, middleAveragePeriodRef.current))
         return
       }
       const candle = param.seriesData.get(candles) as CandlestickData<Time> | undefined
@@ -1520,6 +1523,7 @@ export function ChartCanvas({
         value={readout}
         instrumentName={instrumentName}
         futures={instrumentKind === 'futures-contract' || instrumentKind === 'futures-continuous'}
+        middleAveragePeriod={middleAveragePeriod}
       />}
       {volumePaneTop !== undefined && <PaneHeader kind="volume" top={volumePaneTop} onHide={() => onVolumeVisibleChange?.(false)}/>}
       {macdPaneTop !== undefined && <PaneHeader kind="macd" top={macdPaneTop} onHide={() => onIndicatorChange?.('none')}/>}

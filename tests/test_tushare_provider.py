@@ -65,6 +65,19 @@ class _JsonClient:
         }]
 
 
+class _ActiveMarketValueClient:
+    def daily_basic(self, **kwargs):
+        return [{
+            "ts_code": "600519.SH", "trade_date": kwargs["trade_date"],
+            "turnover_rate_f": 1.25, "free_share": 125_000,
+            "circ_mv": 20_000_000, "total_mv": 25_000_000, "close": 1600,
+        }, {
+            "ts_code": "000001.SZ", "trade_date": kwargs["trade_date"],
+            "turnover_rate_f": None, "free_share": 100,
+            "circ_mv": 100, "total_mv": 200, "close": 10,
+        }]
+
+
 class _UniverseClient:
     def fund_basic(self, **kwargs):
         if kwargs["status"] != "L":
@@ -198,6 +211,17 @@ def _settings() -> TushareSettings:
 
 
 class TushareDailyProviderTests(unittest.TestCase):
+    def test_maps_active_market_value_features_and_skips_incomplete_rows(self) -> None:
+        provider = TushareDailyProvider(_settings(), client=_ActiveMarketValueClient())
+
+        rows = provider.fetch_active_market_value_features(date(2026, 9, 4))
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].symbol, "600519.SH")
+        self.assertEqual(rows[0].free_share, 1_250_000_000)
+        self.assertEqual(rows[0].circ_market_value, 200_000_000_000)
+        self.assertEqual(rows[0].turnover_rate_f, 1.25)
+
     def test_lists_active_and_historical_instruments(self) -> None:
         instruments = TushareDailyProvider(_settings(), client=_Client()).list_instruments()
 

@@ -395,6 +395,29 @@ def create_market_router() -> APIRouter:
         )
         return result
 
+    @router.get("/api/active-market-value")
+    def active_market_value(request: Request) -> dict[str, object]:
+        return store(request).get_active_market_value_index()
+
+    @router.get("/api/active-market-value/daily")
+    def active_market_value_daily(
+        request: Request,
+        start_date: date = date(1990, 1, 1),
+        end_date: date = date.today(),
+    ) -> dict[str, object]:
+        if start_date > end_date:
+            raise HTTPException(status_code=422, detail="start_date must not exceed end_date")
+        return {"items": store(request).list_active_market_value_diagnostics(start_date, end_date)}
+
+    @router.post("/api/active-market-value/rebuild")
+    def rebuild_active_market_value(request: Request) -> dict[str, object]:
+        result = store(request).build_active_market_value_index()
+        LOGGER.info(
+            "active_market_value_rebuilt rows=%s through=%s version=%s",
+            result["rows"], result.get("last_trade_date"), result.get("algorithm_version"),
+        )
+        return result
+
     @router.get("/api/instruments/{symbol}/daily-bars")
     def daily_bars(
         request: Request,

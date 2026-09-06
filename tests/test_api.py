@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 from stock_harness.api import create_app
 from stock_harness.config import FuturesExchangeCutoff
 from stock_harness.models import (
-    AdjustmentFactor, BoardMembership, CatalogEntry, DailyBar, EtfHolding, Instrument,
+    ActiveMarketValueFeature, AdjustmentFactor, BoardMembership, CatalogEntry, DailyBar, EtfHolding, Instrument,
     FuturesExchange, InstrumentKind, MarketSnapshot,
 )
 from stock_harness.sqlite_store import SQLiteMarketDataStore
@@ -114,6 +114,32 @@ def test_stock_board_tags_are_rebuilt_separately_and_batch_readable():
     assert tags[0]["algorithm_version"] == "stock-board-tags-v1"
     assert "concept:" in tags[0]["selection_reason"]
     assert role_tags.json()["items"] == [{"symbol": "300308.SZ", "tags": []}]
+
+
+def test_active_market_value_is_chartable_with_diagnostics():
+    store, client = _client()
+    trade_date = date(2026, 8, 3)
+    store.upsert_daily_bars("tushare", [
+        DailyBar("300308.SZ", trade_date, 10, 12, 9, 11, 100),
+    ])
+    store.upsert_active_market_value_features("tushare", trade_date, [
+        ActiveMarketValueFeature(
+            "300308.SZ", trade_date, 2, 100_000_000,
+            1_100_000_000, 2_000_000_000, 11,
+        ),
+    ])
+    with client:
+        rebuilt = client.post("/api/active-market-value/rebuild")
+        summary = client.get("/api/active-market-value")
+        diagnostics = client.get("/api/active-market-value/daily")
+        chart = client.get("/api/instruments/SHAMV.A/daily-bars")
+    store.close()
+
+    assert rebuilt.status_code == 200
+    assert summary.json()["symbol"] == "SHAMV.A"
+    assert summary.json()["latest_coverage_ratio"] == 1
+    assert diagnostics.json()["items"][0]["absolute_close"] > 0
+    assert chart.json()["items"][0]["close"] == 1000
 
 
 def test_classified_browsing_normalizes_board_sources_and_allows_empty_query():

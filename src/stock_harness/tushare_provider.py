@@ -13,6 +13,7 @@ from urllib.request import Request, urlopen
 from stock_harness.config import TushareSettings, UniverseSymbol, load_provider_token
 from stock_harness.models import (
     AdjustmentFactor,
+    ActiveMarketValueFeature,
     BoardMembership,
     CatalogEntry,
     DailyBar,
@@ -391,6 +392,43 @@ class TushareDailyProvider:
                 amount=float(_field(row, "amount")) * 1_000,
             ))
         return snapshots
+
+    def fetch_active_market_value_features(
+        self, trade_date: date
+    ) -> Sequence[ActiveMarketValueFeature]:
+        rows = _iter_rows(self._call(
+            "daily_basic",
+            trade_date=_compact_date(trade_date),
+            fields=(
+                "ts_code,trade_date,turnover_rate_f,free_share,circ_mv,total_mv,close"
+            ),
+        ))
+        features: list[ActiveMarketValueFeature] = []
+        for row in rows:
+            required = {
+                name: _field(row, name)
+                for name in (
+                    "ts_code", "trade_date", "turnover_rate_f", "free_share",
+                    "circ_mv", "total_mv", "close",
+                )
+            }
+            if any(value in (None, "") for value in required.values()):
+                continue
+            row_date = _parse_compact_date(str(required["trade_date"]))
+            if row_date != trade_date:
+                raise ValueError("active-market-value features returned an unexpected trade date")
+            feature = ActiveMarketValueFeature(
+                symbol=str(required["ts_code"]), trade_date=row_date,
+                turnover_rate_f=float(required["turnover_rate_f"]),
+                # Tushare reports free_share in ten-thousand shares and market values in ten-thousand CNY.
+                free_share=float(required["free_share"]) * 10_000,
+                circ_market_value=float(required["circ_mv"]) * 10_000,
+                total_market_value=float(required["total_mv"]) * 10_000,
+                close=float(required["close"]),
+            )
+            feature.validate()
+            features.append(feature)
+        return features
 
     def fetch_etf_holdings(
         self, etf_symbol: str, candidate_dates: Sequence[date]

@@ -231,10 +231,67 @@ def main() -> None:
     )
     repair.add_argument("--trade-date", type=date.fromisoformat, action="append", dest="dates")
     repair.add_argument("--limit-dates", type=int)
+    amv_features = subparsers.add_parser(
+        "sync-active-market-value-features",
+        help="Resume Tushare daily_basic features required by the active-market-value index",
+    )
+    amv_features.add_argument("--start-date", type=date.fromisoformat, required=True)
+    amv_features.add_argument("--end-date", type=date.fromisoformat, default=date.today())
+    amv_features.add_argument("--max-dates", type=int)
+    amv_features.add_argument("--force", action="store_true")
+    amv_build = subparsers.add_parser(
+        "build-active-market-value",
+        help="Materialize the StockHarness active-market-value daily index",
+    )
+    amv_build.add_argument("--start-date", type=date.fromisoformat)
+    amv_build.add_argument("--end-date", type=date.fromisoformat)
+    amv_build.add_argument("--period", type=int, default=13)
+    amv_build.add_argument("--scale-k", type=float, default=100)
+    amv_build.add_argument("--turnover-cap", type=float, default=1)
+    amv_build.add_argument(
+        "--mode", choices=("backfill", "incremental"), default="backfill"
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     settings = load_runtime_settings(args.provider_config, args.storage_config)
+    if args.command == "sync-active-market-value-features":
+        provider = TushareDailyProvider(settings.tushare)
+        dates = provider.trading_dates(args.start_date, args.end_date)
+        completed = skipped = rows = 0
+        with _open_store(settings) as store:
+            for trade_date in dates:
+                if not args.force and store.has_active_market_value_feature_receipt(
+                    provider.code, trade_date
+                ):
+                    skipped += 1
+                    continue
+                result = store.upsert_active_market_value_features(
+                    provider.code, trade_date,
+                    provider.fetch_active_market_value_features(trade_date),
+                )
+                completed += 1
+                rows += int(result["row_count"])
+                logging.info(
+                    "active_market_value_feature_progress date=%s completed=%d total=%d rows=%d",
+                    trade_date, completed, len(dates), result["row_count"],
+                )
+                if args.max_dates is not None and completed >= args.max_dates:
+                    break
+            coverage = store.active_market_value_feature_coverage()
+        print(json.dumps({
+            "completed_dates": completed, "skipped_dates": skipped,
+            "changed_rows": rows, "coverage": coverage,
+        }, default=str, ensure_ascii=False))
+        return
+    if args.command == "build-active-market-value":
+        with _open_store(settings) as store:
+            result = store.build_active_market_value_index(
+                args.start_date, args.end_date, smoothing_period=args.period,
+                scale_k=args.scale_k, turnover_cap=args.turnover_cap, mode=args.mode,
+            )
+        print(json.dumps(result, default=str, ensure_ascii=False))
+        return
     if args.command == "probe":
         provider = TushareDailyProvider(settings.tushare)
         instruments = provider.list_instruments()

@@ -163,6 +163,99 @@ CREATE TABLE IF NOT EXISTS market_snapshots (
 CREATE INDEX IF NOT EXISTS market_snapshots_latest
 ON market_snapshots(instrument_id, trade_date DESC);
 
+CREATE TABLE IF NOT EXISTS active_market_value_features (
+    instrument_id INTEGER NOT NULL,
+    trade_date INTEGER NOT NULL,
+    turnover_rate_f REAL NOT NULL CHECK (turnover_rate_f >= 0),
+    free_share REAL NOT NULL CHECK (free_share > 0),
+    circ_market_value REAL NOT NULL CHECK (circ_market_value >= 0),
+    total_market_value REAL NOT NULL CHECK (total_market_value >= 0),
+    close REAL NOT NULL CHECK (close > 0),
+    source_id INTEGER NOT NULL,
+    updated_at_ms INTEGER NOT NULL,
+    PRIMARY KEY (instrument_id, trade_date),
+    FOREIGN KEY (instrument_id) REFERENCES instruments(instrument_id),
+    FOREIGN KEY (source_id) REFERENCES sources(source_id)
+) WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS active_market_value_features_date
+ON active_market_value_features(trade_date, instrument_id);
+
+CREATE TABLE IF NOT EXISTS active_market_value_feature_receipts (
+    source_id INTEGER NOT NULL,
+    trade_date INTEGER NOT NULL,
+    row_count INTEGER NOT NULL,
+    skipped_count INTEGER NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('complete', 'empty')),
+    updated_at_ms INTEGER NOT NULL,
+    PRIMARY KEY (source_id, trade_date),
+    FOREIGN KEY (source_id) REFERENCES sources(source_id)
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS active_market_value_definitions (
+    definition_id TEXT PRIMARY KEY,
+    instrument_id INTEGER NOT NULL UNIQUE,
+    algorithm_version TEXT NOT NULL,
+    smoothing_period INTEGER NOT NULL CHECK (smoothing_period > 0),
+    scale_k REAL NOT NULL CHECK (scale_k > 0),
+    turnover_cap REAL NOT NULL CHECK (turnover_cap > 0),
+    base_value REAL NOT NULL CHECK (base_value > 0),
+    base_date INTEGER,
+    status TEXT NOT NULL CHECK (status IN ('pending', 'building', 'ready', 'error')),
+    last_error TEXT,
+    created_at_ms INTEGER NOT NULL,
+    updated_at_ms INTEGER NOT NULL,
+    FOREIGN KEY (instrument_id) REFERENCES instruments(instrument_id)
+);
+
+CREATE TABLE IF NOT EXISTS active_market_value_daily_bars (
+    definition_id TEXT NOT NULL,
+    trade_date INTEGER NOT NULL,
+    absolute_open REAL NOT NULL,
+    absolute_high REAL NOT NULL,
+    absolute_low REAL NOT NULL,
+    absolute_close REAL NOT NULL,
+    open REAL NOT NULL,
+    high REAL NOT NULL,
+    low REAL NOT NULL,
+    close REAL NOT NULL,
+    eligible_count INTEGER NOT NULL,
+    total_count INTEGER NOT NULL,
+    coverage_ratio REAL NOT NULL CHECK (coverage_ratio BETWEEN 0 AND 1),
+    algorithm_version TEXT NOT NULL,
+    updated_at_ms INTEGER NOT NULL,
+    PRIMARY KEY (definition_id, trade_date),
+    FOREIGN KEY (definition_id) REFERENCES active_market_value_definitions(definition_id)
+) WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS active_market_value_daily_bars_date
+ON active_market_value_daily_bars(trade_date, definition_id);
+
+CREATE TABLE IF NOT EXISTS active_market_value_build_runs (
+    run_id INTEGER PRIMARY KEY,
+    definition_id TEXT NOT NULL,
+    mode TEXT NOT NULL CHECK (mode IN ('backfill', 'incremental', 'correction')),
+    from_date INTEGER,
+    through_date INTEGER,
+    row_count INTEGER NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('running', 'completed', 'failed')),
+    message TEXT NOT NULL,
+    started_at_ms INTEGER NOT NULL,
+    completed_at_ms INTEGER,
+    FOREIGN KEY (definition_id) REFERENCES active_market_value_definitions(definition_id)
+);
+
+CREATE TABLE IF NOT EXISTS active_market_value_stock_states (
+    definition_id TEXT NOT NULL,
+    instrument_id INTEGER NOT NULL,
+    as_of_date INTEGER NOT NULL,
+    smoothed_turnover REAL NOT NULL CHECK (smoothed_turnover >= 0),
+    updated_at_ms INTEGER NOT NULL,
+    PRIMARY KEY (definition_id, instrument_id),
+    FOREIGN KEY (definition_id) REFERENCES active_market_value_definitions(definition_id),
+    FOREIGN KEY (instrument_id) REFERENCES instruments(instrument_id)
+) WITHOUT ROWID;
+
 CREATE TABLE IF NOT EXISTS etf_holdings (
     source_id INTEGER NOT NULL,
     etf_instrument_id INTEGER NOT NULL,

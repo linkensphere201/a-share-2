@@ -150,6 +150,39 @@ class IncrementalUpdater:
                             trade_date,
                         )
                         errors.append(f"{scope} {trade_date}: {exc}")
+            amv_feature_dates = 0
+            for trade_date in open_dates:
+                if (
+                    store.has_active_market_value_feature_receipt(provider.code, trade_date)
+                    or not store.has_daily_snapshot(provider.code, "stock", trade_date)
+                ):
+                    continue
+                try:
+                    result = store.upsert_active_market_value_features(
+                        provider.code, trade_date,
+                        provider.fetch_active_market_value_features(trade_date),
+                    )
+                    if int(result["row_count"]) > 0:
+                        amv_feature_dates += 1
+                    LOGGER.info(
+                        "active_market_value_feature_increment date=%s rows=%s skipped=%s",
+                        trade_date, result["row_count"], result["skipped_count"],
+                    )
+                except Exception as exc:
+                    LOGGER.exception(
+                        "active_market_value_feature_increment_failed date=%s", trade_date
+                    )
+                    errors.append(f"active market value feature {trade_date}: {exc}")
+            if amv_feature_dates:
+                try:
+                    result = store.build_active_market_value_index(mode="incremental")
+                    LOGGER.info(
+                        "active_market_value_increment_complete rows=%s through=%s",
+                        result["rows"], result.get("last_trade_date"),
+                    )
+                except Exception as exc:
+                    LOGGER.exception("active_market_value_increment_failed")
+                    errors.append(f"active market value index: {exc}")
             list_result = refresh_list_data(
                 provider, store, self.settings, open_dates
             )

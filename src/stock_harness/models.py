@@ -401,6 +401,32 @@ class MarketSnapshot:
 
 
 @dataclass(frozen=True, slots=True)
+class ActiveMarketValueFeature:
+    symbol: str
+    trade_date: date
+    turnover_rate_f: float
+    free_share: float
+    circ_market_value: float
+    total_market_value: float
+    close: float
+
+    def validate(self) -> None:
+        if not self.symbol:
+            raise ValueError("active-market-value feature symbol is required")
+        for name, value in (
+            ("turnover_rate_f", self.turnover_rate_f),
+            ("free_share", self.free_share),
+            ("circ_market_value", self.circ_market_value),
+            ("total_market_value", self.total_market_value),
+            ("close", self.close),
+        ):
+            if not isfinite(value) or value < 0:
+                raise ValueError(f"active-market-value {name} must be finite and non-negative")
+        if self.free_share <= 0 or self.close <= 0:
+            raise ValueError("active-market-value free share and close must be positive")
+
+
+@dataclass(frozen=True, slots=True)
 class ProvisionalDailyBar:
     symbol: str
     trade_date: date
