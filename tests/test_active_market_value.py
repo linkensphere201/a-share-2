@@ -44,6 +44,7 @@ def test_materializes_causal_active_market_value_bars_and_coverage():
     assert result["status"] == "ready"
     assert result["rows"] == 2
     assert result["base_date"] == first
+    assert result["latest_change_percent"] is not None
     assert diagnostics[0]["coverage_ratio"] == pytest.approx(1)
     assert diagnostics[1]["coverage_ratio"] == pytest.approx(11_000 / 51_000)
     assert diagnostics[0]["absolute_high"] >= diagnostics[0]["absolute_close"]

@@ -469,6 +469,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .instrument-window-header > .board-tag-strip { margin-left: auto; }
 .amv-title-readout { min-width: 0; margin-left: auto; display: inline-flex; align-items: center; gap: 4px; overflow: hidden; }
 .amv-title-readout i { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 1px 4px; border: 1px solid color-mix(in srgb, #5fc6b2 34%, var(--theme-border)); border-radius: 3px; color: #73d0bd; background: color-mix(in srgb, #2b8f7e 13%, var(--theme-surface)); font-size: 9px; font-style: normal; font-weight: 400; line-height: 13px; }
+.amv-title-readout i.rise { color: #ef7471; }
+.amv-title-readout i.fall { color: #62bc88; }
 .list-window-items { min-height: 0; overflow: auto; padding: 2px 5px 6px; }
 .list-window-row { min-height: 42px; border-radius: 3px; border-bottom-color: transparent; }
 .list-window-row:hover, .list-window-row.selected { background: #1b2129; }

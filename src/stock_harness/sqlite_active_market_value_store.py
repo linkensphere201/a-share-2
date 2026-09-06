@@ -391,7 +391,15 @@ class SQLiteActiveMarketValueStoreMixin:
                        (SELECT latest.coverage_ratio
                         FROM active_market_value_daily_bars AS latest
                         WHERE latest.definition_id = definition.definition_id
-                        ORDER BY latest.trade_date DESC LIMIT 1)
+                        ORDER BY latest.trade_date DESC LIMIT 1),
+                       (SELECT latest.close
+                        FROM active_market_value_daily_bars AS latest
+                        WHERE latest.definition_id = definition.definition_id
+                        ORDER BY latest.trade_date DESC LIMIT 1),
+                       (SELECT previous.close
+                        FROM active_market_value_daily_bars AS previous
+                        WHERE previous.definition_id = definition.definition_id
+                        ORDER BY previous.trade_date DESC LIMIT 1 OFFSET 1)
                 FROM active_market_value_definitions AS definition
                 JOIN instruments AS instrument USING (instrument_id)
                 LEFT JOIN active_market_value_daily_bars AS bar USING (definition_id)
@@ -402,6 +410,8 @@ class SQLiteActiveMarketValueStoreMixin:
             ).fetchone()
         if row is None:
             return {"status": "missing", "symbol": DEFAULT_SYMBOL, "rows": 0}
+        latest_close = float(row[17]) if row[17] is not None else None
+        previous_close = float(row[18]) if row[18] is not None else None
         return {
             "id": str(row[0]), "symbol": str(row[1]), "name": str(row[2]),
             "algorithm_version": str(row[3]), "smoothing_period": int(row[4]),
@@ -415,6 +425,10 @@ class SQLiteActiveMarketValueStoreMixin:
             "minimum_coverage_ratio": float(row[14]) if row[14] is not None else None,
             "latest_absolute_close": float(row[15]) if row[15] is not None else None,
             "latest_coverage_ratio": float(row[16]) if row[16] is not None else None,
+            "latest_change_percent": (
+                (latest_close / previous_close - 1) * 100
+                if latest_close is not None and previous_close not in (None, 0) else None
+            ),
         }
 
     def list_active_market_value_diagnostics(
