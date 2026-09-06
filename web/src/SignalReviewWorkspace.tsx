@@ -294,6 +294,7 @@ function observationSummary(item: BoardDailyObservation) {
 }
 
 function evidenceTitle(evidence: SignalEvidence) {
+  if (evidence.evidence_type === 'market-style-divergence') return '上证/活跃市值风格差'
   if (evidence.evidence_type.startsWith('m4-')) {
     return ({ line: '趋势线', zone: '关键位/成交区', pattern: '形态', transition: '突破/破位状态' } as Record<string, string>)[
       evidence.evidence_type.slice(3)
@@ -305,6 +306,7 @@ function evidenceTitle(evidence: SignalEvidence) {
 function evidenceDetail(evidence: SignalEvidence) {
   if (evidence.source_run_id && evidence.source_item_id) return '点击后高亮当轮精确 M4 图形证据'
   if (evidence.evidence_type === 'board-daily-observation') return '当日一级固定算法观察'
+  if (evidence.evidence_type === 'market-style-divergence') return '固定算法 5/20 日相对收益比较'
   const classification = evidence.payload.board_classification === 'industry' ? '行业板块' : '概念板块'
   return `${classification} · 板块第 ${evidence.payload.rank ?? '-'} · 得分 ${((evidence.payload.score ?? 0) * 100).toFixed(1)}`
 }

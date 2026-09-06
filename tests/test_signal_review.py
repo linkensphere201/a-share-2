@@ -3,12 +3,13 @@ from datetime import date, timedelta
 from fastapi.testclient import TestClient
 
 from stock_harness.api import create_app
-from stock_harness.models import Instrument, InstrumentKind
+from stock_harness.models import BoardMembership, Instrument, InstrumentKind
 from stock_harness.signal_review import (
     DAILY_MARKET_BOARD_SIGNAL, WEEKLY_RECOGNITION_SIGNAL,
     _apply_transition_attention,
     _aggregate_assignments, _assign_evidence_aliases,
     _compare_items, _order_daily_deep_candidates, _result_digest,
+    _market_style_divergence,
 )
 from stock_harness.daily_signal_analysis import (
     analyze_daily_series, build_board_analysis_record, render_board_summary,
@@ -332,6 +333,57 @@ def test_daily_deep_queue_prioritizes_manual_then_previously_deferred_items() ->
     assert [item["symbol"] for item in ordered] == ["PIN.DC", "OLD.DC", "NEW.DC"]
 
 
+def test_market_style_divergence_compares_active_value_with_shanghai() -> None:
+    result = _market_style_divergence({
+        "000001.SH": {
+            "coverage_state": "complete",
+            "metrics": {"returns": {"5": .01, "20": .03}},
+        },
+        "SHAMV.A": {
+            "coverage_state": "complete",
+            "metrics": {"returns": {"5": .04, "20": .09}},
+        },
+    })
+
+    assert result == {
+        "state": "active-value-led", "difference_5": .03,
+        "difference_20": .06,
+    }
+
+
+def test_board_breadth_snapshot_uses_deduplicated_member_moves() -> None:
+    store = SQLiteMarketDataStore(":memory:")
+    effective = date(2026, 9, 4)
+    prior = effective - timedelta(days=1)
+    store.upsert_instruments([
+        Instrument("BK001.DC", "测试板块", InstrumentKind.SECTOR, "DC"),
+        Instrument("000001.SZ", "上涨", InstrumentKind.STOCK, "SZ"),
+        Instrument("000002.SZ", "下跌", InstrumentKind.STOCK, "SZ"),
+    ])
+    for source in ("source-a", "source-b"):
+        store.replace_board_memberships(source, "BK001.DC", effective, [
+            BoardMembership("BK001.DC", "000001.SZ", "上涨", source, effective),
+            BoardMembership("BK001.DC", "000002.SZ", "下跌", source, effective),
+        ])
+    store.upsert_daily_bars("test", [
+        DailyBar("000001.SZ", prior, 10, 10, 10, 10, 100),
+        DailyBar("000001.SZ", effective, 11, 11, 11, 11, 200),
+        DailyBar("000002.SZ", prior, 20, 20, 20, 20, 100),
+        DailyBar("000002.SZ", effective, 19, 19, 19, 19, 100),
+    ])
+    store.derive_market_snapshots(effective)
+
+    result = store.calculate_board_breadth_snapshots(effective)["BK001.DC"]
+
+    assert result["member_count"] == 2
+    assert result["covered_member_count"] == 2
+    assert result["advance_count"] == 1
+    assert result["decline_count"] == 1
+    assert result["breadth"] == 0
+    assert result["average_return_1"] == .025
+    store.close()
+
+
 def test_daily_signal_persists_every_board_but_displays_attention_only() -> None:
     store = SQLiteMarketDataStore(":memory:")
     instruments = [
@@ -376,6 +428,12 @@ def test_daily_signal_persists_every_board_but_displays_attention_only() -> None
     assert {item["symbol"] for item in items if item["profile"] == "attention"} == {"BK002.DC"}
     focused_board = next(item for item in items if item["profile"] == "attention")
     assert "- 证据：[S" in focused_board["payload"]["rendered_summary"]
+    market_item = next(item for item in items if item["symbol"] == "000001.SH")
+    assert "- 风格：" in market_item["payload"]["rendered_summary"]
+    assert any(
+        evidence["evidence_type"] == "market-style-divergence"
+        for evidence in market_item["evidence"]
+    )
     assert run["summary"]["ai_used"] is False
 
     replay = service.run_sync(DAILY_MARKET_BOARD_SIGNAL, baseline[-1].trade_date)

@@ -135,6 +135,7 @@ class SignalReviewService:
     def _execute_daily(self, run_id: str, cutoff: date) -> None:
         started = time.perf_counter()
         boards = self._boards()
+        board_breadth = self._store.calculate_board_breadth_snapshots(cutoff)
         benchmark = self._store.get_recent_daily_bars(
             "000001.SH", cutoff, DAILY_LOOKBACK_BARS,
         )
@@ -174,6 +175,11 @@ class SignalReviewService:
                 for board in page
             ]
             for observation in batch:
+                metrics = observation.get("metrics")
+                if isinstance(metrics, dict):
+                    metrics["board_breadth"] = board_breadth.get(
+                        str(observation["symbol"]), {"status": "unavailable"},
+                    )
                 prior = prior_observations.get(str(observation["symbol"]))
                 observation.update(
                     build_board_analysis_record(
@@ -414,27 +420,31 @@ class SignalReviewService:
         correction: dict[str, dict[str, object]],
         recent: dict[str, list[dict[str, object]]],
     ) -> list[dict[str, object]]:
-        items = []
-        for rank, symbol in enumerate(("000001.SH", "SHAMV.A"), 1):
-            bars = self._store.get_recent_daily_bars(symbol, cutoff, DAILY_LOOKBACK_BARS)
-            observation = analyze_daily_series(
-                symbol, bars, cutoff,
-                benchmark_bars=bars if symbol == "000001.SH" else self._store.get_recent_daily_bars(
-                    "000001.SH", cutoff, DAILY_LOOKBACK_BARS,
-                ),
+        benchmark_bars = self._store.get_recent_daily_bars(
+            "000001.SH", cutoff, DAILY_LOOKBACK_BARS,
+        )
+        market_observations = {}
+        for symbol in ("000001.SH", "SHAMV.A"):
+            bars = benchmark_bars if symbol == "000001.SH" else (
+                self._store.get_recent_daily_bars(symbol, cutoff, DAILY_LOOKBACK_BARS)
+            )
+            market_observations[symbol] = analyze_daily_series(
+                symbol, bars, cutoff, benchmark_bars=benchmark_bars,
                 volume_semantics=(
                     "synthetic-not-traded" if symbol == "SHAMV.A" else "traded"
                 ),
             )
-            if symbol == "SHAMV.A" and isinstance(observation.get("metrics"), dict):
-                diagnostics = self._store.list_active_market_value_diagnostics(cutoff, cutoff)
-                observation["metrics"]["active_market_value_diagnostics"] = (
-                    {
-                        **diagnostics[0],
-                        "trade_date": str(diagnostics[0]["trade_date"]),
-                    }
-                    if diagnostics else {"status": "unavailable"}
-                )
+        active_observation = market_observations["SHAMV.A"]
+        if isinstance(active_observation.get("metrics"), dict):
+            diagnostics = self._store.list_active_market_value_diagnostics(cutoff, cutoff)
+            active_observation["metrics"]["active_market_value_diagnostics"] = (
+                {**diagnostics[0], "trade_date": str(diagnostics[0]["trade_date"])}
+                if diagnostics else {"status": "unavailable"}
+            )
+        divergence = _market_style_divergence(market_observations)
+        items = []
+        for rank, symbol in enumerate(("000001.SH", "SHAMV.A"), 1):
+            observation = market_observations[symbol]
             item_key = f"market:{symbol}"
             analysis = build_board_analysis_record(
                 observation, prior_session.get(item_key), recent.get(item_key, []),
@@ -447,6 +457,10 @@ class SignalReviewService:
                 )
             code = str(analysis["conclusion_code"])
             rendered = str(analysis["rendered_summary"])
+            rendered = rendered.replace(
+                "- 近期对比：",
+                f"- 风格：{_market_divergence_sentence(divergence)}\n- 近期对比：",
+            )
             if symbol == "000001.SH":
                 rendered = rendered.replace(
                     "- 近期对比：",
@@ -465,6 +479,7 @@ class SignalReviewService:
                     "rendered_summary": rendered, "metrics": observation["metrics"],
                     "effective_date": cutoff.isoformat(),
                     "comparison": comparison,
+                    "market_style_divergence": divergence,
                     "emotion": emotion if symbol == "000001.SH" else {
                         "status": "represented-by-market-overview",
                     },
@@ -473,6 +488,10 @@ class SignalReviewService:
                     "evidence_id": str(uuid4()), "alias": "",
                     "evidence_type": "market-daily-series",
                     "payload": {"symbol": symbol, "effective_date": cutoff.isoformat()},
+                }, {
+                    "evidence_id": str(uuid4()), "alias": "",
+                    "evidence_type": "market-style-divergence",
+                    "payload": divergence,
                 }],
             })
         return items
@@ -798,6 +817,63 @@ def _emotion_transition(
     return "strengthened" if current_score > prior_score else "weakened"
 
 
+def _market_style_divergence(
+    observations: dict[str, dict[str, object]],
+) -> dict[str, object]:
+    shanghai = observations.get("000001.SH", {})
+    active = observations.get("SHAMV.A", {})
+    if any(item.get("coverage_state") != "complete" for item in (shanghai, active)):
+        return {"state": "unavailable", "difference_5": None, "difference_20": None}
+    shanghai_metrics = shanghai.get("metrics")
+    active_metrics = active.get("metrics")
+    if not isinstance(shanghai_metrics, dict) or not isinstance(active_metrics, dict):
+        return {"state": "unavailable", "difference_5": None, "difference_20": None}
+    difference_5 = (
+        _nested_metric(active_metrics, "returns", "5")
+        - _nested_metric(shanghai_metrics, "returns", "5")
+    )
+    difference_20 = (
+        _nested_metric(active_metrics, "returns", "20")
+        - _nested_metric(shanghai_metrics, "returns", "20")
+    )
+    if difference_5 * difference_20 < 0 and abs(difference_5) >= .02:
+        state = "short-cycle-rotation"
+    elif difference_20 >= .04:
+        state = "active-value-led"
+    elif difference_20 <= -.04:
+        state = "large-cap-led"
+    else:
+        state = "aligned"
+    return {
+        "state": state, "difference_5": round(difference_5, 6),
+        "difference_20": round(difference_20, 6),
+    }
+
+
+def _nested_metric(metrics: dict[str, object], group: str, key: str) -> float:
+    value = metrics.get(group)
+    nested = value.get(key) if isinstance(value, dict) else None
+    return float(nested) if isinstance(nested, (int, float)) else 0.0
+
+
+def _market_divergence_sentence(divergence: dict[str, object]) -> str:
+    state = str(divergence.get("state"))
+    label = {
+        "active-value-led": "活跃市值相对占优",
+        "large-cap-led": "上证权重相对占优",
+        "short-cycle-rotation": "5日与20日方向分歧，处于风格轮动",
+        "aligned": "上证与活跃市值大致同步",
+        "unavailable": "双指数覆盖不足，暂不判断",
+    }.get(state, state)
+    if state == "unavailable":
+        return label
+    return (
+        f"{label}；活跃市值相对上证近5日"
+        f"{float(divergence['difference_5']) * 100:+.2f}个百分点、近20日"
+        f"{float(divergence['difference_20']) * 100:+.2f}个百分点。"
+    )
+
+
 def _emotion_score(snapshot: dict[str, object]) -> float | None:
     metrics = snapshot.get("metrics")
     if not isinstance(metrics, dict) or metrics.get("breadth") is None:
@@ -848,6 +924,7 @@ def _deep_analysis_evidence(
 def _attach_daily_evidence_references(items: list[dict[str, object]]) -> None:
     labels = {
         "market-daily-series": "截止日K线",
+        "market-style-divergence": "双指数风格差",
         "board-daily-observation": "一级量价形态",
         "m4-line": "趋势线",
         "m4-zone": "关键位",

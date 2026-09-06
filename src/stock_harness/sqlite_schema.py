@@ -163,6 +163,9 @@ CREATE TABLE IF NOT EXISTS market_snapshots (
 CREATE INDEX IF NOT EXISTS market_snapshots_latest
 ON market_snapshots(instrument_id, trade_date DESC);
 
+CREATE INDEX IF NOT EXISTS market_snapshots_trade_date
+ON market_snapshots(trade_date, instrument_id);
+
 CREATE TABLE IF NOT EXISTS active_market_value_features (
     instrument_id INTEGER NOT NULL,
     trade_date INTEGER NOT NULL,

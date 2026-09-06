@@ -227,6 +227,7 @@ def render_board_summary(
         f"- 形态：短周期{_shape_label(metrics.get('short_shape'))}；中周期{_shape_label(metrics.get('medium_shape'))}；{boundary_text}。",
         f"- 价：近5日{_percent(_mapping_value(returns, '5'))}，近20日{_percent(_mapping_value(returns, '20'))}。",
         f"- 量：{_volume_sentence(metrics, volume_ratio)}",
+        *([f"- 广度：{_breadth_sentence(metrics)}"] if "board_breadth" in metrics else []),
         f"- 近期对比：{_transition_sentence(transition, prior, recent, primary)}",
         f"- 确认/失效：{_conditions(primary, nearest)}",
     ))
@@ -601,6 +602,22 @@ def _volume_sentence(metrics: dict[str, object], volume_ratio: object) -> str:
             f"活跃市值贡献{float(diagnostics.get('contribution_total') or 0):.2f}。"
         )
     return f"当日量为20日中位量的{_multiple(volume_ratio)}。"
+
+
+def _breadth_sentence(metrics: dict[str, object]) -> str:
+    breadth = metrics.get("board_breadth")
+    if not isinstance(breadth, dict) or breadth.get("covered_member_count") is None:
+        return "成分覆盖不可用。"
+    value = breadth.get("breadth")
+    concentration = breadth.get("impact_concentration_hhi")
+    value_text = "不可用" if value is None else f"{float(value):+.2f}"
+    concentration_text = (
+        "不可用" if concentration is None else f"{float(concentration) * 100:.1f}%"
+    )
+    return (
+        f"上涨{breadth.get('advance_count', 0)}、下跌{breadth.get('decline_count', 0)}，"
+        f"宽度{value_text}；价格量能影响代理HHI为{concentration_text}。"
+    )
 
 
 def _transition_label(value: str) -> str:

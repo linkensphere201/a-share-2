@@ -11,6 +11,73 @@ from stock_harness.sqlite_mapping import _date_from_key, _date_key
 
 
 class SQLiteSignalObservationStoreMixin:
+    def calculate_board_breadth_snapshots(
+        self, effective_date: date,
+    ) -> dict[str, dict[str, object]]:
+        trade_key = _date_key(effective_date)
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                WITH memberships AS MATERIALIZED (
+                    SELECT DISTINCT membership.board_instrument_id,
+                                    stock.instrument_id AS stock_instrument_id
+                    FROM board_memberships AS membership
+                    JOIN instruments AS board
+                      ON board.instrument_id = membership.board_instrument_id
+                    JOIN instruments AS stock
+                      ON stock.symbol = membership.member_symbol
+                    WHERE membership.active = 1 AND board.active = 1
+                      AND board.kind = 'sector' AND stock.kind = 'stock'
+                ), stock_moves AS MATERIALIZED (
+                    SELECT snapshot.instrument_id,
+                           snapshot.change_percent / 100.0 AS return_1,
+                           abs(snapshot.change_percent / 100.0)
+                             * snapshot.close * snapshot.volume AS impact_proxy
+                    FROM market_snapshots AS snapshot
+                    JOIN instruments AS stock USING (instrument_id)
+                    WHERE snapshot.trade_date = ? AND stock.kind = 'stock'
+                      AND snapshot.close IS NOT NULL
+                      AND snapshot.volume IS NOT NULL
+                ), joined AS MATERIALIZED (
+                    SELECT membership.board_instrument_id,
+                           membership.stock_instrument_id, move.return_1,
+                           move.impact_proxy
+                    FROM memberships AS membership
+                    LEFT JOIN stock_moves AS move
+                      ON move.instrument_id = membership.stock_instrument_id
+                )
+                SELECT board.symbol, count(*), count(joined.return_1),
+                       sum(CASE WHEN joined.return_1 > 0 THEN 1 ELSE 0 END),
+                       sum(CASE WHEN joined.return_1 < 0 THEN 1 ELSE 0 END),
+                       sum(CASE WHEN joined.return_1 = 0 THEN 1 ELSE 0 END),
+                       avg(joined.return_1),
+                       CASE WHEN sum(joined.impact_proxy) > 0 THEN
+                           sum(joined.impact_proxy * joined.impact_proxy)
+                           / (sum(joined.impact_proxy) * sum(joined.impact_proxy))
+                       END
+                FROM joined
+                JOIN instruments AS board
+                  ON board.instrument_id = joined.board_instrument_id
+                GROUP BY joined.board_instrument_id, board.symbol
+                """, (trade_key,),
+            ).fetchall()
+        return {str(row[0]): {
+            "member_count": int(row[1]), "covered_member_count": int(row[2]),
+            "coverage_ratio": round(int(row[2]) / int(row[1]), 6) if row[1] else 0.0,
+            "advance_count": int(row[3]), "decline_count": int(row[4]),
+            "unchanged_count": int(row[5]),
+            "breadth": (
+                round((int(row[3]) - int(row[4])) / int(row[2]), 6)
+                if row[2] else None
+            ),
+            "average_return_1": round(float(row[6]), 6) if row[6] is not None else None,
+            "impact_concentration_hhi": (
+                round(float(row[7]), 6) if row[7] is not None else None
+            ),
+            "concentration_method": "abs-return-close-volume-hhi-v1",
+            "membership_semantics": "current-active-membership",
+        } for row in rows}
+
     def _ensure_signal_observation_columns(self) -> None:
         with self._lock, self._writer_lock:
             columns = {
