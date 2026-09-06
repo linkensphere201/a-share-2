@@ -30,6 +30,25 @@ CREATE TABLE IF NOT EXISTS instrument_tags (
 CREATE INDEX IF NOT EXISTS idx_instrument_tags_tag
 ON instrument_tags(tag, instrument_id);
 
+CREATE TABLE IF NOT EXISTS instrument_board_tags (
+    instrument_id INTEGER NOT NULL,
+    board_instrument_id INTEGER NOT NULL,
+    classification TEXT NOT NULL CHECK (classification IN ('industry', 'concept')),
+    position INTEGER NOT NULL CHECK (position BETWEEN 0 AND 2),
+    source_system TEXT NOT NULL,
+    selection_score REAL NOT NULL,
+    selection_reason TEXT NOT NULL,
+    algorithm_version TEXT NOT NULL,
+    generated_at_ms INTEGER NOT NULL,
+    PRIMARY KEY (instrument_id, position),
+    UNIQUE (instrument_id, board_instrument_id),
+    FOREIGN KEY (instrument_id) REFERENCES instruments(instrument_id),
+    FOREIGN KEY (board_instrument_id) REFERENCES instruments(instrument_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_instrument_board_tags_board
+ON instrument_board_tags(board_instrument_id, instrument_id);
+
 CREATE INDEX IF NOT EXISTS instruments_kind_active
 ON instruments(kind, active, symbol);
 

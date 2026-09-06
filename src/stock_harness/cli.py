@@ -709,9 +709,13 @@ def main() -> None:
                     entry.instrument.symbol,
                     len(rows),
                 )
+            board_tag_result = store.rebuild_instrument_board_tags()
         print(
             f"board_membership_summary source={source} boards={len(selected)} "
-            f"memberships={memberships}"
+            f"memberships={memberships} board_tagged_stocks="
+            f"{board_tag_result['tagged_stock_count']} board_tags="
+            f"{board_tag_result['tag_count']} board_tag_version="
+            f"{board_tag_result['algorithm_version']}"
         )
         return
     if args.command == "expanded-report":

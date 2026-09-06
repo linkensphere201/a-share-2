@@ -46,6 +46,7 @@ from stock_harness.sqlite_custom_index_store import SQLiteCustomIndexStoreMixin
 from stock_harness.sqlite_etf_holding_store import SQLiteEtfHoldingStoreMixin
 from stock_harness.sqlite_futures_store import SQLiteFuturesStoreMixin
 from stock_harness.sqlite_instrument_tag_store import SQLiteInstrumentTagStoreMixin
+from stock_harness.sqlite_board_tag_store import SQLiteBoardTagStoreMixin
 from stock_harness.sqlite_provider_quality_store import SQLiteProviderQualityStoreMixin
 from stock_harness.sqlite_screener_store import SQLiteScreenerStoreMixin
 
@@ -62,6 +63,7 @@ LOGGER = logging.getLogger(__name__)
 
 class SQLiteMarketDataStore(
     SQLiteFuturesStoreMixin,
+    SQLiteBoardTagStoreMixin,
     SQLiteInstrumentTagStoreMixin,
     SQLiteChatStoreMixin,
     SQLiteAnalysisStoreMixin,

@@ -10,6 +10,7 @@ import type { TradingSystemWindowState, TradingSystemWindowStates } from './trad
 import type { ThemeDefinition } from './themeStore'
 import { MarketBoardBadge } from './MarketBoardBadge'
 import type { TrendAnalysisRun } from './trendAnalysisClient'
+import { BoardTagStrip } from './BoardTagStrip'
 
 type InstrumentWindowProps = {
   windowState: ChartWindowState
@@ -85,6 +86,7 @@ export function ChartWindow({
         <button className="instrument-window-title" onClick={onFocus}>
           <span className="instrument-name-line"><strong>{instrument.name}</strong><MarketBoardBadge instrument={instrument}/></span><small>{instrument.symbol} · {instrument.category ?? instrument.kind}</small>
         </button>
+        <BoardTagStrip instrument={instrument} compact/>
         <div className="instrument-window-actions">
           <button
             title={poppedOutHost ? '恢复到原布局' : '弹出为独立窗口'}

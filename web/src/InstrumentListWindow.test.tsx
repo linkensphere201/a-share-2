@@ -21,6 +21,14 @@ describe('InstrumentListWindow instrument tags', () => {
           tags: ['板块核心辨识度', '情绪弹性核心'],
         }],
       })
+      if (url.startsWith('/api/instrument-board-tags?')) return response({
+        items: [{ symbol: '002708.SZ', tags: [{
+          board_symbol: 'BK0816.DC', name: 'Auto Parts', classification: 'industry',
+          position: 0, source_system: 'eastmoney', selection_score: 90,
+          selection_reason: 'structured-industry:2', algorithm_version: 'stock-board-tags-v1',
+          generated_at_ms: 1,
+        }] }],
+      })
       throw new Error(`unexpected request ${url}`)
     }))
     const windowState: InstrumentListWindowState = {
@@ -55,6 +63,7 @@ describe('InstrumentListWindow instrument tags', () => {
 
     expect(await screen.findByText('板块核心辨识度')).toBeTruthy()
     expect(screen.getByText('情绪弹性核心')).toBeTruthy()
+    expect(screen.getByText('行业·Auto Parts')).toBeTruthy()
   })
 
   it('shows the stock market-board badge beside the instrument name', async () => {
@@ -62,6 +71,7 @@ describe('InstrumentListWindow instrument tags', () => {
       const url = String(input)
       if (url.startsWith('/api/market-snapshots?')) return response({ items: [] })
       if (url.startsWith('/api/instrument-tags?')) return response({ items: [] })
+      if (url.startsWith('/api/instrument-board-tags?')) return response({ items: [] })
       throw new Error(`unexpected request ${url}`)
     }))
     const windowState: InstrumentListWindowState = {

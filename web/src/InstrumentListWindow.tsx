@@ -5,6 +5,8 @@ import { logWarning } from './eventLogger'
 import { instrumentSecondaryLabel } from './InstrumentBrowser'
 import { CustomGroupMindMap, type MindMapAnchor } from './CustomGroupMindMap'
 import { MarketBoardBadge } from './MarketBoardBadge'
+import { BoardTagStrip } from './BoardTagStrip'
+import { fetchInstrumentBoardTags, type InstrumentBoardTag } from './boardTags'
 
 type MarketSnapshot = {
   symbol: string
@@ -72,6 +74,7 @@ export function InstrumentListWindow({
   const [columnEditorOpen, setColumnEditorOpen] = useState(false)
   const [mindMap, setMindMap] = useState<{ group: Instrument; anchor: MindMapAnchor }>()
   const [instrumentTags, setInstrumentTags] = useState<Record<string, string[]>>({})
+  const [boardTags, setBoardTags] = useState<Record<string, InstrumentBoardTag[]>>({})
   const [tagRefresh, setTagRefresh] = useState(0)
 
   useEffect(() => {
@@ -174,14 +177,22 @@ export function InstrumentListWindow({
       .map(item => item.symbol)
     if (stockSymbols.length === 0) {
       setInstrumentTags({})
+      setBoardTags({})
       return
     }
     const controller = new AbortController()
-    fetchInstrumentTags(stockSymbols, controller.signal)
-      .then(setInstrumentTags)
+    Promise.all([
+      fetchInstrumentTags(stockSymbols, controller.signal),
+      fetchInstrumentBoardTags(stockSymbols, controller.signal),
+    ])
+      .then(([roleResult, boardResult]) => {
+        setInstrumentTags(roleResult)
+        setBoardTags(boardResult)
+      })
       .catch(error => {
         if ((error as Error).name !== 'AbortError') {
           setInstrumentTags({})
+          setBoardTags({})
           logWarning('instrument-tags', '加载标的标签失败', { symbols: stockSymbols.length, error })
         }
       })
@@ -301,6 +312,7 @@ export function InstrumentListWindow({
                   {(instrumentTags[item.symbol] ?? item.instrument_tags ?? []).length > 0 && <span className="list-instrument-tags">
                     {(instrumentTags[item.symbol] ?? item.instrument_tags ?? []).map(tag => <i key={tag}>{tag}</i>)}
                   </span>}
+                  <BoardTagStrip instrument={item} tags={boardTags[item.symbol] ?? []} compact/>
                 </span>
               </button>}
               {visibleColumns.includes('close') && <span className="list-price">{formatPrice(snapshot?.close)}</span>}

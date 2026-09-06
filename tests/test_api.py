@@ -92,6 +92,30 @@ def test_stock_instrument_tags_are_global_persisted_and_batch_readable():
     assert cleared.json()["tags"] == []
 
 
+def test_stock_board_tags_are_rebuilt_separately_and_batch_readable():
+    store, client = _client()
+    with client:
+        rebuilt = client.post("/api/instrument-board-tags/rebuild")
+        batch = client.get(
+            "/api/instrument-board-tags", params=[("symbol", "300308.SZ")]
+        )
+        role_tags = client.get(
+            "/api/instrument-tags", params=[("symbol", "300308.SZ")]
+        )
+    store.close()
+
+    assert rebuilt.status_code == 200
+    assert rebuilt.json()["algorithm_version"] == "stock-board-tags-v1"
+    assert rebuilt.json()["tagged_stock_count"] == 1
+    tags = batch.json()["items"][0]["tags"]
+    assert len(tags) == 1
+    assert tags[0]["board_symbol"] == "BK1128.DC"
+    assert tags[0]["classification"] == "concept"
+    assert tags[0]["algorithm_version"] == "stock-board-tags-v1"
+    assert "concept:" in tags[0]["selection_reason"]
+    assert role_tags.json()["items"] == [{"symbol": "300308.SZ", "tags": []}]
+
+
 def test_classified_browsing_normalizes_board_sources_and_allows_empty_query():
     store, client = _client()
     observed_on = date(2026, 8, 3)
