@@ -8,11 +8,14 @@ import {
 } from './aiChatClient'
 import type { SignalItem, SignalRun } from './signalReviewClient'
 
-export function SignalChatPanel({ run, items, selectedItem, onReference, onClose }: {
+export function SignalChatPanel({
+  run, items, selectedItem, onReferencePreview, onReferenceActivate, onClose,
+}: {
   run: SignalRun
   items: SignalItem[]
   selectedItem?: SignalItem
-  onReference: (itemId?: string, evidenceId?: string) => void
+  onReferencePreview: (itemId?: string, evidenceId?: string) => void
+  onReferenceActivate: (itemId: string, evidenceId: string) => void
   onClose: () => void
 }) {
   const [capabilities, setCapabilities] = useState<CodexCapabilities>()
@@ -25,23 +28,41 @@ export function SignalChatPanel({ run, items, selectedItem, onReference, onClose
   const [activeTurnId, setActiveTurnId] = useState<string>()
   const [error, setError] = useState('')
   const streamRef = useRef<EventSource | null>(null)
-  const referenceMap = useMemo(() => new Map(items.flatMap(item =>
-    item.evidence.map(evidence => [evidence.alias, `${item.item_id}\u0000${evidence.evidence_id}`] as const),
-  )), [items])
-  const highlightReference = (reference?: string) => {
-    if (!reference) { onReference(); return }
+  const runIdRef = useRef(run.run_id)
+  runIdRef.current = run.run_id
+  const referenceMap = useMemo(() => buildSignalReferenceMap(items), [items])
+  const previewReference = (reference?: string) => {
+    if (!reference) { onReferencePreview(); return }
     const [itemId, evidenceId] = reference.split('\u0000', 2)
-    onReference(itemId, evidenceId)
+    onReferencePreview(itemId, evidenceId)
+  }
+  const activateReference = (reference: string) => {
+    const [itemId, evidenceId] = reference.split('\u0000', 2)
+    onReferenceActivate(itemId, evidenceId)
   }
 
-  const refreshHistory = async (conversationId?: string) => {
-    const value = await listSignalChatConversations(run.run_id)
+  const refreshHistory = async (
+    conversationId?: string, expectedRunId = run.run_id,
+  ) => {
+    const value = await listSignalChatConversations(expectedRunId)
+    if (runIdRef.current !== expectedRunId) return
     setHistory(value.items)
-    if (conversationId) setConversation(await loadChatConversation(conversationId))
+    if (conversationId) {
+      const loaded = await loadChatConversation(conversationId)
+      if (runIdRef.current === expectedRunId) setConversation(loaded)
+    }
   }
 
   useEffect(() => {
     let cancelled = false
+    streamRef.current?.close()
+    streamRef.current = null
+    setConversation(undefined)
+    setHistory([])
+    setPending(undefined)
+    setLive('')
+    setActiveTurnId(undefined)
+    setError('')
     Promise.all([loadCodexCapabilities(), openSignalChatConversation(run.run_id)])
       .then(async ([nextCapabilities, nextConversation]) => {
         if (cancelled) return
@@ -52,16 +73,17 @@ export function SignalChatPanel({ run, items, selectedItem, onReference, onClose
     return () => { cancelled = true; streamRef.current?.close() }
   }, [run.run_id])
 
-  const connect = (turnId: string) => {
+  const connect = (turnId: string, conversationId: string, expectedRunId: string) => {
     streamRef.current?.close()
     setActiveTurnId(turnId)
     streamRef.current = streamChatTurn(turnId, {
       onDelta: delta => setLive(value => value + delta),
       onTerminal: async () => {
+        if (runIdRef.current !== expectedRunId) return
         setActiveTurnId(undefined)
         setPending(undefined)
         setLive('')
-        if (conversation) await refreshHistory(conversation.conversation_id)
+        await refreshHistory(conversationId, expectedRunId)
       },
       onError: () => setError('Codex 流式连接中断，服务端结果已保留。'),
     })
@@ -69,7 +91,7 @@ export function SignalChatPanel({ run, items, selectedItem, onReference, onClose
 
   const send = async () => {
     const content = draft.trim()
-    if (!conversation || !content || activeTurnId) return
+    if (!conversation || conversation.context_id !== run.run_id || !content || activeTurnId) return
     setDraft('')
     setPending(content)
     setLive('')
@@ -79,7 +101,7 @@ export function SignalChatPanel({ run, items, selectedItem, onReference, onClose
         conversation.conversation_id, content, templateId, undefined,
         selectedItem ? [selectedItem.item_id] : [],
       )
-      connect(turn.turn_id)
+      connect(turn.turn_id, conversation.conversation_id, run.run_id)
     } catch (reason) {
       setDraft(content)
       setPending(undefined)
@@ -103,10 +125,10 @@ export function SignalChatPanel({ run, items, selectedItem, onReference, onClose
     <div className="signal-chat-messages">
       {conversation?.turns.flatMap(turn => turn.messages.map(message => <article key={message.message_id} className={`analysis-chat-message ${message.role}`}>
         <small>{message.role === 'user' ? '你' : 'Codex'}</small>
-        <ChatMarkdown text={message.content} references={referenceMap} onHighlight={highlightReference}/>
+        <ChatMarkdown text={message.content} references={referenceMap} onHighlight={previewReference} onActivate={activateReference}/>
       </article>))}
-      {pending && <article className="analysis-chat-message user pending"><small>你 · 已发送</small><ChatMarkdown text={pending} references={referenceMap} onHighlight={highlightReference}/></article>}
-      {live && <article className="analysis-chat-message assistant streaming"><small>Codex · 生成中</small><ChatMarkdown text={live} references={referenceMap} onHighlight={highlightReference}/></article>}
+      {pending && <article className="analysis-chat-message user pending"><small>你 · 已发送</small><ChatMarkdown text={pending} references={referenceMap} onHighlight={previewReference} onActivate={activateReference}/></article>}
+      {live && <article className="analysis-chat-message assistant streaming"><small>Codex · 生成中</small><ChatMarkdown text={live} references={referenceMap} onHighlight={previewReference} onActivate={activateReference}/></article>}
       {(pending || activeTurnId) && !live && <div className="analysis-chat-working" role="status"><span>Working</span><i/><i/><i/></div>}
       {error && <p className="analysis-chat-error">{error}</p>}
     </div>
@@ -115,4 +137,15 @@ export function SignalChatPanel({ run, items, selectedItem, onReference, onClose
       <div><textarea aria-label="信号讨论输入" value={draft} disabled={!available || Boolean(activeTurnId)} placeholder="就本轮信号结果继续分析..." onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send() } }}/><button title="发送" aria-label="发送信号问题" disabled={!available || !draft.trim() || Boolean(activeTurnId)} onClick={() => void send()}><Send size={13}/></button></div>
     </div>
   </section>
+}
+
+export function buildSignalReferenceMap(items: SignalItem[]): Map<string, string> {
+  const references = new Map<string, string>()
+  const ambiguous = new Set<string>()
+  for (const item of items) for (const evidence of item.evidence) {
+    if (references.has(evidence.alias)) ambiguous.add(evidence.alias)
+    else references.set(evidence.alias, `${item.item_id}\u0000${evidence.evidence_id}`)
+  }
+  for (const alias of ambiguous) references.delete(alias)
+  return references
 }

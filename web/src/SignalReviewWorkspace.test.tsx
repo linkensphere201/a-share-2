@@ -4,6 +4,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { SignalReviewWorkspace } from './SignalReviewWorkspace'
+import { buildSignalReferenceMap } from './SignalChatPanel'
+import type { SignalItem } from './signalReviewClient'
 import { themes } from './themeStore'
 
 vi.mock('./ChartCanvas', () => ({
@@ -16,6 +18,18 @@ afterEach(() => {
 })
 
 describe('SignalReviewWorkspace', () => {
+  it('does not link ambiguous evidence aliases from legacy runs', () => {
+    const duplicate = {
+      ...items[1], evidence: [{
+        evidence_id: 'e2', alias: 'S1', evidence_type: 'board-recognition-ranking',
+        payload: { board_name: 'Legacy' },
+      }],
+    }
+    expect(buildSignalReferenceMap(
+      [items[0], duplicate] as unknown as SignalItem[],
+    ).has('S1')).toBe(false)
+  })
+
   it('loads an immutable run, filters changes, and opens its chart evidence', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)

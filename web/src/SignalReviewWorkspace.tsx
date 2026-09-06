@@ -34,6 +34,7 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
   const [error, setError] = useState('')
   const [chatOpen, setChatOpen] = useState(false)
   const [highlightedEvidenceId, setHighlightedEvidenceId] = useState<string>()
+  const [selectedEvidenceId, setSelectedEvidenceId] = useState<string>()
 
   useEffect(() => {
     const controller = new AbortController()
@@ -55,6 +56,8 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
   }, [selectedDefinition])
 
   useEffect(() => {
+    setHighlightedEvidenceId(undefined)
+    setSelectedEvidenceId(undefined)
     if (!selectedRun) { setItems([]); setSelectedItem(undefined); return }
     const controller = new AbortController()
     listSignalItems(selectedRun.run_id, controller.signal).then(value => {
@@ -90,9 +93,15 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
   }), [items])
   const progress = selectedRun?.work_total
     ? Math.round(selectedRun.work_done / selectedRun.work_total * 100) : 0
-  const highlightReference = (itemId?: string, evidenceId?: string) => {
-    if (itemId) setSelectedItem(items.find(item => item.item_id === itemId))
-    setHighlightedEvidenceId(evidenceId)
+  const previewReference = (itemId?: string, evidenceId?: string) => {
+    setHighlightedEvidenceId(itemId === selectedItem?.item_id ? evidenceId : undefined)
+  }
+  const activateReference = (itemId: string, evidenceId: string) => {
+    const item = items.find(value => value.item_id === itemId)
+    if (!item) return
+    setSelectedItem(item)
+    setSelectedEvidenceId(evidenceId)
+    setHighlightedEvidenceId(undefined)
   }
 
   const run = async () => {
@@ -138,7 +147,7 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
           {(['all', 'added', 'retained', 'removed'] as ChangeFilter[]).map(value => <button key={value} className={change === value ? 'active' : ''} onClick={() => setChange(value)}>{value === 'all' ? '全部变化' : changeLabels[value]}</button>)}
         </div>
         <div className="signal-result-head"><span>#</span><span>标的</span><span>板块</span><span>变化</span></div>
-        <div className="signal-scroll">{selectedRun?.status === 'failed' && <div className="signal-empty compact error">{selectedRun.error}</div>}{filtered.map(item => <button key={item.item_id} className={`${selectedItem?.item_id === item.item_id ? 'active ' : ''}${item.active ? '' : 'inactive'}`} onClick={() => setSelectedItem(item)}>
+        <div className="signal-scroll">{selectedRun?.status === 'failed' && <div className="signal-empty compact error">{selectedRun.error}</div>}{filtered.map(item => <button key={item.item_id} className={`${selectedItem?.item_id === item.item_id ? 'active ' : ''}${item.active ? '' : 'inactive'}`} onClick={() => { setSelectedItem(item); setSelectedEvidenceId(undefined); setHighlightedEvidenceId(undefined) }}>
           <span>{item.rank}</span><span><span className="instrument-name-line"><b>{item.name}</b><MarketBoardBadge instrument={item}/></span><small>{item.symbol}</small></span><span>{item.payload.board_count ?? 0}<small>{profileLabels[item.profile]}</small></span><span className={`change ${item.change_type}`}>{changeLabels[item.change_type]}</span>
         </button>)}</div>
       </section>
@@ -148,12 +157,12 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
           ? <ChartCanvas key={`${selectedRun?.run_id}:${selectedItem.symbol}`} symbol={selectedItem.symbol} instrumentName={selectedItem.name} instrumentKind={selectedItem.kind} focused theme={theme} range="1Y" priceMode="normal" volumeVisible indicator="none" settlementVisible={false} openInterestVisible={false} asOfDate={selectedRun?.effective_date}/>
           : <div className="signal-empty">选择一项结果查看 K 线</div>}</div>
         <div className="signal-evidence"><header><span>引用证据</span><small>{selectedItem?.evidence.length ?? 0}</small></header>
-          <div className="signal-scroll">{selectedItem?.evidence.map(evidence => <button key={evidence.evidence_id} className={highlightedEvidenceId === evidence.evidence_id ? 'active' : ''} onClick={() => setHighlightedEvidenceId(evidence.evidence_id)} title="该证据为板块排名证据；形态几何证据将在对应信号中联动高亮">
+          <div className="signal-scroll">{selectedItem?.evidence.map(evidence => <button key={evidence.evidence_id} className={(highlightedEvidenceId ?? selectedEvidenceId) === evidence.evidence_id ? 'active' : ''} onClick={() => setSelectedEvidenceId(evidence.evidence_id)} title="该证据为板块排名证据；形态几何证据将在对应信号中联动高亮">
             <code>[{evidence.alias}]</code><span>{evidence.payload.board_name ?? evidence.evidence_type}<small>{evidence.payload.board_classification === 'industry' ? '行业板块' : '概念板块'} · 板块第 {evidence.payload.rank ?? '-'} · 得分 {((evidence.payload.score ?? 0) * 100).toFixed(1)}</small></span>
           </button>)}</div>
         </div>
       </section>}
-      {chatOpen && selectedRun && <SignalChatPanel run={selectedRun} items={items} selectedItem={selectedItem} onReference={highlightReference} onClose={() => setChatOpen(false)}/>}
+      {chatOpen && selectedRun && <SignalChatPanel key={selectedRun.run_id} run={selectedRun} items={items} selectedItem={selectedItem} onReferencePreview={previewReference} onReferenceActivate={activateReference} onClose={() => setChatOpen(false)}/>}
     </section>
   </main>
 }
