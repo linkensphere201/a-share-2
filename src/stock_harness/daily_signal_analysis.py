@@ -12,8 +12,8 @@ from statistics import fmean, median
 from stock_harness.models import StoredDailyBar
 
 
-ALGORITHM_VERSION = "daily-market-board-observation-v1"
-CONFIG_VERSION = "daily-market-board-defaults-v1"
+ALGORITHM_VERSION = "daily-market-board-observation-v2"
+CONFIG_VERSION = "daily-market-board-defaults-v2"
 MINIMUM_BARS = 120
 LOOKBACK_BARS = 260
 
@@ -24,7 +24,10 @@ def analyze_daily_series(
     effective_date: date,
     *,
     benchmark_bars: Sequence[StoredDailyBar] = (),
+    volume_semantics: str = "traded",
 ) -> dict[str, object]:
+    if volume_semantics not in {"traded", "synthetic-not-traded"}:
+        raise ValueError("unsupported daily volume semantics")
     visible = [bar for bar in bars if bar.trade_date <= effective_date]
     if len(visible) < MINIMUM_BARS or visible[-1].trade_date != effective_date:
         reasons = []
@@ -54,9 +57,16 @@ def analyze_daily_series(
             else None
         ) for period in ("5", "20")
     }
-    median_volume20 = median(volumes[-20:])
-    volume_ratio = latest.volume / median_volume20 if median_volume20 > 0 else None
-    recent_volume_ratio = _safe_ratio(fmean(volumes[-5:]), fmean(volumes[-10:-5]))
+    volume_enabled = volume_semantics == "traded"
+    median_volume20 = median(volumes[-20:]) if volume_enabled else None
+    volume_ratio = (
+        latest.volume / median_volume20
+        if median_volume20 is not None and median_volume20 > 0 else None
+    )
+    recent_volume_ratio = (
+        _safe_ratio(fmean(volumes[-5:]), fmean(volumes[-10:-5]))
+        if volume_enabled else None
+    )
     atr_compression = _safe_ratio(atr5, atr20)
     short_shape = _shape(closes, 14)
     medium_shape = _shape(closes, 28)
@@ -105,13 +115,42 @@ def analyze_daily_series(
     ):
         states.append("bullish-transition-candidate")
         attention.append("bullish-boundary-proximity")
+    short_approaching = (
+        envelopes.get("3m") is not None
+        and envelopes["3m"].get("state") == "approaching"
+    )
+    if (
+        short_approaching
+        and short_shape.get("state") != "falling"
+        and medium_shape.get("state") != "falling"
+        and atr_compression is not None and atr_compression <= .75
+        and volume_ratio is not None and volume_ratio <= .8
+    ):
+        states.append("bullish-transition-candidate")
+        attention.append("3m-descending-envelope-approaching")
     if any(item and item["state"] == "broken" for item in envelopes.values()):
         states.append("bullish-boundary-triggered")
 
-    if downside["extended"] and downside["deceleration_count"] >= 3:
+    exhaustion_ready = (
+        downside["extended"] and downside["deceleration_count"] >= 4
+    )
+    if exhaustion_ready and volume_ratio is not None and volume_ratio <= .9:
         states.append("oversold-exhaustion-candidate")
         attention.append("downside-exhaustion")
-    if volume_ratio is not None and volume_ratio >= 1.8:
+    if (
+        exhaustion_ready
+        and latest.close > max(bar.high for bar in visible[-6:-1])
+        and volume_ratio is not None and volume_ratio >= 1.2
+    ):
+        states.append("oversold-rebound-triggered")
+        attention.append("oversold-rebound-triggered")
+    if volume_ratio is not None and (
+        volume_ratio >= 2.5
+        or (
+            volume_ratio >= 1.8 and returns["1"] is not None
+            and abs(float(returns["1"])) >= .015
+        )
+    ):
         states.append("sudden-volume-expansion")
         attention.append("sudden-volume-expansion")
     if (
@@ -120,9 +159,17 @@ def analyze_daily_series(
     ):
         states.append("boundary-volume-contraction")
         attention.append("boundary-volume-contraction")
-    if relative_strength["20"] is not None and abs(float(relative_strength["20"])) >= .08:
+    if (
+        relative_strength["20"] is not None
+        and abs(float(relative_strength["20"])) >= .1
+    ):
         states.append("relative-strength-regime")
-        if volume_ratio is not None and volume_ratio >= 1.2:
+        if (
+            relative_strength["5"] is not None
+            and abs(float(relative_strength["5"])) >= .04
+            and float(relative_strength["5"]) * float(relative_strength["20"]) > 0
+            and volume_ratio is not None and volume_ratio >= 1.5
+        ):
             attention.append("relative-strength-regime")
 
     if not attention:
@@ -140,7 +187,8 @@ def analyze_daily_series(
         "atr14": _round(atr14),
         "atr_percent": _round(_safe_ratio(atr14, latest.close)),
         "atr_compression_5_20": _round(atr_compression),
-        "volume": latest.volume,
+        "volume": latest.volume if volume_enabled else None,
+        "volume_semantics": volume_semantics,
         "median_volume20": _round(median_volume20),
         "volume_ratio20": _round(volume_ratio),
         "recent_volume_ratio_5_5": _round(recent_volume_ratio),
@@ -157,13 +205,14 @@ def analyze_daily_series(
 
 def render_board_summary(
     observation: dict[str, object], prior: dict[str, object] | None,
+    recent: Sequence[dict[str, object]] = (),
 ) -> tuple[str, str]:
     metrics = observation.get("metrics", {})
     if not isinstance(metrics, dict) or observation["coverage_state"] != "complete":
         return "data-unavailable", "- 结论：板块日线覆盖不足，当前无法形成固定算法结论。"
     states = [str(item) for item in observation.get("state_codes", [])]
     primary = _primary_state(states)
-    transition = _transition(primary, prior)
+    transition = _detailed_transition(primary, prior)
     returns = metrics.get("returns", {})
     volume_ratio = metrics.get("volume_ratio20")
     envelopes = metrics.get("descending_envelopes", {})
@@ -177,19 +226,23 @@ def render_board_summary(
         f"- 结论：{_state_conclusion(primary)}",
         f"- 形态：短周期{_shape_label(metrics.get('short_shape'))}；中周期{_shape_label(metrics.get('medium_shape'))}；{boundary_text}。",
         f"- 价：近5日{_percent(_mapping_value(returns, '5'))}，近20日{_percent(_mapping_value(returns, '20'))}。",
-        f"- 量：当日量为20日中位量的{_multiple(volume_ratio)}。",
-        f"- 近期对比：{_transition_sentence(transition, prior)}",
+        f"- 量：{_volume_sentence(metrics, volume_ratio)}",
+        f"- 近期对比：{_transition_sentence(transition, prior, recent, primary)}",
         f"- 确认/失效：{_conditions(primary, nearest)}",
     ))
 
 
 def build_board_analysis_record(
     observation: dict[str, object], prior: dict[str, object] | None,
+    recent: Sequence[dict[str, object]] = (),
+    correction_prior: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """Build the persisted level-one conclusion and its causal comparison."""
-    conclusion_code, rendered_summary = render_board_summary(observation, prior)
-    transition = _transition(conclusion_code, prior)
+    conclusion_code, rendered_summary = render_board_summary(observation, prior, recent)
+    transition = _detailed_transition(conclusion_code, prior)
     prior_effective_date = prior.get("effective_date") if prior else None
+    metrics = observation.get("metrics") if isinstance(observation.get("metrics"), dict) else {}
+    prior_metrics = _prior_metrics(prior)
     return {
         "conclusion_code": conclusion_code,
         "rendered_summary": rendered_summary,
@@ -201,6 +254,24 @@ def build_board_analysis_record(
                 if isinstance(prior_effective_date, date)
                 else prior_effective_date
             ),
+            "correction_baseline": _baseline_identity(correction_prior),
+            "shape": {
+                horizon: _metric_state_transition(
+                    _shape_state(metrics, horizon), _shape_state(prior_metrics, horizon),
+                )
+                for horizon in ("short_shape", "medium_shape")
+            },
+            "price": _numeric_transition(
+                _nested_number(metrics, "returns", "20"),
+                _nested_number(prior_metrics, "returns", "20"), .01,
+            ),
+            "volume": _deviation_transition(
+                _number(metrics.get("volume_ratio20")),
+                _number(prior_metrics.get("volume_ratio20")), .15,
+            ),
+            "recent_sessions": [
+                _history_identity(item) for item in recent[:5]
+            ],
         },
     }
 
@@ -349,14 +420,120 @@ def _primary_state(states: Sequence[str]) -> str:
     return next((state for state in order if state in states), states[0] if states else "neutral")
 
 
-def _transition(primary: str, prior: dict[str, object] | None) -> str:
+def _detailed_transition(primary: str, prior: dict[str, object] | None) -> str:
     if prior is None:
         return "new"
     prior_payload = prior.get("payload", prior)
     if not isinstance(prior_payload, dict):
         return "new"
     prior_code = str(prior_payload.get("conclusion_code") or "neutral")
-    return "unchanged" if prior_code == primary else "invalidated" if primary == "neutral" else "changed"
+    if prior_code == primary:
+        return "unchanged"
+    if primary == "neutral":
+        return "invalidated"
+    families = {
+        "bullish-transition-candidate": ("bullish", 1),
+        "bullish-boundary-triggered": ("bullish", 2),
+        "oversold-exhaustion-candidate": ("oversold", 1),
+        "oversold-rebound-triggered": ("oversold", 2),
+    }
+    current_family = families.get(primary)
+    prior_family = families.get(prior_code)
+    if current_family and prior_family and current_family[0] == prior_family[0]:
+        return "strengthened" if current_family[1] > prior_family[1] else "weakened"
+    if prior_code == "neutral":
+        return "strengthened"
+    return "changed"
+
+
+def _prior_metrics(prior: dict[str, object] | None) -> dict[str, object]:
+    if prior is None:
+        return {}
+    payload = prior.get("payload", prior)
+    if not isinstance(payload, dict):
+        return {}
+    metrics = payload.get("metrics")
+    return metrics if isinstance(metrics, dict) else {}
+
+
+def _shape_state(metrics: dict[str, object], key: str) -> str | None:
+    value = metrics.get(key)
+    return str(value.get("state")) if isinstance(value, dict) and value.get("state") else None
+
+
+def _metric_state_transition(current: str | None, prior: str | None) -> str:
+    if prior is None:
+        return "new"
+    if current is None:
+        return "invalidated"
+    if current == prior:
+        return "unchanged"
+    rank = {"falling": -1, "sideways": 0, "rising": 1}
+    if current not in rank or prior not in rank:
+        return "changed"
+    return "strengthened" if rank[current] > rank[prior] else "weakened"
+
+
+def _number(value: object) -> float | None:
+    return float(value) if isinstance(value, (int, float)) and math.isfinite(value) else None
+
+
+def _nested_number(metrics: dict[str, object], group: str, key: str) -> float | None:
+    value = metrics.get(group)
+    return _number(value.get(key)) if isinstance(value, dict) else None
+
+
+def _numeric_transition(
+    current: float | None, prior: float | None, tolerance: float,
+) -> str:
+    if prior is None:
+        return "new"
+    if current is None:
+        return "invalidated"
+    if abs(current - prior) <= tolerance:
+        return "unchanged"
+    return "strengthened" if current > prior else "weakened"
+
+
+def _deviation_transition(
+    current: float | None, prior: float | None, tolerance: float,
+) -> str:
+    if prior is None:
+        return "new"
+    if current is None:
+        return "invalidated"
+    current_deviation = abs(current - 1)
+    prior_deviation = abs(prior - 1)
+    if abs(current_deviation - prior_deviation) <= tolerance:
+        return "unchanged"
+    return "strengthened" if current_deviation > prior_deviation else "weakened"
+
+
+def _baseline_identity(value: dict[str, object] | None) -> dict[str, object] | None:
+    if value is None:
+        return None
+    payload = value.get("payload", value)
+    return {
+        "run_id": value.get("run_id"),
+        "effective_date": str(value.get("effective_date") or ""),
+        "conclusion_code": (
+            payload.get("conclusion_code") if isinstance(payload, dict) else None
+        ),
+    }
+
+
+def _history_identity(value: dict[str, object]) -> dict[str, object]:
+    metrics = _prior_metrics(value)
+    payload = value.get("payload", value)
+    return {
+        "run_id": value.get("run_id"),
+        "effective_date": str(value.get("effective_date") or ""),
+        "conclusion_code": (
+            payload.get("conclusion_code") if isinstance(payload, dict) else None
+        ),
+        "return20": _nested_number(metrics, "returns", "20"),
+        "volume_ratio20": _number(metrics.get("volume_ratio20")),
+    }
 
 
 def _nearest_envelope(envelopes: dict[str, object]) -> tuple[str, float] | None:
@@ -389,6 +566,7 @@ def _state_conclusion(state: str) -> str:
         "bullish-boundary-triggered": "收盘已越过下降边界，仍需后续量价确认。",
         "bullish-transition-candidate": "价格接近下降压力边界，尚未形成有效突破。",
         "oversold-exhaustion-candidate": "下跌已经扩展且多项动能衰减，尚未确认反转。",
+        "oversold-rebound-triggered": "下跌动能衰减后收盘突破短期反转边界，仍需后续确认。",
         "sudden-volume-expansion": "成交量显著偏离近期基准，需要结合价格方向继续观察。",
         "boundary-volume-contraction": "价格临近边界且成交收缩，处于等待方向选择阶段。",
         "relative-strength-regime": "相对市场强弱明显偏离近期常态。",
@@ -409,18 +587,47 @@ def _multiple(value: object) -> str:
     return "不可用" if value is None else f"{float(value):.2f}倍"
 
 
+def _volume_sentence(metrics: dict[str, object], volume_ratio: object) -> str:
+    if metrics.get("volume_semantics") == "synthetic-not-traded":
+        diagnostics = metrics.get("active_market_value_diagnostics")
+        if not isinstance(diagnostics, dict):
+            return "合成指数不解释K线成交量；当日覆盖诊断不可用。"
+        coverage = diagnostics.get("coverage_ratio")
+        coverage_text = "不可用" if coverage is None else f"{float(coverage) * 100:.2f}%"
+        return (
+            "合成指数不解释K线成交量；"
+            f"覆盖{coverage_text}（{diagnostics.get('eligible_count', 0)}/"
+            f"{diagnostics.get('total_count', 0)}），"
+            f"活跃市值贡献{float(diagnostics.get('contribution_total') or 0):.2f}。"
+        )
+    return f"当日量为20日中位量的{_multiple(volume_ratio)}。"
+
+
 def _transition_label(value: str) -> str:
-    return {"new": "首次观察", "unchanged": "状态延续", "changed": "状态变化", "invalidated": "原状态失效"}[value]
+    return {
+        "new": "首次观察", "unchanged": "状态延续",
+        "strengthened": "状态增强", "weakened": "状态减弱",
+        "changed": "状态切换", "invalidated": "原状态失效",
+    }[value]
 
 
-def _transition_sentence(value: str, prior: dict[str, object] | None) -> str:
+def _transition_sentence(
+    value: str, prior: dict[str, object] | None,
+    recent: Sequence[dict[str, object]], primary: str,
+) -> str:
     if prior is None:
         return "没有兼容的历史运行，建立首个比较基线。"
     prior_date = prior.get("effective_date")
     if prior_date is None and isinstance(prior.get("payload"), dict):
         prior_date = prior["payload"].get("effective_date")
     label = str(prior_date) if prior_date else "上一兼容运行"
-    return f"较{label}{_transition_label(value)}。"
+    same_count = sum(
+        1 for item in recent[:5]
+        if isinstance(item.get("payload", item), dict)
+        and item.get("payload", item).get("conclusion_code") == primary
+    )
+    context = f"近{min(len(recent), 5)}期中当前状态出现{same_count}次" if recent else "近五期上下文不足"
+    return f"较{label}{_transition_label(value)}；{context}。"
 
 
 def _conditions(state: str, nearest: tuple[str, float] | None) -> str:
@@ -429,4 +636,6 @@ def _conditions(state: str, nearest: tuple[str, float] | None) -> str:
         return f"放量收于{period}边界上方确认；重新跌回边界下方0.25 ATR视为失败。"
     if state == "oversold-exhaustion-candidate":
         return "收盘突破短期反转边界才确认；放量创新低则失效。"
+    if state == "oversold-rebound-triggered":
+        return "已触发短期反转边界；重新放量创新低则失效。"
     return "继续观察下一交易日价格方向、量能及结构状态变化。"

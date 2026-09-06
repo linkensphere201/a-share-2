@@ -165,6 +165,8 @@ describe('SignalReviewWorkspace', () => {
     await user.click((await screen.findByText('BK001.DC')).closest('button')!)
     expect(screen.getByTestId('signal-chart').textContent).toBe('BK001.DC')
     expect(screen.getAllByText(/多头临界/).length).toBeGreaterThan(0)
+    expect(screen.getByText(/接近下降边界/)).toBeTruthy()
+    expect(screen.getByText(/确认：放量收于边界上方/)).toBeTruthy()
     await user.click(screen.getByRole('button', { name: '加入手工观察池' }))
 
     expect(fetchMock.mock.calls.some(call =>

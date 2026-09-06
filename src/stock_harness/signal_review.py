@@ -27,6 +27,7 @@ from stock_harness.daily_signal_analysis import (
     LOOKBACK_BARS as DAILY_LOOKBACK_BARS,
     analyze_daily_series,
     build_board_analysis_record,
+    observation_digest,
     render_board_summary,
 )
 from stock_harness.sqlite_store import SQLiteMarketDataStore
@@ -138,13 +139,26 @@ class SignalReviewService:
             "000001.SH", cutoff, DAILY_LOOKBACK_BARS,
         )
         run = self._store.get_signal_review_run(run_id)
-        prior_run_id = str(run["prior_run_id"]) if run and run.get("prior_run_id") else None
-        prior_observations = {
-            str(item["symbol"]): item
+        context_runs = self._store.list_compatible_prior_signal_review_runs(run_id, 7)
+        correction_run = next(
+            (item for item in context_runs if item["effective_date"] == cutoff), None,
+        )
+        session_runs = [
+            item for item in context_runs if item["effective_date"] < cutoff
+        ][:5]
+        correction_observations = _daily_observations_by_symbol(
+            self._store, correction_run,
+        )
+        recent_observations: dict[str, list[dict[str, object]]] = defaultdict(list)
+        for context_run in session_runs:
             for item in self._store.list_board_daily_observations(
-                run_id=prior_run_id, limit=5000,
-            )
-        } if prior_run_id else {}
+                run_id=str(context_run["run_id"]), limit=5000,
+            ):
+                recent_observations[str(item["symbol"])].append(item)
+        prior_observations = {
+            symbol: history[0] for symbol, history in recent_observations.items()
+            if history
+        }
         observations: list[dict[str, object]] = []
         self._progress(run_id, "board-observations", len(boards), 0)
         for offset in range(0, len(boards), 100):
@@ -164,8 +178,19 @@ class SignalReviewService:
                 observation.update(
                     build_board_analysis_record(
                         observation, _daily_prior_payload(prior),
+                        [
+                            payload
+                            for item in recent_observations.get(
+                                str(observation["symbol"]), [],
+                            )
+                            if (payload := _daily_prior_payload(item)) is not None
+                        ],
+                        _daily_prior_payload(correction_observations.get(
+                            str(observation["symbol"]),
+                        )),
                     )
                 )
+                _apply_transition_attention(observation)
             self._store.save_board_daily_observations(run_id, batch)
             observations.extend(batch)
             done = min(offset + len(page), len(boards))
@@ -206,6 +231,7 @@ class SignalReviewService:
 
         deep_results = self._run_daily_deep_analysis(
             run_id, cutoff, promoted, attention_registry,
+            correction_observations or prior_observations,
         )
 
         board_names = {str(board["symbol"]): str(board["name"]) for board in boards}
@@ -214,8 +240,18 @@ class SignalReviewService:
             for item in self._store.get_prior_signal_review_items(run_id)
             if bool(item["active"])
         }
+        prior_session_items = _daily_items_by_key(self._store, session_runs[0]) if session_runs else {}
+        correction_items = _daily_items_by_key(self._store, correction_run)
+        recent_market_items: dict[str, list[dict[str, object]]] = defaultdict(list)
+        for context_run in session_runs:
+            for item in self._store.list_signal_review_items(str(context_run["run_id"])):
+                if item.get("profile") == "market":
+                    recent_market_items[str(item["item_key"])].append(item)
         emotion = self._store.calculate_market_emotion_snapshot(run_id, cutoff)
-        items = self._daily_market_items(cutoff, previous_items, emotion)
+        items = self._daily_market_items(
+            cutoff, previous_items, emotion, prior_session_items,
+            correction_items, recent_market_items,
+        )
         for observation in promoted:
             symbol = str(observation["symbol"])
             item_key = f"attention:{symbol}"
@@ -235,6 +271,7 @@ class SignalReviewService:
                     "attention_reasons": reasons,
                     "rendered_summary": observation["rendered_summary"],
                     "metrics": metrics,
+                    "comparison": observation["comparison"],
                     "effective_date": cutoff.isoformat(),
                     "observation_input_digest": observation["input_digest"],
                     "deep_analysis_state": observation["deep_analysis_state"],
@@ -256,6 +293,7 @@ class SignalReviewService:
         items.extend(_removed_daily_items(items, previous_items))
         _rank_daily_items(items)
         _assign_evidence_aliases(items)
+        _attach_daily_evidence_references(items)
         complete_count = sum(item["coverage_state"] == "complete" for item in observations)
         missing_count = len(observations) - complete_count
         summary = {
@@ -282,7 +320,9 @@ class SignalReviewService:
         digest = _result_digest(items + [{
             "active": True, "item_key": "all-board-observations",
             "rank": 0, "score": 0, "confidence": 1,
-            "payload": {"digests": sorted(str(item["input_digest"]) for item in observations)},
+            "payload": {
+                "digests": sorted(observation_digest(item) for item in observations),
+            },
             "evidence": [],
         }])
         self._store.complete_signal_review_run(
@@ -298,14 +338,14 @@ class SignalReviewService:
         self, run_id: str, cutoff: date,
         promoted: list[dict[str, object]],
         registry: dict[str, dict[str, object]],
+        queue_history: dict[str, dict[str, object]],
     ) -> dict[str, dict[str, object]]:
         from stock_harness.analysis_inputs import AnalysisHorizons, AnalysisTimeframe
         from stock_harness.trend_analysis import TrendAnalysisService
 
-        ordered = sorted(promoted, key=lambda observation: (
-            not bool(registry.get(str(observation["symbol"]), {}).get("manual_pinned")),
-            -_daily_attention_score(observation), str(observation["symbol"]),
-        ))
+        ordered = _order_daily_deep_candidates(
+            promoted, registry, queue_history, cutoff,
+        )
         limit = int(_daily_run_parameters()["deep_analysis_limit"])
         selected = ordered[:limit]
         for observation in ordered[limit:]:
@@ -370,6 +410,9 @@ class SignalReviewService:
     def _daily_market_items(
         self, cutoff: date, previous: dict[str, dict[str, object]],
         emotion: dict[str, object],
+        prior_session: dict[str, dict[str, object]],
+        correction: dict[str, dict[str, object]],
+        recent: dict[str, list[dict[str, object]]],
     ) -> list[dict[str, object]]:
         items = []
         for rank, symbol in enumerate(("000001.SH", "SHAMV.A"), 1):
@@ -379,14 +422,40 @@ class SignalReviewService:
                 benchmark_bars=bars if symbol == "000001.SH" else self._store.get_recent_daily_bars(
                     "000001.SH", cutoff, DAILY_LOOKBACK_BARS,
                 ),
+                volume_semantics=(
+                    "synthetic-not-traded" if symbol == "SHAMV.A" else "traded"
+                ),
             )
-            code, rendered = render_board_summary(observation, previous.get(f"market:{symbol}"))
+            if symbol == "SHAMV.A" and isinstance(observation.get("metrics"), dict):
+                diagnostics = self._store.list_active_market_value_diagnostics(cutoff, cutoff)
+                observation["metrics"]["active_market_value_diagnostics"] = (
+                    {
+                        **diagnostics[0],
+                        "trade_date": str(diagnostics[0]["trade_date"]),
+                    }
+                    if diagnostics else {"status": "unavailable"}
+                )
+            item_key = f"market:{symbol}"
+            analysis = build_board_analysis_record(
+                observation, prior_session.get(item_key), recent.get(item_key, []),
+                correction.get(item_key),
+            )
+            comparison = dict(analysis["comparison"])
+            if symbol == "000001.SH":
+                comparison["emotion"] = _emotion_transition(
+                    emotion, prior_session.get(item_key),
+                )
+            code = str(analysis["conclusion_code"])
+            rendered = str(analysis["rendered_summary"])
             if symbol == "000001.SH":
                 rendered = rendered.replace(
-                    "- 近期对比：", f"- 情绪：{_render_emotion(emotion)}\n- 近期对比：",
+                    "- 近期对比：",
+                    f"- 情绪：{_render_emotion(emotion)}"
+                    f"（较上一交易日{_comparison_label(str(comparison['emotion']))}）\n"
+                    "- 近期对比：",
                 )
             items.append({
-                "item_id": str(uuid4()), "item_key": f"market:{symbol}",
+                "item_id": str(uuid4()), "item_key": item_key,
                 "rank": rank, "symbol": symbol, "profile": "market",
                 "change_type": "retained" if f"market:{symbol}" in previous else "added",
                 "active": True, "score": _daily_attention_score(observation),
@@ -395,6 +464,7 @@ class SignalReviewService:
                     "conclusion_code": code, "state_codes": observation["state_codes"],
                     "rendered_summary": rendered, "metrics": observation["metrics"],
                     "effective_date": cutoff.isoformat(),
+                    "comparison": comparison,
                     "emotion": emotion if symbol == "000001.SH" else {
                         "status": "represented-by-market-overview",
                     },
@@ -575,8 +645,51 @@ def _daily_prior_payload(
         conclusion_code, _ = render_board_summary(prior_observation, None)
     return {
         "run_id": prior_observation.get("run_id"),
-        "payload": {"conclusion_code": conclusion_code},
+        "payload": {
+            "conclusion_code": conclusion_code,
+            "metrics": prior_observation.get("metrics", {}),
+        },
         "effective_date": prior_observation.get("effective_date"),
+    }
+
+
+def _daily_observations_by_symbol(
+    store: SQLiteMarketDataStore, run: dict[str, object] | None,
+) -> dict[str, dict[str, object]]:
+    if run is None:
+        return {}
+    return {
+        str(item["symbol"]): item
+        for item in store.list_board_daily_observations(
+            run_id=str(run["run_id"]), limit=5000,
+        )
+    }
+
+
+def _apply_transition_attention(observation: dict[str, object]) -> None:
+    comparison = observation.get("comparison")
+    transition = comparison.get("transition") if isinstance(comparison, dict) else None
+    if transition not in {"strengthened", "weakened", "changed", "invalidated"}:
+        return
+    states = [str(item) for item in observation.get("state_codes", [])]
+    reasons = [str(item) for item in observation.get("attention_reasons", [])]
+    states.append("prior-state-transition")
+    reasons.append(f"prior-state-{transition}")
+    observation["state_codes"] = sorted(set(states))
+    observation["attention_reasons"] = sorted(set(reasons))
+    observation["attention_eligible"] = True
+    observation["deep_analysis_state"] = "pending"
+
+
+def _daily_items_by_key(
+    store: SQLiteMarketDataStore, run: dict[str, object] | None,
+) -> dict[str, dict[str, object]]:
+    if run is None:
+        return {}
+    return {
+        str(item["item_key"]): item
+        for item in store.list_signal_review_items(str(run["run_id"]))
+        if item.get("profile") == "market"
     }
 
 
@@ -601,13 +714,39 @@ def _daily_attention_score(observation: dict[str, object]) -> float:
         "1y-descending-envelope-broken": .28,
         "6m-descending-envelope-broken": .24,
         "3m-descending-envelope-broken": .20,
+        "3m-descending-envelope-approaching": .14,
         "bullish-boundary-proximity": .20,
         "downside-exhaustion": .20,
+        "oversold-rebound-triggered": .28,
         "sudden-volume-expansion": .16,
         "boundary-volume-contraction": .12,
         "relative-strength-regime": .10,
+        "prior-state-strengthened": .18,
+        "prior-state-weakened": .14,
+        "prior-state-changed": .16,
+        "prior-state-invalidated": .16,
     }
     return min(1.0, round(sum(weights.get(reason, .08) for reason in reasons), 6))
+
+
+def _order_daily_deep_candidates(
+    observations: list[dict[str, object]],
+    registry: dict[str, dict[str, object]],
+    history: dict[str, dict[str, object]],
+    effective_date: date,
+) -> list[dict[str, object]]:
+    def key(observation: dict[str, object]) -> tuple[object, ...]:
+        symbol = str(observation["symbol"])
+        attention = registry.get(symbol, {})
+        previous = history.get(symbol, {})
+        return (
+            not bool(attention.get("manual_pinned")),
+            previous.get("deep_analysis_state") != "deferred-resource-limit",
+            str(attention.get("first_observed_date") or effective_date),
+            -_daily_attention_score(observation),
+            symbol,
+        )
+    return sorted(observations, key=key)
 
 
 def _daily_confidence(observation: dict[str, object]) -> float:
@@ -639,6 +778,46 @@ def _render_emotion(emotion: dict[str, object]) -> str:
     )
 
 
+def _emotion_transition(
+    current: dict[str, object], prior_item: dict[str, object] | None,
+) -> str:
+    if prior_item is None:
+        return "new"
+    prior_payload = prior_item.get("payload")
+    prior = prior_payload.get("emotion") if isinstance(prior_payload, dict) else None
+    if not isinstance(prior, dict) or prior.get("status") == "unavailable":
+        return "new"
+    if current.get("status") == "unavailable":
+        return "invalidated"
+    current_score = _emotion_score(current)
+    prior_score = _emotion_score(prior)
+    if current_score is None or prior_score is None:
+        return "changed"
+    if abs(current_score - prior_score) <= .08:
+        return "unchanged"
+    return "strengthened" if current_score > prior_score else "weakened"
+
+
+def _emotion_score(snapshot: dict[str, object]) -> float | None:
+    metrics = snapshot.get("metrics")
+    if not isinstance(metrics, dict) or metrics.get("breadth") is None:
+        return None
+    components = [float(metrics["breadth"])]
+    if metrics.get("limit_balance") is not None:
+        components.append(float(metrics["limit_balance"]))
+    if metrics.get("sealing_rate") is not None:
+        components.append(float(metrics["sealing_rate"]) * 2 - 1)
+    return sum(components) / len(components)
+
+
+def _comparison_label(value: str) -> str:
+    return {
+        "new": "首次建立基线", "unchanged": "基本持平",
+        "strengthened": "增强", "weakened": "减弱",
+        "changed": "结构变化", "invalidated": "输入失效",
+    }.get(value, value)
+
+
 def _deep_analysis_evidence(
     result: dict[str, object] | None,
 ) -> list[dict[str, object]]:
@@ -664,6 +843,34 @@ def _deep_analysis_evidence(
         if len(evidence) >= 6:
             break
     return evidence
+
+
+def _attach_daily_evidence_references(items: list[dict[str, object]]) -> None:
+    labels = {
+        "market-daily-series": "截止日K线",
+        "board-daily-observation": "一级量价形态",
+        "m4-line": "趋势线",
+        "m4-zone": "关键位",
+        "m4-pattern": "形态",
+        "m4-transition": "突破/破位",
+    }
+    for item in items:
+        if item.get("profile") not in {"market", "attention"} or not item.get("active"):
+            continue
+        payload = item.get("payload")
+        if not isinstance(payload, dict) or not payload.get("rendered_summary"):
+            continue
+        references = [
+            f"[{evidence['alias']}] {labels.get(str(evidence['evidence_type']), str(evidence['evidence_type']))}"
+            for evidence in item.get("evidence", [])[:4]
+        ]
+        if not references:
+            continue
+        summary = str(payload["rendered_summary"])
+        evidence_line = f"- 证据：{'；'.join(references)}"
+        payload["rendered_summary"] = summary.replace(
+            "- 近期对比：", f"{evidence_line}\n- 近期对比：",
+        )
 
 
 def _removed_daily_items(

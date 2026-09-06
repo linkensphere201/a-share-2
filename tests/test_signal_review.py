@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 
 from fastapi.testclient import TestClient
 
@@ -6,10 +6,13 @@ from stock_harness.api import create_app
 from stock_harness.models import Instrument, InstrumentKind
 from stock_harness.signal_review import (
     DAILY_MARKET_BOARD_SIGNAL, WEEKLY_RECOGNITION_SIGNAL,
+    _apply_transition_attention,
     _aggregate_assignments, _assign_evidence_aliases,
-    _compare_items, _result_digest,
+    _compare_items, _order_daily_deep_candidates, _result_digest,
 )
-from stock_harness.daily_signal_analysis import analyze_daily_series, render_board_summary
+from stock_harness.daily_signal_analysis import (
+    analyze_daily_series, build_board_analysis_record, render_board_summary,
+)
 from stock_harness.models import DailyBar, StockDailyLimit
 from stock_harness.sqlite_store import SQLiteMarketDataStore
 from stock_harness.chat_context import build_signal_chat_context
@@ -254,6 +257,81 @@ def test_daily_observation_is_causal_and_template_rendered_without_ai() -> None:
     assert all(label in rendered for label in ("结论", "形态", "价", "量", "近期对比", "确认/失效"))
 
 
+def test_daily_comparison_separates_session_history_and_correction_baseline() -> None:
+    bars = _daily_bars("BK001.DC", 140)
+    current = analyze_daily_series("BK001.DC", bars, bars[-1].trade_date)
+    current["state_codes"] = ["bullish-boundary-triggered"]
+    prior = {
+        "run_id": "prior-session", "effective_date": bars[-2].trade_date,
+        "payload": {
+            "conclusion_code": "bullish-transition-candidate",
+            "metrics": current["metrics"],
+        },
+    }
+    correction = {
+        "run_id": "same-date-revision", "effective_date": bars[-1].trade_date,
+        "payload": {"conclusion_code": "neutral", "metrics": current["metrics"]},
+    }
+
+    result = build_board_analysis_record(current, prior, [prior], correction)
+    current.update(result)
+    _apply_transition_attention(current)
+
+    comparison = result["comparison"]
+    assert comparison["transition"] == "strengthened"
+    assert comparison["prior_run_id"] == "prior-session"
+    assert comparison["correction_baseline"]["run_id"] == "same-date-revision"
+    assert comparison["recent_sessions"][0]["run_id"] == "prior-session"
+    assert comparison["shape"] == {
+        "short_shape": "unchanged", "medium_shape": "unchanged",
+    }
+    assert current["attention_eligible"] is True
+    assert "prior-state-strengthened" in current["attention_reasons"]
+
+
+def test_active_market_value_does_not_treat_synthetic_volume_as_traded_volume() -> None:
+    bars = _daily_bars("SHAMV.A", 140)
+    bars[-1] = DailyBar(
+        "SHAMV.A", bars[-1].trade_date, bars[-1].open, bars[-1].high,
+        bars[-1].low, bars[-1].close, bars[-1].volume * 100,
+    )
+    observation = analyze_daily_series(
+        "SHAMV.A", bars, bars[-1].trade_date,
+        volume_semantics="synthetic-not-traded",
+    )
+    observation["metrics"]["active_market_value_diagnostics"] = {
+        "coverage_ratio": .991, "eligible_count": 5500,
+        "total_count": 5550, "contribution_total": 123456.78,
+    }
+
+    _, rendered = render_board_summary(observation, None)
+
+    assert observation["metrics"]["volume_ratio20"] is None
+    assert "sudden-volume-expansion" not in observation["state_codes"]
+    assert "合成指数不解释K线成交量" in rendered
+    assert "99.10%" in rendered
+
+
+def test_daily_deep_queue_prioritizes_manual_then_previously_deferred_items() -> None:
+    observations = [
+        {"symbol": "NEW.DC", "attention_reasons": ["sudden-volume-expansion"]},
+        {"symbol": "OLD.DC", "attention_reasons": ["boundary-volume-contraction"]},
+        {"symbol": "PIN.DC", "attention_reasons": []},
+    ]
+    registry = {
+        "NEW.DC": {"manual_pinned": False, "first_observed_date": date(2026, 9, 7)},
+        "OLD.DC": {"manual_pinned": False, "first_observed_date": date(2026, 9, 1)},
+        "PIN.DC": {"manual_pinned": True, "first_observed_date": date(2026, 9, 7)},
+    }
+    history = {"OLD.DC": {"deep_analysis_state": "deferred-resource-limit"}}
+
+    ordered = _order_daily_deep_candidates(
+        observations, registry, history, date(2026, 9, 7),
+    )
+
+    assert [item["symbol"] for item in ordered] == ["PIN.DC", "OLD.DC", "NEW.DC"]
+
+
 def test_daily_signal_persists_every_board_but_displays_attention_only() -> None:
     store = SQLiteMarketDataStore(":memory:")
     instruments = [
@@ -296,6 +374,8 @@ def test_daily_signal_persists_every_board_but_displays_attention_only() -> None
     assert loud_observation["deep_analysis_run_id"]
     items = store.list_signal_review_items(str(run["run_id"]))
     assert {item["symbol"] for item in items if item["profile"] == "attention"} == {"BK002.DC"}
+    focused_board = next(item for item in items if item["profile"] == "attention")
+    assert "- 证据：[S" in focused_board["payload"]["rendered_summary"]
     assert run["summary"]["ai_used"] is False
 
     replay = service.run_sync(DAILY_MARKET_BOARD_SIGNAL, baseline[-1].trade_date)
@@ -303,12 +383,29 @@ def test_daily_signal_persists_every_board_but_displays_attention_only() -> None
         run_id=str(replay["run_id"]), limit=10,
     )
     assert all(
-        item["comparison"]["prior_run_id"] == run["run_id"]
+        item["comparison"]["prior_run_id"] is None
         for item in replay_observations
     )
     assert all(
-        item["comparison"]["transition"] == "unchanged"
+        item["comparison"]["correction_baseline"]["run_id"] == run["run_id"]
         for item in replay_observations
+    )
+    next_date = baseline[-1].trade_date + timedelta(days=1)
+    store.upsert_daily_bars("test", [
+        DailyBar(series[-1].symbol, next_date, series[-1].close,
+                 series[-1].close + .5, series[-1].close - .5,
+                 series[-1].close + .1, series[-1].volume)
+        for series in (baseline, active, quiet, loud)
+    ])
+    next_run = service.run_sync(DAILY_MARKET_BOARD_SIGNAL, next_date)
+    next_observations = store.list_board_daily_observations(
+        run_id=str(next_run["run_id"]), limit=10,
+    )
+    assert all(
+        item["comparison"]["prior_run_id"] == replay["run_id"]
+        and len(item["comparison"]["recent_sessions"]) == 1
+        and item["comparison"]["correction_baseline"] is None
+        for item in next_observations
     )
     store.close()
 

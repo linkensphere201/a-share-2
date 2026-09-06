@@ -157,6 +157,7 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
   const highlightedAnalysisItemId = selectedItem?.evidence.find(
     evidence => evidence.evidence_id === activeEvidenceId,
   )?.source_item_id ?? undefined
+  const criticalAlert = buildCriticalAlert(inspected)
   const pinned = selectedObservation
     ? attention.find(item => item.symbol === selectedObservation.symbol)?.manual_pinned ?? false
     : false
@@ -249,10 +250,14 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
           </button>)}</div>
         </>}
       </section>
-      {inspected && <section className="signal-inspector">
+      {inspected && <section className={`signal-inspector${criticalAlert ? ' has-critical' : ''}`}>
         <header><span className="instrument-name-line"><span>{inspected.name}</span>{selectedItem && <MarketBoardBadge instrument={selectedItem}/>}</span><small>{selectedItem ? `${profileLabels[selectedItem.profile]} · 得分 ${(selectedItem.score * 100).toFixed(1)} · 置信 ${(selectedItem.confidence * 100).toFixed(1)}` : `${selectedObservation?.effective_date} · 一级固定分析`}</small>{selectedObservation
           ? <button className="icon-button" title={pinned ? '取消手工固定' : '加入手工观察池'} aria-label={pinned ? '取消手工固定' : '加入手工观察池'} onClick={() => void togglePinned()}>{pinned ? <PinOff size={13}/> : <Pin size={13}/>}</button>
           : <button className="icon-button" title="Codex 信号讨论" aria-label="Codex 信号讨论" onClick={() => setChatOpen(value => !value)}><MessageSquare size={13}/></button>}</header>
+        {criticalAlert && <div className={`signal-critical-alert ${criticalAlert.tone}`}>
+          <span>{criticalAlert.title}<small>{criticalAlert.facts}</small></span>
+          <span>{criticalAlert.reason}<small>{criticalAlert.condition}</small></span>
+        </div>}
         <div className="signal-chart">{inspected
           ? <ChartCanvas key={`${selectedRun?.run_id}:${inspected.symbol}`} symbol={inspected.symbol} instrumentName={inspected.name} instrumentKind={selectedItem?.kind ?? 'sector'} focused theme={theme} range="1Y" priceMode="normal" volumeVisible indicator="none" settlementVisible={false} openInterestVisible={false} asOfDate={selectedRun?.effective_date} trendAnalysisEnabled={Boolean(exactAnalysis)} trendAnalysisOverride={exactAnalysis} highlightedAnalysisItemId={highlightedAnalysisItemId}/>
           : <div className="signal-empty">选择一项结果查看 K 线</div>}</div>
@@ -302,4 +307,45 @@ function evidenceDetail(evidence: SignalEvidence) {
   if (evidence.evidence_type === 'board-daily-observation') return '当日一级固定算法观察'
   const classification = evidence.payload.board_classification === 'industry' ? '行业板块' : '概念板块'
   return `${classification} · 板块第 ${evidence.payload.rank ?? '-'} · 得分 ${((evidence.payload.score ?? 0) * 100).toFixed(1)}`
+}
+
+function buildCriticalAlert(item?: BoardDailyObservation | SignalItem) {
+  if (!item) return undefined
+  const states = 'state_codes' in item ? item.state_codes : item.payload.state_codes ?? []
+  const critical = [
+    'bullish-boundary-triggered', 'oversold-rebound-triggered',
+    'bullish-transition-candidate', 'oversold-exhaustion-candidate',
+  ].find(value => states.includes(value))
+  if (!critical) return undefined
+  const metrics = ('metrics' in item ? item.metrics : item.payload.metrics) ?? {}
+  const envelopes = metrics.descending_envelopes as Record<string, { boundary?: number; distance_atr?: number }> | undefined
+  const nearest = Object.entries(envelopes ?? {})
+    .filter((entry): entry is [string, { boundary?: number; distance_atr: number }] => entry[1]?.distance_atr != null)
+    .sort((left, right) => Math.abs(left[1].distance_atr) - Math.abs(right[1].distance_atr))[0]
+  const effectiveDate = 'effective_date' in item ? item.effective_date : String(item.payload.effective_date ?? '')
+  const reasons = 'attention_reasons' in item ? item.attention_reasons : item.payload.attention_reasons ?? []
+  const bullish = critical.startsWith('bullish')
+  const triggered = critical.endsWith('triggered')
+  const boundary = nearest
+    ? `${nearest[0]} 边界 ${nearest[1].boundary?.toFixed(2) ?? '-'} · 距离 ${nearest[1].distance_atr.toFixed(2)} ATR`
+    : '结构边界由精确 M4 证据补充'
+  return {
+    title: stateLabel([critical]),
+    tone: triggered ? 'triggered' : 'candidate',
+    facts: `${effectiveDate} · ${boundary}`,
+    reason: reasons.slice(0, 2).map(attentionReasonLabel).join(' · ') || '固定结构门槛已命中',
+    condition: bullish
+      ? '确认：放量收于边界上方；失效：重新跌回边界下方 0.25 ATR'
+      : '确认：收盘突破短期反转边界；失效：放量创出新低',
+  }
+}
+
+function attentionReasonLabel(value: string) {
+  if (value.includes('descending-envelope-broken')) return '下降边界收盘突破'
+  if (value.includes('descending-envelope-approaching') || value === 'bullish-boundary-proximity') return '接近下降边界'
+  if (value === 'downside-exhaustion') return '下跌扩展且动能减速'
+  if (value === 'oversold-rebound-triggered') return '超跌反转边界已触发'
+  if (value === 'sudden-volume-expansion') return '成交量异常放大'
+  if (value.startsWith('prior-state-')) return '较上一交易日状态变化'
+  return value
 }

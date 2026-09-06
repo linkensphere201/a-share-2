@@ -134,6 +134,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .signal-results { display: flex; flex-direction: column; }
 .signal-results > .signal-scroll { flex: 1 1 auto; }
 .signal-inspector { display: grid; grid-template-rows: 42px minmax(300px, 1fr) minmax(135px, 28%); border-right: 0; }
+.signal-inspector.has-critical { grid-template-rows: 42px auto minmax(260px, 1fr) minmax(135px, 28%); }
+.signal-critical-alert { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr); gap: 12px; padding: 7px 12px; border-bottom: 1px solid var(--theme-border); border-left: 3px solid #d8aa5d; background: color-mix(in srgb, #d8aa5d 9%, var(--theme-surface)); color: var(--theme-text-strong); font-size: 11px; }
+.signal-critical-alert.triggered { border-left-color: #d18b94; background: color-mix(in srgb, #d18b94 9%, var(--theme-surface)); }
+.signal-critical-alert > span { min-width: 0; line-height: 1.35; }
+.signal-critical-alert small { display: block; margin-top: 2px; color: var(--theme-muted); font-size: 9px; white-space: normal; }
 .signal-runs > header, .signal-results > header, .signal-inspector > header, .signal-evidence > header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 12px; color: var(--theme-text-strong); border-bottom: 1px solid var(--theme-border); }
 .signal-runs header small, .signal-results header small, .signal-inspector header small, .signal-evidence header small { color: var(--theme-muted); font-size: 9px; }
 .signal-scroll { min-height: 0; overflow: auto; }

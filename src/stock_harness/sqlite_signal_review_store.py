@@ -11,6 +11,48 @@ from stock_harness.sqlite_mapping import _date_from_key, _date_key
 
 
 class SQLiteSignalReviewStoreMixin:
+    def list_compatible_prior_signal_review_runs(
+        self, run_id: str, limit: int = 7,
+    ) -> list[dict[str, object]]:
+        if not 1 <= limit <= 20:
+            raise ValueError("prior signal run limit must be between 1 and 20")
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                WITH current AS (
+                    SELECT signal_id, definition_version, algorithm_version,
+                           cadence, effective_date, revision, parameters_json
+                    FROM signal_review_runs WHERE run_id = ?
+                ), compatible AS (
+                    SELECT prior.run_id, prior.effective_date, prior.revision,
+                           row_number() OVER (
+                               PARTITION BY prior.effective_date
+                               ORDER BY prior.revision DESC
+                           ) AS date_revision_rank
+                    FROM signal_review_runs AS prior, current
+                    WHERE prior.signal_id = current.signal_id
+                      AND prior.definition_version = current.definition_version
+                      AND prior.algorithm_version = current.algorithm_version
+                      AND prior.cadence = current.cadence
+                      AND prior.parameters_json = current.parameters_json
+                      AND prior.status = 'succeeded'
+                      AND (
+                          prior.effective_date < current.effective_date OR
+                          (prior.effective_date = current.effective_date
+                           AND prior.revision < current.revision)
+                      )
+                )
+                SELECT run_id FROM compatible
+                WHERE date_revision_rank = 1
+                ORDER BY effective_date DESC, revision DESC
+                LIMIT ?
+                """, (run_id, limit),
+            ).fetchall()
+        return [
+            value for row in rows
+            if (value := self.get_signal_review_run(str(row[0]))) is not None
+        ]
+
     def create_signal_review_run(
         self, *, signal_id: str, definition_version: str, algorithm_version: str,
         cadence: str, effective_date: date, parameters: dict[str, object],

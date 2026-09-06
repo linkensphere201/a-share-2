@@ -1,5 +1,6 @@
 export type SignalProfile = 'recent' | 'historical' | 'market' | 'attention'
 export type SignalChangeType = 'added' | 'retained' | 'removed'
+export type SignalStateTransition = 'new' | 'unchanged' | 'strengthened' | 'weakened' | 'changed' | 'invalidated'
 
 export type SignalDefinition = {
   signal_id: string
@@ -73,6 +74,8 @@ export type SignalItem = {
     attention_reasons?: string[]
     rendered_summary?: string
     metrics?: Record<string, unknown>
+    effective_date?: string
+    comparison?: Record<string, unknown>
     deep_analysis_state?: string
     deep_analysis_run_id?: string | null
   }
@@ -94,9 +97,18 @@ export type BoardDailyObservation = {
   conclusion_code: string
   rendered_summary: string
   comparison: {
-    transition?: 'new' | 'unchanged' | 'changed' | 'invalidated'
+    transition?: SignalStateTransition
     prior_run_id?: string | null
     prior_effective_date?: string | null
+    correction_baseline?: {
+      run_id?: string | null
+      effective_date?: string | null
+      conclusion_code?: string | null
+    } | null
+    shape?: Record<string, SignalStateTransition>
+    price?: SignalStateTransition
+    volume?: SignalStateTransition
+    recent_sessions?: Array<Record<string, unknown>>
   }
   deep_analysis_state: string
   deep_analysis_run_id?: string | null
