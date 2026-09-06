@@ -1,4 +1,4 @@
-"""Daily-bar proxy ranking for current board dragon-one/dragon-two identities."""
+"""Daily-bar proxy ranking for recent and historical board identities."""
 
 from __future__ import annotations
 
@@ -9,7 +9,28 @@ from statistics import fmean
 from typing import Sequence
 
 
-ALGORITHM_VERSION = "board-dragon-daily-v1"
+ALGORITHM_VERSION = "board-recognition-dual-v3"
+RECENT_PROFILE = "recent"
+HISTORICAL_PROFILE = "historical"
+PROFILE_WEIGHTS = {
+    RECENT_PROFILE: {
+        "event": 0.10,
+        "peak": 0.08,
+        "recent": 0.32,
+        "persistence": 0.08,
+        "liquidity": 0.22,
+        "association": 0.20,
+    },
+    HISTORICAL_PROFILE: {
+        "event": 0.20,
+        "peak": 0.12,
+        "regime": 0.24,
+        "persistence": 0.10,
+        "liquidity": 0.10,
+        "association": 0.12,
+        "longevity": 0.12,
+    },
+}
 
 
 @dataclass(frozen=True)
@@ -22,11 +43,17 @@ class CompactReturns:
 class StockFeatures:
     symbol: str
     observations: int
-    event_intensity: float
-    peak_strength: float
+    recent_event_intensity: float
+    historical_event_intensity: float
+    recent_peak_strength: float
+    historical_peak_strength: float
     recent_strength: float
-    persistence: float
-    liquidity: float
+    recent_persistence: float
+    historical_persistence: float
+    recent_liquidity: float
+    historical_liquidity: float
+    historical_regimes: float
+    longevity: float
     returns: CompactReturns
 
 
@@ -47,32 +74,51 @@ def calculate_stock_features(symbol: str, bars: Sequence[dict[str, object]]) -> 
     daily = [(closes[index] / closes[index - 1] - 1.0) for index in range(1, len(closes))]
     ordinals = array("I", (_date_ordinal(str(item["trade_date"])) for item in ordered[1:]))
     compact_returns = array("f", daily)
+    recent_daily = daily[-244:]
     limit_days = sum(value >= 0.095 for value in daily)
     surge_days = sum(value >= 0.05 for value in daily)
-    event_intensity = min(1.0, limit_days / 10.0 + surge_days / 40.0)
-    peak_20 = _maximum_window_return(closes, 20)
-    peak_60 = _maximum_window_return(closes, 60)
-    peak_strength = _clip((peak_20 + peak_60 * 0.65) / 1.1)
-    recent_strength = _clip(
-        (_period_return(closes, 20) + _period_return(closes, 60) * 0.7
-         + _period_return(closes, 120) * 0.45 + 0.55) / 1.8
+    recent_limit_days = sum(value >= 0.095 for value in recent_daily)
+    recent_surge_days = sum(value >= 0.05 for value in recent_daily)
+    years = max(1.0, len(daily) / 244.0)
+    historical_event_intensity = (limit_days * 2.0 + surge_days * 0.5) / years
+    recent_event_intensity = recent_limit_days * 2.0 + recent_surge_days * 0.5
+    recent_closes = closes[-245:]
+    recent_peak_strength = (
+        _maximum_window_return(recent_closes, 20)
+        + _maximum_window_return(recent_closes, 60) * 0.65
     )
-    persistence = _clip(
-        sum(value > 0.02 for value in daily) / max(1, len(daily)) * 6.0
+    historical_peak_strength = (
+        _maximum_window_return(closes, 20)
+        + _maximum_window_return(closes, 60) * 0.65
     )
-    turnover_proxies = [
+    recent_strength = (
+        _period_return(closes, 20) + _period_return(closes, 60) * 0.7
+        + _period_return(closes, 120) * 0.45
+    )
+    recent_persistence = sum(value > 0.02 for value in recent_daily) / max(1, len(recent_daily))
+    historical_persistence = sum(value > 0.02 for value in daily) / max(1, len(daily))
+    recent_turnover = [
         float(item["close"]) * max(0.0, float(item.get("volume") or 0))
         for item in ordered[-60:]
     ]
-    liquidity = log1p(fmean(turnover_proxies)) if turnover_proxies else 0.0
+    historical_turnover = [
+        float(item["close"]) * max(0.0, float(item.get("volume") or 0))
+        for item in ordered
+    ]
     return StockFeatures(
         symbol=symbol,
         observations=len(closes),
-        event_intensity=event_intensity,
-        peak_strength=peak_strength,
+        recent_event_intensity=recent_event_intensity,
+        historical_event_intensity=historical_event_intensity,
+        recent_peak_strength=recent_peak_strength,
+        historical_peak_strength=historical_peak_strength,
         recent_strength=recent_strength,
-        persistence=persistence,
-        liquidity=liquidity,
+        recent_persistence=recent_persistence,
+        historical_persistence=historical_persistence,
+        recent_liquidity=log1p(fmean(recent_turnover)) if recent_turnover else 0.0,
+        historical_liquidity=log1p(fmean(historical_turnover)) if historical_turnover else 0.0,
+        historical_regimes=_historical_regime_count(daily),
+        longevity=min(10.0, years),
         returns=CompactReturns(ordinals, compact_returns),
     )
 
@@ -80,27 +126,38 @@ def calculate_stock_features(symbol: str, bars: Sequence[dict[str, object]]) -> 
 def rank_board_leaders(
     members: Sequence[StockFeatures],
     board_returns: CompactReturns,
+    profile: str = RECENT_PROFILE,
+    limit: int = 2,
 ) -> list[RankedLeader]:
+    if profile not in PROFILE_WEIGHTS:
+        raise ValueError(f"unknown recognition profile: {profile}")
     eligible = [item for item in members if item.observations >= 120]
     if len(eligible) < 4 or len(board_returns.returns) < 60:
         return []
-    raw = {
-        "event": [item.event_intensity for item in eligible],
-        "peak": [item.peak_strength for item in eligible],
+    raw = ({
+        "event": [item.recent_event_intensity for item in eligible],
+        "peak": [item.recent_peak_strength for item in eligible],
         "recent": [item.recent_strength for item in eligible],
-        "persistence": [item.persistence for item in eligible],
-        "liquidity": [item.liquidity for item in eligible],
+        "persistence": [item.recent_persistence for item in eligible],
+        "liquidity": [item.recent_liquidity for item in eligible],
+        "association": [
+            _positive_board_association(item.returns, board_returns, max_observations=244)
+            for item in eligible
+        ],
+    } if profile == RECENT_PROFILE else {
+        "event": [item.historical_event_intensity for item in eligible],
+        "peak": [item.historical_peak_strength for item in eligible],
+        "regime": [item.historical_regimes for item in eligible],
+        "persistence": [item.historical_persistence for item in eligible],
+        "liquidity": [item.historical_liquidity for item in eligible],
         "association": [_positive_board_association(item.returns, board_returns) for item in eligible],
-    }
+        "longevity": [item.longevity for item in eligible],
+    })
     percentiles = {name: _percentile_scores(values) for name, values in raw.items()}
     scored: list[tuple[float, StockFeatures, dict[str, float]]] = []
     for index, item in enumerate(eligible):
         part = {name: values[index] for name, values in percentiles.items()}
-        score = (
-            part["event"] * 0.24 + part["peak"] * 0.18
-            + part["recent"] * 0.14 + part["persistence"] * 0.10
-            + part["liquidity"] * 0.18 + part["association"] * 0.16
-        )
+        score = sum(part[name] * weight for name, weight in PROFILE_WEIGHTS[profile].items())
         scored.append((score, item, part))
     scored.sort(key=lambda item: (-item[0], item[1].symbol))
     if len(scored) < 2:
@@ -108,7 +165,7 @@ def rank_board_leaders(
     separation = max(0.0, scored[0][0] - scored[2][0] if len(scored) > 2 else scored[0][0] - scored[1][0])
     coverage = min(1.0, len(eligible) / 12.0)
     result: list[RankedLeader] = []
-    for index, (score, item, part) in enumerate(scored[:2], start=1):
+    for index, (score, item, part) in enumerate(scored[:max(0, limit)], start=1):
         evidence_floor = min(part["association"], max(part["event"], part["peak"]), part["liquidity"])
         confidence = _clip(coverage * 0.45 + separation * 0.25 + evidence_floor * 0.30)
         result.append(RankedLeader(
@@ -140,10 +197,19 @@ def is_risk_name(name: str) -> bool:
     return compact.startswith(("ST", "*ST", "S*ST", "退市"))
 
 
-def _positive_board_association(stock: CompactReturns, board: CompactReturns) -> float:
+def _positive_board_association(
+    stock: CompactReturns,
+    board: CompactReturns,
+    max_observations: int | None = None,
+) -> float:
     left = right = 0
     stock_values: list[float] = []
     board_values: list[float] = []
+    cutoff = (
+        board.dates[max(0, len(board.dates) - max_observations)]
+        if max_observations is not None and board.dates
+        else None
+    )
     while left < len(stock.dates) and right < len(board.dates):
         if stock.dates[left] < board.dates[right]:
             left += 1
@@ -151,7 +217,7 @@ def _positive_board_association(stock: CompactReturns, board: CompactReturns) ->
             right += 1
         else:
             board_return = float(board.returns[right])
-            if board_return > 0.01:
+            if board_return > 0.01 and (cutoff is None or board.dates[right] >= cutoff):
                 stock_values.append(float(stock.returns[left]))
                 board_values.append(board_return)
             left += 1
@@ -202,6 +268,19 @@ def _period_return(closes: Sequence[float], window: int) -> float:
     if len(closes) <= window:
         return 0.0
     return closes[-1] / closes[-1 - window] - 1.0
+
+
+def _historical_regime_count(daily: Sequence[float], window: int = 60) -> float:
+    """Count independent windows with a recognisable acceleration event."""
+    regimes = []
+    for start in range(0, len(daily), window):
+        values = daily[start : start + window]
+        if len(values) < window // 2:
+            continue
+        limit_days = sum(value >= 0.095 for value in values)
+        surge_days = sum(value >= 0.05 for value in values)
+        regimes.append(limit_days >= 1 or surge_days >= 2)
+    return float(sum(regimes))
 
 
 def _date_ordinal(value: str) -> int:

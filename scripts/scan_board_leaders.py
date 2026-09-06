@@ -13,6 +13,8 @@ from urllib.request import Request, urlopen
 
 from stock_harness.board_leader_scan import (
     ALGORITHM_VERSION,
+    HISTORICAL_PROFILE,
+    RECENT_PROFILE,
     calculate_stock_features,
     compact_returns,
     is_risk_name,
@@ -24,20 +26,28 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-url", default="http://127.0.0.1:8765")
     parser.add_argument("--as-of", type=date.fromisoformat, default=date.today())
-    parser.add_argument("--years", type=int, default=3)
+    parser.add_argument("--years", type=int, default=10)
     parser.add_argument("--max-boards", type=int)
+    parser.add_argument("--board-symbol", action="append", default=[])
+    parser.add_argument("--historical-limit", type=int, default=5)
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--apply-report", type=Path)
-    parser.add_argument("--group-name", default="全市场辨识度品种")
-    parser.add_argument("--output", type=Path, default=Path("data/reports/board-leaders-latest.json"))
+    parser.add_argument("--recent-group-name", default="近期辨识度品种")
+    parser.add_argument("--historical-group-name", default="历史辨识度品种")
+    parser.add_argument("--group-name", help=argparse.SUPPRESS)
+    parser.add_argument("--output", type=Path, default=Path("data/reports/board-leaders-dual-latest.json"))
     args = parser.parse_args()
 
     if args.apply_report is not None:
         report = json.loads(args.apply_report.read_text(encoding="utf-8"))
+        assignments = list(report["assignments"])
+        if not any(item.get("profile") for item in assignments):
+            assignments = [{**item, "profile": RECENT_PROFILE} for item in assignments]
         _apply(
             args.base_url,
-            args.group_name,
-            list(report["assignments"]),
+            args.group_name or args.recent_group_name,
+            args.historical_group_name,
+            assignments,
             report,
             _all_stock_symbols(args.base_url),
         )
@@ -50,6 +60,9 @@ def main() -> None:
 
     started = time.perf_counter()
     boards = _all_boards(args.base_url)
+    if args.board_symbol:
+        selected_symbols = {item.strip().upper() for item in args.board_symbol}
+        boards = [item for item in boards if str(item["symbol"]).upper() in selected_symbols]
     if args.max_boards:
         boards = boards[:args.max_boards]
     effective_dates = [
@@ -86,31 +99,43 @@ def main() -> None:
 
     assignments: list[dict[str, object]] = []
     skipped = 0
+    ranked_board_count = 0
     for index, board in enumerate(boards, start=1):
         symbol = str(board["symbol"])
         board_bars = _bars(args.base_url, symbol, start_date, effective_as_of)
-        ranked = rank_board_leaders(
-            [features[str(item["symbol"])] for item in memberships[symbol] if str(item["symbol"]) in features],
-            compact_returns(board_bars),
-        )
-        if len(ranked) < 2:
+        member_features = [
+            features[str(item["symbol"])]
+            for item in memberships[symbol]
+            if str(item["symbol"]) in features
+        ]
+        board_series = compact_returns(board_bars)
+        ranked_by_profile = {
+            RECENT_PROFILE: rank_board_leaders(member_features, board_series, RECENT_PROFILE, 2),
+            HISTORICAL_PROFILE: rank_board_leaders(
+                member_features, board_series, HISTORICAL_PROFILE, max(2, args.historical_limit)
+            ),
+        }
+        if any(len(items) < 2 for items in ranked_by_profile.values()):
             skipped += 1
             continue
+        ranked_board_count += 1
         names = {str(item["symbol"]): str(item["name"]) for item in memberships[symbol]}
-        for item in ranked:
-            assignments.append({
-                "board_symbol": symbol,
-                "board_name": board["name"],
-                "board_classification": board["classification"],
-                "board_source": board.get("source_label"),
-                "member_symbol": item.symbol,
-                "member_name": names.get(item.symbol, item.symbol),
-                "rank": item.rank,
-                "role": f"dragon-{item.rank}",
-                "score": item.score,
-                "confidence": item.confidence,
-                "components": item.components,
-            })
+        for profile, ranked in ranked_by_profile.items():
+            for item in ranked:
+                assignments.append({
+                    "profile": profile,
+                    "board_symbol": symbol,
+                    "board_name": board["name"],
+                    "board_classification": board["classification"],
+                    "board_source": board.get("source_label"),
+                    "member_symbol": item.symbol,
+                    "member_name": names.get(item.symbol, item.symbol),
+                    "rank": item.rank,
+                    "role": f"{profile}-recognition-{item.rank}",
+                    "score": item.score,
+                    "confidence": item.confidence,
+                    "components": item.components,
+                })
         if index % 100 == 0:
             print(f"ranking boards={index}/{len(boards)} assignments={len(assignments)}", flush=True)
 
@@ -122,7 +147,9 @@ def main() -> None:
         "lookback_start": start_date.isoformat(),
         "board_count": len(boards),
         "stock_count": len(stocks),
-        "ranked_board_count": len(assignments) // 2,
+        "ranked_board_count": ranked_board_count,
+        "profiles": [RECENT_PROFILE, HISTORICAL_PROFILE],
+        "profile_limits": {RECENT_PROFILE: 2, HISTORICAL_PROFILE: max(2, args.historical_limit)},
         "skipped_board_count": skipped,
         "assignments": assignments,
         "elapsed_seconds": round(time.perf_counter() - started, 3),
@@ -130,7 +157,14 @@ def main() -> None:
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     if args.apply:
-        _apply(args.base_url, args.group_name, assignments, report, list(stocks))
+        _apply(
+            args.base_url,
+            args.group_name or args.recent_group_name,
+            args.historical_group_name,
+            assignments,
+            report,
+            list(stocks),
+        )
     print(json.dumps({key: report[key] for key in (
         "algorithm_version", "as_of_date", "board_count", "stock_count",
         "ranked_board_count", "skipped_board_count", "elapsed_seconds",
@@ -173,17 +207,24 @@ def _bars(base_url: str, symbol: str, start: date, end: date) -> list[dict[str, 
 
 def _apply(
     base_url: str,
-    group_name: str,
+    recent_group_name: str,
+    historical_group_name: str,
     assignments: list[dict[str, object]],
     report: dict[str, object],
     universe_symbols: list[str],
 ) -> None:
     by_symbol: dict[str, list[dict[str, object]]] = defaultdict(list)
-    ranks: dict[str, set[int]] = defaultdict(set)
+    ranks: dict[str, set[tuple[str, int]]] = defaultdict(set)
     for item in assignments:
         by_symbol[str(item["member_symbol"])].append(item)
-        ranks[str(item["member_symbol"])].add(int(item["rank"]))
-    managed_tag_names = {"板块龙1", "板块龙2"}
+        ranks[str(item["member_symbol"])].add((str(item["profile"]), int(item["rank"])))
+    managed_tags = {
+        (RECENT_PROFILE, 1): "近期板块龙1",
+        (RECENT_PROFILE, 2): "近期板块龙2",
+        (HISTORICAL_PROFILE, 1): "历史板块龙1",
+        (HISTORICAL_PROFILE, 2): "历史板块龙2",
+    }
+    managed_tag_names = {"板块龙1", "板块龙2", "历史高权", *managed_tags.values()}
     existing_tags: dict[str, list[str]] = {}
     for offset in range(0, len(universe_symbols), 500):
         query = urlencode([("symbol", item) for item in universe_symbols[offset : offset + 500]])
@@ -195,38 +236,90 @@ def _apply(
     })
     for index, symbol in enumerate(symbols, start=1):
         retained = [tag for tag in existing_tags.get(symbol, []) if tag not in managed_tag_names]
-        managed = [tag for rank, tag in ((1, "板块龙1"), (2, "板块龙2")) if rank in ranks[symbol]]
-        available = max(0, 8 - len(managed))
-        _request(base_url, f"/api/instruments/{quote(symbol, safe='')}/tags", "PUT", {"tags": retained[:available] + managed})
+        managed = [tag for key, tag in managed_tags.items() if key in ranks[symbol]]
+        if any(profile == HISTORICAL_PROFILE and rank >= 3 for profile, rank in ranks[symbol]):
+            managed.append("历史高权")
+        retained = retained[:8]
+        available = max(0, 8 - len(retained))
+        _request(base_url, f"/api/instruments/{quote(symbol, safe='')}/tags", "PUT", {"tags": retained + managed[:available]})
         if index % 100 == 0:
             print(f"tags updated={index}/{len(symbols)}", flush=True)
 
-    dragons = [item for item in assignments if item["rank"] == 1]
-    dragon_by_symbol: dict[str, list[dict[str, object]]] = defaultdict(list)
-    for item in dragons:
-        dragon_by_symbol[str(item["member_symbol"])].append(item)
+    groups = _get(base_url, "/api/custom-groups")["items"]
+    _upsert_recognition_group(
+        base_url,
+        groups,
+        recent_group_name,
+        assignments,
+        report,
+        RECENT_PROFILE,
+        {1},
+        aliases={"全市场辨识度品种"},
+    )
+    if any(item.get("profile") == HISTORICAL_PROFILE for item in assignments):
+        _upsert_recognition_group(
+            base_url,
+            groups,
+            historical_group_name,
+            assignments,
+            report,
+            HISTORICAL_PROFILE,
+            {int(item["rank"]) for item in assignments if item.get("profile") == HISTORICAL_PROFILE},
+        )
+
+
+def _upsert_recognition_group(
+    base_url: str,
+    groups: list[dict[str, object]],
+    group_name: str,
+    assignments: list[dict[str, object]],
+    report: dict[str, object],
+    profile: str,
+    included_ranks: set[int],
+    aliases: set[str] | None = None,
+) -> None:
+    algorithm_version = str(report.get("algorithm_version") or ALGORITHM_VERSION)
+    selected = [
+        item for item in assignments
+        if item.get("profile") == profile and int(item["rank"]) in included_ranks
+    ]
+    by_symbol: dict[str, list[dict[str, object]]] = defaultdict(list)
+    for item in selected:
+        by_symbol[str(item["member_symbol"])].append(item)
     members = []
     for symbol, items in sorted(
-        dragon_by_symbol.items(), key=lambda pair: (-len(pair[1]), -max(float(item["score"]) for item in pair[1]), pair[0])
+        by_symbol.items(),
+        key=lambda pair: (-len(pair[1]), -max(float(item["score"]) for item in pair[1]), pair[0]),
     ):
-        board_names = [str(item["board_name"]) for item in sorted(items, key=lambda row: -float(row["score"]))]
+        ordered = sorted(items, key=lambda row: (int(row["rank"]), -float(row["score"])))
+        board_names = [str(item["board_name"]) for item in ordered]
         members.append({
             "symbol": symbol,
             "role": "core_identity",
-            "tags": [f"{name}龙1" for name in board_names[:12]],
-            "note": (f"{ALGORITHM_VERSION}；截至{report['as_of_date']}；龙1板块：" + "、".join(board_names))[:500],
+            "tags": [f"{item['board_name']}{'近期' if profile == RECENT_PROFILE else '历史'}龙{item['rank']}" for item in ordered[:12]],
+            "note": (
+                f"{algorithm_version}；截至{report['as_of_date']}；"
+                f"{'近期高权' if profile == RECENT_PROFILE else '历史高权'}板块：" + "、".join(board_names)
+            )[:500],
         })
     payload = {
         "name": group_name,
-        "description": f"{ALGORITHM_VERSION} 日线量价代理排名；截至 {report['as_of_date']}；当前成分关系，不代表永久龙头。",
+        "description": (
+            f"{algorithm_version} 日线量价代理排名；截至 {report['as_of_date']}；"
+            f"{'强调近期强度、容量和板块联动' if profile == RECENT_PROFILE else '强调跨阶段重复活跃、历史峰值和长期板块联动'}；"
+            "使用当前成分关系，不代表永久龙头。"
+        ),
         "members": members,
     }
-    groups = _get(base_url, "/api/custom-groups?" + urlencode({"query": group_name}))["items"]
     exact = next((item for item in groups if item["name"] == group_name), None)
+    if exact is None:
+        accepted_aliases = aliases or set()
+        exact = next((item for item in groups if item["name"] in accepted_aliases), None)
     if exact:
         _request(base_url, f"/api/custom-groups/{exact['id']}", "PUT", payload)
     else:
-        _request(base_url, "/api/custom-groups", "POST", payload)
+        created = _request(base_url, "/api/custom-groups", "POST", payload)
+        groups.append(created)
 
 
 def _get(base_url: str, path: str) -> dict[str, object]:
