@@ -28,6 +28,13 @@ build-*/
 *.key
 config/*.local.yaml
 data/
+# Trading-system learning media stays external to source control and packages.
+data/trading-system-learning/**/*.mp4
+data/trading-system-learning/**/*.m4a
+data/trading-system-learning/**/*.mkv
+data/trading-system-learning/**/*.webm
+data/trading-system-learning/**/*.mov
+data/trading-system-learning/**/*.avi
 logs/
 outputs/
 runs/
