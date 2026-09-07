@@ -56,7 +56,7 @@ from stock_harness.trend_context import (
 )
 
 
-ALGORITHM_VERSION = "trend-causal-replay-v24"
+ALGORITHM_VERSION = "trend-causal-replay-v25"
 LOGGER = logging.getLogger(__name__)
 
 
@@ -682,6 +682,7 @@ def _generated_items(
                 "major_target_price": line.major_target_price,
                 "first_risk_reward": line.first_risk_reward,
                 "major_risk_reward": line.major_risk_reward,
+                "trade_scenario": line.trade_scenario,
                 "score": line.score,
                 "score_components": {"shared_major_line_detector": 1.0},
                 "invalidation_reason": None,

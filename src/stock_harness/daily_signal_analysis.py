@@ -11,7 +11,11 @@ from statistics import fmean, median
 
 from stock_harness.models import StoredDailyBar
 from stock_harness.pattern_analysis import PatternAnalysisService
-from stock_harness.trade_scenarios import TradeDirection, calculate_risk_reward
+from stock_harness.trade_scenarios import (
+    TradeDirection,
+    TradeTargetSide,
+    build_trade_scenario,
+)
 
 
 ALGORITHM_VERSION = "daily-market-board-observation-v3"
@@ -373,25 +377,33 @@ def _price_space(
         ((period, value) for period, value in lows if value < latest.close - buffer),
         key=lambda item: item[1], default=None,
     )
-    risk_reward = None
-    if (
-        upside is not None and entry is not None and invalidation is not None
-        and upside[1] > entry > invalidation
-    ):
-        risk_reward = calculate_risk_reward(
-            TradeDirection.LONG, entry, invalidation, upside[1]
-        )
+    targets = []
+    if upside is not None:
+        targets.append((upside[1], f"{upside[0]}-session-high", TradeTargetSide.UPSIDE))
+    if downside is not None:
+        targets.append((downside[1], f"{downside[0]}-session-low", TradeTargetSide.DOWNSIDE))
+    scenario = build_trade_scenario(
+        method="causal-range-levels-v1",
+        direction=TradeDirection.LONG,
+        entry_price=entry,
+        invalidation_price=invalidation,
+        targets=targets,
+        setup_basis=setup_basis,
+        assumptions=("daily bars only", "historical range levels exclude the latest bar"),
+    )
+    upside_target = next(
+        (target for target in scenario.targets if target.side is TradeTargetSide.UPSIDE),
+        None,
+    )
+    risk_reward = upside_target.risk_reward_ratio if upside_target is not None else None
 
     return {
-        "method": "causal-range-levels-v1",
+        **scenario.to_payload(),
         "upside_target": _target_payload(upside),
         "downside_target": _target_payload(downside),
         "entry_price": _round(entry),
         "invalidation_price": _round(invalidation),
         "risk_reward_ratio": _round(risk_reward),
-        "has_trade_space": bool(risk_reward is not None and risk_reward >= 1.5),
-        "minimum_risk_reward": 1.5,
-        "setup_basis": setup_basis,
     }
 
 
