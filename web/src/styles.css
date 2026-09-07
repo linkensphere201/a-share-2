@@ -312,7 +312,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .list-state { padding: 18px 8px; color: #788493; text-align: center; font-size: 11px; }
 .list-state.error { color: #d38181; }
 
-.workspace { min-width: 0; min-height: 0; display: grid; grid-template-rows: 50px 32px minmax(0, 1fr) 26px; }
+.workspace { min-width: 0; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: 50px 32px minmax(0, 1fr) 26px; }
+.workspace > * { min-width: 0; }
 .toolbar {
   display: flex;
   align-items: center;
@@ -1391,8 +1392,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   color: #788493;
   font-size: 10px;
 }
-.runtime-events { min-width: 0; flex: 1; align-self: stretch; display: flex; align-items: center; }
+.runtime-events { min-width: 0; overflow: hidden; flex: 1 1 0; align-self: stretch; display: flex; align-items: center; }
 .runtime-event-summary {
+  width: 100%;
   min-width: 0;
   max-width: 100%;
   height: 100%;
@@ -1406,7 +1408,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 }
 .runtime-event-summary:disabled { opacity: 1; }
 .runtime-event-summary > i { width: 5px; height: 5px; border-radius: 50%; background: #5db68a; }
-.runtime-event-summary > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.runtime-event-summary > span { min-width: 0; overflow: hidden; flex: 1 1 0; text-overflow: ellipsis; white-space: nowrap; }
 .runtime-event-summary > b { min-width: 16px; padding: 1px 4px; border-radius: 3px; background: #303743; color: #c6ccd5; font-size: 9px; }
 .runtime-events.warning .runtime-event-summary { color: #d2ab68; }
 .runtime-events.error .runtime-event-summary, .runtime-events.critical .runtime-event-summary { color: #db7f88; }

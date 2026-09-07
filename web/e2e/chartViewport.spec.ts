@@ -52,3 +52,24 @@ test('left drag pans the main chart in both dimensions', async ({ page }) => {
   expect(after.y - before.y).toBeGreaterThan(35)
   expect(after.y - before.y).toBeLessThan(75)
 })
+
+test('long runtime warnings cannot push the chart outside the viewport', async ({ page }) => {
+  const marker = `layout-regression-${'x'.repeat(950)}`
+  const response = await page.request.post('http://127.0.0.1:8001/api/runtime-events', {
+    data: { level: 'WARNING', logger: 'layout-regression', message: marker },
+  })
+  expect(response.ok()).toBeTruthy()
+  await page.goto('http://127.0.0.1:5173')
+  const stage = page.locator('.chart-stage').first()
+  await expect(stage.locator('.chart-state')).toHaveCount(0, { timeout: 15_000 })
+  await expect(page.locator('.runtime-event-summary')).toContainText('layout-regression', {
+    timeout: 5_000,
+  })
+
+  const bounds = await stage.boundingBox()
+  if (!bounds) throw new Error('Chart has no bounds')
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(1440)
+  expect(bounds.x).toBeGreaterThanOrEqual(0)
+  expect(bounds.x + bounds.width).toBeLessThanOrEqual(1440)
+  await candleCentroid(page)
+})
