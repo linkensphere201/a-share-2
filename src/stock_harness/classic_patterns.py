@@ -8,6 +8,10 @@ from enum import StrEnum
 from typing import Sequence
 
 from stock_harness.analysis_inputs import AnalysisBar
+from stock_harness.breakout_state import (
+    BreakoutDirection,
+    evaluate_directional_pattern_boundary,
+)
 from stock_harness.trend_pivots import PivotKind, PricePivot
 
 
@@ -164,35 +168,31 @@ def _build_pattern(
         if pattern_type is PatternType.DOUBLE_BOTTOM
         else max(first.price, last.price) * (1 + config.invalidation_buffer_percent)
     )
-    breakout_threshold = (
-        neckline * (1 + config.breakout_buffer_percent)
-        if pattern_type is PatternType.DOUBLE_BOTTOM
-        else neckline * (1 - config.breakout_buffer_percent)
+    events = evaluate_directional_pattern_boundary(
+        bars,
+        available_date=available_date,
+        direction=(
+            BreakoutDirection.UP
+            if pattern_type is PatternType.DOUBLE_BOTTOM
+            else BreakoutDirection.DOWN
+        ),
+        boundary_price_at=lambda _index: neckline,
+        invalidation_price=invalidation_price,
+        buffer_percent=config.breakout_buffer_percent,
     )
-    breakout_date: date | None = None
-    invalidation_date: date | None = None
-    trigger_index: int | None = None
-    for index, bar in enumerate(bars):
-        if bar.period_end < available_date:
-            continue
-        invalid = bar.close < invalidation_price if pattern_type is PatternType.DOUBLE_BOTTOM else bar.close > invalidation_price
-        breakout = bar.close > breakout_threshold if pattern_type is PatternType.DOUBLE_BOTTOM else bar.close < breakout_threshold
-        if breakout_date is None and breakout:
-            breakout_date = bar.period_end
-            trigger_index = index
-        if invalid:
-            invalidation_date = bar.period_end
-            break
     state = (
-        PatternState.INVALIDATED if invalidation_date is not None
-        else PatternState.CONFIRMED if breakout_date is not None
+        PatternState.INVALIDATED if events.invalidation_date is not None
+        else PatternState.CONFIRMED if events.breakout_date is not None
         else PatternState.FORMING
     )
     similarity_score = 1 - endpoint_error / config.endpoint_tolerance_percent
     prominence_score = min(1.0, prominence / (config.minimum_prominence_percent * 2))
     symmetry_score = 1 / leg_ratio
     duration_score = min(1.0, (last_index - first_index) / 40)
-    volume_ratio = _volume_ratio(bars, trigger_index) if trigger_index is not None else None
+    volume_ratio = (
+        _volume_ratio(bars, events.trigger_index)
+        if events.trigger_index is not None else None
+    )
     volume_score = min(1.0, (volume_ratio or 0) / 1.5)
     score = (
         0.30 * similarity_score + 0.25 * prominence_score
@@ -211,9 +211,9 @@ def _build_pattern(
             for item in (first, middle, last)
         ),
         neckline_price=neckline,
-        breakout_date=breakout_date,
+        breakout_date=events.breakout_date,
         invalidation_price=invalidation_price,
-        invalidation_date=invalidation_date,
+        invalidation_date=events.invalidation_date,
         score=round(score, 6),
         score_components={
             "endpoint_similarity": round(similarity_score, 6),

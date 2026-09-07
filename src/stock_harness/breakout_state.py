@@ -103,6 +103,63 @@ def evaluate_pattern_boundaries(
     )
 
 
+def evaluate_directional_pattern_boundary(
+    bars: Sequence[AnalysisBar],
+    *,
+    available_date: date,
+    direction: BreakoutDirection,
+    boundary_price_at: Callable[[int], float],
+    invalidation_price: float,
+    buffer_percent: float = 0.005,
+    invalidation_requires_trigger: bool = False,
+    inclusive_trigger: bool = False,
+) -> PatternBoundaryEvents:
+    """Evaluate one directional trigger boundary and its structural invalidation."""
+    if buffer_percent < 0:
+        raise ValueError("buffer_percent must be non-negative")
+    breakout_date: date | None = None
+    trigger_index: int | None = None
+    invalidation_date: date | None = None
+    for index, bar in enumerate(bars):
+        if bar.period_end < available_date:
+            continue
+        boundary = boundary_price_at(index)
+        if boundary <= 0:
+            continue
+        threshold = boundary * (
+            1 + buffer_percent
+            if direction is BreakoutDirection.UP else 1 - buffer_percent
+        )
+        crossed = (
+            bar.close >= threshold if direction is BreakoutDirection.UP
+            else bar.close <= threshold
+        ) if inclusive_trigger else (
+            bar.close > threshold if direction is BreakoutDirection.UP
+            else bar.close < threshold
+        )
+        if breakout_date is None and crossed:
+            breakout_date = bar.period_end
+            trigger_index = index
+        invalid = (
+            bar.close < invalidation_price
+            if direction is BreakoutDirection.UP
+            else bar.close > invalidation_price
+        )
+        can_invalidate = (
+            not invalidation_requires_trigger
+            or (trigger_index is not None and index > trigger_index)
+        )
+        if invalid and can_invalidate:
+            invalidation_date = bar.period_end
+            break
+    return PatternBoundaryEvents(
+        direction=direction if breakout_date is not None else None,
+        breakout_date=breakout_date,
+        trigger_index=trigger_index,
+        invalidation_date=invalidation_date,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class BreakoutConfig:
     trigger_buffer_percent: float = 0.005

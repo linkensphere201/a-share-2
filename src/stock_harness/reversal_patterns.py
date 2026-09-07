@@ -8,6 +8,11 @@ from enum import StrEnum
 from typing import Sequence
 
 from stock_harness.analysis_inputs import AnalysisBar
+from stock_harness.breakout_state import (
+    BreakoutDirection,
+    evaluate_directional_pattern_boundary,
+    resolve_pattern_completion_state,
+)
 from stock_harness.consolidation_patterns import BoundaryLine
 from stock_harness.trend_pivots import PivotKind, PricePivot
 
@@ -141,10 +146,20 @@ def _fit_v(
         if pattern_type is ReversalType.V_BOTTOM
         else pivot.price * (1 + config.invalidation_buffer_percent)
     )
-    invalidation_date = next((
-        bar.period_end for bar in bars[recovery_index + 1:]
-        if (bar.close < invalidation_price if pattern_type is ReversalType.V_BOTTOM else bar.close > invalidation_price)
-    ), None)
+    events = evaluate_directional_pattern_boundary(
+        bars,
+        available_date=bars[recovery_index].period_end,
+        direction=(
+            BreakoutDirection.UP
+            if pattern_type is ReversalType.V_BOTTOM
+            else BreakoutDirection.DOWN
+        ),
+        boundary_price_at=lambda _index: recovery_target,
+        invalidation_price=invalidation_price,
+        buffer_percent=0,
+        invalidation_requires_trigger=True,
+        inclusive_trigger=True,
+    )
     move_score = min(1.0, decline / (config.minimum_v_move_percent * 2))
     symmetry_score = 1 / leg_ratio
     recovery_score = min(1.0, (
@@ -162,7 +177,9 @@ def _fit_v(
         pattern_type=pattern_type,
         display_name="\u0056\u5f62\u5e95" if pattern_type is ReversalType.V_BOTTOM else "\u5012\u0056\u5f62\u9876",
         direction=direction,
-        state="invalidated" if invalidation_date else "confirmed",
+        state=resolve_pattern_completion_state(
+            events.breakout_date, events.invalidation_date
+        ),
         start_date=bars[left_index].period_end,
         end_date=bars[recovery_index].period_end,
         available_date=available_date,
@@ -181,9 +198,9 @@ def _fit_v(
         ),
         neckline_price=recovery_target,
         neckline_slope_per_bar=0.0,
-        breakout_date=bars[recovery_index].period_end,
+        breakout_date=events.breakout_date,
         invalidation_price=invalidation_price,
-        invalidation_date=invalidation_date,
+        invalidation_date=events.invalidation_date,
         score=round(score, 6),
         score_components={
             "move": round(move_score, 6),
@@ -235,27 +252,21 @@ def _fit_head_shoulders(
     available_date = max(item.confirmed_date for item in pivots)
     latest_index = len(bars) - 1
     neckline_latest = neckline_first.price + neckline_slope * (latest_index - indexes[1])
-    breakout_date: date | None = None
-    trigger_index: int | None = None
-    for index, bar in enumerate(bars):
-        if bar.period_end < available_date:
-            continue
-        neckline = neckline_first.price + neckline_slope * (index - indexes[1])
-        crossed = (
-            bar.close < neckline * (1 - config.breakout_buffer_percent)
-            if top else bar.close > neckline * (1 + config.breakout_buffer_percent)
-        )
-        if crossed:
-            breakout_date, trigger_index = bar.period_end, index
-            break
     invalidation_price = (
         pivots[2].price * (1 + config.invalidation_buffer_percent)
         if top else pivots[2].price * (1 - config.invalidation_buffer_percent)
     )
-    invalidation_date = next((
-        bar.period_end for bar in bars[(trigger_index + 1) if trigger_index is not None else latest_index + 1:]
-        if (bar.close > invalidation_price if top else bar.close < invalidation_price)
-    ), None)
+    events = evaluate_directional_pattern_boundary(
+        bars,
+        available_date=available_date,
+        direction=BreakoutDirection.DOWN if top else BreakoutDirection.UP,
+        boundary_price_at=lambda index: (
+            neckline_first.price + neckline_slope * (index - indexes[1])
+        ),
+        invalidation_price=invalidation_price,
+        buffer_percent=config.breakout_buffer_percent,
+        invalidation_requires_trigger=True,
+    )
     left_duration = indexes[2] - indexes[0]
     right_duration = indexes[4] - indexes[2]
     duration_ratio = max(left_duration, right_duration) / min(left_duration, right_duration)
@@ -265,14 +276,16 @@ def _fit_head_shoulders(
     prominence_score = min(1.0, prominence / (config.minimum_head_prominence_percent * 2))
     symmetry_score = 1 / duration_ratio
     neckline_score = 1 - min(1.0, abs(neckline_second.price - neckline_first.price) / shoulder_scale / 0.12)
-    volume_ratio = _volume_ratio(bars, trigger_index) if trigger_index is not None else None
+    volume_ratio = _volume_ratio(bars, events.trigger_index)
     volume_score = min(1.0, (volume_ratio or 0) / 1.5)
     score = 0.25 * shoulder_score + 0.30 * prominence_score + 0.20 * symmetry_score + 0.15 * neckline_score + 0.10 * volume_score
     return ReversalPattern(
         pattern_type=(ReversalType.HEAD_SHOULDERS_TOP if top else ReversalType.HEAD_SHOULDERS_BOTTOM),
         display_name="\u5934\u80a9\u9876" if top else "\u5934\u80a9\u5e95",
         direction="bearish" if top else "bullish",
-        state="invalidated" if invalidation_date else "confirmed" if breakout_date else "forming",
+        state=resolve_pattern_completion_state(
+            events.breakout_date, events.invalidation_date
+        ),
         start_date=pivots[0].pivot_date,
         end_date=pivots[4].pivot_date,
         available_date=available_date,
@@ -283,9 +296,9 @@ def _fit_head_shoulders(
         ),),
         neckline_price=neckline_latest,
         neckline_slope_per_bar=neckline_slope,
-        breakout_date=breakout_date,
+        breakout_date=events.breakout_date,
         invalidation_price=invalidation_price,
-        invalidation_date=invalidation_date,
+        invalidation_date=events.invalidation_date,
         score=round(score, 6),
         score_components={
             "shoulder_similarity": round(shoulder_score, 6),

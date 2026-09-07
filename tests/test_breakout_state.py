@@ -6,6 +6,7 @@ from stock_harness.breakout_state import (
     BreakoutState,
     StructuralEventKind,
     evaluate_breakout,
+    evaluate_directional_pattern_boundary,
     evaluate_latest_boundary_event,
     evaluate_pattern_boundaries,
 )
@@ -169,3 +170,24 @@ def test_pattern_boundaries_support_downward_escape_without_invalidation():
     assert result.breakout_date == bars[1].period_end
     assert result.trigger_index == 1
     assert result.invalidation_date is None
+
+
+def test_directional_pattern_boundary_can_require_trigger_before_invalidation():
+    bars = _bars([
+        (9.7, 9.9, 9.4, 9.5, 100),
+        (10.0, 10.4, 9.9, 10.3, 140),
+        (9.6, 9.8, 9.3, 9.4, 160),
+    ])
+
+    result = evaluate_directional_pattern_boundary(
+        bars,
+        available_date=bars[0].period_end,
+        direction=BreakoutDirection.UP,
+        boundary_price_at=lambda _index: 10,
+        invalidation_price=9.6,
+        invalidation_requires_trigger=True,
+    )
+
+    assert result.breakout_date == bars[1].period_end
+    assert result.trigger_index == 1
+    assert result.invalidation_date == bars[2].period_end
