@@ -35,6 +35,18 @@ class StructuralEventKind(StrEnum):
     NO_CHANGE = "no-structural-change"
 
 
+def resolve_pattern_completion_state(
+    breakout_date: date | None,
+    invalidation_date: date | None,
+) -> str:
+    """Map detector event dates to the shared persisted pattern state."""
+    if invalidation_date is not None:
+        return "invalidated"
+    if breakout_date is not None:
+        return "confirmed"
+    return "forming"
+
+
 @dataclass(frozen=True, slots=True)
 class BreakoutConfig:
     trigger_buffer_percent: float = 0.005

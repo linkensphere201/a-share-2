@@ -9,6 +9,7 @@ from stock_harness.consolidation_patterns import (
     ConsolidationType,
 )
 from stock_harness.generated_patterns import generate_pattern_items
+from stock_harness.breakout_state import resolve_pattern_completion_state
 from stock_harness.pattern_tolerances import build_pattern_tolerance_profile
 from stock_harness.pattern_ranking import rank_pattern_candidates
 from stock_harness.trend_lines_analysis import TrendHorizon
@@ -84,6 +85,14 @@ def test_generates_horizon_qualified_patterns_and_child_evidence():
         "short-pattern-double-bottom-0",
         "long-pattern-double-bottom-0",
     } <= parent_ids
+
+
+def test_shared_pattern_completion_state_uses_detector_event_dates() -> None:
+    day = date(2026, 1, 1)
+
+    assert resolve_pattern_completion_state(None, None) == "forming"
+    assert resolve_pattern_completion_state(day, None) == "confirmed"
+    assert resolve_pattern_completion_state(day, day + timedelta(days=1)) == "invalidated"
 
 
 def test_confirmed_triangle_keeps_its_downward_breakdown_direction(monkeypatch):
