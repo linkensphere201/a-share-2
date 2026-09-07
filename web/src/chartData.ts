@@ -249,6 +249,38 @@ function positiveNormalRange(from: number, to: number): NumericRange {
   return { from: from + shift, to: to + shift }
 }
 
+export function constrainPriceRangeToData(
+  range: NumericRange,
+  dataLow: number,
+  dataHigh: number,
+  logarithmic = false,
+  minimumDataOccupancy = 0.8,
+  maximumCenterOffsetFraction = 0.1,
+): NumericRange {
+  const transformedLow = transformPrice(Math.min(dataLow, dataHigh), logarithmic)
+  const transformedHigh = transformPrice(Math.max(dataLow, dataHigh), logarithmic)
+  const dataSpan = Math.max(Number.EPSILON, transformedHigh - transformedLow)
+  const candidateFrom = transformPrice(range.from, logarithmic)
+  const candidateTo = transformPrice(range.to, logarithmic)
+  const candidateSpan = Math.max(Number.EPSILON, candidateTo - candidateFrom)
+  const minimumSpan = dataSpan * 1.08
+  const maximumSpan = dataSpan / clamp(minimumDataOccupancy, 0.1, 1)
+  const span = clamp(candidateSpan, minimumSpan, maximumSpan)
+  const dataCenter = (transformedLow + transformedHigh) / 2
+  const maximumCenterOffset = span * maximumCenterOffsetFraction
+  const candidateCenter = (candidateFrom + candidateTo) / 2
+  const center = clamp(
+    candidateCenter,
+    dataCenter - maximumCenterOffset,
+    dataCenter + maximumCenterOffset,
+  )
+  const result = {
+    from: restorePrice(center - span / 2, logarithmic),
+    to: restorePrice(center + span / 2, logarithmic),
+  }
+  return logarithmic ? result : positiveNormalRange(result.from, result.to)
+}
+
 /**
  * Resizes the price viewport with the time viewport so a price/time slope keeps
  * the same screen angle. Values are transformed in logarithmic mode first.

@@ -14,6 +14,7 @@ import {
   candleColor,
   chooseLodBucket,
   clampLogicalRangeSpan,
+  constrainPriceRangeToData,
   remapLogicalRange,
   rescalePriceRange,
   snapLogicalRangeToDataEdge,
@@ -103,6 +104,22 @@ describe('aspect-locked price viewport', () => {
     expect(boundedPricePanDelta(100, 400)).toBe(25)
     expect(boundedPricePanDelta(1000, 400)).toBe(80)
     expect(boundedPricePanDelta(-1000, 400)).toBe(-80)
+  })
+
+  it('globally constrains accumulated price panning to visible data', () => {
+    const constrained = constrainPriceRangeToData({ from: 0, to: 1000 }, 20, 40)
+    expect(constrained.to - constrained.from).toBeCloseTo(20 / 0.8)
+    expect((constrained.from + constrained.to) / 2).toBeLessThan(33)
+    expect(constrained.from).toBeLessThanOrEqual(20)
+    expect(constrained.to).toBeGreaterThan(40)
+  })
+
+  it('applies the same accumulated-pan boundary in logarithmic mode', () => {
+    const constrained = constrainPriceRangeToData({ from: 0.01, to: 10000 }, 20, 40, true)
+    expect(constrained.from).toBeGreaterThan(10)
+    expect(constrained.to).toBeLessThan(80)
+    expect(constrained.from).toBeLessThan(20)
+    expect(constrained.to).toBeGreaterThan(40)
   })
 
   it('uses multiplicative translation and scaling in logarithmic mode', () => {

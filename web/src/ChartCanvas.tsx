@@ -41,6 +41,7 @@ import {
   chooseLodBucket,
   clamp,
   clampLogicalRangeSpan,
+  constrainPriceRangeToData,
   createRangeMeasurement,
   detectPriceGaps,
   latestReadout,
@@ -54,6 +55,7 @@ import {
   subtractYears,
   translatePriceRange,
   visibleBarStats,
+  visibleExtrema,
   type DailyBar,
   type NumericRange,
   type PriceViewportMetrics,
@@ -1020,9 +1022,20 @@ export function ChartCanvas({
     if (!(target instanceof HTMLElement) || !target.closest('.chart-host')) return
     const chart = chartRef.current
     const logical = chart.timeScale().getVisibleLogicalRange()
-    const range = chart.priceScale('right', 0).getVisibleRange()
-    if (!logical || !range) return
+    const visible = chart.timeScale().getVisibleRange()
+    const currentRange = chart.priceScale('right', 0).getVisibleRange()
+    if (!logical || !visible || !currentRange) return
+    const extrema = visibleExtrema(barsRef.current, String(visible.from), String(visible.to))
+    const range = extrema
+      ? constrainPriceRangeToData(
+          currentRange,
+          extrema.low.low,
+          extrema.high.high,
+          priceModeRef.current === 'log',
+        )
+      : currentRange
     const paneHeight = Math.max(1, chart.panes()[0]?.getHeight() ?? event.currentTarget.clientHeight)
+    chart.priceScale('right', 0).setVisibleRange(range)
     priceViewportRef.current = {
       range,
       timeUnits: Math.max(1, logical.to - logical.from) * bucketRef.current,
@@ -1064,9 +1077,23 @@ export function ChartCanvas({
       drag.paneHeight,
       priceModeRef.current === 'log',
     )
-    chart.priceScale('right', 0).setVisibleRange(nextRange)
+    const visible = chart.timeScale().getVisibleRange()
+    const extrema = visible && visibleExtrema(
+      barsRef.current,
+      String(visible.from),
+      String(visible.to),
+    )
+    const boundedRange = extrema
+      ? constrainPriceRangeToData(
+          nextRange,
+          extrema.low.low,
+          extrema.high.high,
+          priceModeRef.current === 'log',
+        )
+      : nextRange
+    chart.priceScale('right', 0).setVisibleRange(boundedRange)
     const viewport = priceViewportRef.current
-    if (viewport) priceViewportRef.current = { ...viewport, range: nextRange }
+    if (viewport) priceViewportRef.current = { ...viewport, range: boundedRange }
     setOverlayRevision(value => value + 1)
   }
 

@@ -68,10 +68,12 @@ test('vertical drag is dampened and capped without flattening prices', async ({ 
   if (!box) throw new Error('Chart has no bounds')
   const x = box.x + box.width * 0.56
   const y = box.y + box.height * 0.32
-  await page.mouse.move(x, y)
-  await page.mouse.down()
-  await page.mouse.move(x + 30, y + 520, { steps: 20 })
-  await page.mouse.up()
+  for (let index = 0; index < 5; index += 1) {
+    await page.mouse.move(x, y)
+    await page.mouse.down()
+    await page.mouse.move(x + 30, y + 520, { steps: 20 })
+    await page.mouse.up()
+  }
   await page.waitForTimeout(350)
   const after = await candleCentroid(page)
   expect(after.y - before.y).toBeGreaterThan(25)
