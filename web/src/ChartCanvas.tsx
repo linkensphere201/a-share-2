@@ -34,6 +34,7 @@ import {
 } from './chartProjection'
 import {
   aggregateBars,
+  boundedPricePanDelta,
   calculateChangePercent,
   calculateMacd,
   candleColor,
@@ -153,6 +154,7 @@ type PricePanDrag = {
   startY: number
   latestX: number
   latestY: number
+  axis: 'pending' | 'horizontal' | 'vertical'
   paneHeight: number
   range: NumericRange
 }
@@ -1035,6 +1037,7 @@ export function ChartCanvas({
       startY: event.clientY,
       latestX: event.clientX,
       latestY: event.clientY,
+      axis: 'pending',
       paneHeight,
       range,
     }
@@ -1046,9 +1049,18 @@ export function ChartCanvas({
     if (!drag || drag.pointerId !== event.pointerId || !chart) return
     drag.latestX = event.clientX
     drag.latestY = event.clientY
+    const horizontalDistance = Math.abs(event.clientX - drag.startX)
+    const verticalDistance = Math.abs(event.clientY - drag.startY)
+    if (drag.axis === 'pending' && Math.max(horizontalDistance, verticalDistance) >= 6) {
+      drag.axis = horizontalDistance >= verticalDistance ? 'horizontal' : 'vertical'
+    }
+    if (drag.axis === 'horizontal') {
+      chart.priceScale('right', 0).setVisibleRange(drag.range)
+      return
+    }
     const nextRange = translatePriceRange(
       drag.range,
-      event.clientY - drag.startY,
+      boundedPricePanDelta(event.clientY - drag.startY, drag.paneHeight),
       drag.paneHeight,
       priceModeRef.current === 'log',
     )
@@ -1065,9 +1077,7 @@ export function ChartCanvas({
     if (drag.captureTarget.hasPointerCapture(event.pointerId)) {
       drag.captureTarget.releasePointerCapture(event.pointerId)
     }
-    const horizontalDistance = Math.abs(drag.latestX - drag.startX)
-    const verticalDistance = Math.abs(drag.latestY - drag.startY)
-    if (horizontalDistance >= 12 && horizontalDistance >= verticalDistance * 2) {
+    if (drag.axis === 'horizontal') {
       refitPriceViewportRef.current()
     }
   }

@@ -56,7 +56,7 @@ async function mainPaneCandleOccupancy(page: import('@playwright/test').Page) {
   })
 }
 
-test('left drag pans the main chart in both dimensions', async ({ page }) => {
+test('vertical drag is dampened and capped without flattening prices', async ({ page }) => {
   await page.goto('http://127.0.0.1:5173')
   const stage = page.locator('.chart-stage').first()
   await expect(stage).toBeVisible()
@@ -70,15 +70,13 @@ test('left drag pans the main chart in both dimensions', async ({ page }) => {
   const y = box.y + box.height * 0.32
   await page.mouse.move(x, y)
   await page.mouse.down()
-  await page.mouse.move(x + 72, y + 54, { steps: 8 })
+  await page.mouse.move(x + 30, y + 520, { steps: 20 })
   await page.mouse.up()
   await page.waitForTimeout(350)
   const after = await candleCentroid(page)
-  // Horizontal samples clip at the pane edge, so their centroid moves less than the pointer.
-  expect(after.x - before.x).toBeGreaterThan(15)
-  expect(after.x - before.x).toBeLessThan(60)
-  expect(after.y - before.y).toBeGreaterThan(35)
-  expect(after.y - before.y).toBeLessThan(75)
+  expect(after.y - before.y).toBeGreaterThan(25)
+  expect(after.y - before.y).toBeLessThan(100)
+  expect(await mainPaneCandleOccupancy(page)).toBeGreaterThan(0.6)
 })
 
 test('dominant horizontal drag refits prices for the newly visible history', async ({ page }) => {

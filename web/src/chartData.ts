@@ -290,6 +290,16 @@ export function translatePriceRange(
   return logarithmic ? result : positiveNormalRange(result.from, result.to)
 }
 
+export function boundedPricePanDelta(
+  deltaPixels: number,
+  paneHeight: number,
+  sensitivity = 0.25,
+  maximumPaneFraction = 0.2,
+): number {
+  const maximum = Math.max(1, paneHeight) * maximumPaneFraction
+  return clamp(deltaPixels * sensitivity, -maximum, maximum)
+}
+
 export function calculateChangePercent(close: number, previousClose?: number): number | undefined {
   if (previousClose === undefined || previousClose === 0) return undefined
   return (close - previousClose) / previousClose * 100

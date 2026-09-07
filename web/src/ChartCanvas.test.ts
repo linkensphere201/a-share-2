@@ -10,6 +10,7 @@ import {
   aggregateBars,
   calculateMacd,
   calculateChangePercent,
+  boundedPricePanDelta,
   candleColor,
   chooseLodBucket,
   clampLogicalRangeSpan,
@@ -96,6 +97,12 @@ describe('aspect-locked price viewport', () => {
 
   it('translates the normal price window by the vertical drag distance', () => {
     expect(translatePriceRange({ from: 80, to: 120 }, 100, 400)).toEqual({ from: 90, to: 130 })
+  })
+
+  it('dampens vertical price panning and caps one gesture', () => {
+    expect(boundedPricePanDelta(100, 400)).toBe(25)
+    expect(boundedPricePanDelta(1000, 400)).toBe(80)
+    expect(boundedPricePanDelta(-1000, 400)).toBe(-80)
   })
 
   it('uses multiplicative translation and scaling in logarithmic mode', () => {
