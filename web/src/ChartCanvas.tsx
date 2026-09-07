@@ -36,7 +36,6 @@ import {
   aggregateBars,
   calculateChangePercent,
   calculateMacd,
-  calculatePriceScaleMargins,
   candleColor,
   chooseLodBucket,
   clamp,
@@ -47,11 +46,15 @@ import {
   movingAverage,
   previousCloseByDate,
   remapLogicalRange,
+  rescalePriceRange,
   snapLogicalRangeToDataEdge,
   subtractMonths,
   subtractYears,
+  translatePriceRange,
   visibleBarStats,
   type DailyBar,
+  type NumericRange,
+  type PriceViewportMetrics,
   type RangeMeasurement,
   type Readout,
   type RenderBar,
@@ -136,6 +139,17 @@ type TrendLineAnchorDrag = {
   startY: number
   latest: TrendLineDrawing
   moved: boolean
+}
+
+type LockedPriceViewport = PriceViewportMetrics & {
+  range: NumericRange
+}
+
+type PricePanDrag = {
+  pointerId: number
+  startY: number
+  paneHeight: number
+  range: NumericRange
 }
 
 type ChartCanvasProps = {
@@ -291,9 +305,11 @@ export function ChartCanvas({
   const bucketRef = useRef(1)
   const applyBucketRef = useRef<(bucket: number, preserve?: ViewportSnapshot) => void>(() => undefined)
   const recalculateLodRef = useRef<() => void>(() => undefined)
-  const resetAutoScaleRef = useRef<(visibleBars?: number, width?: number, low?: number, high?: number) => void>(() => undefined)
+  const resetAutoScaleRef = useRef<() => void>(() => undefined)
   const suppressLodRef = useRef(false)
   const timeAxisPointerActiveRef = useRef(false)
+  const priceViewportRef = useRef<LockedPriceViewport | undefined>(undefined)
+  const pricePanDragRef = useRef<PricePanDrag | undefined>(undefined)
   const coverageCallbackRef = useRef(onCoverageChange)
   const visibleRangeCallbackRef = useRef(onVisibleRangeChange)
   const paneRatiosCallbackRef = useRef(onPaneRatiosChange)
@@ -482,7 +498,17 @@ export function ChartCanvas({
         vertLine: { color: initialTheme.colors.crosshair, labelBackgroundColor: initialTheme.colors.raised },
         horzLine: { color: initialTheme.colors.crosshair, labelBackgroundColor: initialTheme.colors.raised },
       },
-      rightPriceScale: { borderColor: initialTheme.colors.border, scaleMargins: calculatePriceScaleMargins(0, 1) },
+      rightPriceScale: {
+        borderColor: initialTheme.colors.border,
+        autoScale: true,
+        scaleMargins: { top: 0.06, bottom: 0.06 },
+      },
+      handleScroll: {
+        mouseWheel: true,
+        pressedMouseMove: true,
+        horzTouchDrag: true,
+        vertTouchDrag: true,
+      },
       timeScale: {
         borderColor: initialTheme.colors.border,
         rightOffset: 3,
@@ -522,30 +548,32 @@ export function ChartCanvas({
     const ma5 = chart.addSeries(LineSeries, { color: '#e5b85c', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, ...compactCrosshairMarkerOptions })
     const ma20 = chart.addSeries(LineSeries, { color: '#57a7d9', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, ...compactCrosshairMarkerOptions })
     const ma60 = chart.addSeries(LineSeries, { color: '#b984cc', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, ...compactCrosshairMarkerOptions })
-    const resetAutoScale = (visibleBars?: number, width?: number, low?: number, high?: number) => {
-      const visible = chart.timeScale().getVisibleRange()
-      const stats = visibleBars === undefined || low === undefined || high === undefined
-        ? visible
-          ? visibleBarStats(barsRef.current, String(visible.from), String(visible.to))
-          : visibleBarStats(barsRef.current)
-        : { count: visibleBars, low, high }
-      const resolvedBars = visibleBars ?? stats.count
-      const resolvedWidth = width ?? chart.timeScale().width() ?? hostRef.current?.clientWidth ?? 1
+    const resetAutoScale = () => {
       const logicalRange = chart.timeScale().getVisibleLogicalRange()
-      const visibleLogicalBars = logicalRange
-        ? Math.max(1, logicalRange.to - logicalRange.from)
-        : resolvedBars
-      const zeroSafeRange = priceModeRef.current === 'normal'
-      chart.priceScale('right', 0).applyOptions({
-        autoScale: true,
-        scaleMargins: calculatePriceScaleMargins(
-          resolvedBars,
-          resolvedWidth,
-          zeroSafeRange ? low ?? stats.low : undefined,
-          zeroSafeRange ? high ?? stats.high : undefined,
-          visibleLogicalBars,
-        ),
-      })
+      if (!logicalRange) return
+      const scale = chart.priceScale('right', 0)
+      const width = Math.max(1, chart.timeScale().width() || hostRef.current?.clientWidth || 1)
+      const height = Math.max(1, chart.panes()[0]?.getHeight() || hostRef.current?.clientHeight || 1)
+      const metrics: PriceViewportMetrics = {
+        timeUnits: Math.max(1, logicalRange.to - logicalRange.from) * bucketRef.current,
+        width,
+        height,
+      }
+      const previous = priceViewportRef.current
+      if (!previous) {
+        scale.setAutoScale(true)
+        const visibleRange = scale.getVisibleRange()
+        if (visibleRange) priceViewportRef.current = { ...metrics, range: visibleRange }
+      } else {
+        const nextRange = rescalePriceRange(
+          previous.range,
+          previous,
+          metrics,
+          priceModeRef.current === 'log',
+        )
+        scale.setVisibleRange(nextRange)
+        priceViewportRef.current = { ...metrics, range: nextRange }
+      }
       chart.panes().slice(1).forEach((_, index) => {
         chart.priceScale('right', index + 1).applyOptions({ autoScale: true })
       })
@@ -595,7 +623,7 @@ export function ChartCanvas({
         const visible = chart.timeScale().getVisibleRange()
         if (!visible || !hostRef.current) return
         const stats = visibleBarStats(barsRef.current, String(visible.from), String(visible.to))
-        resetAutoScale(stats.count, chart.timeScale().width(), stats.low, stats.high)
+        if (!timeAxisPointerActiveRef.current) resetAutoScale()
         const nextBucket = chooseLodBucket(stats.count, hostRef.current.clientWidth)
         if (nextBucket !== bucketRef.current) {
           applyBucketRef.current(nextBucket, captureViewport(chart, renderedBarListRef.current.length))
@@ -875,11 +903,18 @@ export function ChartCanvas({
   }, [bars, averages, macd])
 
   useEffect(() => {
+    priceViewportRef.current = undefined
+    pricePanDragRef.current = undefined
+    chartRef.current?.priceScale('right', 0).setAutoScale(true)
+  }, [symbol, asOfDate, range])
+
+  useEffect(() => {
     priceModeRef.current = priceMode
-    chartRef.current?.priceScale('right', 0).applyOptions({
-      autoScale: true,
-      mode: priceMode === 'log' ? PriceScaleMode.Logarithmic : PriceScaleMode.Normal,
-    })
+    priceViewportRef.current = undefined
+    pricePanDragRef.current = undefined
+    const scale = chartRef.current?.priceScale('right', 0)
+    scale?.applyOptions({ mode: priceMode === 'log' ? PriceScaleMode.Logarithmic : PriceScaleMode.Normal })
+    scale?.setAutoScale(true)
     resetAutoScaleRef.current()
     window.requestAnimationFrame(() => setOverlayRevision(value => value + 1))
   }, [priceMode])
@@ -923,6 +958,50 @@ export function ChartCanvas({
     setMeasurement(undefined)
     setRangeSelection(undefined)
     setSelectionBox({ left: point.x, top: point.y, width: 0, height: 0 })
+  }
+
+  const handlePricePanStart = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0 || drawingTool !== 'browse' || !chartRef.current) return
+    const target = event.target
+    if (!(target instanceof Element) || !target.closest('.chart-host')) return
+    const chart = chartRef.current
+    const logical = chart.timeScale().getVisibleLogicalRange()
+    const range = chart.priceScale('right', 0).getVisibleRange()
+    if (!logical || !range) return
+    const paneHeight = Math.max(1, chart.panes()[0]?.getHeight() ?? event.currentTarget.clientHeight)
+    priceViewportRef.current = {
+      range,
+      timeUnits: Math.max(1, logical.to - logical.from) * bucketRef.current,
+      width: Math.max(1, chart.timeScale().width() || event.currentTarget.clientWidth),
+      height: paneHeight,
+    }
+    pricePanDragRef.current = {
+      pointerId: event.pointerId,
+      startY: event.clientY,
+      paneHeight,
+      range,
+    }
+  }
+
+  const handlePricePanMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = pricePanDragRef.current
+    const chart = chartRef.current
+    if (!drag || drag.pointerId !== event.pointerId || !chart) return
+    const nextRange = translatePriceRange(
+      drag.range,
+      event.clientY - drag.startY,
+      drag.paneHeight,
+      priceModeRef.current === 'log',
+    )
+    chart.priceScale('right', 0).setVisibleRange(nextRange)
+    const viewport = priceViewportRef.current
+    if (viewport) priceViewportRef.current = { ...viewport, range: nextRange }
+    setOverlayRevision(value => value + 1)
+  }
+
+  const handlePricePanEnd = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (pricePanDragRef.current?.pointerId !== event.pointerId) return
+    pricePanDragRef.current = undefined
   }
 
   const handleSelectionMove = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -1367,17 +1446,22 @@ export function ChartCanvas({
       className={`${selectionDragRef.current ? 'chart-stage selecting' : 'chart-stage'}${trendIsolation ? ' trend-isolated' : ''}`}
       onPointerDown={handleSelectionStart}
       onPointerDownCapture={event => {
-        if (event.button === 0) timeAxisPointerActiveRef.current = true
+        if (event.button !== 0) return
+        timeAxisPointerActiveRef.current = true
+        handlePricePanStart(event)
       }}
+      onPointerMoveCapture={handlePricePanMove}
       onPointerMove={handleSelectionMove}
       onPointerUp={handleSelectionEnd}
       onPointerUpCapture={event => {
         if (event.button !== 0) return
+        handlePricePanEnd(event)
         timeAxisPointerActiveRef.current = false
         recalculateLodRef.current()
       }}
       onPointerCancel={handleSelectionCancel}
       onPointerCancelCapture={() => {
+        pricePanDragRef.current = undefined
         timeAxisPointerActiveRef.current = false
         recalculateLodRef.current()
       }}

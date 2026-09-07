@@ -211,25 +211,67 @@ export function snapLogicalRangeToDataEdge(
   return { from: range.from + delta, to: range.to + delta }
 }
 
-export function calculatePriceScaleMargins(
-  visibleBars: number,
-  width: number,
-  low?: number,
-  high?: number,
-  visibleLogicalBars?: number,
-): { top: number; bottom: number } {
-  const density = Math.max(0, visibleBars) / Math.max(1, width)
-  const whitespaceCompression = visibleBars > 0 && visibleLogicalBars !== undefined
-    ? Math.max(1, visibleLogicalBars / visibleBars)
-    : 1
-  const compression = Math.max(1, density / 0.35, whitespaceCompression)
-  const occupancy = clamp(0.88 / compression ** 0.25, 0.38, 0.88)
-  const totalMargin = 1 - occupancy
-  let bottom = totalMargin / 2
-  if (low !== undefined && high !== undefined && low > 0 && high > low) {
-    bottom = Math.min(bottom, low * occupancy / (high - low))
+export type NumericRange = { from: number; to: number }
+
+export type PriceViewportMetrics = {
+  timeUnits: number
+  width: number
+  height: number
+}
+
+function transformPrice(value: number, logarithmic: boolean): number {
+  return logarithmic ? Math.log(Math.max(value, Number.EPSILON)) : value
+}
+
+function restorePrice(value: number, logarithmic: boolean): number {
+  return logarithmic ? Math.exp(value) : value
+}
+
+function positiveNormalRange(from: number, to: number): NumericRange {
+  if (from > 0) return { from, to }
+  const shift = Number.EPSILON - from
+  return { from: from + shift, to: to + shift }
+}
+
+/**
+ * Resizes the price viewport with the time viewport so a price/time slope keeps
+ * the same screen angle. Values are transformed in logarithmic mode first.
+ */
+export function rescalePriceRange(
+  range: NumericRange,
+  previous: PriceViewportMetrics,
+  next: PriceViewportMetrics,
+  logarithmic = false,
+): NumericRange {
+  const previousFrom = transformPrice(range.from, logarithmic)
+  const previousTo = transformPrice(range.to, logarithmic)
+  const previousSpan = Math.max(Number.EPSILON, previousTo - previousFrom)
+  const previousProjection = Math.max(Number.EPSILON, previous.timeUnits * previous.height / Math.max(1, previous.width))
+  const nextProjection = Math.max(Number.EPSILON, next.timeUnits * next.height / Math.max(1, next.width))
+  const nextSpan = previousSpan * nextProjection / previousProjection
+  const center = (previousFrom + previousTo) / 2
+  const result = {
+    from: restorePrice(center - nextSpan / 2, logarithmic),
+    to: restorePrice(center + nextSpan / 2, logarithmic),
   }
-  return { top: totalMargin - bottom, bottom }
+  return logarithmic ? result : positiveNormalRange(result.from, result.to)
+}
+
+/** Moves the price viewport by the same number of pixels as a vertical drag. */
+export function translatePriceRange(
+  range: NumericRange,
+  deltaPixels: number,
+  paneHeight: number,
+  logarithmic = false,
+): NumericRange {
+  const from = transformPrice(range.from, logarithmic)
+  const to = transformPrice(range.to, logarithmic)
+  const offset = (to - from) * deltaPixels / Math.max(1, paneHeight)
+  const result = {
+    from: restorePrice(from + offset, logarithmic),
+    to: restorePrice(to + offset, logarithmic),
+  }
+  return logarithmic ? result : positiveNormalRange(result.from, result.to)
 }
 
 export function calculateChangePercent(close: number, previousClose?: number): number | undefined {

@@ -9,11 +9,11 @@ import {
 import {
   aggregateBars,
   calculateMacd,
-  calculatePriceScaleMargins,
   calculateChangePercent,
   candleColor,
   chooseLodBucket,
   remapLogicalRange,
+  rescalePriceRange,
   snapLogicalRangeToDataEdge,
   createRangeMeasurement,
   detectPriceGaps,
@@ -23,6 +23,7 @@ import {
   mergeProvisionalBar,
   millisecondsUntilMarketSession,
   shouldUseFinalDailyRefresh,
+  translatePriceRange,
   visibleExtrema,
   visibleUnfilledPriceGaps,
   type DailyBar,
@@ -66,45 +67,49 @@ describe('chart layout', () => {
   })
 })
 
-describe('density-coupled price scale', () => {
-  const occupancy = (bars: number, width = 800) => {
-    const margins = calculatePriceScaleMargins(bars, width)
-    return 1 - margins.top - margins.bottom
-  }
+describe('aspect-locked price viewport', () => {
+  const projectedSlopeRatio = (
+    range: { from: number; to: number },
+    metrics: { timeUnits: number; width: number; height: number },
+  ) => metrics.height * metrics.timeUnits / ((range.to - range.from) * metrics.width)
 
-  it('keeps short ranges readable and progressively shrinks long-history shapes', () => {
-    expect(occupancy(250)).toBeCloseTo(0.88)
-    expect(occupancy(750)).toBeGreaterThan(0.65)
-    expect(occupancy(750)).toBeLessThan(0.72)
-    expect(occupancy(2500)).toBeGreaterThan(0.48)
-    expect(occupancy(2500)).toBeLessThan(0.54)
-    expect(occupancy(6000)).toBeGreaterThan(0.39)
-    expect(occupancy(6000)).toBeLessThan(0.43)
+  it('keeps the projected price/time slope unchanged while zooming', () => {
+    const previous = { timeUnits: 120, width: 800, height: 480 }
+    const next = { timeUnits: 360, width: 800, height: 480 }
+    const initial = { from: 8, to: 32 }
+    const resized = rescalePriceRange(initial, previous, next)
+
+    expect(projectedSlopeRatio(resized, next)).toBeCloseTo(projectedSlopeRatio(initial, previous))
+    expect(resized.from).toBeGreaterThanOrEqual(0)
+    expect(resized.to).toBeCloseTo(72)
   })
 
-  it('uses symmetric margins and enforces a long-history readability floor', () => {
-    const margins = calculatePriceScaleMargins(20_000, 800)
-    expect(margins.top).toBeCloseTo(margins.bottom)
-    expect(1 - margins.top - margins.bottom).toBeCloseTo(0.38)
+  it('accounts for chart resizing without changing the projected slope', () => {
+    const previous = { timeUnits: 120, width: 800, height: 480 }
+    const next = { timeUnits: 120, width: 1200, height: 600 }
+    const initial = { from: 80, to: 120 }
+    const resized = rescalePriceRange(initial, previous, next)
+
+    expect(projectedSlopeRatio(resized, next)).toBeCloseTo(projectedSlopeRatio(initial, previous))
   })
 
-  it('shrinks a short series vertically when zooming out into surrounding whitespace', () => {
-    const fitted = calculatePriceScaleMargins(37, 800, undefined, undefined, 37)
-    const zoomedOut = calculatePriceScaleMargins(37, 800, undefined, undefined, 370)
-    const fittedOccupancy = 1 - fitted.top - fitted.bottom
-    const zoomedOutOccupancy = 1 - zoomedOut.top - zoomedOut.bottom
-
-    expect(fittedOccupancy).toBeCloseTo(0.88)
-    expect(zoomedOutOccupancy).toBeLessThan(0.51)
-    expect(zoomedOutOccupancy).toBeGreaterThanOrEqual(0.38)
+  it('translates the normal price window by the vertical drag distance', () => {
+    expect(translatePriceRange({ from: 80, to: 120 }, 100, 400)).toEqual({ from: 90, to: 130 })
   })
 
-  it('moves unsafe bottom padding above the data instead of extending a positive price scale below zero', () => {
-    const margins = calculatePriceScaleMargins(5_500, 800, 0.89, 36.88)
-    const dataOccupancy = 1 - margins.top - margins.bottom
-    const projectedLowerExtension = (36.88 - 0.89) * margins.bottom / dataOccupancy
-    expect(projectedLowerExtension).toBeCloseTo(0.89)
-    expect(margins.top).toBeGreaterThan(margins.bottom)
+  it('uses multiplicative translation and scaling in logarithmic mode', () => {
+    const translated = translatePriceRange({ from: 10, to: 40 }, 200, 400, true)
+    expect(translated.from).toBeCloseTo(20)
+    expect(translated.to).toBeCloseTo(80)
+
+    const resized = rescalePriceRange(
+      { from: 10, to: 40 },
+      { timeUnits: 100, width: 800, height: 400 },
+      { timeUnits: 200, width: 800, height: 400 },
+      true,
+    )
+    expect(resized.from).toBeCloseTo(5)
+    expect(resized.to).toBeCloseTo(80)
   })
 })
 
