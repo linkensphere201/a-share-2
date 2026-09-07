@@ -10,6 +10,7 @@ import math
 from statistics import fmean, median
 
 from stock_harness.models import StoredDailyBar
+from stock_harness.pattern_analysis import PatternAnalysisService
 
 
 ALGORITHM_VERSION = "daily-market-board-observation-v3"
@@ -42,9 +43,10 @@ def analyze_daily_series(
     latest = visible[-1]
     closes = [bar.close for bar in visible]
     volumes = [bar.volume for bar in visible]
-    atr14 = _atr(visible, 14)
-    atr5 = _atr(visible, 5)
-    atr20 = _atr(visible, 20)
+    structure = PatternAnalysisService.scan_daily(visible)
+    atr14 = structure.atr14
+    atr5 = structure.atr5
+    atr20 = structure.atr20
     returns = {str(period): _return(closes, period) for period in (1, 5, 10, 20)}
     benchmark_returns = {
         str(period): _return([bar.close for bar in benchmark_bars], period)
@@ -68,13 +70,13 @@ def analyze_daily_series(
         if volume_enabled else None
     )
     atr_compression = _safe_ratio(atr5, atr20)
-    short_shape = _shape(closes, 14)
-    medium_shape = _shape(closes, 28)
+    short_shape = dict(structure.short_shape)
+    medium_shape = dict(structure.medium_shape)
     envelopes = {
-        label: _descending_upper_envelope(visible, period, atr14)
-        for label, period in (("3m", 63), ("6m", 126), ("1y", 250))
+        label: dict(value) if value is not None else None
+        for label, value in structure.descending_envelopes.items()
     }
-    downside = _downside_deceleration(visible, atr14)
+    downside = dict(structure.downside_deceleration)
     states: list[str] = []
     attention: list[str] = []
     disqualifiers: list[str] = []
@@ -320,84 +322,6 @@ def _return(values: Sequence[float], periods: int) -> float | None:
     return values[-1] / values[-periods - 1] - 1
 
 
-def _atr(bars: Sequence[StoredDailyBar], periods: int) -> float:
-    selected = bars[-(periods + 1):]
-    ranges = [
-        max(current.high - current.low, abs(current.high - previous.close),
-            abs(current.low - previous.close))
-        for previous, current in zip(selected, selected[1:])
-    ]
-    return fmean(ranges) if ranges else 0.0
-
-
-def _shape(closes: Sequence[float], periods: int) -> dict[str, object]:
-    values = list(closes[-periods:])
-    if len(values) < periods:
-        return {"state": "insufficient", "slope_per_10": None}
-    logs = [math.log(value) for value in values if value > 0]
-    if len(logs) != len(values):
-        return {"state": "invalid", "slope_per_10": None}
-    slope = _linear_slope(logs)
-    change = math.exp(slope * 10) - 1
-    state = "rising" if change >= .02 else "falling" if change <= -.02 else "sideways"
-    return {"state": state, "slope_per_10": _round(change)}
-
-
-def _descending_upper_envelope(
-    bars: Sequence[StoredDailyBar], periods: int, atr14: float,
-) -> dict[str, object] | None:
-    if len(bars) < periods + 1 or atr14 <= 0:
-        return None
-    history = list(bars[-(periods + 1):-1])
-    highs = [bar.high for bar in history]
-    slope = _linear_slope(highs)
-    if slope >= 0:
-        return None
-    intercept = fmean(highs) - slope * (len(highs) - 1) / 2
-    intercept += max(value - (intercept + slope * index) for index, value in enumerate(highs))
-    boundary = intercept + slope * len(highs)
-    latest = bars[-1]
-    distance = (boundary - latest.close) / atr14
-    buffer = max(boundary * .005, atr14 * .25)
-    state = "broken" if latest.close > boundary + buffer else "approaching" if 0 <= distance <= 1 else "none"
-    return {
-        "period_bars": periods, "boundary": _round(boundary),
-        "slope_per_bar": _round(slope), "distance_atr": _round(distance),
-        "state": state,
-    }
-
-
-def _downside_deceleration(
-    bars: Sequence[StoredDailyBar], atr14: float,
-) -> dict[str, object]:
-    closes = [bar.close for bar in bars]
-    latest = closes[-1]
-    high20 = max(bar.high for bar in bars[-20:])
-    ma20 = fmean(closes[-20:])
-    extended = atr14 > 0 and ((high20 - latest) / atr14 >= 2.5 or (ma20 - latest) / atr14 >= 1.5)
-    recent = closes[-6:]
-    prior = closes[-11:-5]
-    recent_negative = sum(abs(b / a - 1) for a, b in zip(recent, recent[1:]) if b < a)
-    prior_negative = sum(abs(b / a - 1) for a, b in zip(prior, prior[1:]) if b < a)
-    count = 0
-    facts: list[str] = []
-    if prior_negative > 0 and recent_negative <= prior_negative * .65:
-        count += 1; facts.append("negative-return-deceleration")
-    if latest >= min(closes[-4:]):
-        count += 1; facts.append("no-new-low-three-sessions")
-    recent_bodies = fmean(abs(bar.close - bar.open) for bar in bars[-3:])
-    prior_bodies = fmean(abs(bar.close - bar.open) for bar in bars[-8:-3])
-    if prior_bodies > 0 and recent_bodies <= prior_bodies * .8:
-        count += 1; facts.append("body-contraction")
-    recent_down_volume = [bar.volume for before, bar in zip(bars[-6:-1], bars[-5:]) if bar.close < before.close]
-    prior_down_volume = [bar.volume for before, bar in zip(bars[-11:-6], bars[-10:-5]) if bar.close < before.close]
-    if recent_down_volume and prior_down_volume and fmean(recent_down_volume) <= fmean(prior_down_volume) * .85:
-        count += 1; facts.append("sell-volume-contraction")
-    if _linear_slope([math.log(value) for value in closes[-14:]]) > _linear_slope([math.log(value) for value in closes[-28:-14]]):
-        count += 1; facts.append("slope-improvement")
-    return {"extended": extended, "deceleration_count": count, "facts": facts}
-
-
 def _price_space(
     bars: Sequence[StoredDailyBar], states: Sequence[str],
     envelopes: dict[str, dict[str, object] | None], atr14: float,
@@ -472,13 +396,6 @@ def _target_payload(target: tuple[int, float] | None) -> dict[str, object] | Non
     if target is None:
         return None
     return {"price": _round(target[1]), "lookback_sessions": target[0]}
-
-
-def _linear_slope(values: Sequence[float]) -> float:
-    count = len(values)
-    center = (count - 1) / 2
-    denominator = sum((index - center) ** 2 for index in range(count))
-    return sum((index - center) * value for index, value in enumerate(values)) / denominator if denominator else 0.0
 
 
 def _safe_ratio(left: float, right: float) -> float | None:

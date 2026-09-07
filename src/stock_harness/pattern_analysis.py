@@ -7,6 +7,8 @@ from datetime import date
 from enum import StrEnum
 
 from stock_harness.analysis_inputs import AnalysisHorizons, AnalysisTimeframe
+from stock_harness.models import StoredDailyBar
+from stock_harness.pattern_analysis_scan import DailyStructureScan, scan_daily_structure
 from stock_harness.sqlite_store import SQLiteMarketDataStore
 from stock_harness.trend_analysis import TrendAnalysisService
 from stock_harness.trend_pivots import DirectionalChangeConfig
@@ -46,6 +48,10 @@ class PatternAnalysisService:
 
     def __init__(self, store: SQLiteMarketDataStore) -> None:
         self._delegate = TrendAnalysisService(store)
+
+    @staticmethod
+    def scan_daily(bars: tuple[StoredDailyBar, ...] | list[StoredDailyBar]) -> DailyStructureScan:
+        return scan_daily_structure(bars)
 
     def analyze(self, request: PatternAnalysisRequest) -> list[dict[str, object]]:
         request.validate()
