@@ -168,6 +168,7 @@ type ChartCanvasProps = {
   trendAnalysisEnabled?: boolean
   showTentativePivots?: boolean
   shortTrendLinesVisible?: boolean
+  mediumTrendLinesVisible?: boolean
   longTrendLinesVisible?: boolean
   keyLevelsVisible?: boolean
   volumeZonesVisible?: boolean
@@ -246,6 +247,7 @@ export function ChartCanvas({
   trendAnalysisEnabled = false,
   showTentativePivots = true,
   shortTrendLinesVisible = true,
+  mediumTrendLinesVisible = true,
   longTrendLinesVisible = true,
   keyLevelsVisible = true,
   volumeZonesVisible = true,
@@ -1328,6 +1330,7 @@ export function ChartCanvas({
     shortTrendLinesVisible,
     longTrendLinesVisible,
     highlightedAnalysisItemId,
+    mediumTrendLinesVisible,
   )
   const generatedZones = projectGeneratedZones(
     displayedTrendAnalysis,

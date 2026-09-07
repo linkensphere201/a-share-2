@@ -16,8 +16,8 @@ from stock_harness.major_descending_lines import (
     MajorDescendingLine, MajorLineDiagnostics, MajorLinePeriod, MajorLineState,
     detect_major_descending_lines,
 )
+from stock_harness.pattern_analysis import PatternAnalysisRequest, PatternAnalysisService
 from stock_harness.sqlite_store import SQLiteMarketDataStore
-from stock_harness.trend_analysis import TrendAnalysisService
 
 
 LOGGER = logging.getLogger(__name__)
@@ -35,7 +35,7 @@ class ScreenerService:
     def __init__(self, store: SQLiteMarketDataStore) -> None:
         self._store = store
         self._inputs = AnalysisInputService(store)
-        self._analysis = TrendAnalysisService(store)
+        self._analysis = PatternAnalysisService(store)
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
         recovered = store.recover_interrupted_screener_runs()
@@ -156,10 +156,12 @@ class ScreenerService:
         )
         retained: list[dict[str, object]] = []
         for instrument, line, structure in candidates[:max_results]:
-            analysis = self._analysis.recalculate(
-                instrument["symbol"], [AnalysisTimeframe.DAILY], DEFAULT_HORIZONS,
+            analysis = self._analysis.analyze(PatternAnalysisRequest(
+                symbol=instrument["symbol"],
+                timeframes=(AnalysisTimeframe.DAILY,),
+                horizons=DEFAULT_HORIZONS,
                 config_version=CONFIG_VERSION, include_preview=False, as_of_date=cutoff,
-            )[0]
+            ))[0]
             if not any(item["item_id"] == line.item_id for item in analysis["items"]):
                 raise RuntimeError(
                     f"screening line is absent from linked analysis: {instrument['symbol']} {line.item_id}"

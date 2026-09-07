@@ -22,6 +22,7 @@ from stock_harness.trend_pivots import (
 
 class TrendHorizon(StrEnum):
     SHORT = "short"
+    MEDIUM = "medium"
     LONG = "long"
 
 

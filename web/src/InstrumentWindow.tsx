@@ -162,6 +162,7 @@ export function ChartWindow({
           trendAnalysisEnabled={chart.tradingSystems.trend.enabled || explanationOpen}
           showTentativePivots={Boolean(chart.tradingSystems.trend.settings.showTentativePivots)}
           shortTrendLinesVisible={explanationOpen || chart.tradingSystems.trend.layers['short-trend-lines'] !== false}
+          mediumTrendLinesVisible={explanationOpen || chart.tradingSystems.trend.layers['medium-trend-lines'] !== false}
           longTrendLinesVisible={explanationOpen || chart.tradingSystems.trend.layers['long-trend-lines'] !== false}
           keyLevelsVisible={explanationOpen || chart.tradingSystems.trend.layers['key-levels'] !== false}
           volumeZonesVisible={chart.tradingSystems.trend.layers['volume-zones'] !== false}

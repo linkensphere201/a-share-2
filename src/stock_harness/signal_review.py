@@ -347,7 +347,10 @@ class SignalReviewService:
         queue_history: dict[str, dict[str, object]],
     ) -> dict[str, dict[str, object]]:
         from stock_harness.analysis_inputs import AnalysisHorizons, AnalysisTimeframe
-        from stock_harness.trend_analysis import TrendAnalysisService
+        from stock_harness.pattern_analysis import (
+            PatternAnalysisRequest,
+            PatternAnalysisService,
+        )
 
         ordered = _order_daily_deep_candidates(
             promoted, registry, queue_history, cutoff,
@@ -362,7 +365,7 @@ class SignalReviewService:
                 summary={"reason": "daily deep-analysis resource limit", "limit": limit},
             )
         results: dict[str, dict[str, object]] = {}
-        service = TrendAnalysisService(self._store)
+        service = PatternAnalysisService(self._store)
         self._progress(run_id, "board-deep-analysis", len(selected), 0)
         for index, observation in enumerate(selected, 1):
             symbol = str(observation["symbol"])
@@ -376,11 +379,13 @@ class SignalReviewService:
                 self._progress(run_id, "board-deep-analysis", len(selected), index)
                 continue
             try:
-                result = service.recalculate(
-                    symbol, [AnalysisTimeframe.DAILY], AnalysisHorizons(14, 28, 250),
+                result = service.analyze(PatternAnalysisRequest(
+                    symbol=symbol,
+                    timeframes=(AnalysisTimeframe.DAILY,),
+                    horizons=AnalysisHorizons(14, 28, 250),
                     config_version="signal-review-daily-v1", include_preview=False,
                     as_of_date=cutoff,
-                )[0]
+                ))[0]
                 relevant = [
                     item for item in result.get("items", [])
                     if item.get("item_type") in {"line", "zone", "pattern", "transition"}

@@ -16,7 +16,7 @@ export type GeneratedPivotGeometry = {
 export type GeneratedTrendLineGeometry = {
   id: string
   kind: 'support' | 'resistance'
-  horizon: 'short' | 'long'
+  horizon: 'short' | 'medium' | 'long'
   line: LineGeometry
   score: number
   touchCount: number
@@ -71,7 +71,7 @@ export function selectCoreTrendLineItems(items: AnalysisItem[]): AnalysisItem[] 
     const kind = item.payload.kind
     const horizon = item.payload.horizon
     if ((kind !== 'support' && kind !== 'resistance')
-      || (horizon !== 'short' && horizon !== 'long')) continue
+      || (horizon !== 'short' && horizon !== 'medium' && horizon !== 'long')) continue
     if (typeof item.payload.ai_reference_code === 'string') {
       aiReferences.push(item)
       continue
@@ -94,7 +94,9 @@ export function selectCorePatternItems(items: AnalysisItem[]): AnalysisItem[] {
   const aiReferences = patterns.filter(item => typeof item.payload.ai_reference_code === 'string')
   const horizons = new Map<string, AnalysisItem[]>()
   for (const item of patterns) {
-    const horizon = item.payload.horizon === 'long' || item.payload.horizon === 'short'
+    const horizon = item.payload.horizon === 'long'
+      || item.payload.horizon === 'medium'
+      || item.payload.horizon === 'short'
       ? item.payload.horizon
       : 'unspecified'
     horizons.set(horizon, [...(horizons.get(horizon) ?? []), item])
@@ -202,6 +204,7 @@ export function projectGeneratedTrendLines(
   showShort: boolean,
   showLong: boolean,
   highlightedItemId?: string,
+  showMedium: boolean = true,
 ): GeneratedTrendLineGeometry[] {
   if (!run || !chart || !priceSeries || !host) return []
   const width = chart.timeScale().width()
@@ -222,10 +225,12 @@ export function projectGeneratedTrendLines(
     const firstPrice = item.payload.first_price
     const secondPrice = item.payload.second_price
     if ((kind !== 'support' && kind !== 'resistance')
-      || (horizon !== 'short' && horizon !== 'long')
+      || (horizon !== 'short' && horizon !== 'medium' && horizon !== 'long')
       || typeof firstDate !== 'string' || typeof secondDate !== 'string'
       || typeof firstPrice !== 'number' || typeof secondPrice !== 'number') return []
-    if ((horizon === 'short' && !showShort) || (horizon === 'long' && !showLong)) return []
+    if ((horizon === 'short' && !showShort)
+      || (horizon === 'medium' && !showMedium)
+      || (horizon === 'long' && !showLong)) return []
     const x1 = chart.timeScale().timeToCoordinate(firstDate as Time)
     const x2 = chart.timeScale().timeToCoordinate(secondDate as Time)
     const y1 = priceSeries.priceToCoordinate(firstPrice)

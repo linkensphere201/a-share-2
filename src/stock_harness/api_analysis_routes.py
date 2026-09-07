@@ -27,9 +27,9 @@ from stock_harness.api_support import (
     validate_ai_analysis_payload,
 )
 from stock_harness.major_descending_lines import MajorLinePeriod, MajorLineState
+from stock_harness.pattern_analysis import PatternAnalysisRequest, PatternAnalysisService
 from stock_harness.screener import ScreenerBusyError
 from stock_harness.signal_review import SignalReviewBusyError
-from stock_harness.trend_analysis import TrendAnalysisService
 from stock_harness.trend_review_set import has_scoreable_expected_labels
 from stock_harness.trend_reviews import (
     TrendReviewDecision,
@@ -225,13 +225,13 @@ def create_analysis_router() -> APIRouter:
             payload.long_horizon_bars,
         )
         try:
-            results = TrendAnalysisService(store(request)).recalculate(
-                payload.symbol,
-                [AnalysisTimeframe(item) for item in payload.timeframes],
-                horizons,
+            results = PatternAnalysisService(store(request)).analyze(PatternAnalysisRequest(
+                symbol=payload.symbol,
+                timeframes=tuple(AnalysisTimeframe(item) for item in payload.timeframes),
+                horizons=horizons,
                 config_version=payload.config_version,
                 include_preview=payload.include_preview,
-            )
+            ))
         except ValueError as error:
             LOGGER.warning(
                 "trend_analysis_rejected symbol=%s error=%s", payload.symbol, error
@@ -340,12 +340,16 @@ def create_analysis_router() -> APIRouter:
             payload.long_horizon_bars,
         )
         try:
-            snapshot = TrendAnalysisService(store(request)).build_review_snapshot(
-                payload.symbol,
-                AnalysisTimeframe(payload.timeframe),
-                horizons,
-                as_of_date=payload.as_of_date,
-                config_version=payload.config_version,
+            timeframe = AnalysisTimeframe(payload.timeframe)
+            snapshot = PatternAnalysisService(store(request)).build_snapshot(
+                PatternAnalysisRequest(
+                    symbol=payload.symbol,
+                    timeframes=(timeframe,),
+                    horizons=horizons,
+                    config_version=payload.config_version,
+                    as_of_date=payload.as_of_date,
+                ),
+                timeframe=timeframe,
             )
             labels = labels_from_analysis(snapshot["items"], payload.horizon)
             review = store(request).create_trend_review(TrendReviewDraftSpec(
@@ -411,16 +415,20 @@ def create_analysis_router() -> APIRouter:
         if not isinstance(settings, dict):
             raise HTTPException(status_code=409, detail="trend review settings are invalid")
         try:
-            snapshot = TrendAnalysisService(store(request)).build_review_snapshot(
-                str(review["symbol"]),
-                AnalysisTimeframe(str(review["timeframe"])),
-                AnalysisHorizons(
-                    int(settings["short_horizon_bars"]),
-                    int(settings["medium_horizon_bars"]),
-                    int(settings["long_horizon_bars"]),
+            timeframe = AnalysisTimeframe(str(review["timeframe"]))
+            snapshot = PatternAnalysisService(store(request)).build_snapshot(
+                PatternAnalysisRequest(
+                    symbol=str(review["symbol"]),
+                    timeframes=(timeframe,),
+                    horizons=AnalysisHorizons(
+                        int(settings["short_horizon_bars"]),
+                        int(settings["medium_horizon_bars"]),
+                        int(settings["long_horizon_bars"]),
+                    ),
+                    config_version=str(review["config_version"]),
+                    as_of_date=review["as_of_date"],
                 ),
-                as_of_date=review["as_of_date"],
-                config_version=str(review["config_version"]),
+                timeframe=timeframe,
             )
         except (KeyError, TypeError, ValueError) as error:
             raise HTTPException(status_code=409, detail=str(error)) from error

@@ -345,7 +345,7 @@ export function GeneratedAnalysisOverlay({
               x2={item.line.x2}
               y2={item.line.y2}
             >
-              <title>{`${item.label ? `${item.label} · ` : ''}${item.horizon === 'short' ? '短期' : '长期'}${item.kind === 'support' ? '支撑' : '压力'} · 评分 ${item.score.toFixed(2)} · 触碰 ${item.touchCount}`}</title>
+              <title>{`${item.label ? `${item.label} · ` : ''}${item.horizon === 'short' ? '短期' : item.horizon === 'medium' ? '中期' : '长期'}${item.kind === 'support' ? '支撑' : '压力'} · 评分 ${item.score.toFixed(2)} · 触碰 ${item.touchCount}`}</title>
             </line>
             {item.label && <text
               className="generated-line-code"

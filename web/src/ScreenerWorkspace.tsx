@@ -327,6 +327,7 @@ const ScreenerChart = memo(function ScreenerChart({
       />}
       trendAnalysisEnabled={trendState.enabled}
       shortTrendLinesVisible={layers['short-trend-lines'] !== false}
+      mediumTrendLinesVisible={layers['medium-trend-lines'] !== false}
       longTrendLinesVisible={layers['long-trend-lines'] !== false}
       keyLevelsVisible={layers['key-levels'] !== false}
       volumeZonesVisible={layers['volume-zones'] !== false}

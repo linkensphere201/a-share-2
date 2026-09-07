@@ -53,6 +53,7 @@ describe('trading system registry', () => {
     expect(states.trend.enabled).toBe(true)
     expect(states.trend.expanded).toBe(true)
     expect(states.trend.layers['short-trend-lines']).toBe(false)
+    expect(states.trend.layers['medium-trend-lines']).toBe(true)
     expect(states.trend.layers).not.toHaveProperty('unknown')
     expect(states.trend.settings).toMatchObject({
       shortHorizonBars: 120,

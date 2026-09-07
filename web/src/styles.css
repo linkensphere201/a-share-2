@@ -1181,6 +1181,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .generated-trend-line.support { stroke: #d5a253; }
 .generated-trend-line.resistance { stroke: #69a8d3; }
 .generated-trend-line.short { stroke-dasharray: 4 3; }
+.generated-trend-line.medium { stroke-dasharray: 8 3; stroke-width: 1.35; }
 .generated-trend-line.long { stroke-width: 1.5; opacity: .9; }
 .generated-pivot line { stroke: #8bb8d8; stroke-width: 1; vector-effect: non-scaling-stroke; }
 .generated-pivot polygon { fill: #8bb8d8; stroke: #10202c; stroke-width: 1; vector-effect: non-scaling-stroke; }

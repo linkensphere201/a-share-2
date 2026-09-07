@@ -96,6 +96,25 @@ describe('generated analysis overlay projection', () => {
     expect(projectGeneratedTrendLines(run, chart, series, host, false, true)).toEqual([])
   })
 
+  it('projects medium-horizon lines through their independent visibility flag', () => {
+    const medium: TrendAnalysisRun = {
+      ...run,
+      items: [...run.items, {
+        item_id: 'line-medium', item_type: 'line', payload: {
+          kind: 'resistance', horizon: 'medium',
+          first_pivot_date: '2026-08-01', first_price: 12,
+          second_pivot_date: '2026-08-10', second_price: 11,
+          score: 0.9, touch_count: 3,
+        },
+      }],
+    }
+
+    expect(projectGeneratedTrendLines(medium, chart, series, host, false, false, undefined, true)
+      .map(item => item.id)).toEqual(['line-medium'])
+    expect(projectGeneratedTrendLines(medium, chart, series, host, false, false, undefined, false))
+      .toEqual([])
+  })
+
   it('projects only the highest-scoring line for each horizon and role', () => {
     const withCandidates: TrendAnalysisRun = {
       ...run,

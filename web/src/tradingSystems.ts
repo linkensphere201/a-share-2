@@ -81,6 +81,7 @@ export const trendTradingSystem: TradingSystemDescriptor = {
   ],
   layers: [
     { id: 'short-trend-lines', label: '短期趋势线', defaultVisible: true },
+    { id: 'medium-trend-lines', label: '中期趋势线', defaultVisible: true },
     { id: 'long-trend-lines', label: '长期趋势线', defaultVisible: true },
     { id: 'key-levels', label: '关键位', defaultVisible: true },
     { id: 'volume-zones', label: '成交密集区', defaultVisible: true },

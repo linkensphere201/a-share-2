@@ -55,7 +55,7 @@ from stock_harness.trend_context import (
 )
 
 
-ALGORITHM_VERSION = "trend-causal-replay-v21"
+ALGORITHM_VERSION = "trend-causal-replay-v22"
 LOGGER = logging.getLogger(__name__)
 
 
@@ -596,6 +596,17 @@ def _generated_items(
             TrendHorizon.SHORT,
             analysis_input.bars[-horizons.short:],
             base_config,
+        ),
+        (
+            TrendHorizon.MEDIUM,
+            analysis_input.bars[-horizons.medium:],
+            DirectionalChangeConfig(
+                atr_period=max(16, base_config.atr_period),
+                atr_multiplier=min(10, base_config.atr_multiplier * 1.25),
+                minimum_reversal_percent=min(
+                    0.25, base_config.minimum_reversal_percent * 1.35
+                ),
+            ),
         ),
         (
             TrendHorizon.LONG,
