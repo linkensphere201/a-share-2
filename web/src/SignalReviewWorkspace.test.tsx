@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { SignalReviewWorkspace } from './SignalReviewWorkspace'
+import { SignalReviewWorkspace, stateDetailLabels } from './SignalReviewWorkspace'
 import { buildSignalReferenceMap } from './SignalChatPanel'
 import type { SignalItem } from './signalReviewClient'
 import { themes } from './themeStore'
@@ -18,10 +18,18 @@ vi.mock('./ChartCanvas', () => ({
 
 afterEach(() => {
   cleanup()
+  window.localStorage.clear()
   vi.unstubAllGlobals()
 })
 
 describe('SignalReviewWorkspace', () => {
+  it('keeps simultaneous volume and descending-envelope anomalies visible', () => {
+    expect(stateDetailLabels([
+      'bullish-boundary-triggered', 'descending-envelope-3m-broken',
+      'descending-envelope-6m-broken', 'sudden-volume-expansion',
+    ])).toEqual(['3月斜边突破', '6月斜边突破', '突然放量'])
+  })
+
   it('does not link ambiguous evidence aliases from legacy runs', () => {
     const duplicate = {
       ...items[1], evidence: [{
@@ -50,6 +58,16 @@ describe('SignalReviewWorkspace', () => {
     await user.click(result.closest('button')!)
     expect(screen.getByTestId('signal-chart').textContent).toBe('000001.SZ')
     expect(screen.getByText('[S1]')).toBeTruthy()
+    const separator = screen.getByRole('separator', { name: '调整固定算法结论高度' })
+    const inspector = separator.closest('.signal-inspector') as HTMLElement
+    Object.defineProperty(inspector, 'clientHeight', { configurable: true, value: 800 })
+    fireEvent.pointerDown(separator, { clientY: 500 })
+    fireEvent.pointerMove(window, { clientY: 400 })
+    fireEvent.pointerUp(window)
+    await vi.waitFor(() => expect(window.localStorage.getItem(
+      'stock-harness.signal-review.evidence-height.v1',
+    )).toBe('310'))
+    expect(inspector.style.gridTemplateRows).toContain('310px')
     await user.click(screen.getByRole('button', { name: '移除' }))
     expect(screen.getByText('旧标的')).toBeTruthy()
     expect(screen.queryByText('测试标的')).toBeNull()

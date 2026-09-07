@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { ArrowLeft, Eye, ListFilter, MessageSquare, Pin, PinOff, Play, Radar, RefreshCw, Search } from 'lucide-react'
 import { ChartCanvas } from './ChartCanvas'
 import { MarketBoardBadge } from './MarketBoardBadge'
@@ -28,6 +28,7 @@ const profileLabels: Record<SignalProfile, string> = {
   recent: '近期高权', historical: '历史高权', market: '大盘', attention: '重点观察',
 }
 const changeLabels: Record<SignalChangeType, string> = { added: '新增', retained: '保留', removed: '移除' }
+const EVIDENCE_HEIGHT_KEY = 'stock-harness.signal-review.evidence-height.v1'
 
 export function SignalReviewWorkspace({ theme, onClose }: Props) {
   const [definitions, setDefinitions] = useState<SignalDefinition[]>([])
@@ -49,6 +50,15 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
   const [selectedObservation, setSelectedObservation] = useState<BoardDailyObservation>()
   const [attention, setAttention] = useState<SignalAttention[]>([])
   const [exactAnalysis, setExactAnalysis] = useState<TrendAnalysisRun | null>(null)
+  const [evidenceHeight, setEvidenceHeight] = useState(() => {
+    const stored = Number(window.localStorage.getItem(EVIDENCE_HEIGHT_KEY))
+    return Number.isFinite(stored) && stored >= 135 ? Math.min(stored, 520) : 210
+  })
+  const inspectorRef = useRef<HTMLElement>(null)
+
+  useEffect(() => {
+    window.localStorage.setItem(EVIDENCE_HEIGHT_KEY, String(Math.round(evidenceHeight)))
+  }, [evidenceHeight])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -192,6 +202,25 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
     } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)) }
   }
 
+  const startEvidenceResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    const startY = event.clientY
+    const startHeight = evidenceHeight
+    const panelHeight = inspectorRef.current?.clientHeight || 800
+    const maximum = Math.max(135, panelHeight - 300)
+    const move = (pointer: PointerEvent) => {
+      setEvidenceHeight(Math.max(135, Math.min(maximum, startHeight + startY - pointer.clientY)))
+    }
+    const stop = () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', stop)
+      document.body.classList.remove('signal-evidence-resizing')
+    }
+    document.body.classList.add('signal-evidence-resizing')
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', stop, { once: true })
+  }
+
   return <main className="signal-workspace">
     <header className="signal-toolbar">
       <button className="icon-button" title="返回工作台" aria-label="返回工作台" onClick={onClose}><ArrowLeft size={16}/></button>
@@ -233,7 +262,7 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
             const entry = attention.find(value => value.symbol === item.symbol)
             return <button key={item.symbol} className={selectedObservation?.symbol === item.symbol ? 'active' : ''} onClick={() => { setSelectedObservation(item); setSelectedItem(undefined) }}>
               <span><span className="instrument-name-line"><b>{item.name}</b></span><small>{item.symbol}</small></span>
-              <span>{stateLabel(item.state_codes)}<small>{item.coverage_state === 'complete' ? item.attention_reasons.join(' · ') || '未触发异动' : '数据不足'}</small></span>
+              <span>{stateLabel(item.state_codes)}<small title={stateDetailLabels(item.state_codes).join(' · ')}>{item.coverage_state === 'complete' ? stateDetailLabels(item.state_codes).join(' · ') || '未触发异动' : '数据不足'}</small></span>
               <span className={`attention-state ${entry?.status ?? 'inactive'}`}>{entry?.manual_pinned ? '固定' : item.attention_eligible ? '自动' : '-'}</span>
             </button>
           })}</div>
@@ -246,11 +275,11 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
           </div>
           <div className="signal-result-head"><span>#</span><span>标的</span><span>{daily ? '状态' : '板块'}</span><span>变化</span></div>
           <div className="signal-scroll">{selectedRun?.status === 'failed' && <div className="signal-empty compact error">{selectedRun.error}</div>}{filtered.map(item => <button key={item.item_id} className={`${selectedItem?.item_id === item.item_id ? 'active ' : ''}${item.active ? '' : 'inactive'}`} onClick={() => { setSelectedItem(item); setSelectedObservation(undefined); setSelectedEvidenceId(undefined); setHighlightedEvidenceId(undefined) }}>
-            <span>{item.rank}</span><span><span className="instrument-name-line"><b>{item.name}</b><MarketBoardBadge instrument={item}/></span><small>{item.symbol}</small></span><span>{daily ? stateLabel(item.payload.state_codes) : item.payload.board_count ?? 0}<small>{profileLabels[item.profile]}</small></span><span className={`change ${item.change_type}`}>{changeLabels[item.change_type]}</span>
+            <span>{item.rank}</span><span><span className="instrument-name-line"><b>{item.name}</b><MarketBoardBadge instrument={item}/></span><small>{item.symbol}</small></span><span>{daily ? stateLabel(item.payload.state_codes) : item.payload.board_count ?? 0}<small title={daily ? stateDetailLabels(item.payload.state_codes).join(' · ') : undefined}>{daily ? stateDetailLabels(item.payload.state_codes).join(' · ') || profileLabels[item.profile] : profileLabels[item.profile]}</small></span><span className={`change ${item.change_type}`}>{changeLabels[item.change_type]}</span>
           </button>)}</div>
         </>}
       </section>
-      {inspected && <section className={`signal-inspector${criticalAlert ? ' has-critical' : ''}`}>
+      {inspected && <section ref={inspectorRef} className={`signal-inspector${criticalAlert ? ' has-critical' : ''}`} style={{ gridTemplateRows: criticalAlert ? `42px auto minmax(220px, 1fr) ${evidenceHeight}px` : `42px minmax(220px, 1fr) ${evidenceHeight}px` }}>
         <header><span className="instrument-name-line"><span>{inspected.name}</span>{selectedItem && <MarketBoardBadge instrument={selectedItem}/>}</span><small>{selectedItem ? `${profileLabels[selectedItem.profile]} · 得分 ${(selectedItem.score * 100).toFixed(1)} · 置信 ${(selectedItem.confidence * 100).toFixed(1)}` : `${selectedObservation?.effective_date} · 一级固定分析`}</small>{selectedObservation
           ? <button className="icon-button" title={pinned ? '取消手工固定' : '加入手工观察池'} aria-label={pinned ? '取消手工固定' : '加入手工观察池'} onClick={() => void togglePinned()}>{pinned ? <PinOff size={13}/> : <Pin size={13}/>}</button>
           : <button className="icon-button" title="Codex 信号讨论" aria-label="Codex 信号讨论" onClick={() => setChatOpen(value => !value)}><MessageSquare size={13}/></button>}</header>
@@ -261,7 +290,7 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
         <div className="signal-chart">{inspected
           ? <ChartCanvas key={`${selectedRun?.run_id}:${inspected.symbol}`} symbol={inspected.symbol} instrumentName={inspected.name} instrumentKind={selectedItem?.kind ?? 'sector'} focused theme={theme} range="1Y" priceMode="normal" volumeVisible indicator="none" settlementVisible={false} openInterestVisible={false} asOfDate={selectedRun?.effective_date} trendAnalysisEnabled={Boolean(exactAnalysis)} trendAnalysisOverride={exactAnalysis} highlightedAnalysisItemId={highlightedAnalysisItemId}/>
           : <div className="signal-empty">选择一项结果查看 K 线</div>}</div>
-        <div className="signal-evidence"><header><span>{selectedObservation ? '一级分析' : selectedItem?.payload.rendered_summary ? '固定算法结论' : '引用证据'}</span><small>{selectedObservation ? selectedObservation.state_codes.length : selectedItem?.evidence.length ?? 0}</small></header>
+        <div className="signal-evidence"><div className="signal-evidence-resizer" role="separator" aria-orientation="horizontal" aria-label="调整固定算法结论高度" title="上下拖动调整结论区域高度" onPointerDown={startEvidenceResize}/><header><span>{selectedObservation ? '一级分析' : selectedItem?.payload.rendered_summary ? '固定算法结论' : '引用证据'}</span><small>{selectedObservation ? selectedObservation.state_codes.length : selectedItem?.evidence.length ?? 0}</small></header>
           {selectedObservation ? <pre className="signal-fixed-summary">{observationSummary(selectedObservation)}</pre> : <div className="signal-analysis-details">{selectedItem?.payload.rendered_summary && <pre className="signal-fixed-summary">{selectedItem.payload.rendered_summary}</pre>}<div className="signal-evidence-list">{selectedItem?.evidence.map(evidence => <button key={evidence.evidence_id} className={(highlightedEvidenceId ?? selectedEvidenceId) === evidence.evidence_id ? 'active' : ''} onClick={() => setSelectedEvidenceId(evidence.evidence_id)} title="点击查看该轮固定算法引用的原始或 M4 证据">
             <code>[{evidence.alias}]</code><span>{evidenceTitle(evidence)}<small>{evidenceDetail(evidence)}</small></span>
           </button>)}</div></div>}
@@ -273,17 +302,33 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
 }
 
 function stateLabel(states?: string[]) {
-  const labels: Record<string, string> = {
+  const labels = signalStateLabels()
+  return states?.map(item => labels[item]).find(Boolean) ?? (states?.[0] || '数据不足')
+}
+
+export function stateDetailLabels(states?: string[]) {
+  const labels = signalStateLabels()
+  const primary = stateLabel(states)
+  return Array.from(new Set((states ?? []).map(item => labels[item]).filter(
+    (item): item is string => Boolean(item) && item !== primary && item !== '中性',
+  )))
+}
+
+function signalStateLabels(): Record<string, string> {
+  return {
     'bullish-boundary-triggered': '多头边界已触发',
     'bullish-transition-candidate': '多头临界',
     'oversold-exhaustion-candidate': '下跌衰竭临界',
     'oversold-rebound-triggered': '超跌反弹已触发',
+    'descending-envelope-3m-approaching': '3月斜边临界',
+    'descending-envelope-3m-broken': '3月斜边突破',
+    'descending-envelope-6m-broken': '6月斜边突破',
+    'descending-envelope-1y-broken': '1年斜边突破',
     'sudden-volume-expansion': '突然放量',
     'boundary-volume-contraction': '边界缩量',
     'relative-strength-regime': '相对强弱异动',
     neutral: '中性',
   }
-  return states?.map(item => labels[item]).find(Boolean) ?? (states?.[0] || '数据不足')
 }
 
 function observationSummary(item: BoardDailyObservation) {
