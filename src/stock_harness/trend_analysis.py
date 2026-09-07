@@ -26,6 +26,7 @@ from stock_harness.analysis_results import (
     GeneratedAnalysisTarget,
     GeneratedItemType,
 )
+from stock_harness.analysis_projection import build_core_projection_item
 from stock_harness.breakout_state import (
     BreakoutDirection,
     StructuralEvent,
@@ -55,7 +56,7 @@ from stock_harness.trend_context import (
 )
 
 
-ALGORITHM_VERSION = "trend-causal-replay-v22"
+ALGORITHM_VERSION = "trend-causal-replay-v23"
 LOGGER = logging.getLogger(__name__)
 
 
@@ -838,7 +839,9 @@ def _generated_items(
             analysis_input.timeframe,
             preview=analysis_input.provisional_date is not None,
         ))
-    return rank_pattern_candidates(items)
+    ranked = rank_pattern_candidates(items)
+    ranked.append(build_core_projection_item(ranked))
+    return ranked
 
 def _structural_event_items(
     parent_item_id: str,

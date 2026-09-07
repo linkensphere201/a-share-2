@@ -63,9 +63,45 @@ export type GeneratedBreakoutState = {
 
 export type AnalysisItem = TrendAnalysisRun['items'][number]
 
+function readCoreProjectionIds(
+  items: AnalysisItem[],
+  key: 'line_item_ids' | 'pattern_item_ids' | 'zone_item_ids',
+): string[] | undefined {
+  const projection = items.find(item => (
+    item.item_type === 'evidence'
+    && item.payload.kind === 'core-analysis-projection'
+  ))
+  const values = projection?.payload[key]
+  return Array.isArray(values)
+    ? values.filter((value): value is string => typeof value === 'string')
+    : undefined
+}
+
+function projectedItems(
+  items: AnalysisItem[],
+  ids: string[],
+  itemType: AnalysisItem['item_type'],
+): AnalysisItem[] {
+  const byId = new Map(items.map(item => [item.item_id, item]))
+  return ids.flatMap(id => {
+    const item = byId.get(id)
+    return item?.item_type === itemType ? [item] : []
+  })
+}
+
 export function selectCoreTrendLineItems(items: AnalysisItem[]): AnalysisItem[] {
   const bestByRole = new Map<string, AnalysisItem>()
   const aiReferences: AnalysisItem[] = []
+  const projectedIds = readCoreProjectionIds(items, 'line_item_ids')
+  if (projectedIds) {
+    const projected = projectedItems(items, projectedIds, 'line')
+    const projectedSet = new Set(projected.map(item => item.item_id))
+    return [...projected, ...items.filter(item => (
+      item.item_type === 'line'
+      && typeof item.payload.ai_reference_code === 'string'
+      && !projectedSet.has(item.item_id)
+    ))]
+  }
   for (const item of items) {
     if (item.item_type !== 'line') continue
     const kind = item.payload.kind
@@ -92,6 +128,12 @@ export function selectCoreTrendLineItems(items: AnalysisItem[]): AnalysisItem[] 
 export function selectCorePatternItems(items: AnalysisItem[]): AnalysisItem[] {
   const patterns = items.filter(item => item.item_type === 'pattern')
   const aiReferences = patterns.filter(item => typeof item.payload.ai_reference_code === 'string')
+  const projectedIds = readCoreProjectionIds(items, 'pattern_item_ids')
+  if (projectedIds) {
+    const projected = projectedItems(items, projectedIds, 'pattern')
+    const projectedSet = new Set(projected.map(item => item.item_id))
+    return [...projected, ...aiReferences.filter(item => !projectedSet.has(item.item_id))]
+  }
   const horizons = new Map<string, AnalysisItem[]>()
   for (const item of patterns) {
     const horizon = item.payload.horizon === 'long'
@@ -131,6 +173,16 @@ export function selectCorePatternItems(items: AnalysisItem[]): AnalysisItem[] {
 export function selectCoreZoneItems(items: AnalysisItem[]): AnalysisItem[] {
   const strongestByKind = new Map<string, AnalysisItem[]>()
   const aiReferences: AnalysisItem[] = []
+  const projectedIds = readCoreProjectionIds(items, 'zone_item_ids')
+  if (projectedIds) {
+    const projected = projectedItems(items, projectedIds, 'zone')
+    const projectedSet = new Set(projected.map(item => item.item_id))
+    return [...projected, ...items.filter(item => (
+      item.item_type === 'zone'
+      && typeof item.payload.ai_reference_code === 'string'
+      && !projectedSet.has(item.item_id)
+    ))]
+  }
   for (const item of items) {
     if (item.item_type !== 'zone') continue
     const kind = item.payload.kind

@@ -117,10 +117,18 @@ def test_explicit_recalculate_registers_and_persists_only_requested_timeframes()
             if item["item_id"] == "key-level-volume-profile-evidence"
         )
         assert "not exact position cost" in evidence["payload"]["uncertainty"]
-        assert results[0]["algorithm_version"] == "trend-causal-replay-v22"
+        assert results[0]["algorithm_version"] == "trend-causal-replay-v23"
+        projection = next(
+            item for item in results[0]["items"]
+            if item["item_id"] == "core-analysis-projection"
+        )
+        assert projection["payload"]["version"] == "core-evidence-v1"
         pattern_items = [
             item for item in results[0]["items"] if item["item_type"] == "pattern"
         ]
+        assert set(projection["payload"]["pattern_item_ids"]) <= {
+            item["item_id"] for item in pattern_items
+        }
         assert pattern_items
         assert sum(
             item["payload"]["primary"] is True for item in pattern_items

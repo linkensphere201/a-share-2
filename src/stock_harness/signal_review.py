@@ -21,6 +21,7 @@ from stock_harness.board_leader_scan import (
     is_risk_name,
     rank_board_leaders,
 )
+from stock_harness.analysis_projection import read_core_structural_item_ids
 from stock_harness.daily_signal_analysis import (
     ALGORITHM_VERSION as DAILY_ALGORITHM_VERSION,
     CONFIG_VERSION as DAILY_CONFIG_VERSION,
@@ -905,9 +906,13 @@ def _deep_analysis_evidence(
     if not result or result.get("status") != "succeeded":
         return []
     source_run_id = str(result["run_id"])
+    result_items = [
+        item for item in result.get("items", []) if isinstance(item, dict)
+    ]
+    core_ids = set(read_core_structural_item_ids(result_items))
     evidence = []
-    for item in result.get("items", []):
-        if not isinstance(item, dict) or item.get("item_type") not in {
+    for item in result_items:
+        if item.get("item_id") not in core_ids or item.get("item_type") not in {
             "line", "zone", "pattern", "transition",
         }:
             continue
@@ -921,8 +926,6 @@ def _deep_analysis_evidence(
                 "geometry": item.get("payload", {}),
             },
         })
-        if len(evidence) >= 6:
-            break
     return evidence
 
 

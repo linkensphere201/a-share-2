@@ -139,6 +139,32 @@ describe('generated analysis overlay projection', () => {
       .toEqual(['line-short', 'line-short-resistance'])
   })
 
+  it('uses the backend-owned core projection when present', () => {
+    const projected: TrendAnalysisRun = {
+      ...run,
+      items: [...run.items, {
+        item_id: 'line-backend-core', item_type: 'line', payload: {
+          kind: 'support', horizon: 'short',
+          first_pivot_date: '2026-08-01', first_price: 9,
+          second_pivot_date: '2026-08-10', second_price: 11,
+          score: 0.1, touch_count: 2,
+        },
+      }, {
+        item_id: 'core-analysis-projection', item_type: 'evidence', payload: {
+          kind: 'core-analysis-projection',
+          line_item_ids: ['line-backend-core'],
+          pattern_item_ids: [],
+          zone_item_ids: [],
+        },
+      }],
+    }
+
+    expect(projectGeneratedTrendLines(projected, chart, series, host, true, true)
+      .map(item => item.id)).toEqual(['line-backend-core'])
+    expect(projectGeneratedZones(projected, chart, series, host, true, true)).toEqual([])
+    expect(projectGeneratedPatterns(projected, chart, series, true)).toEqual([])
+  })
+
   it('adds the exact screener major line only when it is highlighted', () => {
     const withMajorLine: TrendAnalysisRun = {
       ...run,

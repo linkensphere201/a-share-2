@@ -15,6 +15,7 @@ from stock_harness.trend_line_envelope import (
     dominates_prior_extremes,
     evaluate_trend_line_envelope,
 )
+from stock_harness.trade_scenarios import TradeDirection, calculate_risk_reward
 from stock_harness.trend_pivots import causal_average_true_range
 
 
@@ -233,8 +234,12 @@ def _detect_profile(
         first_target = overhead[0] if overhead else max(highs[second], latest.close)
         major_target = max(highs[first], latest.close)
         risk = latest.close - invalidation
-        first_rr = _risk_reward(latest.close, invalidation, first_target)
-        major_rr = _risk_reward(latest.close, invalidation, major_target)
+        first_rr = calculate_risk_reward(
+            TradeDirection.LONG, latest.close, invalidation, first_target
+        )
+        major_rr = calculate_risk_reward(
+            TradeDirection.LONG, latest.close, invalidation, major_target
+        )
         volume_ratio = _volume_ratio_5(bars)
         recency = 1 - (len(bars) - 1 - second) / max(1, len(bars) - 1)
         score = (
@@ -415,12 +420,6 @@ def _volume_ratio_5(bars: Sequence[AnalysisBar]) -> float | None:
         return None
     average = sum(item.volume for item in bars[-6:-1]) / 5
     return bars[-1].volume / average if average > 0 else None
-
-
-def _risk_reward(entry: float, stop: float, target: float) -> float | None:
-    risk = entry - stop
-    reward = target - entry
-    return round(reward / risk, 6) if risk > 0 and reward > 0 else None
 
 
 def _state_rank(state: MajorLineState) -> int:

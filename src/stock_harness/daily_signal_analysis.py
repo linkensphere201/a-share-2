@@ -11,6 +11,7 @@ from statistics import fmean, median
 
 from stock_harness.models import StoredDailyBar
 from stock_harness.pattern_analysis import PatternAnalysisService
+from stock_harness.trade_scenarios import TradeDirection, calculate_risk_reward
 
 
 ALGORITHM_VERSION = "daily-market-board-observation-v3"
@@ -377,7 +378,9 @@ def _price_space(
         upside is not None and entry is not None and invalidation is not None
         and upside[1] > entry > invalidation
     ):
-        risk_reward = (upside[1] - entry) / (entry - invalidation)
+        risk_reward = calculate_risk_reward(
+            TradeDirection.LONG, entry, invalidation, upside[1]
+        )
 
     return {
         "method": "causal-range-levels-v1",

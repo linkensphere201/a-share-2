@@ -9,6 +9,7 @@ from fastapi import Request
 
 from stock_harness.analysis_results import AnalysisNamespace
 from stock_harness.api_models import AiAnalysisReportInput
+from stock_harness.trade_scenarios import TradeDirection, calculate_risk_reward
 from stock_harness.api_runtime import FactorLoader, StatusLoader
 from stock_harness.config import FuturesExchangeCutoff
 from stock_harness.intraday import IntradayQuoteService
@@ -132,13 +133,13 @@ def validate_ai_analysis_payload(
         entry = float(scenario["entry_price"])
         stop = float(scenario["stop_price"])
         target = float(scenario["target_price"])
-        if scenario["direction"] == "long":
-            risk, reward = entry - stop, target - entry
-        else:
-            risk, reward = stop - entry, entry - target
-        if risk <= 0 or reward <= 0:
+        ratio = calculate_risk_reward(
+            TradeDirection(str(scenario["direction"])), entry, stop, target,
+            precision=4,
+        )
+        if ratio is None:
             raise ValueError(f"risk/reward scenario {scenario['name']} has invalid price ordering")
-        scenario["risk_reward_ratio"] = round(reward / risk, 4)
+        scenario["risk_reward_ratio"] = ratio
     return framework, references
 
 
