@@ -7,6 +7,7 @@ from stock_harness.breakout_state import (
     StructuralEventKind,
     evaluate_breakout,
     evaluate_latest_boundary_event,
+    evaluate_pattern_boundaries,
 )
 
 
@@ -129,3 +130,42 @@ def test_latest_dynamic_boundary_events_do_not_backfill_history():
     assert breakout.event_date == date(2026, 1, 2)
     assert breakout.preview is True
     assert failed is not None and failed.kind is StructuralEventKind.FALSE_BREAKOUT_RISK
+
+
+def test_pattern_boundaries_retain_first_breakout_and_opposite_invalidation():
+    bars = _bars([
+        (9.9, 10.0, 9.8, 9.95, 100),
+        (10.0, 10.4, 9.9, 10.3, 140),
+        (9.7, 9.9, 9.4, 9.5, 160),
+    ])
+
+    result = evaluate_pattern_boundaries(
+        bars,
+        available_date=bars[1].period_end,
+        upper_price_at=lambda _index: 10.0,
+        lower_price_at=lambda _index: 9.8,
+    )
+
+    assert result.direction is BreakoutDirection.UP
+    assert result.breakout_date == bars[1].period_end
+    assert result.trigger_index == 1
+    assert result.invalidation_date == bars[2].period_end
+
+
+def test_pattern_boundaries_support_downward_escape_without_invalidation():
+    bars = _bars([
+        (10.0, 10.1, 9.9, 10.0, 100),
+        (9.9, 10.0, 9.5, 9.6, 130),
+    ])
+
+    result = evaluate_pattern_boundaries(
+        bars,
+        available_date=bars[0].period_end,
+        upper_price_at=lambda _index: 10.2,
+        lower_price_at=lambda _index: 9.8,
+    )
+
+    assert result.direction is BreakoutDirection.DOWN
+    assert result.breakout_date == bars[1].period_end
+    assert result.trigger_index == 1
+    assert result.invalidation_date is None

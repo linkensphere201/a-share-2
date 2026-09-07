@@ -9,6 +9,10 @@ from math import sqrt
 from typing import Sequence
 
 from stock_harness.analysis_inputs import AnalysisBar
+from stock_harness.breakout_state import (
+    evaluate_pattern_boundaries,
+    resolve_pattern_completion_state,
+)
 from stock_harness.trend_pivots import PivotKind, PricePivot
 
 
@@ -163,32 +167,14 @@ def _fit_window(
     else:
         return None
     available_date = max(item.confirmed_date for item in pivots)
-    breakout_direction: str | None = None
-    breakout_date: date | None = None
-    invalidation_date: date | None = None
-    trigger_index: int | None = None
-    for index, bar in enumerate(bars):
-        if bar.period_end < available_date:
-            continue
-        upper = upper_intercept + upper_slope * index
-        lower = lower_intercept + lower_slope * index
-        if breakout_direction is None:
-            if bar.close > upper * (1 + config.breakout_buffer_percent):
-                breakout_direction = "up"
-                breakout_date = bar.period_end
-                trigger_index = index
-            elif bar.close < lower * (1 - config.breakout_buffer_percent):
-                breakout_direction = "down"
-                breakout_date = bar.period_end
-                trigger_index = index
-        elif (
-            breakout_direction == "up" and bar.close < lower
-        ) or (
-            breakout_direction == "down" and bar.close > upper
-        ):
-            invalidation_date = bar.period_end
-            break
-    state = "invalidated" if invalidation_date else "confirmed" if breakout_date else "forming"
+    events = evaluate_pattern_boundaries(
+        bars,
+        available_date=available_date,
+        upper_price_at=lambda index: upper_intercept + upper_slope * index,
+        lower_price_at=lambda index: lower_intercept + lower_slope * index,
+        buffer_percent=config.breakout_buffer_percent,
+    )
+    breakout_direction = events.direction.value if events.direction is not None else None
     residual_score = 1 - min(1.0, max(upper_residual, lower_residual) / scale / config.maximum_boundary_residual_percent)
     contraction_score = min(1.0, max(0.0, 1 - end_width / start_width) / 0.6)
     impulse_score = min(1.0, abs(impulse) / (config.minimum_flag_impulse_percent * 2))
@@ -200,7 +186,10 @@ def _fit_window(
         else contraction_score
     )
     score = 0.35 * residual_score + 0.30 * shape_score + 0.20 * duration_score + 0.15 * pivot_score
-    volume_ratio = _volume_ratio(bars, trigger_index) if trigger_index is not None else None
+    volume_ratio = (
+        _volume_ratio(bars, events.trigger_index)
+        if events.trigger_index is not None else None
+    )
     return ConsolidationPattern(
         pattern_type=pattern_type,
         display_name={
@@ -221,10 +210,12 @@ def _fit_window(
         lower_boundary=BoundaryLine(
             pivots[0].pivot_date, lower_start, pivots[-1].pivot_date, lower_end, lower_slope
         ),
-        completion_state=state,
+        completion_state=resolve_pattern_completion_state(
+            events.breakout_date, events.invalidation_date
+        ),
         breakout_direction=breakout_direction,
-        breakout_date=breakout_date,
-        invalidation_date=invalidation_date,
+        breakout_date=events.breakout_date,
+        invalidation_date=events.invalidation_date,
         score=round(score, 6),
         score_components={
             "boundary_fit": round(residual_score, 6),

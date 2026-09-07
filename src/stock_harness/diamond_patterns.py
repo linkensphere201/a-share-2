@@ -9,6 +9,10 @@ from math import sqrt
 from typing import Sequence
 
 from stock_harness.analysis_inputs import AnalysisBar
+from stock_harness.breakout_state import (
+    evaluate_pattern_boundaries,
+    resolve_pattern_completion_state,
+)
 from stock_harness.consolidation_patterns import BoundaryLine
 from stock_harness.trend_pivots import PivotKind, PricePivot
 
@@ -142,25 +146,14 @@ def _fit_window(
         else DiamondType.DIAMOND
     )
     available_date = max(item.confirmed_date for item in pivots)
-    breakout_direction: str | None = None
-    breakout_date: date | None = None
-    invalidation_date: date | None = None
-    trigger_index: int | None = None
-    for index, bar in enumerate(bars):
-        if bar.period_end < available_date:
-            continue
-        upper = _price(upper_second, index)
-        lower = _price(lower_second, index)
-        if breakout_direction is None:
-            if bar.close > upper * (1 + config.breakout_buffer_percent):
-                breakout_direction, breakout_date, trigger_index = "up", bar.period_end, index
-            elif bar.close < lower * (1 - config.breakout_buffer_percent):
-                breakout_direction, breakout_date, trigger_index = "down", bar.period_end, index
-        elif (breakout_direction == "up" and bar.close < lower) or (
-            breakout_direction == "down" and bar.close > upper
-        ):
-            invalidation_date = bar.period_end
-            break
+    events = evaluate_pattern_boundaries(
+        bars,
+        available_date=available_date,
+        upper_price_at=lambda index: _price(upper_second, index),
+        lower_price_at=lambda index: _price(lower_second, index),
+        buffer_percent=config.breakout_buffer_percent,
+    )
+    breakout_direction = events.direction.value if events.direction is not None else None
     expansion_score = min(1.0, (middle_width / start_width - 1) / 0.8)
     contraction_score = min(1.0, (1 - end_width / middle_width) / 0.7)
     residual_score = 1 - min(
@@ -189,10 +182,12 @@ def _fit_window(
         ),
         upper_active=_boundary(upper_second, contract_highs, index_by_date),
         lower_active=_boundary(lower_second, contract_lows, index_by_date),
-        completion_state="invalidated" if invalidation_date else "confirmed" if breakout_date else "forming",
+        completion_state=resolve_pattern_completion_state(
+            events.breakout_date, events.invalidation_date
+        ),
         breakout_direction=breakout_direction,
-        breakout_date=breakout_date,
-        invalidation_date=invalidation_date,
+        breakout_date=events.breakout_date,
+        invalidation_date=events.invalidation_date,
         score=round(score, 6),
         score_components={
             "expansion": round(expansion_score, 6),
@@ -201,7 +196,10 @@ def _fit_window(
             "symmetry": round(symmetry_score, 6),
         },
         context_change_percent=context_change,
-        volume_ratio=_volume_ratio(bars, trigger_index) if trigger_index is not None else None,
+        volume_ratio=(
+            _volume_ratio(bars, events.trigger_index)
+            if events.trigger_index is not None else None
+        ),
     )
 
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 from enum import StrEnum
-from typing import Sequence
+from typing import Callable, Sequence
 
 from stock_harness.analysis_inputs import AnalysisBar
 
@@ -35,6 +35,16 @@ class StructuralEventKind(StrEnum):
     NO_CHANGE = "no-structural-change"
 
 
+@dataclass(frozen=True, slots=True)
+class PatternBoundaryEvents:
+    """First causal escape and later opposite-boundary invalidation."""
+
+    direction: BreakoutDirection | None
+    breakout_date: date | None
+    trigger_index: int | None
+    invalidation_date: date | None
+
+
 def resolve_pattern_completion_state(
     breakout_date: date | None,
     invalidation_date: date | None,
@@ -45,6 +55,52 @@ def resolve_pattern_completion_state(
     if breakout_date is not None:
         return "confirmed"
     return "forming"
+
+
+def evaluate_pattern_boundaries(
+    bars: Sequence[AnalysisBar],
+    *,
+    available_date: date,
+    upper_price_at: Callable[[int], float],
+    lower_price_at: Callable[[int], float],
+    buffer_percent: float = 0.005,
+) -> PatternBoundaryEvents:
+    """Evaluate a pattern's moving upper/lower boundaries in bar-index space."""
+    if buffer_percent < 0:
+        raise ValueError("buffer_percent must be non-negative")
+    direction: BreakoutDirection | None = None
+    breakout_date: date | None = None
+    trigger_index: int | None = None
+    invalidation_date: date | None = None
+    for index, bar in enumerate(bars):
+        if bar.period_end < available_date:
+            continue
+        upper = upper_price_at(index)
+        lower = lower_price_at(index)
+        if upper <= 0 or lower <= 0 or upper < lower:
+            continue
+        if direction is None:
+            if bar.close > upper * (1 + buffer_percent):
+                direction = BreakoutDirection.UP
+                breakout_date = bar.period_end
+                trigger_index = index
+            elif bar.close < lower * (1 - buffer_percent):
+                direction = BreakoutDirection.DOWN
+                breakout_date = bar.period_end
+                trigger_index = index
+        elif (
+            direction is BreakoutDirection.UP and bar.close < lower
+        ) or (
+            direction is BreakoutDirection.DOWN and bar.close > upper
+        ):
+            invalidation_date = bar.period_end
+            break
+    return PatternBoundaryEvents(
+        direction=direction,
+        breakout_date=breakout_date,
+        trigger_index=trigger_index,
+        invalidation_date=invalidation_date,
+    )
 
 
 @dataclass(frozen=True, slots=True)
