@@ -81,6 +81,21 @@ test('left drag pans the main chart in both dimensions', async ({ page }) => {
   expect(after.y - before.y).toBeLessThan(75)
 })
 
+test('wheel zoom-out stops at the complete data span instead of scaling empty time', async ({ page }) => {
+  await page.goto('http://127.0.0.1:5173')
+  const stage = page.locator('.chart-stage').first()
+  await expect(stage.locator('.chart-state')).toHaveCount(0, { timeout: 15_000 })
+  const box = await stage.boundingBox()
+  if (!box) throw new Error('Chart has no bounds')
+  await page.mouse.move(box.x + box.width * 0.6, box.y + box.height * 0.3)
+  for (let index = 0; index < 12; index += 1) {
+    await page.mouse.wheel(0, 120)
+    await page.waitForTimeout(80)
+  }
+  await page.waitForTimeout(500)
+  expect(await mainPaneCandleOccupancy(page)).toBeGreaterThan(0.6)
+})
+
 test('long runtime warnings cannot push the chart outside the viewport', async ({ page }) => {
   const marker = `layout-regression-${'x'.repeat(950)}`
   const response = await page.request.post('http://127.0.0.1:8001/api/runtime-events', {

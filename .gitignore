@@ -9,6 +9,7 @@ pytest-cache-files-*/
 coverage.xml
 htmlcov/
 test-results/
+.test-runtime/
 .venv/
 venv/
 *.egg-info/

@@ -39,6 +39,7 @@ import {
   candleColor,
   chooseLodBucket,
   clamp,
+  clampLogicalRangeSpan,
   createRangeMeasurement,
   detectPriceGaps,
   latestReadout,
@@ -477,7 +478,8 @@ export function ChartCanvas({
 
   useEffect(() => {
     if (!hostRef.current) return
-    const chart = createChart(hostRef.current, {
+    const host = hostRef.current
+    const chart = createChart(host, {
       autoSize: true,
       layout: {
         ...chartLayoutOptions,
@@ -597,6 +599,8 @@ export function ChartCanvas({
       }))
     }
     refitPriceViewportRef.current = refitPriceViewport
+    const refitAfterWheel = () => refitPriceViewport()
+    host.addEventListener('wheel', refitAfterWheel, { capture: true, passive: true })
 
     chart.subscribeCrosshairMove(param => {
       if (!param.time) {
@@ -640,6 +644,15 @@ export function ChartCanvas({
         setOverlayRevision(value => value + 1)
         const visible = chart.timeScale().getVisibleRange()
         if (!visible || !hostRef.current) return
+        const logical = chart.timeScale().getVisibleLogicalRange()
+        const bounded = logical && clampLogicalRangeSpan(
+          logical,
+          renderedBarListRef.current.length,
+        )
+        if (bounded) {
+          chart.timeScale().setVisibleLogicalRange(bounded)
+          return
+        }
         const stats = visibleBarStats(barsRef.current, String(visible.from), String(visible.to))
         if (!timeAxisPointerActiveRef.current) resetAutoScale()
         const nextBucket = chooseLodBucket(stats.count, hostRef.current.clientWidth)
@@ -698,6 +711,7 @@ export function ChartCanvas({
       resizeObserver.disconnect()
       priceRefitGenerationRef.current += 1
       priceRefitPendingRef.current = false
+      host.removeEventListener('wheel', refitAfterWheel, true)
       chart.timeScale().unsubscribeVisibleLogicalRangeChange(recalculateLod)
       chart.remove()
       chartRef.current = null

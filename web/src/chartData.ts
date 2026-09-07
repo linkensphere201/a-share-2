@@ -211,6 +211,22 @@ export function snapLogicalRangeToDataEdge(
   return { from: range.from + delta, to: range.to + delta }
 }
 
+export function clampLogicalRangeSpan(
+  range: { from: number; to: number },
+  dataCount: number,
+  edgeBlankBars = 6,
+): { from: number; to: number } | undefined {
+  if (dataCount <= 0) return undefined
+  const currentSpan = range.to - range.from
+  const maximumSpan = Math.max(1, dataCount - 1 + edgeBlankBars * 2)
+  if (currentSpan <= maximumSpan) return undefined
+  const center = (range.from + range.to) / 2
+  return {
+    from: center - maximumSpan / 2,
+    to: center + maximumSpan / 2,
+  }
+}
+
 export type NumericRange = { from: number; to: number }
 
 export type PriceViewportMetrics = {

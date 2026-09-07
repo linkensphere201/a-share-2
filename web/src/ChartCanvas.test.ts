@@ -12,6 +12,7 @@ import {
   calculateChangePercent,
   candleColor,
   chooseLodBucket,
+  clampLogicalRangeSpan,
   remapLogicalRange,
   rescalePriceRange,
   snapLogicalRangeToDataEdge,
@@ -110,6 +111,20 @@ describe('aspect-locked price viewport', () => {
     )
     expect(resized.from).toBeCloseTo(5)
     expect(resized.to).toBeCloseTo(80)
+  })
+})
+
+describe('time viewport limits', () => {
+  it('caps zoom-out span at the complete data width plus bounded edge space', () => {
+    expect(clampLogicalRangeSpan({ from: -100, to: 300 }, 100)).toEqual({
+      from: 44.5,
+      to: 155.5,
+    })
+    expect(clampLogicalRangeSpan({ from: -5, to: 105 }, 100)).toBeUndefined()
+  })
+
+  it('does not constrain panning when the visible span is already bounded', () => {
+    expect(clampLogicalRangeSpan({ from: 500, to: 600 }, 100)).toBeUndefined()
   })
 })
 
