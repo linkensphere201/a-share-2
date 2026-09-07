@@ -148,7 +148,11 @@ type LockedPriceViewport = PriceViewportMetrics & {
 
 type PricePanDrag = {
   pointerId: number
+  captureTarget: HTMLElement
+  startX: number
   startY: number
+  latestX: number
+  latestY: number
   paneHeight: number
   range: NumericRange
 }
@@ -1011,7 +1015,7 @@ export function ChartCanvas({
   const handlePricePanStart = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0 || drawingTool !== 'browse' || !chartRef.current) return
     const target = event.target
-    if (!(target instanceof Element) || !target.closest('.chart-host')) return
+    if (!(target instanceof HTMLElement) || !target.closest('.chart-host')) return
     const chart = chartRef.current
     const logical = chart.timeScale().getVisibleLogicalRange()
     const range = chart.priceScale('right', 0).getVisibleRange()
@@ -1023,9 +1027,14 @@ export function ChartCanvas({
       width: Math.max(1, chart.timeScale().width() || event.currentTarget.clientWidth),
       height: paneHeight,
     }
+    target.setPointerCapture(event.pointerId)
     pricePanDragRef.current = {
       pointerId: event.pointerId,
+      captureTarget: target,
+      startX: event.clientX,
       startY: event.clientY,
+      latestX: event.clientX,
+      latestY: event.clientY,
       paneHeight,
       range,
     }
@@ -1035,6 +1044,8 @@ export function ChartCanvas({
     const drag = pricePanDragRef.current
     const chart = chartRef.current
     if (!drag || drag.pointerId !== event.pointerId || !chart) return
+    drag.latestX = event.clientX
+    drag.latestY = event.clientY
     const nextRange = translatePriceRange(
       drag.range,
       event.clientY - drag.startY,
@@ -1048,8 +1059,17 @@ export function ChartCanvas({
   }
 
   const handlePricePanEnd = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (pricePanDragRef.current?.pointerId !== event.pointerId) return
+    const drag = pricePanDragRef.current
+    if (drag?.pointerId !== event.pointerId) return
     pricePanDragRef.current = undefined
+    if (drag.captureTarget.hasPointerCapture(event.pointerId)) {
+      drag.captureTarget.releasePointerCapture(event.pointerId)
+    }
+    const horizontalDistance = Math.abs(drag.latestX - drag.startX)
+    const verticalDistance = Math.abs(drag.latestY - drag.startY)
+    if (horizontalDistance >= 12 && horizontalDistance >= verticalDistance * 2) {
+      refitPriceViewportRef.current()
+    }
   }
 
   const handleSelectionMove = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -1508,8 +1528,12 @@ export function ChartCanvas({
         recalculateLodRef.current()
       }}
       onPointerCancel={handleSelectionCancel}
-      onPointerCancelCapture={() => {
+      onPointerCancelCapture={event => {
+        const drag = pricePanDragRef.current
         pricePanDragRef.current = undefined
+        if (drag?.captureTarget.hasPointerCapture(event.pointerId)) {
+          drag.captureTarget.releasePointerCapture(event.pointerId)
+        }
         timeAxisPointerActiveRef.current = false
         recalculateLodRef.current()
       }}

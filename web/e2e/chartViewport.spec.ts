@@ -81,6 +81,22 @@ test('left drag pans the main chart in both dimensions', async ({ page }) => {
   expect(after.y - before.y).toBeLessThan(75)
 })
 
+test('dominant horizontal drag refits prices for the newly visible history', async ({ page }) => {
+  await page.goto('http://127.0.0.1:5173')
+  const stage = page.locator('.chart-stage').first()
+  await expect(stage.locator('.chart-state')).toHaveCount(0, { timeout: 15_000 })
+  const box = await stage.boundingBox()
+  if (!box) throw new Error('Chart has no bounds')
+  const x = box.x + box.width * 0.56
+  const y = box.y + box.height * 0.32
+  await page.mouse.move(x, y)
+  await page.mouse.down()
+  await page.mouse.move(x + 520, y, { steps: 20 })
+  await page.mouse.up()
+  await page.waitForTimeout(500)
+  expect(await mainPaneCandleOccupancy(page)).toBeGreaterThan(0.6)
+})
+
 test('wheel zoom-out stops at the complete data span instead of scaling empty time', async ({ page }) => {
   await page.goto('http://127.0.0.1:5173')
   const stage = page.locator('.chart-stage').first()
