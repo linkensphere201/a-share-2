@@ -4,6 +4,7 @@ import json
 import pytest
 
 from stock_harness.analysis_inputs import AnalysisHorizons, AnalysisTimeframe
+from stock_harness.pattern_analysis import PatternAnalysisService
 from stock_harness.models import (
     AdjustmentFactor,
     DailyBar,
@@ -66,7 +67,7 @@ def test_replay_captures_complete_production_outputs_in_chronological_order():
     store, days = _replay_store()
     try:
         snapshots = replay_trend_analysis(
-            TrendAnalysisService(store), "000001.SZ",
+            PatternAnalysisService(store), "000001.SZ",
             [days[17], days[23], days[29]], horizons=HORIZONS,
         )
 
@@ -87,11 +88,11 @@ def test_future_suffix_mutation_cannot_change_any_historical_production_output()
     cutoffs = [days[17], days[22], cutoff]
     try:
         baseline = replay_trend_analysis(
-            TrendAnalysisService(baseline_store), "000001.SZ", cutoffs,
+            PatternAnalysisService(baseline_store), "000001.SZ", cutoffs,
             horizons=HORIZONS,
         )
         mutated = replay_trend_analysis(
-            TrendAnalysisService(mutated_store), "000001.SZ", cutoffs,
+            PatternAnalysisService(mutated_store), "000001.SZ", cutoffs,
             horizons=HORIZONS,
         )
 
@@ -106,7 +107,7 @@ def test_replay_records_structural_revisions_before_each_next_bar_is_revealed():
     store, days = _replay_store()
     try:
         snapshots = replay_trend_analysis(
-            TrendAnalysisService(store), "000001.SZ", days[17:34],
+            PatternAnalysisService(store), "000001.SZ", days[17:34],
             horizons=HORIZONS,
         )
         events_by_date = {
@@ -129,11 +130,11 @@ def test_incremental_replay_matches_a_fresh_full_run_at_the_same_cutoff():
     full_store, _ = _replay_store()
     try:
         incremental = replay_trend_analysis(
-            TrendAnalysisService(incremental_store), "000001.SZ",
+            PatternAnalysisService(incremental_store), "000001.SZ",
             [days[17], days[22], days[27], days[32]], horizons=HORIZONS,
         )
         full = replay_trend_analysis(
-            TrendAnalysisService(full_store), "000001.SZ", [days[32]],
+            PatternAnalysisService(full_store), "000001.SZ", [days[32]],
             horizons=HORIZONS,
         )
 
@@ -154,7 +155,7 @@ def test_replay_retains_a_confirmed_pattern_when_the_next_bar_invalidates_it():
     ])
     try:
         before, after = replay_trend_analysis(
-            TrendAnalysisService(store), "000001.SZ",
+            PatternAnalysisService(store), "000001.SZ",
             [days[25], invalidation_day], horizons=HORIZONS,
         )
 
@@ -186,7 +187,7 @@ def test_replay_metrics_separate_recognition_lag_from_event_turnover():
     store, days = _replay_store()
     try:
         snapshots = replay_trend_analysis(
-            TrendAnalysisService(store), "000001.SZ", days[17:34],
+            PatternAnalysisService(store), "000001.SZ", days[17:34],
             horizons=HORIZONS,
         )
         metrics = summarize_replay(snapshots)
@@ -323,7 +324,7 @@ def test_final_close_can_reverse_a_provisional_breakout_into_official_breakdown(
 def test_replay_rejects_empty_or_non_chronological_cutoffs():
     store, days = _replay_store()
     try:
-        service = TrendAnalysisService(store)
+        service = PatternAnalysisService(store)
         with pytest.raises(ValueError, match="at least one cutoff"):
             replay_trend_analysis(service, "000001.SZ", [], horizons=HORIZONS)
         with pytest.raises(ValueError, match="strictly chronological"):
@@ -341,7 +342,7 @@ def test_replay_rejects_empty_or_non_chronological_cutoffs():
 def test_replay_comparison_rejects_different_cutoff_sets():
     store, days = _replay_store()
     try:
-        service = TrendAnalysisService(store)
+        service = PatternAnalysisService(store)
         first = replay_trend_analysis(service, "000001.SZ", [days[20]], horizons=HORIZONS)
         second = replay_trend_analysis(service, "000001.SZ", [days[21]], horizons=HORIZONS)
         with pytest.raises(ValueError, match="must match"):

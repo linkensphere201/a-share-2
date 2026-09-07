@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 from enum import StrEnum
+from typing import NotRequired, TypedDict, cast
 
 from stock_harness.analysis_inputs import AnalysisHorizons, AnalysisTimeframe
 from stock_harness.models import StoredDailyBar
@@ -20,6 +21,19 @@ class PatternAnalysisProfile(StrEnum):
     SCAN = "scan"
     FULL = "full"
     REPLAY = "replay"
+
+
+class PatternAnalysisResult(TypedDict):
+    run_id: str
+    status: str
+    as_of_date: date
+    algorithm_version: str
+    config_version: str
+    completion_state: str
+    items: list[dict[str, object]]
+    warnings: list[dict[str, object]]
+    stale: bool
+    failure_details: NotRequired[object | None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,11 +67,18 @@ class PatternAnalysisService:
     def scan_daily(bars: tuple[StoredDailyBar, ...] | list[StoredDailyBar]) -> DailyStructureScan:
         return scan_daily_structure(bars)
 
-    def analyze(self, request: PatternAnalysisRequest) -> list[dict[str, object]]:
+    def analyze(self, request: PatternAnalysisRequest) -> list[PatternAnalysisResult]:
         request.validate()
         if request.profile is PatternAnalysisProfile.SCAN:
-            raise ValueError("scan profile is not available through persisted analysis yet")
-        return self._delegate.recalculate(
+            raise ValueError("scan profile requires preloaded bars through scan_daily")
+        if request.profile is PatternAnalysisProfile.REPLAY:
+            if request.as_of_date is None:
+                raise ValueError("replay profile requires an as-of date")
+            return [
+                self.build_snapshot(request, timeframe=timeframe)
+                for timeframe in dict.fromkeys(request.timeframes)
+            ]
+        return cast(list[PatternAnalysisResult], self._delegate.recalculate(
             request.symbol,
             request.timeframes,
             request.horizons,
@@ -65,22 +86,22 @@ class PatternAnalysisService:
             include_preview=request.include_preview,
             as_of_date=request.as_of_date,
             pivot_config=request.pivot_config,
-        )
+        ))
 
     def build_snapshot(
         self,
         request: PatternAnalysisRequest,
         *,
         timeframe: AnalysisTimeframe,
-    ) -> dict[str, object]:
+    ) -> PatternAnalysisResult:
         request.validate()
         if request.as_of_date is None:
             raise ValueError("snapshot analysis requires an as-of date")
-        return self._delegate.build_review_snapshot(
+        return cast(PatternAnalysisResult, self._delegate.build_review_snapshot(
             request.symbol,
             timeframe,
             request.horizons,
             as_of_date=request.as_of_date,
             config_version=request.config_version,
             pivot_config=request.pivot_config,
-        )
+        ))

@@ -40,7 +40,7 @@ def test_scan_profile_cannot_silently_fall_back_to_full_persistence() -> None:
             config_version="test-v1",
             profile=PatternAnalysisProfile.SCAN,
         )
-        with pytest.raises(ValueError, match="scan profile"):
+        with pytest.raises(ValueError, match="scan profile requires preloaded bars"):
             service.analyze(request)
     finally:
         store.close()
@@ -74,10 +74,9 @@ def test_service_http_and_snapshot_share_identical_structural_output() -> None:
     )
     try:
         direct = PatternAnalysisService(store).analyze(request)[0]
-        snapshot = PatternAnalysisService(store).build_snapshot(
-            replace(request, profile=PatternAnalysisProfile.REPLAY),
-            timeframe=AnalysisTimeframe.DAILY,
-        )
+        snapshot = PatternAnalysisService(store).analyze(
+            replace(request, profile=PatternAnalysisProfile.REPLAY)
+        )[0]
         with TestClient(create_app(store)) as client:
             response = client.post("/api/analysis/trend/recalculate", json={
                 "symbol": "000001.SZ",

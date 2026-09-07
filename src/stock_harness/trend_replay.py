@@ -11,7 +11,11 @@ import json
 from typing import Any
 
 from stock_harness.analysis_inputs import AnalysisHorizons, AnalysisTimeframe
-from stock_harness.trend_analysis import TrendAnalysisService
+from stock_harness.pattern_analysis import (
+    PatternAnalysisProfile,
+    PatternAnalysisRequest,
+    PatternAnalysisService,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,7 +62,7 @@ class TrendReplayMetrics:
 
 
 def replay_trend_analysis(
-    service: TrendAnalysisService,
+    service: PatternAnalysisService,
     symbol: str,
     cutoffs: Sequence[date],
     *,
@@ -74,14 +78,15 @@ def replay_trend_analysis(
         raise ValueError("historical replay cutoffs must be strictly chronological")
     snapshots: list[TrendReplaySnapshot] = []
     for cutoff in ordered:
-        result = service.recalculate(
-            symbol,
-            [timeframe],
-            horizons,
+        result = service.analyze(PatternAnalysisRequest(
+            symbol=symbol,
+            timeframes=(timeframe,),
+            horizons=horizons,
             config_version=config_version,
             include_preview=False,
             as_of_date=cutoff,
-        )[0]
+            profile=PatternAnalysisProfile.REPLAY,
+        ))[0]
         snapshots.append(_snapshot_result(result, timeframe))
     return tuple(snapshots)
 

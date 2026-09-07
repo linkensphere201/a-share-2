@@ -2,6 +2,7 @@ from datetime import date, datetime, timedelta, timezone
 import json
 
 from stock_harness.analysis_inputs import AnalysisHorizons, AnalysisTimeframe
+from stock_harness.pattern_analysis import PatternAnalysisService
 from stock_harness.models import (
     FuturesBarState,
     FuturesCalendarDay,
@@ -125,11 +126,11 @@ def test_futures_replay_is_causal_across_night_expiry_roll_limit_and_missing_ses
     cutoffs = [days[12], days[17], days[23], cutoff]
     try:
         baseline_replay = replay_trend_analysis(
-            TrendAnalysisService(baseline), series.symbol, cutoffs,
+            PatternAnalysisService(baseline), series.symbol, cutoffs,
             horizons=HORIZONS, config_version="futures-replay-v1",
         )
         mutated_replay = replay_trend_analysis(
-            TrendAnalysisService(mutated), series.symbol, cutoffs,
+            PatternAnalysisService(mutated), series.symbol, cutoffs,
             horizons=HORIZONS, config_version="futures-replay-v1",
         )
 
@@ -149,7 +150,7 @@ def test_futures_replay_is_causal_across_night_expiry_roll_limit_and_missing_ses
         assert baseline_replay[-1].items
 
         expired = replay_trend_analysis(
-            TrendAnalysisService(baseline), front.symbol, [days[25]],
+            PatternAnalysisService(baseline), front.symbol, [days[25]],
             horizons=HORIZONS, config_version="expired-contract-v1",
         )[0]
         assert "unexplained_missing_bars" not in expired.warnings_json
