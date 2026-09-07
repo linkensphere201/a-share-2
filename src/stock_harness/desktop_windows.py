@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import threading
+import time
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -15,6 +16,12 @@ MAX_POPPED_OUT_WINDOWS = 4
 DEFAULT_POPPED_OUT_WIDTH = 1200
 DEFAULT_POPPED_OUT_HEIGHT = 760
 MIN_POPPED_OUT_SIZE = (800, 560)
+ALLOWED_DIAGNOSTIC_EVENTS = {
+    "frontend-focus",
+    "frontend-blur",
+    "frontend-visibility",
+    "presentation-reconcile",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,9 +45,11 @@ class DesktopWindowBridge:
         self._main_window: Any | None = None
         self._windows: dict[PopoutKey, Any] = {}
         self._lock = threading.RLock()
+        self._diagnostic_times: dict[str, float] = {}
 
     def _set_main_window(self, window: Any) -> None:
         self._main_window = window
+        self._attach_native_lifecycle("main", None, window)
 
     def pop_out_window(
         self,
@@ -48,14 +57,28 @@ class DesktopWindowBridge:
         window_id: str,
         title: str,
         geometry: dict[str, object] | None = None,
+        diagnostic: dict[str, object] | None = None,
     ) -> dict[str, object]:
         key = _validated_key(group_id, window_id)
         safe_title = _validated_title(title)
         with self._lock:
             existing = self._windows.get(key)
+            LOGGER.info(
+                "desktop_popout_requested group_id=%s window_id=%s existing=%s count=%d diagnostic=%s",
+                key.group_id,
+                key.window_id,
+                existing is not None,
+                len(self._windows),
+                _diagnostic_json(diagnostic),
+            )
             if existing is not None:
                 existing.restore()
                 existing.show()
+                LOGGER.info(
+                    "desktop_popout_existing_focused group_id=%s window_id=%s",
+                    key.group_id,
+                    key.window_id,
+                )
                 return {"ok": True, "state": "focused"}
             if len(self._windows) >= MAX_POPPED_OUT_WINDOWS:
                 return {
@@ -77,6 +100,7 @@ class DesktopWindowBridge:
                 js_api=self,
             )
             self._windows[key] = window
+            self._attach_native_lifecycle("child", key, window)
             window.events.closed += lambda: self._handle_closed(key, window)
             window.events.resized += lambda width, height: self._notify_geometry(
                 key, width=width, height=height
@@ -113,6 +137,56 @@ class DesktopWindowBridge:
         window.restore()
         window.show()
         return {"ok": True, "state": "focused"}
+
+    def report_window_diagnostic(
+        self,
+        event_name: str,
+        diagnostic: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        if event_name not in ALLOWED_DIAGNOSTIC_EVENTS:
+            return {"ok": False, "state": "invalid-event"}
+        detail = _diagnostic_json(diagnostic)
+        rate_key = f"{event_name}:{detail}"
+        now = time.monotonic()
+        with self._lock:
+            previous = self._diagnostic_times.get(rate_key, 0.0)
+            if now - previous < 0.5:
+                return {"ok": True, "state": "rate-limited"}
+            self._diagnostic_times[rate_key] = now
+            if len(self._diagnostic_times) > 128:
+                cutoff = now - 60
+                self._diagnostic_times = {
+                    key: value for key, value in self._diagnostic_times.items()
+                    if value >= cutoff
+                }
+        LOGGER.info("desktop_window_diagnostic event=%s detail=%s", event_name, detail)
+        return {"ok": True, "state": "recorded"}
+
+    def _attach_native_lifecycle(
+        self,
+        host: str,
+        key: PopoutKey | None,
+        window: Any,
+    ) -> None:
+        identity = (
+            f"group_id={key.group_id} window_id={key.window_id}"
+            if key is not None else "group_id=- window_id=-"
+        )
+        events = getattr(window, "events", None)
+        if events is None:
+            LOGGER.debug("desktop_native_lifecycle_unavailable host=%s", host)
+            return
+        for event_name in ("shown", "minimized", "maximized", "restored"):
+            event = getattr(events, event_name, None)
+            if event is None:
+                continue
+            event += lambda name=event_name: LOGGER.info(
+                "desktop_native_window_event host=%s event=%s %s child_count=%d",
+                host,
+                name,
+                identity,
+                len(self._windows),
+            )
 
     def _handle_closed(self, key: PopoutKey, expected_window: Any) -> None:
         with self._lock:
@@ -174,6 +248,20 @@ def _validated_title(value: object) -> str:
         return "StockHarness"
     normalized = " ".join(value.split())[:80]
     return normalized or "StockHarness"
+
+
+def _diagnostic_json(value: dict[str, object] | None) -> str:
+    if not isinstance(value, dict):
+        return "{}"
+    bounded = {
+        str(key)[:48]: item
+        if isinstance(item, (str, int, float, bool)) or item is None
+        else type(item).__name__
+        for key, item in list(value.items())[:16]
+    }
+    return json.dumps(
+        bounded, ensure_ascii=True, sort_keys=True, separators=(",", ":")
+    )[:1000]
 
 
 def _normalize_geometry(value: dict[str, object] | None) -> dict[str, int]:

@@ -17,7 +17,13 @@ import { subscribeDrawingStore } from './drawingStore'
 import { applyTheme, loadTheme, persistTheme, themes, type ThemeDefinition } from './themeStore'
 import { updateSplitRatio } from './layoutTree'
 import { WindowGroup } from './WindowGroup'
-import { dockNativeWindow, focusNativeWindow, popOutNativeWindow, readPopoutTarget } from './nativeWindowBridge'
+import {
+  dockNativeWindow,
+  focusNativeWindow,
+  popOutNativeWindow,
+  readPopoutTarget,
+  reportNativeWindowDiagnostic,
+} from './nativeWindowBridge'
 import { createWorkspaceSync, type WorkspaceSync } from './workspaceSync'
 import { buildWorkspaceContext, publishWorkspaceContext } from './workspaceContext'
 import type { TradingSystemWindowStates } from './tradingSystems'
@@ -89,6 +95,7 @@ export function StockWorkspace() {
   const workspaceSyncRef = useRef<WorkspaceSync | undefined>(undefined)
   const remoteWorkspaceRef = useRef<string | undefined>(undefined)
   const nativeRequestedRef = useRef(new Set<string>())
+  const lastWindowFocusAtRef = useRef<number | undefined>(document.hasFocus() ? performance.now() : undefined)
   const geometryTimersRef = useRef(new Map<string, number>())
   const pendingGeometryRef = useRef(new Map<string, {
     groupId: string
@@ -175,6 +182,32 @@ export function StockWorkspace() {
     window.addEventListener('pywebviewready', ready)
     return () => window.removeEventListener('pywebviewready', ready)
   }, [])
+
+  useEffect(() => {
+    const reportLifecycle = (eventName: string) => {
+      void reportNativeWindowDiagnostic(eventName, {
+        host: isPopoutHost ? 'popout' : 'main',
+        group_id: popoutTarget?.groupId ?? activeGroup.id,
+        window_id: popoutTarget?.windowId,
+        visibility: document.visibilityState,
+        document_focus: document.hasFocus(),
+      })
+    }
+    const handleFocus = () => {
+      lastWindowFocusAtRef.current = performance.now()
+      reportLifecycle('frontend-focus')
+    }
+    const handleBlur = () => reportLifecycle('frontend-blur')
+    const handleVisibility = () => reportLifecycle('frontend-visibility')
+    window.addEventListener('focus', handleFocus)
+    window.addEventListener('blur', handleBlur)
+    document.addEventListener('visibilitychange', handleVisibility)
+    return () => {
+      window.removeEventListener('focus', handleFocus)
+      window.removeEventListener('blur', handleBlur)
+      document.removeEventListener('visibilitychange', handleVisibility)
+    }
+  }, [activeGroup.id, isPopoutHost, popoutTarget?.groupId, popoutTarget?.windowId])
 
   useEffect(() => {
     if (isPopoutHost) return
@@ -330,17 +363,27 @@ export function StockWorkspace() {
         : window),
     }))
     nativeRequestedRef.current.add(key)
+    const millisecondsSinceFocus = lastWindowFocusAtRef.current === undefined
+      ? undefined
+      : Math.max(0, Math.round(performance.now() - lastWindowFocusAtRef.current))
     const result = await popOutNativeWindow(
       target,
       `StockHarness - ${item.type === 'chart' ? item.instrument.name : item.title}`,
       item.presentation.geometry,
+      {
+        trigger: 'window-toolbar-click',
+        host: isPopoutHost ? 'popout' : 'main',
+        visibility: document.visibilityState,
+        document_focus: document.hasFocus(),
+        milliseconds_since_focus: millisecondsSinceFocus,
+      },
     )
     if (!result.ok) {
       nativeRequestedRef.current.delete(key)
       updateWindowPresentation(activeGroup.id, id, current => ({ ...current, mode: 'docked' }))
       logWarning('desktop-window', '弹出独立窗口失败', { state: result.state, limit: result.limit })
     }
-  }, [activeGroup, updateActiveGroup, updateWindowPresentation])
+  }, [activeGroup, isPopoutHost, updateActiveGroup, updateWindowPresentation])
 
   const dockWindow = useCallback(async (id: string) => {
     const target = { groupId: activeGroup.id, windowId: id }
@@ -370,6 +413,18 @@ export function StockWorkspace() {
       else stale.push({ groupId: group.id, windowId: item.id })
     }))
     stale.forEach(target => {
+      logWarning('desktop-window', '检测到未经本会话请求的分离状态，已自动复原', {
+        group_id: target.groupId,
+        window_id: target.windowId,
+        visibility: document.visibilityState,
+        document_focus: document.hasFocus(),
+      })
+      void reportNativeWindowDiagnostic('presentation-reconcile', {
+        host: 'main',
+        group_id: target.groupId,
+        window_id: target.windowId,
+        action: 'force-docked',
+      })
       updateWindowPresentation(target.groupId, target.windowId, current => ({
         ...current, mode: 'docked',
       }))

@@ -68,6 +68,9 @@ describe('StockWorkspace', () => {
 
     await waitFor(() => expect(popOut).toHaveBeenCalledWith(
       'group-primary', 'chart-primary', expect.stringContaining('StockHarness - '), undefined,
+      expect.objectContaining({
+        trigger: 'window-toolbar-click', host: 'main',
+      }),
     ))
     expect(screen.getByRole('button', { name: /显示已弹出的/ })).toBeTruthy()
     expect(JSON.parse(window.localStorage.getItem(workspaceStorageKey) ?? '{}')

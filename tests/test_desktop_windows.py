@@ -20,6 +20,10 @@ class FakeEvent:
 class FakeEvents:
     def __init__(self) -> None:
         self.closed = FakeEvent()
+        self.shown = FakeEvent()
+        self.minimized = FakeEvent()
+        self.maximized = FakeEvent()
+        self.restored = FakeEvent()
         self.resized = FakeEvent()
         self.moved = FakeEvent()
 
@@ -134,3 +138,33 @@ def test_geometry_events_are_bounded_and_dispatched() -> None:
     assert kwargs["x"] == 560
     assert kwargs["y"] == 0
     assert sum("native-window-geometry" in script for script in main.scripts) == 2
+
+
+def test_focus_and_native_lifecycle_diagnostics_are_recorded(caplog) -> None:
+    caplog.set_level("INFO", logger="stock_harness.desktop_windows")
+    webview = FakeWebview()
+    bridge = DesktopWindowBridge(webview, "http://127.0.0.1:8765/", (0, 0, 1920, 1080))
+    main = FakeWindow()
+    bridge._set_main_window(main)
+
+    assert bridge.report_window_diagnostic(
+        "frontend-focus", {"host": "main", "document_focus": True},
+    )["state"] == "recorded"
+    assert bridge.report_window_diagnostic(
+        "frontend-focus", {"host": "main", "document_focus": True},
+    )["state"] == "rate-limited"
+    assert bridge.report_window_diagnostic("unknown", {})["state"] == "invalid-event"
+
+    bridge.pop_out_window(
+        "group", "chart", "Chart", diagnostic={"trigger": "window-toolbar-click"},
+    )
+    child = webview.calls[0][2]
+    main.events.restored.emit()
+    child.events.minimized.emit()
+    child.events.restored.emit()
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("desktop_popout_requested" in message for message in messages)
+    assert any("event=frontend-focus" in message for message in messages)
+    assert any("host=main event=restored" in message for message in messages)
+    assert any("host=child event=restored" in message for message in messages)
