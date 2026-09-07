@@ -91,10 +91,11 @@ export function ChartWindow({
         <ActiveMarketValueReadout symbol={instrument.symbol}/>
         <div className="instrument-window-actions">
           <button
+            className={poppedOutHost ? 'dock-window-action' : undefined}
             title={poppedOutHost ? '恢复到原布局' : '弹出为独立窗口'}
             aria-label={poppedOutHost ? `恢复 ${instrument.name} 到原布局` : `弹出 ${instrument.name} 为独立窗口`}
             onClick={poppedOutHost ? onDock : onPopOut}
-          >{poppedOutHost ? <PanelTopClose size={13}/> : <PanelTopOpen size={13}/>}</button>
+          >{poppedOutHost ? <><PanelTopClose size={13}/><span>复原</span></> : <PanelTopOpen size={13}/>}</button>
           {windowState.mode === 'detached' && <button title="编辑标的" aria-label={`编辑 ${instrument.name} 标的`} onClick={onEdit}><Pencil size={13}/></button>}
           {!poppedOutHost && <><button
             title={maximized ? '还原窗口' : '最大化窗口'}

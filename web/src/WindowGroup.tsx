@@ -75,11 +75,16 @@ export function WindowGroup({
     if (!item) return null
     if (!poppedOutHost && item.presentation.mode === 'popped-out') {
       return <div className="popped-out-placeholder" data-window-id={item.id}>
-        <button title="显示已弹出窗口" aria-label={`显示已弹出的 ${item.title}`} onClick={() => onFocusPopoutWindow(item.id)}>
-          <PanelTopClose size={14}/>{item.type === 'chart'
-            ? <span className="instrument-name-line"><span>{item.instrument.name}</span><MarketBoardBadge instrument={item.instrument}/></span>
-            : <span>{item.title}</span>}
-        </button>
+        <div>
+          <button title="显示已弹出窗口" aria-label={`显示已弹出的 ${item.title}`} onClick={() => onFocusPopoutWindow(item.id)}>
+            <PanelTopClose size={14}/>{item.type === 'chart'
+              ? <span className="instrument-name-line"><span>{item.instrument.name}</span><MarketBoardBadge instrument={item.instrument}/></span>
+              : <span>{item.title}</span>}
+          </button>
+          <button className="restore-popout-placeholder" onClick={() => onDockWindow(item.id)}>
+            复原到布局
+          </button>
+        </div>
       </div>
     }
     if (item.type === 'instrument-list') {

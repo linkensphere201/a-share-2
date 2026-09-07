@@ -91,6 +91,45 @@ describe('StockWorkspace', () => {
     expect(screen.getAllByTestId('chart-canvas')).toHaveLength(1)
     expect(screen.queryByText('2/8')).toBeNull()
     expect(screen.getByTitle('恢复到原布局')).toBeTruthy()
+    expect(screen.getByText('复原')).toBeTruthy()
+  })
+
+  it('restores a popped-out chart from its original layout placeholder', async () => {
+    vi.stubGlobal('fetch', emptyFetch())
+    const dock = vi.fn().mockResolvedValue({ ok: true, state: 'docked' })
+    window.pywebview = { api: {
+      pop_out_window: vi.fn().mockResolvedValue({ ok: true, state: 'opened' }),
+      dock_window: dock,
+      focus_window: vi.fn().mockResolvedValue({ ok: true, state: 'focused' }),
+    } }
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(screen.getAllByTitle('弹出为独立窗口')[1])
+    await user.click(await screen.findByRole('button', { name: '复原到布局' }))
+
+    await waitFor(() => expect(dock).toHaveBeenCalledWith('group-primary', 'chart-primary'))
+    expect(screen.getByTestId('chart-canvas')).toBeTruthy()
+  })
+
+  it('does not reopen a persisted pop-out without an explicit current-session request', async () => {
+    vi.stubGlobal('fetch', emptyFetch())
+    const workspace = createDefaultWorkspace()
+    workspace.groups[0].windows[1].presentation.mode = 'popped-out'
+    window.localStorage.setItem(workspaceStorageKey, JSON.stringify(workspace))
+    const popOut = vi.fn().mockResolvedValue({ ok: true, state: 'opened' })
+    window.pywebview = { api: {
+      pop_out_window: popOut,
+      dock_window: vi.fn().mockResolvedValue({ ok: true, state: 'docked' }),
+      focus_window: vi.fn().mockResolvedValue({ ok: true, state: 'focused' }),
+    } }
+
+    render(<App />)
+
+    await waitFor(() => expect(screen.getByTestId('chart-canvas')).toBeTruthy())
+    expect(popOut).not.toHaveBeenCalled()
+    expect(JSON.parse(window.localStorage.getItem(workspaceStorageKey) ?? '{}')
+      .groups[0].windows[1].presentation.mode).toBe('docked')
   })
 
   it('opens the default list-plus-attached-chart group and collapses chat', async () => {

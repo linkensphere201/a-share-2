@@ -362,23 +362,18 @@ export function StockWorkspace() {
   useEffect(() => {
     if (isPopoutHost || !nativeShellReady) return
     const desired = new Set<string>()
+    const stale: Array<{ groupId: string; windowId: string }> = []
     workspaceRef.current.groups.forEach(group => group.windows.forEach(item => {
       const key = nativeWindowKey(group.id, item.id)
       if (item.presentation.mode !== 'popped-out') return
-      desired.add(key)
-      if (nativeRequestedRef.current.has(key)) return
-      nativeRequestedRef.current.add(key)
-      void popOutNativeWindow(
-        { groupId: group.id, windowId: item.id },
-        `StockHarness - ${item.type === 'chart' ? item.instrument.name : item.title}`,
-        item.presentation.geometry,
-      ).then(result => {
-        if (result.ok) return
-        nativeRequestedRef.current.delete(key)
-        updateWindowPresentation(group.id, item.id, current => ({ ...current, mode: 'docked' }))
-        logWarning('desktop-window', '恢复已弹出窗口失败', { state: result.state, limit: result.limit })
-      })
+      if (nativeRequestedRef.current.has(key)) desired.add(key)
+      else stale.push({ groupId: group.id, windowId: item.id })
     }))
+    stale.forEach(target => {
+      updateWindowPresentation(target.groupId, target.windowId, current => ({
+        ...current, mode: 'docked',
+      }))
+    })
     nativeRequestedRef.current.forEach(key => {
       if (desired.has(key)) return
       nativeRequestedRef.current.delete(key)
