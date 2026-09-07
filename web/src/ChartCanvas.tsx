@@ -585,22 +585,35 @@ export function ChartCanvas({
       })
     }
     resetAutoScaleRef.current = resetAutoScale
-    const refitPriceViewport = () => {
+    let wheelRefitTimer = 0
+    const beginPriceRefit = (settleDelayMs = 0) => {
+      window.clearTimeout(wheelRefitTimer)
       const generation = ++priceRefitGenerationRef.current
       priceRefitPendingRef.current = true
       priceViewportRef.current = undefined
       pricePanDragRef.current = undefined
       chart.priceScale('right', 0).setAutoScale(true)
-      // Let the time range, series data, and pane layout settle before capturing the fitted price range.
-      window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
-        if (generation !== priceRefitGenerationRef.current || chartRef.current !== chart) return
-        priceRefitPendingRef.current = false
-        resetAutoScale()
-      }))
+      const captureFittedRange = () => {
+        // Let the time range, series data, and pane layout settle before capturing the fitted price range.
+        window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+          if (generation !== priceRefitGenerationRef.current || chartRef.current !== chart) return
+          priceRefitPendingRef.current = false
+          resetAutoScale()
+        }))
+      }
+      if (settleDelayMs > 0) {
+        wheelRefitTimer = window.setTimeout(captureFittedRange, settleDelayMs)
+      } else {
+        captureFittedRange()
+      }
     }
+    const refitPriceViewport = () => beginPriceRefit()
     refitPriceViewportRef.current = refitPriceViewport
-    const refitAfterWheel = () => refitPriceViewport()
-    host.addEventListener('wheel', refitAfterWheel, { capture: true, passive: true })
+    const stage = host.closest('.chart-stage')
+    const refitAfterWheel = (event: WheelEvent) => {
+      if (stage?.contains(event.target as Node)) beginPriceRefit(180)
+    }
+    window.addEventListener('wheel', refitAfterWheel, { capture: true, passive: true })
 
     chart.subscribeCrosshairMove(param => {
       if (!param.time) {
@@ -709,9 +722,10 @@ export function ChartCanvas({
       window.clearTimeout(visibleRangeTimer)
       window.clearTimeout(edgeSnapTimer)
       resizeObserver.disconnect()
+      window.clearTimeout(wheelRefitTimer)
       priceRefitGenerationRef.current += 1
       priceRefitPendingRef.current = false
-      host.removeEventListener('wheel', refitAfterWheel, true)
+      window.removeEventListener('wheel', refitAfterWheel, true)
       chart.timeScale().unsubscribeVisibleLogicalRangeChange(recalculateLod)
       chart.remove()
       chartRef.current = null

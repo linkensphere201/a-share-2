@@ -93,7 +93,16 @@ test('wheel zoom-out stops at the complete data span instead of scaling empty ti
     await page.waitForTimeout(80)
   }
   await page.waitForTimeout(500)
-  expect(await mainPaneCandleOccupancy(page)).toBeGreaterThan(0.6)
+  const atLimit = await mainPaneCandleOccupancy(page)
+  for (let index = 0; index < 12; index += 1) {
+    await page.mouse.wheel(0, 120)
+    await page.waitForTimeout(80)
+  }
+  await page.waitForTimeout(500)
+  const beyondLimit = await mainPaneCandleOccupancy(page)
+  expect(atLimit).toBeGreaterThan(0.6)
+  expect(beyondLimit).toBeGreaterThan(0.6)
+  expect(Math.abs(beyondLimit - atLimit)).toBeLessThan(0.03)
 })
 
 test('long runtime warnings cannot push the chart outside the viewport', async ({ page }) => {
