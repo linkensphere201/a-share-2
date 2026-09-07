@@ -310,6 +310,9 @@ export function ChartCanvas({
   const timeAxisPointerActiveRef = useRef(false)
   const priceViewportRef = useRef<LockedPriceViewport | undefined>(undefined)
   const pricePanDragRef = useRef<PricePanDrag | undefined>(undefined)
+  const priceRefitPendingRef = useRef(false)
+  const priceRefitGenerationRef = useRef(0)
+  const refitPriceViewportRef = useRef<() => void>(() => undefined)
   const coverageCallbackRef = useRef(onCoverageChange)
   const visibleRangeCallbackRef = useRef(onVisibleRangeChange)
   const paneRatiosCallbackRef = useRef(onPaneRatiosChange)
@@ -549,6 +552,7 @@ export function ChartCanvas({
     const ma20 = chart.addSeries(LineSeries, { color: '#57a7d9', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, ...compactCrosshairMarkerOptions })
     const ma60 = chart.addSeries(LineSeries, { color: '#b984cc', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, ...compactCrosshairMarkerOptions })
     const resetAutoScale = () => {
+      if (priceRefitPendingRef.current) return
       const logicalRange = chart.timeScale().getVisibleLogicalRange()
       if (!logicalRange) return
       const scale = chart.priceScale('right', 0)
@@ -579,6 +583,20 @@ export function ChartCanvas({
       })
     }
     resetAutoScaleRef.current = resetAutoScale
+    const refitPriceViewport = () => {
+      const generation = ++priceRefitGenerationRef.current
+      priceRefitPendingRef.current = true
+      priceViewportRef.current = undefined
+      pricePanDragRef.current = undefined
+      chart.priceScale('right', 0).setAutoScale(true)
+      // Let the time range, series data, and pane layout settle before capturing the fitted price range.
+      window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+        if (generation !== priceRefitGenerationRef.current || chartRef.current !== chart) return
+        priceRefitPendingRef.current = false
+        resetAutoScale()
+      }))
+    }
+    refitPriceViewportRef.current = refitPriceViewport
 
     chart.subscribeCrosshairMove(param => {
       if (!param.time) {
@@ -678,6 +696,8 @@ export function ChartCanvas({
       window.clearTimeout(visibleRangeTimer)
       window.clearTimeout(edgeSnapTimer)
       resizeObserver.disconnect()
+      priceRefitGenerationRef.current += 1
+      priceRefitPendingRef.current = false
       chart.timeScale().unsubscribeVisibleLogicalRangeChange(recalculateLod)
       chart.remove()
       chartRef.current = null
@@ -905,17 +925,15 @@ export function ChartCanvas({
   useEffect(() => {
     priceViewportRef.current = undefined
     pricePanDragRef.current = undefined
+    priceRefitPendingRef.current = true
     chartRef.current?.priceScale('right', 0).setAutoScale(true)
-  }, [symbol, asOfDate, range])
+  }, [symbol, asOfDate])
 
   useEffect(() => {
     priceModeRef.current = priceMode
-    priceViewportRef.current = undefined
-    pricePanDragRef.current = undefined
     const scale = chartRef.current?.priceScale('right', 0)
     scale?.applyOptions({ mode: priceMode === 'log' ? PriceScaleMode.Logarithmic : PriceScaleMode.Normal })
-    scale?.setAutoScale(true)
-    resetAutoScaleRef.current()
+    refitPriceViewportRef.current()
     window.requestAnimationFrame(() => setOverlayRevision(value => value + 1))
   }, [priceMode])
 
@@ -924,26 +942,28 @@ export function ChartCanvas({
     if (!chart || bars.length === 0) return
     if (skipRangeResetRef.current) {
       skipRangeResetRef.current = false
+      priceRefitPendingRef.current = false
+      resetAutoScaleRef.current()
       return
     }
     if (initialVisibleRange) {
       const emitted = emittedVisibleRangeRef.current
       if (emitted?.from === initialVisibleRange.from && emitted.to === initialVisibleRange.to) return
       chart.timeScale().setVisibleRange(initialVisibleRange)
-      resetAutoScaleRef.current()
+      refitPriceViewportRef.current()
       window.requestAnimationFrame(() => recalculateLodRef.current())
       return
     }
     if (range === 'ALL') {
       chart.timeScale().fitContent()
-      resetAutoScaleRef.current()
+      refitPriceViewportRef.current()
       window.requestAnimationFrame(() => recalculateLodRef.current())
       return
     }
     const last = bars.at(-1)!.trade_date
     const from = range === '1M' ? subtractMonths(last, 1) : subtractYears(last, Number.parseInt(range, 10))
     chart.timeScale().setVisibleRange({ from, to: last })
-    resetAutoScaleRef.current()
+    refitPriceViewportRef.current()
     window.requestAnimationFrame(() => recalculateLodRef.current())
   }, [bars, range, initialVisibleRange?.from, initialVisibleRange?.to])
 
@@ -1362,7 +1382,7 @@ export function ChartCanvas({
       from: rangeSelection.first.period_start,
       to: rangeSelection.last.trade_date,
     })
-    resetAutoScaleRef.current()
+    refitPriceViewportRef.current()
     setRangeSelection(undefined)
     setSelectionBox(undefined)
     window.requestAnimationFrame(() => recalculateLodRef.current())

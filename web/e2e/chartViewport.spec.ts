@@ -29,12 +29,40 @@ async function candleCentroid(page: import('@playwright/test').Page) {
   })
 }
 
+async function mainPaneCandleOccupancy(page: import('@playwright/test').Page) {
+  return page.locator('.chart-stage').first().evaluate(stage => {
+    const colors = [[239, 83, 80], [38, 162, 105], [233, 150, 147], [112, 190, 154]]
+    const stageTop = stage.getBoundingClientRect().top
+    const samples: number[] = []
+    let paneHeight = 0
+    for (const canvas of stage.querySelectorAll('canvas')) {
+      const bounds = canvas.getBoundingClientRect()
+      if (Math.abs(bounds.top - stageTop) > 2 || bounds.height <= 0) continue
+      const context = canvas.getContext('2d')
+      if (!context) continue
+      paneHeight = Math.max(paneHeight, bounds.height)
+      const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data
+      const ratio = canvas.height / bounds.height
+      for (let offset = 0; offset < pixels.length; offset += 4) {
+        if (pixels[offset + 3] < 160) continue
+        if (!colors.some(([r, g, b]) => Math.abs(pixels[offset] - r) <= 10
+          && Math.abs(pixels[offset + 1] - g) <= 10
+          && Math.abs(pixels[offset + 2] - b) <= 10)) continue
+        samples.push(Math.floor(offset / 4 / canvas.width) / ratio)
+      }
+    }
+    if (!samples.length || paneHeight <= 0) throw new Error('No main-pane candle pixels found')
+    return (Math.max(...samples) - Math.min(...samples)) / paneHeight
+  })
+}
+
 test('left drag pans the main chart in both dimensions', async ({ page }) => {
   await page.goto('http://127.0.0.1:5173')
   const stage = page.locator('.chart-stage').first()
   await expect(stage).toBeVisible()
   await expect(stage.locator('.chart-state')).toHaveCount(0, { timeout: 15_000 })
   await page.waitForTimeout(500)
+  expect(await mainPaneCandleOccupancy(page)).toBeGreaterThan(0.55)
   const before = await candleCentroid(page)
   const box = await stage.boundingBox()
   if (!box) throw new Error('Chart has no bounds')
