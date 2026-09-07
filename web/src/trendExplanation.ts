@@ -98,10 +98,27 @@ function explainZone(item: AnalysisItem, allItems: AnalysisItem[]): TrendExplana
 
 function explainPattern(item: AnalysisItem, allItems: AnalysisItem[]): TrendExplanationItem {
   const payload = item.payload
-  const horizon = payload.horizon === 'short' ? '短期' : '长期'
+  const horizon = payload.horizon === 'short' ? '短期' : payload.horizon === 'medium' ? '中期' : '长期'
   const state = stringValue(payload.completion_state) ?? 'forming'
   const neckline = numberValue(payload.neckline_price)
   const structuralState = structuralStateFor(item.item_id, allItems)
+  if (payload.pattern_type === 'moving-average-convergence') {
+    const periods = Array.isArray(payload.ma_periods)
+      ? payload.ma_periods.filter(value => typeof value === 'number').map(value => `MA${value}`).join('/')
+      : '-'
+    const spread = numberValue(payload.spread_percent)
+    const spreadAtr = numberValue(payload.spread_atr)
+    const contraction = numberValue(payload.contraction_ratio)
+    const compressedBars = numberValue(payload.compressed_bars)
+    const volumeRatio = numberValue(payload.volume_ratio)
+    return {
+      analysisItemId: item.item_id,
+      title: `${horizon}${stringValue(payload.display_name) ?? '均线粘合'}`,
+      detail: `${periods}；离散度 ${spread !== undefined ? `${(spread * 100).toFixed(2)}%` : '-'} / ${spreadAtr !== undefined ? `${spreadAtr.toFixed(2)} ATR` : '-'}；持续 ${compressedBars ?? '-'} 根；收敛率 ${contraction !== undefined ? contraction.toFixed(2) : '-'}${volumeRatio !== undefined ? `；量比 ${volumeRatio.toFixed(2)}` : ''}${structuralState ? `；${structuralStateLabel(structuralState)}` : ''}。`,
+      score: numberValue(payload.score),
+      state,
+    }
+  }
   return {
     analysisItemId: item.item_id,
     title: `${horizon}${stringValue(payload.display_name) ?? '结构形态'}`,

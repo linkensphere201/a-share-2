@@ -43,6 +43,7 @@ export type GeneratedPatternGeometry = {
   points: string
   neckline: LineGeometry
   boundaries: LineGeometry[]
+  band?: string
   labelX: number
   labelY: number
   showLabel: boolean
@@ -374,6 +375,7 @@ export function projectGeneratedPatterns(
     const last = projected.at(-1)!
     const boundaryGeometry = item.payload.boundary_geometry
     const boundaries: LineGeometry[] = []
+    let band: string | undefined
     if (boundaryGeometry && typeof boundaryGeometry === 'object') {
       const geometry = boundaryGeometry as Record<string, unknown>
       const boundaryValues = [geometry.upper, geometry.lower]
@@ -390,8 +392,25 @@ export function projectGeneratedPatterns(
         if (x1 === null || x2 === null || y1 === null || y2 === null) continue
         boundaries.push({ x1, y1, x2, y2 })
       }
+      if (geometry.kind === 'moving-average-band' && Array.isArray(geometry.points)) {
+        const bandPoints = geometry.points.flatMap(value => {
+          if (!value || typeof value !== 'object') return []
+          const point = value as Record<string, unknown>
+          if (typeof point.date !== 'string' || typeof point.upper !== 'number' || typeof point.lower !== 'number') return []
+          const x = chart.timeScale().timeToCoordinate(point.date as Time)
+          const upperY = priceSeries.priceToCoordinate(point.upper)
+          const lowerY = priceSeries.priceToCoordinate(point.lower)
+          return x === null || upperY === null || lowerY === null ? [] : [{ x, upperY, lowerY }]
+        })
+        if (bandPoints.length === geometry.points.length && bandPoints.length >= 2) {
+          band = [
+            ...bandPoints.map(point => `${point.x},${point.upperY}`),
+            ...[...bandPoints].reverse().map(point => `${point.x},${point.lowerY}`),
+          ].join(' ')
+        }
+      }
     }
-    if (projected.length < 3 && boundaries.length === 0) return []
+    if (projected.length < 3 && boundaries.length === 0 && !band) return []
     const patternXs = [
       ...projected.map(point => point.x),
       ...boundaries.flatMap(boundary => [boundary.x1, boundary.x2]),
@@ -406,6 +425,7 @@ export function projectGeneratedPatterns(
       points: projected.map(point => `${point.x},${point.y}`).join(' '),
       neckline: { x1: patternStartX, y1: necklineY, x2: patternEndX, y2: necklineY },
       boundaries,
+      band,
       labelX: Math.max(36, Math.min(chartWidth - 36, Math.min(first.x, last.x) + Math.abs(last.x - first.x) / 2)),
       labelY: Math.max(10, Math.min(...projected.map(point => point.y), necklineY) - 5),
       showLabel: false,

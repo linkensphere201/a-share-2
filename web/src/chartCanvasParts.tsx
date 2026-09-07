@@ -312,6 +312,7 @@ export function GeneratedAnalysisOverlay({
         ))}
         {patterns.map(item => (
           <g key={item.id} className={`generated-pattern ${item.state} ${item.primary ? 'primary' : 'alternative'}${highlightedItemId === item.id ? ' highlighted' : ''}`}>
+            {item.band && <polygon className="generated-pattern-band" points={item.band}/>}
             {item.boundaries.map((boundary, index) => (
               <line
                 key={index}

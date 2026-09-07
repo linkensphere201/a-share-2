@@ -1175,6 +1175,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .generated-price-zone.key-level { fill: #e0b45a20; stroke: #d6a84d80; stroke-width: .7; }
 .generated-price-zone.estimated-volume-at-price { fill: #5f9fbd16; stroke: #6ca8c344; stroke-width: .5; }
 .generated-pattern polyline, .generated-pattern line { fill: none; stroke: #c5a86b; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.generated-pattern .generated-pattern-band { fill: #d8b45f18; stroke: none; }
+.generated-pattern.highlighted .generated-pattern-band { fill: #e5bf6650; }
 .generated-pattern.forming polyline, .generated-pattern.forming line { stroke-dasharray: 3 3; opacity: .72; }
 .generated-pattern.confirmed polyline, .generated-pattern.confirmed line { stroke: #e0bd6c; stroke-width: 1.25; }
 .generated-pattern.invalidated { opacity: .35; }

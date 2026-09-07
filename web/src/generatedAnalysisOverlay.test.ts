@@ -263,6 +263,33 @@ describe('generated analysis overlay projection', () => {
     expect(pattern.boundaries[0].x2).toBe(80)
   })
 
+  it('projects a moving-average convergence band for chart highlighting', () => {
+    const convergence: TrendAnalysisRun = {
+      ...run,
+      items: [{
+        item_id: 'ma-convergence', item_type: 'pattern', payload: {
+          pattern_type: 'moving-average-convergence', display_name: '均线粘合',
+          completion_state: 'forming', neckline_price: 10.1,
+          pivots: [
+            { pivot_date: '2026-08-01', price: 10 },
+            { pivot_date: '2026-08-10', price: 10.1 },
+          ],
+          boundary_geometry: {
+            kind: 'moving-average-band',
+            points: [
+              { date: '2026-08-01', upper: 10.2, lower: 9.8 },
+              { date: '2026-08-10', upper: 10.15, lower: 10.05 },
+            ],
+          },
+        },
+      }],
+    }
+
+    const pattern = projectGeneratedPatterns(convergence, chart, series, true)[0]
+    expect(pattern.boundaries).toHaveLength(0)
+    expect(pattern.band).toBe('20,102 80,101.5 80,100.5 20,98')
+  })
+
   it('projects all four broadening and contracting diamond segments', () => {
     const segment = {
       start_date: '2026-08-01', start_price: 10,

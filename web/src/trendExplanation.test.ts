@@ -65,6 +65,28 @@ describe('trend explanation', () => {
       .toBe('短期压力：已向上突破')
     expect(result?.warnings).toEqual(['复权因子不完整，当前分析采用未复权价格。'])
   })
+
+  it('explains moving-average convergence with compact auditable metrics', () => {
+    const run: TrendAnalysisRun = {
+      run_id: 'run', as_of_date: '2026-08-21', completion_state: 'complete',
+      stale: false, stale_reasons: [], warnings: [], items: [{
+        item_id: 'ma', item_type: 'pattern', payload: {
+          pattern_type: 'moving-average-convergence', display_name: '均线粘合向上发散',
+          completion_state: 'confirmed', horizon: 'medium', start_date: '2026-08-01',
+          end_date: '2026-08-21', neckline_price: 10.2, pivots: [], score: 0.82,
+          ma_periods: [5, 20, 60], spread_percent: 0.0123, spread_atr: 0.71,
+          contraction_ratio: 0.64, compressed_bars: 7, volume_ratio: 1.56,
+          primary: true, interpretation_rank: 1,
+        },
+      }],
+    }
+
+    const item = buildTrendExplanation(run)?.sections.find(value => value.id === 'patterns')?.items[0]
+    expect(item?.title).toBe('中期均线粘合向上发散')
+    expect(item?.detail).toContain('MA5/MA20/MA60')
+    expect(item?.detail).toContain('离散度 1.23% / 0.71 ATR')
+    expect(item?.detail).toContain('持续 7 根；收敛率 0.64；量比 1.56')
+  })
 })
 
 function line(id: string, horizon: string, kind: string, score: number) {

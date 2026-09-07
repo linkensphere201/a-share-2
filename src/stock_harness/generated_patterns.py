@@ -27,6 +27,11 @@ from stock_harness.pattern_tolerances import (
     PatternToleranceProfile,
     build_pattern_tolerance_profile,
 )
+from stock_harness.moving_average_convergence import (
+    MovingAverageConvergenceState,
+    convergence_config,
+    detect_moving_average_convergence,
+)
 from stock_harness.trend_lines_analysis import TrendHorizon
 from stock_harness.trend_pivots import PricePivot
 
@@ -59,7 +64,120 @@ def generate_pattern_items(
     )
     _append_diamonds(items, bars, pivots, horizon, timeframe, preview, profile)
     _append_reversals(items, bars, pivots, horizon, timeframe, preview, profile)
+    _append_moving_average_convergence(
+        items, bars, horizon, timeframe, preview, profile
+    )
     return items
+
+
+def _append_moving_average_convergence(
+    items: list[GeneratedAnalysisItem],
+    bars: Sequence[AnalysisBar],
+    horizon: TrendHorizon,
+    timeframe: AnalysisTimeframe,
+    preview: bool,
+    profile: PatternToleranceProfile,
+) -> None:
+    pattern = detect_moving_average_convergence(
+        bars, convergence_config(horizon, profile.volatility_ratio)
+    )
+    if pattern is None:
+        return
+    item_id = f"{horizon.value}-pattern-moving-average-convergence-0"
+    confirmed = pattern.state in {
+        MovingAverageConvergenceState.BULLISH_EXPANSION,
+        MovingAverageConvergenceState.BEARISH_EXPANSION,
+    }
+    completion_state = "confirmed" if confirmed else "forming"
+    periods = list(pattern.periods)
+    values = {
+        f"ma{period}": round(value, 6)
+        for period, value in zip(pattern.periods, pattern.current_values)
+    }
+    items.append(GeneratedAnalysisItem(
+        item_id=item_id,
+        item_type=GeneratedItemType.PATTERN,
+        payload={
+            "pattern_type": "moving-average-convergence",
+            "display_name": pattern.display_name,
+            "direction": pattern.direction,
+            "horizon": horizon.value,
+            "timeframe": timeframe.value,
+            "start_date": pattern.start_date.isoformat(),
+            "end_date": pattern.end_date.isoformat(),
+            "available_date": pattern.available_date.isoformat(),
+            "pivots": [
+                {"kind": "ma-center", "pivot_date": pattern.start_date.isoformat(), "price": pattern.center_start},
+                {"kind": "ma-center", "pivot_date": pattern.end_date.isoformat(), "price": pattern.center_end},
+            ],
+            "completion_state": completion_state,
+            "breakout_date": _iso(pattern.event_date),
+            "invalidation_price": pattern.invalidation_price,
+            "invalidation_date": None,
+            "score": pattern.score,
+            "score_components": pattern.score_components,
+            "volume_ratio": pattern.volume_ratio,
+            "primary": False,
+            "boundary_geometry": {
+                "kind": "moving-average-band",
+                "points": [
+                    {"date": item_date.isoformat(), "upper": upper, "lower": lower}
+                    for item_date, upper, lower in pattern.band_points
+                ],
+            },
+            "neckline_price": pattern.center_end,
+            "ma_periods": periods,
+            "ma_values": values,
+            "convergence_state": pattern.state.value,
+            "spread_percent": pattern.spread_percent,
+            "spread_atr": pattern.spread_atr,
+            "contraction_ratio": pattern.contraction_ratio,
+            "compressed_bars": pattern.compressed_bars,
+            "method": "trailing moving-average band normalized by price and causal ATR",
+            "analytical_only": True,
+        },
+    ))
+    items.append(GeneratedAnalysisItem(
+        item_id=f"{item_id}-convergence-evidence",
+        item_type=GeneratedItemType.EVIDENCE,
+        parent_item_id=item_id,
+        payload={
+            "kind": "moving-average-convergence-summary",
+            "current_state": pattern.state.value,
+            "periods": periods,
+            "spread_percent": pattern.spread_percent,
+            "spread_atr": pattern.spread_atr,
+            "contraction_ratio": pattern.contraction_ratio,
+            "compressed_bars": pattern.compressed_bars,
+            "volume_ratio": pattern.volume_ratio,
+            "event_date": _iso(pattern.event_date),
+            "preview": preview,
+        },
+    ))
+    if not confirmed or pattern.event_date is None:
+        return
+    upward = pattern.direction == "bullish"
+    items.append(GeneratedAnalysisItem(
+        item_id=f"{item_id}-latest-event-evidence",
+        item_type=GeneratedItemType.EVIDENCE,
+        parent_item_id=item_id,
+        payload={
+            "kind": "latest-structural-event-summary",
+            "event_kind": "upward-breakout" if upward else "downward-breakdown",
+            "current_state": "confirmed",
+            "direction": "up" if upward else "down",
+            "event_date": pattern.event_date.isoformat(),
+            "boundary_price": pattern.upper_end if upward else pattern.lower_end,
+            "previous_boundary_price": pattern.upper_start if upward else pattern.lower_start,
+            "invalidation_level": pattern.invalidation_price,
+            "trigger_date": pattern.event_date.isoformat(),
+            "confirmation_date": pattern.event_date.isoformat(),
+            "failure_date": None,
+            "preview": preview,
+            "reason": "price released from a persistent volatility-normalized moving-average band with ordered moving averages and aligned slopes",
+            "analytical_only": True,
+        },
+    ))
 
 
 def _append_double_patterns(
