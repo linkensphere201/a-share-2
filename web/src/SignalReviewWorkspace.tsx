@@ -1,4 +1,7 @@
-import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import {
+  useEffect, useMemo, useRef, useState, type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
+} from 'react'
 import { ArrowLeft, Eye, ListFilter, MessageSquare, Pin, PinOff, Play, Radar, RefreshCw, Search } from 'lucide-react'
 import { ChartCanvas } from './ChartCanvas'
 import { MarketBoardBadge } from './MarketBoardBadge'
@@ -29,6 +32,13 @@ const profileLabels: Record<SignalProfile, string> = {
 }
 const changeLabels: Record<SignalChangeType, string> = { added: '新增', retained: '保留', removed: '移除' }
 const EVIDENCE_HEIGHT_KEY = 'stock-harness.signal-review.evidence-height.v1'
+const COLUMN_WIDTHS_KEY = 'stock-harness.signal-review.column-widths.v1'
+type SignalColumn = 'runs' | 'results' | 'chat'
+type SignalColumnWidths = Record<SignalColumn, number>
+const DEFAULT_COLUMN_WIDTHS: SignalColumnWidths = { runs: 225, results: 360, chat: 340 }
+const COLUMN_LIMITS: Record<SignalColumn, [number, number]> = {
+  runs: [180, 340], results: [280, 560], chat: [280, 620],
+}
 
 export function SignalReviewWorkspace({ theme, onClose }: Props) {
   const [definitions, setDefinitions] = useState<SignalDefinition[]>([])
@@ -54,11 +64,16 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
     const stored = Number(window.localStorage.getItem(EVIDENCE_HEIGHT_KEY))
     return Number.isFinite(stored) && stored >= 135 ? Math.min(stored, 520) : 210
   })
+  const [columnWidths, setColumnWidths] = useState(readColumnWidths)
   const inspectorRef = useRef<HTMLElement>(null)
 
   useEffect(() => {
     window.localStorage.setItem(EVIDENCE_HEIGHT_KEY, String(Math.round(evidenceHeight)))
   }, [evidenceHeight])
+
+  useEffect(() => {
+    window.localStorage.setItem(COLUMN_WIDTHS_KEY, JSON.stringify(columnWidths))
+  }, [columnWidths])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -221,6 +236,36 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
     window.addEventListener('pointerup', stop, { once: true })
   }
 
+  const startColumnResize = (
+    column: SignalColumn, event: ReactPointerEvent<HTMLDivElement>,
+  ) => {
+    event.preventDefault()
+    const startX = event.clientX
+    const startWidth = columnWidths[column]
+    const direction = column === 'chat' ? -1 : 1
+    const [minimum, maximum] = COLUMN_LIMITS[column]
+    const move = (pointer: PointerEvent) => {
+      const width = startWidth + (pointer.clientX - startX) * direction
+      setColumnWidths(value => ({
+        ...value, [column]: Math.max(minimum, Math.min(maximum, width)),
+      }))
+    }
+    const stop = () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', stop)
+      document.body.classList.remove('signal-column-resizing')
+    }
+    document.body.classList.add('signal-column-resizing')
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', stop, { once: true })
+  }
+
+  const gridStyle = {
+    '--signal-runs-width': `${Math.round(columnWidths.runs)}px`,
+    '--signal-results-width': `${Math.round(columnWidths.results)}px`,
+    '--signal-chat-width': `${Math.round(columnWidths.chat)}px`,
+  } as CSSProperties
+
   return <main className="signal-workspace">
     <header className="signal-toolbar">
       <button className="icon-button" title="返回工作台" aria-label="返回工作台" onClick={onClose}><ArrowLeft size={16}/></button>
@@ -239,7 +284,7 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
       </button>
     </header>
     {error && <button className="signal-error" onClick={() => setError('')}>{error}</button>}
-    <section className={`${inspected ? 'signal-grid inspector-open' : 'signal-grid'}${chatOpen ? ' chat-open' : ''}`}>
+    <section className={`${inspected ? 'signal-grid inspector-open' : 'signal-grid'}${chatOpen ? ' chat-open' : ''}`} style={gridStyle}>
       <aside className="signal-runs">
         <header><span>历史轮次</span><small>{runs.length}</small></header>
         <div className="signal-scroll">{runs.length === 0 && <div className="signal-empty compact">尚未运行</div>}{runs.map(item => <button key={item.run_id} className={selectedRun?.run_id === item.run_id ? 'active' : ''} onClick={() => setSelectedRun(item)}>
@@ -248,6 +293,7 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
           <em className={item.status}/>
         </button>)}</div>
       </aside>
+      <div className="signal-column-resizer" role="separator" aria-orientation="vertical" aria-label="调整历史轮次栏宽度" title="左右拖动调整历史轮次栏宽度" onPointerDown={event => startColumnResize('runs', event)}/>
       <section className="signal-results">
         <header><span>{dailyView === 'observations' ? '全部板块观察' : '复盘结果'}</span><small>{dailyView === 'observations' ? `当前 ${observations.length} / 全量 ${observationTotal}` : selectedRun ? `+${selectedRun.added_count} =${selectedRun.retained_count} -${selectedRun.removed_count}` : '请选择轮次'}</small></header>
         {selectedRun?.status === 'running' && <div className="signal-progress"><i style={{ width: `${progress}%` }}/></div>}
@@ -279,6 +325,7 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
           </button>)}</div>
         </>}
       </section>
+      {inspected && <div className="signal-column-resizer" role="separator" aria-orientation="vertical" aria-label="调整复盘结果栏宽度" title="左右拖动调整复盘结果栏宽度" onPointerDown={event => startColumnResize('results', event)}/>}
       {inspected && <section ref={inspectorRef} className={`signal-inspector${criticalAlert ? ' has-critical' : ''}`} style={{ gridTemplateRows: criticalAlert ? `42px auto minmax(220px, 1fr) ${evidenceHeight}px` : `42px minmax(220px, 1fr) ${evidenceHeight}px` }}>
         <header><span className="instrument-name-line"><span>{inspected.name}</span>{selectedItem && <MarketBoardBadge instrument={selectedItem}/>}</span><small>{selectedItem ? `${profileLabels[selectedItem.profile]} · 得分 ${(selectedItem.score * 100).toFixed(1)} · 置信 ${(selectedItem.confidence * 100).toFixed(1)}` : `${selectedObservation?.effective_date} · 一级固定分析`}</small>{selectedObservation
           ? <button className="icon-button" title={pinned ? '取消手工固定' : '加入手工观察池'} aria-label={pinned ? '取消手工固定' : '加入手工观察池'} onClick={() => void togglePinned()}>{pinned ? <PinOff size={13}/> : <Pin size={13}/>}</button>
@@ -296,9 +343,25 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
           </button>)}</div></div>}
         </div>
       </section>}
+      {chatOpen && <div className="signal-column-resizer" role="separator" aria-orientation="vertical" aria-label="调整Codex对话栏宽度" title="左右拖动调整Codex对话栏宽度" onPointerDown={event => startColumnResize('chat', event)}/>}
       {chatOpen && selectedRun && <SignalChatPanel key={selectedRun.run_id} run={selectedRun} items={items} selectedItem={selectedItem} onReferencePreview={previewReference} onReferenceActivate={activateReference} onClose={() => setChatOpen(false)}/>}
     </section>
   </main>
+}
+
+function readColumnWidths(): SignalColumnWidths {
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(COLUMN_WIDTHS_KEY) ?? '{}') as Partial<SignalColumnWidths>
+    return Object.fromEntries((Object.keys(DEFAULT_COLUMN_WIDTHS) as SignalColumn[]).map(column => {
+      const [minimum, maximum] = COLUMN_LIMITS[column]
+      const value = Number(stored[column])
+      return [column, Number.isFinite(value)
+        ? Math.max(minimum, Math.min(maximum, value))
+        : DEFAULT_COLUMN_WIDTHS[column]]
+    })) as SignalColumnWidths
+  } catch {
+    return { ...DEFAULT_COLUMN_WIDTHS }
+  }
 }
 
 function stateLabel(states?: string[]) {

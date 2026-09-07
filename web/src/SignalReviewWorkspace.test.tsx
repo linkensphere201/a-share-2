@@ -55,9 +55,18 @@ describe('SignalReviewWorkspace', () => {
 
     const result = await screen.findByText('000001.SZ')
     expect(screen.queryByTestId('signal-chart')).toBeNull()
-    await user.click(result.closest('button')!)
+    const resultButton = result.closest('button')!
+    await user.click(resultButton)
+    expect(resultButton.classList.contains('active')).toBe(true)
     expect(screen.getByTestId('signal-chart').textContent).toBe('000001.SZ')
     expect(screen.getByText('[S1]')).toBeTruthy()
+    const resultWidthSeparator = screen.getByRole('separator', { name: '调整复盘结果栏宽度' })
+    fireEvent.pointerDown(resultWidthSeparator, { clientX: 500 })
+    fireEvent.pointerMove(window, { clientX: 560 })
+    fireEvent.pointerUp(window)
+    await vi.waitFor(() => expect(JSON.parse(window.localStorage.getItem(
+      'stock-harness.signal-review.column-widths.v1',
+    ) ?? '{}').results).toBe(420))
     const separator = screen.getByRole('separator', { name: '调整固定算法结论高度' })
     const inspector = separator.closest('.signal-inspector') as HTMLElement
     Object.defineProperty(inspector, 'clientHeight', { configurable: true, value: 800 })
@@ -95,6 +104,7 @@ describe('SignalReviewWorkspace', () => {
   })
 
   it('binds Codex chat to the selected signal result and its run', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       if (url === '/api/signals/definitions') return response({ items: [definition] })
@@ -108,6 +118,7 @@ describe('SignalReviewWorkspace', () => {
       if (url.startsWith('/api/ai/conversations?')) return response({ items: [{
         ...conversation, turn_count: 0, created_at_ms: 1, updated_at_ms: 1,
       }] })
+      if (url === `/api/ai/conversations/${conversation.conversation_id}` && init?.method === 'DELETE') return new Response(null, { status: 204 })
       if (url === `/api/ai/conversations/${conversation.conversation_id}`) return response(conversation)
       if (url.endsWith('/turns') && init?.method === 'POST') return response({ turn_id: 'turn-1', status: 'queued' }, 202)
       throw new Error(`unexpected URL ${url}`)
@@ -149,6 +160,10 @@ describe('SignalReviewWorkspace', () => {
     await vi.waitFor(() => expect(eventSource).toBeDefined())
     eventSource?.emit('failed', { message: 'invalid MCP transport' })
     expect(await screen.findByText('invalid MCP transport')).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: '删除当前信号会话' }))
+    expect(fetchMock.mock.calls.some(call =>
+      String(call[0]).endsWith(conversation.conversation_id) && call[1]?.method === 'DELETE'
+    )).toBe(true)
   })
 
   it('searches complete daily observations and pins one into the attention registry', async () => {

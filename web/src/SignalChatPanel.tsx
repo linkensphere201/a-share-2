@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Bot, PanelRightClose, Plus, Send } from 'lucide-react'
+import { Bot, PanelRightClose, Plus, Send, Trash2 } from 'lucide-react'
 import { ChatMarkdown } from './AnalysisChatPanel'
 import {
-  listSignalChatConversations, loadChatConversation, loadCodexCapabilities,
+  deleteChatConversation, listSignalChatConversations, loadChatConversation, loadCodexCapabilities,
   openSignalChatConversation, startChatTurn, streamChatTurn,
   type ChatConversation, type ChatConversationSummary, type CodexCapabilities,
 } from './aiChatClient'
@@ -115,11 +115,31 @@ export function SignalChatPanel({
     }
   }
 
+  const removeConversation = async () => {
+    if (!conversation || activeTurnId) return
+    if (!window.confirm(`删除会话“${conversation.title}”及其全部消息？复盘结果不会被删除。`)) return
+    try {
+      setError('')
+      await deleteChatConversation(conversation.conversation_id)
+      const remaining = (await listSignalChatConversations(run.run_id)).items
+      setHistory(remaining)
+      if (remaining[0]) setConversation(await loadChatConversation(remaining[0].conversation_id))
+      else {
+        const created = await openSignalChatConversation(run.run_id, true)
+        setConversation(created)
+        setHistory((await listSignalChatConversations(run.run_id)).items)
+      }
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason))
+    }
+  }
+
   const available = Boolean(capabilities?.codex.available && capabilities.codex.authenticated)
   return <section className="signal-chat-pane">
     <header><span><Bot size={13}/>Codex 信号讨论</span><div>
       <small className={available ? 'available' : 'unavailable'}>{available ? '已连接' : '不可用'}</small>
       <button title="新建会话" aria-label="新建信号会话" onClick={() => void openSignalChatConversation(run.run_id, true).then(value => { setConversation(value); void refreshHistory() })}><Plus size={12}/></button>
+      <button title="删除当前会话" aria-label="删除当前信号会话" disabled={!conversation || Boolean(activeTurnId)} onClick={() => void removeConversation()}><Trash2 size={11}/></button>
       <button title="关闭对话" aria-label="关闭信号对话" onClick={onClose}><PanelRightClose size={12}/></button>
     </div></header>
     <div className="signal-chat-context">
