@@ -126,7 +126,7 @@ class CodexAppServerClient:
             "approvalPolicy": "never",
             "sandbox": "read-only",
             "ephemeral": False,
-            "config": _thread_mcp_config(allowed_tools),
+            "config": _thread_mcp_config(allowed_tools, self._mcp_api_url),
             "baseInstructions": (
                 "You are the embedded StockHarness market-analysis assistant. "
                 "Use the frozen selected-result context and, when needed, only the allowlisted "
@@ -161,7 +161,9 @@ class CodexAppServerClient:
             "cwd": str(workdir.resolve()),
             "approvalPolicy": "never",
             "sandbox": "read-only",
-            "config": _thread_mcp_config(_tools_for_profile(profile)),
+            "config": _thread_mcp_config(
+                _tools_for_profile(profile), self._mcp_api_url
+            ),
         })
         self._loaded_threads.add(thread_id)
         self._thread_profiles[thread_id] = profile
@@ -536,10 +538,27 @@ def _tools_for_profile(value: str) -> frozenset[str]:
     return ALLOWED_MCP_TOOLS if _access_profile(value) == TREND_ACCESS_PROFILE else READ_ONLY_MCP_TOOLS
 
 
-def _thread_mcp_config(allowed_tools: frozenset[str]) -> dict[str, object]:
+def _thread_mcp_config(
+    allowed_tools: frozenset[str], api_url: str
+) -> dict[str, object]:
+    command, args, cwd = _embedded_mcp_command()
     return {
         "mcp_servers": {
-            ALLOWED_MCP_SERVER: {"enabled_tools": sorted(allowed_tools)}
+            ALLOWED_MCP_SERVER: {
+                "command": command,
+                "args": args,
+                "cwd": cwd,
+                "required": True,
+                "startup_timeout_sec": 15,
+                "tool_timeout_sec": 120,
+                "enabled_tools": sorted(allowed_tools),
+                "env": {
+                    "STOCK_HARNESS_API_URL": _loopback_url(api_url),
+                    "STOCK_HARNESS_MCP_TIMEOUT_SECONDS": "30",
+                    "STOCK_HARNESS_MCP_LOG_LEVEL": "WARNING",
+                    "STOCK_HARNESS_MCP_PROFILE": "embedded-chat",
+                },
+            }
         }
     }
 

@@ -696,9 +696,15 @@ def test_signal_chat_thread_configuration_excludes_recalculation(tmp_path: Path)
     thread_id = client.start_thread(tmp_path, SIGNAL_ACCESS_PROFILE)
     config = client.params["config"]
     assert isinstance(config, dict)
-    enabled = config["mcp_servers"][ALLOWED_MCP_SERVER]["enabled_tools"]
+    server = config["mcp_servers"][ALLOWED_MCP_SERVER]
+    enabled = server["enabled_tools"]
     assert enabled == sorted(READ_ONLY_MCP_TOOLS)
     assert "recalculate_trend_analysis" not in enabled
+    assert server["command"]
+    assert server["args"]
+    assert server["cwd"] == str(Path(__file__).resolve().parents[1])
+    assert server["env"]["STOCK_HARNESS_API_URL"] == "http://127.0.0.1:8765"
+    assert "transport" not in server
     assert client.thread_policy_version(SIGNAL_ACCESS_PROFILE).endswith(":signal_run")
     assert thread_id == "signal-thread"
 

@@ -78,11 +78,17 @@ export function SignalChatPanel({
     setActiveTurnId(turnId)
     streamRef.current = streamChatTurn(turnId, {
       onDelta: delta => setLive(value => value + delta),
-      onTerminal: async () => {
+      onTerminal: async (type, data) => {
         if (runIdRef.current !== expectedRunId) return
         setActiveTurnId(undefined)
         setPending(undefined)
         setLive('')
+        if (type === 'failed') {
+          const message = typeof data.message === 'string' && data.message.trim()
+            ? data.message.trim()
+            : 'Codex 对话失败，请查看应用日志。'
+          setError(message)
+        }
         await refreshHistory(conversationId, expectedRunId)
       },
       onError: () => setError('Codex 流式连接中断，服务端结果已保留。'),

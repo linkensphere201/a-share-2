@@ -90,15 +90,25 @@ describe('SignalReviewWorkspace', () => {
       if (url.startsWith('/api/ai/conversations?')) return response({ items: [{
         ...conversation, turn_count: 0, created_at_ms: 1, updated_at_ms: 1,
       }] })
+      if (url === `/api/ai/conversations/${conversation.conversation_id}`) return response(conversation)
       if (url.endsWith('/turns') && init?.method === 'POST') return response({ turn_id: 'turn-1', status: 'queued' }, 202)
       throw new Error(`unexpected URL ${url}`)
     })
     class FakeEventSource {
       onerror: (() => void) | null = null
-      constructor(public url: string) {}
-      addEventListener() {}
+      listeners = new Map<string, (event: MessageEvent) => void>()
+      constructor(public url: string) { eventSource = this }
+      addEventListener(type: string, listener: EventListenerOrEventListenerObject) {
+        if (typeof listener === 'function') {
+          this.listeners.set(type, listener as (event: MessageEvent) => void)
+        }
+      }
+      emit(type: string, payload: Record<string, unknown>) {
+        this.listeners.get(type)?.({ data: JSON.stringify(payload) } as MessageEvent)
+      }
       close() {}
     }
+    let eventSource: FakeEventSource | undefined
     vi.stubGlobal('fetch', fetchMock)
     vi.stubGlobal('EventSource', FakeEventSource)
     const user = userEvent.setup()
@@ -118,6 +128,9 @@ describe('SignalReviewWorkspace', () => {
     expect(JSON.parse(String(turn?.[1]?.body))).toMatchObject({
       content: '复核这个变化', selected_signal_item_ids: ['item-1'],
     })
+    await vi.waitFor(() => expect(eventSource).toBeDefined())
+    eventSource?.emit('failed', { message: 'invalid MCP transport' })
+    expect(await screen.findByText('invalid MCP transport')).toBeTruthy()
   })
 
   it('searches complete daily observations and pins one into the attention registry', async () => {
