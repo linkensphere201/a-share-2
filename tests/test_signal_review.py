@@ -12,7 +12,8 @@ from stock_harness.signal_review import (
     _market_style_divergence,
 )
 from stock_harness.daily_signal_analysis import (
-    analyze_daily_series, build_board_analysis_record, render_board_summary,
+    _price_space, analyze_daily_series, build_board_analysis_record,
+    render_board_summary,
 )
 from stock_harness.models import DailyBar, StockDailyLimit
 from stock_harness.sqlite_store import SQLiteMarketDataStore
@@ -255,7 +256,44 @@ def test_daily_observation_is_causal_and_template_rendered_without_ai() -> None:
     assert first["metrics"] == replay["metrics"]
     code, rendered = render_board_summary(first, None)
     assert code
-    assert all(label in rendered for label in ("结论", "形态", "价", "量", "近期对比", "确认/失效"))
+    assert all(label in rendered for label in (
+        "结论", "形态", "价", "量", "上涨目标位", "下跌目标位",
+        "盈亏比", "近期对比", "确认/失效",
+    ))
+
+
+def test_daily_price_space_calculates_only_reproducible_long_risk_reward() -> None:
+    bars = _daily_bars("BK001.DC", 140, falling=True)
+    observation = analyze_daily_series("BK001.DC", bars, bars[-1].trade_date)
+    metrics = observation["metrics"]
+    metrics["price_space"] = _price_space(
+        bars, ["bullish-boundary-triggered"],
+        {"3m": {"state": "broken", "boundary": 82.5}}, 1.0,
+    )
+
+    _, rendered = render_board_summary(observation, None)
+
+    price_space = metrics["price_space"]
+    assert price_space["setup_basis"] == "3m-descending-envelope"
+    assert price_space["entry_price"] == bars[-1].close
+    assert price_space["invalidation_price"] == 82.25
+    assert price_space["risk_reward_ratio"] > 1.5
+    assert price_space["has_trade_space"] is True
+    assert "上涨目标位" in rendered
+    assert "下跌目标位" in rendered
+    assert "存在博弈空间" in rendered
+
+
+def test_daily_price_space_does_not_claim_trade_space_without_a_setup() -> None:
+    bars = _daily_bars("BK001.DC", 140)
+    observation = analyze_daily_series("BK001.DC", bars, bars[-1].trade_date)
+    price_space = observation["metrics"]["price_space"]
+
+    assert price_space["method"] == "causal-range-levels-v1"
+    assert price_space["risk_reward_ratio"] is None
+    assert price_space["has_trade_space"] is False
+    _, rendered = render_board_summary(observation, None)
+    assert "不计算盈亏比" in rendered
 
 
 def test_daily_comparison_separates_session_history_and_correction_baseline() -> None:

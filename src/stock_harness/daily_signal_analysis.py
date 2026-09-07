@@ -12,8 +12,8 @@ from statistics import fmean, median
 from stock_harness.models import StoredDailyBar
 
 
-ALGORITHM_VERSION = "daily-market-board-observation-v2"
-CONFIG_VERSION = "daily-market-board-defaults-v2"
+ALGORITHM_VERSION = "daily-market-board-observation-v3"
+CONFIG_VERSION = "daily-market-board-defaults-v3"
 MINIMUM_BARS = 120
 LOOKBACK_BARS = 260
 
@@ -196,6 +196,7 @@ def analyze_daily_series(
         "medium_shape": medium_shape,
         "downside": downside,
         "descending_envelopes": envelopes,
+        "price_space": _price_space(visible, states, envelopes, atr14),
     }
     return _observation(
         symbol, effective_date, visible, "complete", metrics,
@@ -228,6 +229,7 @@ def render_board_summary(
         f"- 价：近5日{_percent(_mapping_value(returns, '5'))}，近20日{_percent(_mapping_value(returns, '20'))}。",
         f"- 量：{_volume_sentence(metrics, volume_ratio)}",
         *([f"- 广度：{_breadth_sentence(metrics)}"] if "board_breadth" in metrics else []),
+        f"- 目标/空间：{_price_space_sentence(metrics)}",
         f"- 近期对比：{_transition_sentence(transition, prior, recent, primary)}",
         f"- 确认/失效：{_conditions(primary, nearest)}",
     ))
@@ -394,6 +396,82 @@ def _downside_deceleration(
     if _linear_slope([math.log(value) for value in closes[-14:]]) > _linear_slope([math.log(value) for value in closes[-28:-14]]):
         count += 1; facts.append("slope-improvement")
     return {"extended": extended, "deceleration_count": count, "facts": facts}
+
+
+def _price_space(
+    bars: Sequence[StoredDailyBar], states: Sequence[str],
+    envelopes: dict[str, dict[str, object] | None], atr14: float,
+) -> dict[str, object]:
+    """Build a causal, reproducible long-side scenario from visible range levels."""
+    latest = bars[-1]
+    history = list(bars[:-1])
+    buffer = max(atr14 * .25, latest.close * .003)
+    highs: list[tuple[int, float]] = []
+    lows: list[tuple[int, float]] = []
+    for period in (20, 60, 120):
+        selected = history[-period:]
+        if len(selected) < period:
+            continue
+        highs.append((period, max(bar.high for bar in selected)))
+        lows.append((period, min(bar.low for bar in selected)))
+
+    primary = _primary_state(states)
+    entry: float | None = None
+    invalidation: float | None = None
+    setup_basis: str | None = None
+    if primary in {"bullish-transition-candidate", "bullish-boundary-triggered"}:
+        wanted_state = "broken" if primary == "bullish-boundary-triggered" else "approaching"
+        candidates = [
+            (label, float(value["boundary"]))
+            for label, value in envelopes.items()
+            if isinstance(value, dict) and value.get("state") == wanted_state
+            and value.get("boundary") is not None
+        ]
+        if candidates:
+            label, boundary = min(candidates, key=lambda item: abs(item[1] - latest.close))
+            entry = latest.close if wanted_state == "broken" else boundary + buffer
+            invalidation = boundary - buffer
+            setup_basis = f"{label}-descending-envelope"
+    elif primary in {"oversold-exhaustion-candidate", "oversold-rebound-triggered"}:
+        reversal_high = max(bar.high for bar in bars[-6:-1])
+        reversal_low = min(bar.low for bar in bars[-6:])
+        entry = latest.close if primary == "oversold-rebound-triggered" else reversal_high + buffer
+        invalidation = reversal_low - buffer
+        setup_basis = "five-session-reversal-boundary"
+
+    target_reference = entry if entry is not None else latest.close
+    upside = min(
+        ((period, value) for period, value in highs if value > target_reference + buffer),
+        key=lambda item: item[1], default=None,
+    )
+    downside = max(
+        ((period, value) for period, value in lows if value < latest.close - buffer),
+        key=lambda item: item[1], default=None,
+    )
+    risk_reward = None
+    if (
+        upside is not None and entry is not None and invalidation is not None
+        and upside[1] > entry > invalidation
+    ):
+        risk_reward = (upside[1] - entry) / (entry - invalidation)
+
+    return {
+        "method": "causal-range-levels-v1",
+        "upside_target": _target_payload(upside),
+        "downside_target": _target_payload(downside),
+        "entry_price": _round(entry),
+        "invalidation_price": _round(invalidation),
+        "risk_reward_ratio": _round(risk_reward),
+        "has_trade_space": bool(risk_reward is not None and risk_reward >= 1.5),
+        "minimum_risk_reward": 1.5,
+        "setup_basis": setup_basis,
+    }
+
+
+def _target_payload(target: tuple[int, float] | None) -> dict[str, object] | None:
+    if target is None:
+        return None
+    return {"price": _round(target[1]), "lookback_sessions": target[0]}
 
 
 def _linear_slope(values: Sequence[float]) -> float:
@@ -617,6 +695,36 @@ def _breadth_sentence(metrics: dict[str, object]) -> str:
     return (
         f"上涨{breadth.get('advance_count', 0)}、下跌{breadth.get('decline_count', 0)}，"
         f"宽度{value_text}；价格量能影响代理HHI为{concentration_text}。"
+    )
+
+
+def _price_space_sentence(metrics: dict[str, object]) -> str:
+    value = metrics.get("price_space")
+    if not isinstance(value, dict):
+        return "目标位数据不可用，不计算盈亏比。"
+    upside = value.get("upside_target")
+    downside = value.get("downside_target")
+    upside_text = _target_text(upside, "上涨")
+    downside_text = _target_text(downside, "下跌")
+    ratio = _number(value.get("risk_reward_ratio"))
+    entry = _number(value.get("entry_price"))
+    invalidation = _number(value.get("invalidation_price"))
+    if ratio is None or entry is None or invalidation is None:
+        return f"{upside_text}；{downside_text}；当前没有可复现的入场/失效组合，不计算盈亏比。"
+    threshold = _number(value.get("minimum_risk_reward")) or 1.5
+    verdict = "存在博弈空间" if bool(value.get("has_trade_space")) else f"低于{threshold:.2f}:1，空间不足"
+    return (
+        f"{upside_text}；{downside_text}；计划入场{entry:.2f}、"
+        f"失效位{invalidation:.2f}，盈亏比{ratio:.2f}:1（{verdict}）。"
+    )
+
+
+def _target_text(value: object, direction: str) -> str:
+    if not isinstance(value, dict) or value.get("price") is None:
+        return f"{direction}目标位暂无合格历史区间位"
+    return (
+        f"{direction}目标位{float(value['price']):.2f}"
+        f"（{int(value.get('lookback_sessions') or 0)}日区间）"
     )
 
 
