@@ -16,7 +16,6 @@ import {
   clampLogicalRangeSpan,
   constrainPriceRangeToData,
   remapLogicalRange,
-  rescalePriceRange,
   snapLogicalRangeToDataEdge,
   createRangeMeasurement,
   detectPriceGaps,
@@ -70,32 +69,7 @@ describe('chart layout', () => {
   })
 })
 
-describe('aspect-locked price viewport', () => {
-  const projectedSlopeRatio = (
-    range: { from: number; to: number },
-    metrics: { timeUnits: number; width: number; height: number },
-  ) => metrics.height * metrics.timeUnits / ((range.to - range.from) * metrics.width)
-
-  it('keeps the projected price/time slope unchanged while zooming', () => {
-    const previous = { timeUnits: 120, width: 800, height: 480 }
-    const next = { timeUnits: 360, width: 800, height: 480 }
-    const initial = { from: 8, to: 32 }
-    const resized = rescalePriceRange(initial, previous, next)
-
-    expect(projectedSlopeRatio(resized, next)).toBeCloseTo(projectedSlopeRatio(initial, previous))
-    expect(resized.from).toBeGreaterThanOrEqual(0)
-    expect(resized.to).toBeCloseTo(72)
-  })
-
-  it('accounts for chart resizing without changing the projected slope', () => {
-    const previous = { timeUnits: 120, width: 800, height: 480 }
-    const next = { timeUnits: 120, width: 1200, height: 600 }
-    const initial = { from: 80, to: 120 }
-    const resized = rescalePriceRange(initial, previous, next)
-
-    expect(projectedSlopeRatio(resized, next)).toBeCloseTo(projectedSlopeRatio(initial, previous))
-  })
-
+describe('bounded manual price viewport', () => {
   it('translates the normal price window by the vertical drag distance', () => {
     expect(translatePriceRange({ from: 80, to: 120 }, 100, 400)).toEqual({ from: 90, to: 130 })
   })
@@ -122,19 +96,10 @@ describe('aspect-locked price viewport', () => {
     expect(constrained.to).toBeGreaterThan(40)
   })
 
-  it('uses multiplicative translation and scaling in logarithmic mode', () => {
+  it('uses multiplicative translation in logarithmic mode', () => {
     const translated = translatePriceRange({ from: 10, to: 40 }, 200, 400, true)
     expect(translated.from).toBeCloseTo(20)
     expect(translated.to).toBeCloseTo(80)
-
-    const resized = rescalePriceRange(
-      { from: 10, to: 40 },
-      { timeUnits: 100, width: 800, height: 400 },
-      { timeUnits: 200, width: 800, height: 400 },
-      true,
-    )
-    expect(resized.from).toBeCloseTo(5)
-    expect(resized.to).toBeCloseTo(80)
   })
 })
 

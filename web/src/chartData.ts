@@ -229,12 +229,6 @@ export function clampLogicalRangeSpan(
 
 export type NumericRange = { from: number; to: number }
 
-export type PriceViewportMetrics = {
-  timeUnits: number
-  width: number
-  height: number
-}
-
 function transformPrice(value: number, logarithmic: boolean): number {
   return logarithmic ? Math.log(Math.max(value, Number.EPSILON)) : value
 }
@@ -277,30 +271,6 @@ export function constrainPriceRangeToData(
   const result = {
     from: restorePrice(center - span / 2, logarithmic),
     to: restorePrice(center + span / 2, logarithmic),
-  }
-  return logarithmic ? result : positiveNormalRange(result.from, result.to)
-}
-
-/**
- * Resizes the price viewport with the time viewport so a price/time slope keeps
- * the same screen angle. Values are transformed in logarithmic mode first.
- */
-export function rescalePriceRange(
-  range: NumericRange,
-  previous: PriceViewportMetrics,
-  next: PriceViewportMetrics,
-  logarithmic = false,
-): NumericRange {
-  const previousFrom = transformPrice(range.from, logarithmic)
-  const previousTo = transformPrice(range.to, logarithmic)
-  const previousSpan = Math.max(Number.EPSILON, previousTo - previousFrom)
-  const previousProjection = Math.max(Number.EPSILON, previous.timeUnits * previous.height / Math.max(1, previous.width))
-  const nextProjection = Math.max(Number.EPSILON, next.timeUnits * next.height / Math.max(1, next.width))
-  const nextSpan = previousSpan * nextProjection / previousProjection
-  const center = (previousFrom + previousTo) / 2
-  const result = {
-    from: restorePrice(center - nextSpan / 2, logarithmic),
-    to: restorePrice(center + nextSpan / 2, logarithmic),
   }
   return logarithmic ? result : positiveNormalRange(result.from, result.to)
 }

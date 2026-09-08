@@ -76,6 +76,7 @@ test('vertical drag is dampened and capped without flattening prices', async ({ 
   }
   await page.waitForTimeout(350)
   const after = await candleCentroid(page)
+  expect(Math.abs(after.x - before.x)).toBeLessThan(8)
   expect(after.y - before.y).toBeGreaterThan(25)
   expect(after.y - before.y).toBeLessThan(100)
   expect(await mainPaneCandleOccupancy(page)).toBeGreaterThan(0.6)
