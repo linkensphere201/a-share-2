@@ -1,7 +1,11 @@
 from datetime import date, datetime, timedelta, timezone
 
 from stock_harness.config import IntradaySettings
-from stock_harness.intraday import IntradayQuoteService, is_market_polling_time
+from stock_harness.intraday import (
+    IntradayQuoteService,
+    _parse_quote,
+    is_market_polling_time,
+)
 from stock_harness.models import ProvisionalDailyBar
 from stock_harness.sqlite_store import SQLiteMarketDataStore
 
@@ -43,6 +47,36 @@ class FakeProvider:
 
 def _settings() -> IntradaySettings:
     return IntradaySettings(True, 30, 8, 90, 2, 60, 1000)
+
+
+def _eastmoney_row(volume: int) -> dict[str, object]:
+    return {
+        "f2": 8406.84,
+        "f3": 3.69,
+        "f5": volume,
+        "f6": 24_593_064_364,
+        "f15": 8416.05,
+        "f16": 8038.58,
+        "f17": 8091.21,
+        "f18": 8107.84,
+        "f124": 1_788_857_999,
+    }
+
+
+def test_eastmoney_quote_volume_matches_instrument_unit_contract():
+    received_at = datetime(2026, 9, 8, 15, 1, tzinfo=CHINA_TIME)
+
+    board = _parse_quote(
+        "BK1600.DC", _eastmoney_row(6_070_476), received_at, "eastmoney_selected"
+    )
+    stock = _parse_quote(
+        "600519.SH", _eastmoney_row(12_345), received_at, "eastmoney_selected"
+    )
+
+    assert board is not None
+    assert board.volume == 6_070_476
+    assert stock is not None
+    assert stock.volume == 1_234_500
 
 
 def test_market_polling_time_excludes_lunch_and_after_close():

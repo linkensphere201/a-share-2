@@ -509,7 +509,7 @@ def _parse_quote(
         high=high,
         low=low,
         close=close,
-        volume=max(0, int(round(_number(row.get("f5")) * 100))),
+        volume=_eastmoney_volume(symbol, row.get("f5")),
         amount=max(0.0, _number(row.get("f6"))),
         previous_close=previous_close,
         change_percent=_number(row.get("f3")),
@@ -517,6 +517,13 @@ def _parse_quote(
         provider_time=provider_time,
         received_at=received_at,
     )
+
+
+def _eastmoney_volume(symbol: str, value: object) -> int:
+    """Normalize Eastmoney quote volume to the matching canonical daily-bar unit."""
+    suffix = symbol.upper().rpartition(".")[2]
+    multiplier = 1 if suffix == "DC" else 100
+    return max(0, int(round(_number(value) * multiplier)))
 
 
 def _parse_sina_quote(
