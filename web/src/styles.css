@@ -139,6 +139,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .signal-runs { display: grid; grid-template-rows: 42px minmax(0, 1fr); }
 .signal-results { display: flex; flex-direction: column; }
 .signal-results > .signal-scroll { flex: 1 1 auto; }
+.signal-results > header, .signal-view-switch, .signal-filters, .signal-result-head { flex: 0 0 auto; }
+.signal-results > header { min-height: 42px; }
 .signal-inspector { display: grid; grid-template-rows: 42px minmax(300px, 1fr) minmax(135px, 28%); border-right: 0; }
 .signal-inspector.has-critical { grid-template-rows: 42px auto minmax(260px, 1fr) minmax(135px, 28%); }
 .signal-critical-alert { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr); gap: 12px; padding: 7px 12px; border-bottom: 1px solid var(--theme-border); border-left: 3px solid #d8aa5d; background: color-mix(in srgb, #d8aa5d 9%, var(--theme-surface)); color: var(--theme-text-strong); font-size: 11px; }
@@ -176,6 +178,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .signal-results button.inactive { opacity: .62; }
 .signal-results button span { min-width: 0; }
 .signal-results button small { display: block; overflow: hidden; color: var(--theme-muted); text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
+.signal-result-state { display: grid; align-content: center; gap: 2px; padding-block: 2px; }
+.signal-results button .signal-result-details { overflow: visible; color: var(--theme-muted); text-overflow: clip; white-space: normal; line-height: 1.35; }
+.signal-result-details > span { display: block; overflow-wrap: anywhere; }
 .signal-results .change { font-size: 9px; }
 .signal-results .change.added { color: #76c99b; }
 .signal-results .change.removed { color: #df8585; }

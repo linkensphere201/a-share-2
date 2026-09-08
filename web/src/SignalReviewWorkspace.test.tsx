@@ -229,7 +229,13 @@ describe('SignalReviewWorkspace', () => {
     const dailyRun = { ...run, signal_id: dailyDefinition.signal_id, cadence: 'daily' }
     const dailyItem = {
       ...items[0], symbol: 'BK001.DC', name: '测试板块', profile: 'attention',
-      payload: { rendered_summary: '固定结论', deep_analysis_run_id: 'deep-1' },
+      payload: {
+        rendered_summary: '固定结论', deep_analysis_run_id: 'deep-1',
+        state_codes: [
+          'bullish-boundary-triggered', 'descending-envelope-3m-broken',
+          'descending-envelope-6m-broken', 'sudden-volume-expansion',
+        ],
+      },
       evidence: [{
         evidence_id: 'm4-e1', alias: 'S1', evidence_type: 'm4-line',
         source_run_id: 'deep-1', source_item_id: 'line-1', payload: {},
@@ -248,6 +254,7 @@ describe('SignalReviewWorkspace', () => {
     render(<SignalReviewWorkspace theme={themes[0]} onClose={() => undefined}/>)
 
     await user.click((await screen.findByText('BK001.DC')).closest('button')!)
+    expect(document.querySelectorAll('.signal-result-details > span')).toHaveLength(3)
     expect(await screen.findByText('固定结论')).toBeTruthy()
     expect(screen.getByTestId('signal-chart').dataset.analysisRun).toBe('deep-1')
     await user.click(screen.getByText('[S1]').closest('button')!)

@@ -308,7 +308,10 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
             const entry = attention.find(value => value.symbol === item.symbol)
             return <button key={item.symbol} className={selectedObservation?.symbol === item.symbol ? 'active' : ''} onClick={() => { setSelectedObservation(item); setSelectedItem(undefined) }}>
               <span><span className="instrument-name-line"><b>{item.name}</b></span><small>{item.symbol}</small></span>
-              <span>{stateLabel(item.state_codes)}<small title={stateDetailLabels(item.state_codes).join(' · ')}>{item.coverage_state === 'complete' ? stateDetailLabels(item.state_codes).join(' · ') || '未触发异动' : '数据不足'}</small></span>
+              <SignalStateCell
+                states={item.state_codes}
+                fallback={item.coverage_state === 'complete' ? '未触发异动' : '数据不足'}
+              />
               <span className={`attention-state ${entry?.status ?? 'inactive'}`}>{entry?.manual_pinned ? '固定' : item.attention_eligible ? '自动' : '-'}</span>
             </button>
           })}</div>
@@ -321,7 +324,10 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
           </div>
           <div className="signal-result-head"><span>#</span><span>标的</span><span>{daily ? '状态' : '板块'}</span><span>变化</span></div>
           <div className="signal-scroll">{selectedRun?.status === 'failed' && <div className="signal-empty compact error">{selectedRun.error}</div>}{filtered.map(item => <button key={item.item_id} className={`${selectedItem?.item_id === item.item_id ? 'active ' : ''}${item.active ? '' : 'inactive'}`} onClick={() => { setSelectedItem(item); setSelectedObservation(undefined); setSelectedEvidenceId(undefined); setHighlightedEvidenceId(undefined) }}>
-            <span>{item.rank}</span><span><span className="instrument-name-line"><b>{item.name}</b><MarketBoardBadge instrument={item}/></span><small>{item.symbol}</small></span><span>{daily ? stateLabel(item.payload.state_codes) : item.payload.board_count ?? 0}<small title={daily ? stateDetailLabels(item.payload.state_codes).join(' · ') : undefined}>{daily ? stateDetailLabels(item.payload.state_codes).join(' · ') || profileLabels[item.profile] : profileLabels[item.profile]}</small></span><span className={`change ${item.change_type}`}>{changeLabels[item.change_type]}</span>
+            <span>{item.rank}</span><span><span className="instrument-name-line"><b>{item.name}</b><MarketBoardBadge instrument={item}/></span><small>{item.symbol}</small></span>{daily
+              ? <SignalStateCell states={item.payload.state_codes} fallback={profileLabels[item.profile]}/>
+              : <span>{item.payload.board_count ?? 0}<small>{profileLabels[item.profile]}</small></span>}
+            <span className={`change ${item.change_type}`}>{changeLabels[item.change_type]}</span>
           </button>)}</div>
         </>}
       </section>
@@ -367,6 +373,18 @@ function readColumnWidths(): SignalColumnWidths {
 function stateLabel(states?: string[]) {
   const labels = signalStateLabels()
   return states?.map(item => labels[item]).find(Boolean) ?? (states?.[0] || '数据不足')
+}
+
+function SignalStateCell({ states, fallback }: { states?: string[]; fallback: string }) {
+  const details = stateDetailLabels(states)
+  return <span className="signal-result-state">
+    {stateLabel(states)}
+    <small className="signal-result-details" title={details.join(' · ')}>
+      {details.length > 0
+        ? details.map(detail => <span key={detail}>{detail}</span>)
+        : <span>{fallback}</span>}
+    </small>
+  </span>
 }
 
 export function stateDetailLabels(states?: string[]) {
