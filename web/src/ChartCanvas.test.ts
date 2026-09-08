@@ -25,6 +25,7 @@ import {
   movingAverage,
   mergeProvisionalBar,
   millisecondsUntilMarketSession,
+  priceRangeForChartScale,
   shouldUseFinalDailyRefresh,
   translateLogicalRange,
   translatePriceRange,
@@ -107,6 +108,13 @@ describe('bounded manual price viewport', () => {
     const translated = translatePriceRange({ from: 10, to: 40 }, 200, 400, true)
     expect(translated.from).toBeCloseTo(20)
     expect(translated.to).toBeCloseTo(80)
+  })
+
+  it('encodes raw prices for the Lightweight Charts logarithmic range API', () => {
+    const encoded = priceRangeForChartScale({ from: 100, to: 1000 }, true)
+    expect(encoded.from).toBeCloseTo(6.0000004)
+    expect(encoded.to).toBeCloseTo(7.00000004)
+    expect(priceRangeForChartScale({ from: 100, to: 1000 })).toEqual({ from: 100, to: 1000 })
   })
 
   it('translates a logical range without changing its span', () => {

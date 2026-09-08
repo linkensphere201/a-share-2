@@ -82,6 +82,25 @@ test('vertical drag is dampened and capped without flattening prices', async ({ 
   expect(await mainPaneCandleOccupancy(page)).toBeGreaterThan(0.6)
 })
 
+test('logarithmic price-axis drag keeps raw prices readable', async ({ page }) => {
+  await page.goto('http://127.0.0.1:5173')
+  await page.getByRole('button', { name: '对数', exact: true }).click()
+  const stage = page.locator('.chart-stage').first()
+  await expect(stage.locator('.chart-state')).toHaveCount(0, { timeout: 15_000 })
+  await page.waitForTimeout(350)
+  expect(await mainPaneCandleOccupancy(page)).toBeGreaterThan(0.55)
+  const box = await stage.boundingBox()
+  if (!box) throw new Error('Chart has no bounds')
+  const x = box.x + box.width - 20
+  const y = box.y + box.height * 0.3
+  await page.mouse.move(x, y)
+  await page.mouse.down()
+  await page.mouse.move(x, y + 120, { steps: 12 })
+  await page.mouse.up()
+  await page.waitForTimeout(350)
+  expect(await mainPaneCandleOccupancy(page)).toBeGreaterThan(0.55)
+})
+
 test('dominant horizontal drag refits prices for the newly visible history', async ({ page }) => {
   await page.goto('http://127.0.0.1:5173')
   const stage = page.locator('.chart-stage').first()

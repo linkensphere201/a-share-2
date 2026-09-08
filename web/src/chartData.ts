@@ -229,12 +229,41 @@ export function clampLogicalRangeSpan(
 
 export type NumericRange = { from: number; to: number }
 
+const lightweightChartLogLogicalOffset = 4
+const lightweightChartLogCoordinateOffset = 0.0001
+
 function transformPrice(value: number, logarithmic: boolean): number {
   return logarithmic ? Math.log(Math.max(value, Number.EPSILON)) : value
 }
 
 function restorePrice(value: number, logarithmic: boolean): number {
   return logarithmic ? Math.exp(value) : value
+}
+
+/**
+ * Lightweight Charts 5.2 returns raw prices from getVisibleRange(), but its
+ * logarithmic setVisibleRange() path consumes the library's logical values.
+ */
+export function priceRangeForChartScale(
+  range: NumericRange,
+  logarithmic = false,
+): NumericRange {
+  if (!logarithmic) return range
+  const span = Math.abs(range.to - range.from)
+  const extraDigits = span < 1 && span >= 1e-15
+    ? Math.ceil(Math.abs(Math.log10(span)))
+    : 0
+  const logicalOffset = lightweightChartLogLogicalOffset + extraDigits
+  const coordinateOffset = extraDigits > 0
+    ? 1 / Math.pow(10, logicalOffset)
+    : lightweightChartLogCoordinateOffset
+  const encode = (price: number) => {
+    const magnitude = Math.abs(price)
+    if (magnitude < 1e-15) return 0
+    const logical = Math.log10(magnitude + coordinateOffset) + logicalOffset
+    return price < 0 ? -logical : logical
+  }
+  return { from: encode(range.from), to: encode(range.to) }
 }
 
 function positiveNormalRange(from: number, to: number): NumericRange {

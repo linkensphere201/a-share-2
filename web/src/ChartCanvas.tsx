@@ -48,6 +48,7 @@ import {
   middleMovingAveragePeriod,
   movingAverage,
   previousCloseByDate,
+  priceRangeForChartScale,
   remapLogicalRange,
   snapLogicalRangeToDataEdge,
   subtractMonths,
@@ -594,7 +595,7 @@ export function ChartCanvas({
         scale.setAutoScale(true)
       } else {
         const range = constrainToVisibleData(state.range)
-        scale.setVisibleRange(range)
+        scale.setVisibleRange(priceRangeForChartScale(range, priceModeRef.current === 'log'))
         priceViewportStateRef.current = { mode: 'MANUAL_PAN', range }
       }
       chart.panes().slice(1).forEach((_, index) => {
@@ -1103,7 +1104,10 @@ export function ChartCanvas({
           priceModeRef.current === 'log',
         )
       : nextRange
-    chart.priceScale('right', 0).setVisibleRange(boundedRange)
+    chart.priceScale('right', 0).setVisibleRange(priceRangeForChartScale(
+      boundedRange,
+      priceModeRef.current === 'log',
+    ))
     priceViewportStateRef.current = { mode: 'MANUAL_PAN', range: boundedRange }
     setOverlayRevision(value => value + 1)
   }
