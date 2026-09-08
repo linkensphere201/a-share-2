@@ -211,34 +211,10 @@ export function snapLogicalRangeToDataEdge(
   return { from: range.from + delta, to: range.to + delta }
 }
 
-export function clampLogicalRangeSpan(
-  range: { from: number; to: number },
-  dataCount: number,
-  edgeBlankBars = 6,
-): { from: number; to: number } | undefined {
-  if (dataCount <= 0) return undefined
-  const currentSpan = range.to - range.from
-  const maximumSpan = Math.max(1, dataCount - 1 + edgeBlankBars * 2)
-  if (currentSpan <= maximumSpan) return undefined
-  const center = (range.from + range.to) / 2
-  return {
-    from: center - maximumSpan / 2,
-    to: center + maximumSpan / 2,
-  }
-}
-
 export type NumericRange = { from: number; to: number }
 
 const lightweightChartLogLogicalOffset = 4
 const lightweightChartLogCoordinateOffset = 0.0001
-
-function transformPrice(value: number, logarithmic: boolean): number {
-  return logarithmic ? Math.log(Math.max(value, Number.EPSILON)) : value
-}
-
-function restorePrice(value: number, logarithmic: boolean): number {
-  return logarithmic ? Math.exp(value) : value
-}
 
 /**
  * Lightweight Charts 5.2 returns raw prices from getVisibleRange(), but its
@@ -264,105 +240,6 @@ export function priceRangeForChartScale(
     return price < 0 ? -logical : logical
   }
   return { from: encode(range.from), to: encode(range.to) }
-}
-
-function positiveNormalRange(from: number, to: number): NumericRange {
-  if (from > 0) return { from, to }
-  const shift = Number.EPSILON - from
-  return { from: from + shift, to: to + shift }
-}
-
-export function constrainPriceRangeToData(
-  range: NumericRange,
-  dataLow: number,
-  dataHigh: number,
-  logarithmic = false,
-  minimumDataOccupancy = 0.4,
-  maximumCenterOffsetFraction = 0.3,
-): NumericRange {
-  const transformedLow = transformPrice(Math.min(dataLow, dataHigh), logarithmic)
-  const transformedHigh = transformPrice(Math.max(dataLow, dataHigh), logarithmic)
-  const dataSpan = Math.max(Number.EPSILON, transformedHigh - transformedLow)
-  const candidateFrom = transformPrice(range.from, logarithmic)
-  const candidateTo = transformPrice(range.to, logarithmic)
-  const candidateSpan = Math.max(Number.EPSILON, candidateTo - candidateFrom)
-  const minimumSpan = dataSpan * 1.08
-  const maximumSpan = dataSpan / clamp(minimumDataOccupancy, 0.1, 1)
-  const span = clamp(candidateSpan, minimumSpan, maximumSpan)
-  const dataCenter = (transformedLow + transformedHigh) / 2
-  const maximumCenterOffset = span * maximumCenterOffsetFraction
-  const candidateCenter = (candidateFrom + candidateTo) / 2
-  const center = clamp(
-    candidateCenter,
-    dataCenter - maximumCenterOffset,
-    dataCenter + maximumCenterOffset,
-  )
-  const result = {
-    from: restorePrice(center - span / 2, logarithmic),
-    to: restorePrice(center + span / 2, logarithmic),
-  }
-  return logarithmic ? result : positiveNormalRange(result.from, result.to)
-}
-
-/** Moves the price viewport by the same number of pixels as a vertical drag. */
-export function translatePriceRange(
-  range: NumericRange,
-  deltaPixels: number,
-  paneHeight: number,
-  logarithmic = false,
-): NumericRange {
-  const from = transformPrice(range.from, logarithmic)
-  const to = transformPrice(range.to, logarithmic)
-  const offset = (to - from) * deltaPixels / Math.max(1, paneHeight)
-  const result = {
-    from: restorePrice(from + offset, logarithmic),
-    to: restorePrice(to + offset, logarithmic),
-  }
-  return logarithmic ? result : positiveNormalRange(result.from, result.to)
-}
-
-/** Scales a raw price range around its center; log mode scales multiplicatively. */
-export function scalePriceRange(
-  range: NumericRange,
-  factor: number,
-  logarithmic = false,
-): NumericRange {
-  const from = transformPrice(range.from, logarithmic)
-  const to = transformPrice(range.to, logarithmic)
-  const center = (from + to) / 2
-  const halfSpan = (to - from) / 2 * Math.max(0.01, factor)
-  const result = {
-    from: restorePrice(center - halfSpan, logarithmic),
-    to: restorePrice(center + halfSpan, logarithmic),
-  }
-  return logarithmic ? result : positiveNormalRange(result.from, result.to)
-}
-
-export function wheelPriceScaleFactor(deltaY: number, intensity = 0.0005): number {
-  return Math.exp(clamp(deltaY, -3000, 3000) * intensity)
-}
-
-export function boundedPricePanDelta(
-  deltaPixels: number,
-  paneHeight: number,
-  sensitivity = 0.5,
-  maximumPaneFraction = 0.45,
-): number {
-  const maximum = Math.max(1, paneHeight) * maximumPaneFraction
-  return clamp(deltaPixels * sensitivity, -maximum, maximum)
-}
-
-/** Translates a logical time range without changing its span. */
-export function translateLogicalRange(
-  range: NumericRange,
-  deltaPixels: number,
-  barSpacing: number,
-): NumericRange {
-  const offset = deltaPixels / Math.max(0.01, barSpacing)
-  return {
-    from: range.from - offset,
-    to: range.to - offset,
-  }
 }
 
 export function calculateChangePercent(close: number, previousClose?: number): number | undefined {

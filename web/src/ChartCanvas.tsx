@@ -34,14 +34,11 @@ import {
 } from './chartProjection'
 import {
   aggregateBars,
-  boundedPricePanDelta,
   calculateChangePercent,
   calculateMacd,
   candleColor,
   chooseLodBucket,
   clamp,
-  clampLogicalRangeSpan,
-  constrainPriceRangeToData,
   createRangeMeasurement,
   detectPriceGaps,
   latestReadout,
@@ -50,21 +47,25 @@ import {
   previousCloseByDate,
   priceRangeForChartScale,
   remapLogicalRange,
-  scalePriceRange,
   snapLogicalRangeToDataEdge,
   subtractMonths,
   subtractYears,
-  translateLogicalRange,
-  translatePriceRange,
   visibleBarStats,
   visibleExtrema,
-  wheelPriceScaleFactor,
   type DailyBar,
   type NumericRange,
   type RangeMeasurement,
   type Readout,
   type RenderBar,
 } from './chartData'
+import {
+  constrainLogicalViewport,
+  constrainPriceViewport,
+  panChartViewport,
+  wheelZoomFactor,
+  zoomChartViewport,
+  type ChartViewport,
+} from './chartViewport'
 import {
   CandlestickSeries,
   ColorType,
@@ -159,10 +160,11 @@ type PricePanDrag = {
   startY: number
   latestX: number
   latestY: number
-  axis: 'pending' | 'horizontal' | 'vertical'
   logicalRange: { from: number; to: number }
+  paneWidth: number
   paneHeight: number
   range: NumericRange
+  frame: number
 }
 
 type ChartCanvasProps = {
@@ -231,7 +233,7 @@ export const compactCrosshairMarkerOptions = {
 } as const
 
 export const chartHandleScaleOptions: HandleScaleOptions = {
-  mouseWheel: true,
+  mouseWheel: false,
   pinch: true,
   axisPressedMouseMove: { time: false, price: false },
   axisDoubleClickReset: { time: true, price: true },
@@ -316,6 +318,7 @@ export function ChartCanvas({
   const openInterestRef = useRef<ISeriesApi<'Histogram'> | null>(null)
   const openInterestPaneRef = useRef<IPaneApi<Time> | null>(null)
   const previousCloseByDateRef = useRef<Map<string, number>>(new Map())
+  const fullPriceExtremaRef = useRef<{ low: number; high: number } | undefined>(undefined)
   const renderedBarsRef = useRef<Map<string, RenderBar>>(new Map())
   const renderedBarListRef = useRef<RenderBar[]>([])
   const selectionDragRef = useRef<{ pointerId: number; startX: number; startY: number } | undefined>(undefined)
@@ -330,6 +333,7 @@ export function ChartCanvas({
   const timeAxisPointerActiveRef = useRef(false)
   const priceViewportStateRef = useRef<PriceViewportState>({ mode: 'AUTO' })
   const pricePanDragRef = useRef<PricePanDrag | undefined>(undefined)
+  const applyViewportRef = useRef<(viewport: ChartViewport) => void>(() => undefined)
   const priceRefitPendingRef = useRef(false)
   const priceRefitGenerationRef = useRef(0)
   const refitPriceViewportRef = useRef<() => void>(() => undefined)
@@ -393,6 +397,10 @@ export function ChartCanvas({
   }, [])
   const onBarsChanged = useCallback((next: DailyBar[]) => {
     previousCloseByDateRef.current = previousCloseByDate(next)
+    fullPriceExtremaRef.current = next.length > 0 ? {
+      low: Math.min(...next.map(bar => bar.low)),
+      high: Math.max(...next.map(bar => bar.high)),
+    } : undefined
     setReadout(latestReadout(next, middleAveragePeriod))
   }, [middleAveragePeriod])
   const onDailyLoadStart = useCallback(() => {
@@ -528,7 +536,7 @@ export function ChartCanvas({
         scaleMargins: { top: 0.06, bottom: 0.06 },
       },
       handleScroll: {
-        mouseWheel: true,
+        mouseWheel: false,
         pressedMouseMove: false,
         horzTouchDrag: true,
         vertTouchDrag: true,
@@ -573,22 +581,52 @@ export function ChartCanvas({
     const ma5 = chart.addSeries(LineSeries, { color: '#e5b85c', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, ...compactCrosshairMarkerOptions })
     const ma20 = chart.addSeries(LineSeries, { color: '#57a7d9', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, ...compactCrosshairMarkerOptions })
     const ma60 = chart.addSeries(LineSeries, { color: '#b984cc', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, ...compactCrosshairMarkerOptions })
-    const constrainToVisibleData = (range: NumericRange) => {
-      const visible = chart.timeScale().getVisibleRange()
-      const extrema = visible && visibleExtrema(
-        barsRef.current,
-        String(visible.from),
-        String(visible.to),
-      )
+    const extremaForLogicalRange = (logical?: NumericRange | null) => {
+      const rendered = renderedBarListRef.current
+      if (!logical || rendered.length === 0) return fullPriceExtremaRef.current
+      const first = Math.max(0, Math.floor(logical.from))
+      const last = Math.min(rendered.length - 1, Math.ceil(logical.to))
+      if (first > last) return fullPriceExtremaRef.current
+      let low = Number.POSITIVE_INFINITY
+      let high = Number.NEGATIVE_INFINITY
+      for (let index = first; index <= last; index += 1) {
+        low = Math.min(low, rendered[index].low)
+        high = Math.max(high, rendered[index].high)
+      }
+      return Number.isFinite(low) && Number.isFinite(high) ? { low, high } : fullPriceExtremaRef.current
+    }
+    const constrainToCompleteData = (range: NumericRange, logical?: NumericRange | null) => {
+      const extrema = fullPriceExtremaRef.current
+      const visibleExtrema = extremaForLogicalRange(logical)
       return extrema
-        ? constrainPriceRangeToData(
+        ? constrainPriceViewport(
             range,
-            extrema.low.low,
-            extrema.high.high,
+            extrema.low,
+            extrema.high,
             priceModeRef.current === 'log',
+            0.18,
+            0.001,
+            0.42,
+            visibleExtrema?.low,
+            visibleExtrema?.high,
           )
         : range
     }
+    const applyViewport = (viewport: ChartViewport) => {
+      const logical = constrainLogicalViewport(
+        viewport.logical,
+        renderedBarListRef.current.length,
+      )
+      const price = constrainToCompleteData(viewport.price, logical)
+      chart.timeScale().setVisibleLogicalRange(logical)
+      chart.priceScale('right', 0).setVisibleRange(priceRangeForChartScale(
+        price,
+        priceModeRef.current === 'log',
+      ))
+      priceViewportStateRef.current = { mode: 'MANUAL_PAN', range: price }
+      setOverlayRevision(value => value + 1)
+    }
+    applyViewportRef.current = applyViewport
     const syncPriceScale = () => {
       if (priceRefitPendingRef.current) return
       const scale = chart.priceScale('right', 0)
@@ -596,7 +634,10 @@ export function ChartCanvas({
       if (state.mode === 'AUTO') {
         scale.setAutoScale(true)
       } else {
-        const range = constrainToVisibleData(state.range)
+        const range = constrainToCompleteData(
+          state.range,
+          chart.timeScale().getVisibleLogicalRange(),
+        )
         scale.setVisibleRange(priceRangeForChartScale(range, priceModeRef.current === 'log'))
         priceViewportStateRef.current = { mode: 'MANUAL_PAN', range }
       }
@@ -606,12 +647,19 @@ export function ChartCanvas({
     }
     syncPriceScaleRef.current = syncPriceScale
     let wheelRefitTimer = 0
-    let wheelZoomTimer = 0
-    let wheelZoomSnapshot: { range: NumericRange; deltaY: number } | undefined
+    let wheelZoomFrame = 0
+    let wheelZoomSnapshot: {
+      viewport: ChartViewport
+      deltaY: number
+      anchorX: number
+      anchorY: number
+    } | undefined
     const beginPriceRefit = (settleDelayMs = 0) => {
       window.clearTimeout(wheelRefitTimer)
-      window.clearTimeout(wheelZoomTimer)
+      window.cancelAnimationFrame(wheelZoomFrame)
+      wheelZoomFrame = 0
       wheelZoomSnapshot = undefined
+      timeAxisPointerActiveRef.current = false
       const generation = ++priceRefitGenerationRef.current
       priceRefitPendingRef.current = true
       priceViewportStateRef.current = { mode: 'AUTO' }
@@ -636,37 +684,51 @@ export function ChartCanvas({
     const stage = host.closest('.chart-stage')
     const refitAfterWheel = (event: WheelEvent) => {
       if (!stage?.contains(event.target as Node)) return
+      event.preventDefault()
+      event.stopPropagation()
       if (!wheelZoomSnapshot) {
-        const range = chart.priceScale('right', 0).getVisibleRange()
-        if (!range) return
-        wheelZoomSnapshot = { range, deltaY: 0 }
+        const logical = chart.timeScale().getVisibleLogicalRange()
+        const price = chart.priceScale('right', 0).getVisibleRange()
+        if (!logical || !price) return
+        const bounds = host.getBoundingClientRect()
+        const paneHeight = Math.max(1, chart.panes()[0]?.getHeight() ?? bounds.height)
+        wheelZoomSnapshot = {
+          viewport: {
+            logical: { from: logical.from, to: logical.to },
+            price: constrainToCompleteData(price, logical),
+          },
+          deltaY: 0,
+          anchorX: clamp((event.clientX - bounds.left) / Math.max(1, bounds.width), 0, 1),
+          anchorY: clamp((event.clientY - bounds.top) / paneHeight, 0, 1),
+        }
         priceRefitPendingRef.current = true
+        timeAxisPointerActiveRef.current = true
         pricePanDragRef.current = undefined
       }
       wheelZoomSnapshot.deltaY += event.deltaY
-      window.clearTimeout(wheelZoomTimer)
-      wheelZoomTimer = window.setTimeout(() => {
-        window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+      if (!wheelZoomFrame) {
+        wheelZoomFrame = window.requestAnimationFrame(() => {
+          wheelZoomFrame = 0
           const snapshot = wheelZoomSnapshot
-          wheelZoomSnapshot = undefined
           if (!snapshot || chartRef.current !== chart) return
-          const scaled = scalePriceRange(
-            snapshot.range,
-            wheelPriceScaleFactor(snapshot.deltaY),
-            priceModeRef.current === 'log',
-          )
-          const bounded = constrainToVisibleData(scaled)
-          chart.priceScale('right', 0).setVisibleRange(priceRangeForChartScale(
-            bounded,
+          applyViewport(zoomChartViewport(
+            snapshot.viewport,
+            wheelZoomFactor(snapshot.deltaY),
+            snapshot.anchorX,
+            snapshot.anchorY,
             priceModeRef.current === 'log',
           ))
-          priceViewportStateRef.current = { mode: 'MANUAL_PAN', range: bounded }
-          priceRefitPendingRef.current = false
-          setOverlayRevision(value => value + 1)
-        }))
-      }, 180)
+        })
+      }
+      window.clearTimeout(wheelRefitTimer)
+      wheelRefitTimer = window.setTimeout(() => {
+        wheelZoomSnapshot = undefined
+        timeAxisPointerActiveRef.current = false
+        priceRefitPendingRef.current = false
+        recalculateLodRef.current()
+      }, 160)
     }
-    window.addEventListener('wheel', refitAfterWheel, { capture: true, passive: true })
+    window.addEventListener('wheel', refitAfterWheel, { capture: true, passive: false })
 
     chart.subscribeCrosshairMove(param => {
       if (!param.time) {
@@ -711,11 +773,14 @@ export function ChartCanvas({
         const visible = chart.timeScale().getVisibleRange()
         if (!visible || !hostRef.current) return
         const logical = chart.timeScale().getVisibleLogicalRange()
-        const bounded = logical && clampLogicalRangeSpan(
+        const bounded = logical && constrainLogicalViewport(
           logical,
           renderedBarListRef.current.length,
         )
-        if (bounded) {
+        if (bounded && (
+          Math.abs(bounded.from - logical.from) > 0.001
+          || Math.abs(bounded.to - logical.to) > 0.001
+        )) {
           chart.timeScale().setVisibleLogicalRange(bounded)
           return
         }
@@ -776,9 +841,10 @@ export function ChartCanvas({
       window.clearTimeout(edgeSnapTimer)
       resizeObserver.disconnect()
       window.clearTimeout(wheelRefitTimer)
-      window.clearTimeout(wheelZoomTimer)
+      window.cancelAnimationFrame(wheelZoomFrame)
       priceRefitGenerationRef.current += 1
       priceRefitPendingRef.current = false
+      applyViewportRef.current = () => undefined
       window.removeEventListener('wheel', refitAfterWheel, true)
       chart.timeScale().unsubscribeVisibleLogicalRangeChange(recalculateLod)
       chart.remove()
@@ -1070,20 +1136,20 @@ export function ChartCanvas({
     if (!(target instanceof HTMLElement) || !target.closest('.chart-host')) return
     const chart = chartRef.current
     const logical = chart.timeScale().getVisibleLogicalRange()
-    const visible = chart.timeScale().getVisibleRange()
     const currentRange = chart.priceScale('right', 0).getVisibleRange()
-    if (!logical || !visible || !currentRange) return
-    const extrema = visibleExtrema(barsRef.current, String(visible.from), String(visible.to))
-    const range = extrema
-      ? constrainPriceRangeToData(
+    if (!logical || !currentRange) return
+    const range = fullPriceExtremaRef.current
+      ? constrainPriceViewport(
           currentRange,
-          extrema.low.low,
-          extrema.high.high,
+          fullPriceExtremaRef.current.low,
+          fullPriceExtremaRef.current.high,
           priceModeRef.current === 'log',
         )
       : currentRange
+    const paneWidth = Math.max(1, chart.timeScale().width())
     const paneHeight = Math.max(1, chart.panes()[0]?.getHeight() ?? event.currentTarget.clientHeight)
     target.setPointerCapture(event.pointerId)
+    priceRefitPendingRef.current = true
     pricePanDragRef.current = {
       pointerId: event.pointerId,
       captureTarget: target,
@@ -1091,90 +1157,57 @@ export function ChartCanvas({
       startY: event.clientY,
       latestX: event.clientX,
       latestY: event.clientY,
-      axis: 'pending',
       logicalRange: { from: logical.from, to: logical.to },
+      paneWidth,
       paneHeight,
       range,
+      frame: 0,
     }
+  }
+
+  const applyPricePanDrag = (drag: PricePanDrag) => {
+    applyViewportRef.current(panChartViewport(
+      { logical: drag.logicalRange, price: drag.range },
+      drag.latestX - drag.startX,
+      drag.latestY - drag.startY,
+      drag.paneWidth,
+      drag.paneHeight,
+      priceModeRef.current === 'log',
+    ))
   }
 
   const handlePricePanMove = (event: ReactPointerEvent<HTMLDivElement>) => {
     const drag = pricePanDragRef.current
     const chart = chartRef.current
     if (!drag || drag.pointerId !== event.pointerId || !chart) return
-    drag.latestX = event.clientX
-    drag.latestY = event.clientY
-    const horizontalDistance = Math.abs(event.clientX - drag.startX)
-    const verticalDistance = Math.abs(event.clientY - drag.startY)
-    if (drag.axis === 'pending' && Math.max(horizontalDistance, verticalDistance) >= 6) {
-      drag.axis = horizontalDistance >= verticalDistance ? 'horizontal' : 'vertical'
-    }
-    if (drag.axis === 'horizontal') {
-      event.preventDefault()
-      event.stopPropagation()
-      priceViewportStateRef.current = { mode: 'AUTO' }
-      chart.priceScale('right', 0).setAutoScale(true)
-      chart.timeScale().setVisibleLogicalRange(translateLogicalRange(
-        drag.logicalRange,
-        event.clientX - drag.startX,
-        chart.timeScale().options().barSpacing,
-      ))
-      return
-    }
-    if (drag.axis === 'pending') return
     event.preventDefault()
     event.stopPropagation()
-    priceRefitPendingRef.current = true
-    const nextRange = translatePriceRange(
-      drag.range,
-      boundedPricePanDelta(event.clientY - drag.startY, drag.paneHeight),
-      drag.paneHeight,
-      priceModeRef.current === 'log',
-    )
-    const visible = chart.timeScale().getVisibleRange()
-    const extrema = visible && visibleExtrema(
-      barsRef.current,
-      String(visible.from),
-      String(visible.to),
-    )
-    const boundedRange = extrema
-      ? constrainPriceRangeToData(
-          nextRange,
-          extrema.low.low,
-          extrema.high.high,
-          priceModeRef.current === 'log',
-        )
-      : nextRange
-    chart.priceScale('right', 0).setVisibleRange(priceRangeForChartScale(
-      boundedRange,
-      priceModeRef.current === 'log',
-    ))
-    priceViewportStateRef.current = { mode: 'MANUAL_PAN', range: boundedRange }
-    chart.timeScale().setVisibleLogicalRange(drag.logicalRange)
-    setOverlayRevision(value => value + 1)
+    drag.latestX = event.clientX
+    drag.latestY = event.clientY
+    if (drag.frame) return
+    drag.frame = window.requestAnimationFrame(() => {
+      drag.frame = 0
+      if (pricePanDragRef.current === drag) applyPricePanDrag(drag)
+    })
   }
 
   const handlePricePanEnd = (event: ReactPointerEvent<HTMLDivElement>) => {
     const drag = pricePanDragRef.current
     if (drag?.pointerId !== event.pointerId) return
+    window.cancelAnimationFrame(drag.frame)
+    applyPricePanDrag(drag)
     pricePanDragRef.current = undefined
     if (drag.captureTarget.hasPointerCapture(event.pointerId)) {
       drag.captureTarget.releasePointerCapture(event.pointerId)
     }
-    if (drag.axis === 'horizontal') {
-      refitPriceViewportRef.current()
-    } else if (drag.axis === 'vertical') {
-      priceRefitPendingRef.current = false
-      chartRef.current?.timeScale().setVisibleLogicalRange(drag.logicalRange)
-      syncPriceScaleRef.current()
-      logInfo('chart-viewport', '价格轴拖拽完成', {
-        symbol,
-        deltaY: Math.round(drag.latestY - drag.startY),
-        paneHeight: Math.round(drag.paneHeight),
-        rangeFrom: Number(drag.range.from.toFixed(4)),
-        rangeTo: Number(drag.range.to.toFixed(4)),
-      })
-    }
+    priceRefitPendingRef.current = false
+    logInfo('chart-viewport', '二维视口拖拽完成', {
+      symbol,
+      deltaX: Math.round(drag.latestX - drag.startX),
+      deltaY: Math.round(drag.latestY - drag.startY),
+      paneWidth: Math.round(drag.paneWidth),
+      paneHeight: Math.round(drag.paneHeight),
+    })
   }
 
   const handleSelectionMove = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -1636,11 +1669,11 @@ export function ChartCanvas({
       onPointerCancelCapture={event => {
         const drag = pricePanDragRef.current
         pricePanDragRef.current = undefined
+        if (drag) window.cancelAnimationFrame(drag.frame)
         if (drag?.captureTarget.hasPointerCapture(event.pointerId)) {
           drag.captureTarget.releasePointerCapture(event.pointerId)
         }
         priceRefitPendingRef.current = false
-        if (drag?.axis === 'vertical') syncPriceScaleRef.current()
         timeAxisPointerActiveRef.current = false
         recalculateLodRef.current()
       }}

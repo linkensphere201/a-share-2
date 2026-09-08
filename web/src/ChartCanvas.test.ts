@@ -11,13 +11,9 @@ import {
   aggregateBars,
   calculateMacd,
   calculateChangePercent,
-  boundedPricePanDelta,
   candleColor,
   chooseLodBucket,
-  clampLogicalRangeSpan,
-  constrainPriceRangeToData,
   remapLogicalRange,
-  scalePriceRange,
   snapLogicalRangeToDataEdge,
   createRangeMeasurement,
   detectPriceGaps,
@@ -28,11 +24,8 @@ import {
   millisecondsUntilMarketSession,
   priceRangeForChartScale,
   shouldUseFinalDailyRefresh,
-  translateLogicalRange,
-  translatePriceRange,
   visibleExtrema,
   visibleUnfilledPriceGaps,
-  wheelPriceScaleFactor,
   type DailyBar,
   type PriceGap,
 } from './chartData'
@@ -75,56 +68,11 @@ describe('chart layout', () => {
 
   it('leaves vertical price interaction to the bounded StockHarness viewport', () => {
     expect(chartHandleScaleOptions.axisPressedMouseMove).toEqual({ time: false, price: false })
-    expect(chartHandleScaleOptions.mouseWheel).toBe(true)
+    expect(chartHandleScaleOptions.mouseWheel).toBe(false)
   })
 })
 
 describe('bounded manual price viewport', () => {
-  it('translates the normal price window by the vertical drag distance', () => {
-    expect(translatePriceRange({ from: 80, to: 120 }, 100, 400)).toEqual({ from: 90, to: 130 })
-  })
-
-  it('dampens vertical price panning and caps one gesture', () => {
-    expect(boundedPricePanDelta(100, 400)).toBe(50)
-    expect(boundedPricePanDelta(1000, 400)).toBe(180)
-    expect(boundedPricePanDelta(-1000, 400)).toBe(-180)
-  })
-
-  it('globally constrains accumulated price panning to visible data', () => {
-    const constrained = constrainPriceRangeToData({ from: 0, to: 1000 }, 20, 40)
-    expect(constrained.to - constrained.from).toBeCloseTo(20 / 0.4)
-    expect((constrained.from + constrained.to) / 2).toBeLessThan(46)
-    expect(constrained.from).toBeLessThanOrEqual(20)
-    expect(constrained.to).toBeGreaterThanOrEqual(40)
-  })
-
-  it('applies the same accumulated-pan boundary in logarithmic mode', () => {
-    const constrained = constrainPriceRangeToData({ from: 0.01, to: 10000 }, 20, 40, true)
-    expect(constrained.from).toBeGreaterThan(5)
-    expect(constrained.from).toBeLessThan(20)
-    expect(constrained.to).toBeGreaterThanOrEqual(40)
-    expect(Math.log(40 / 20) / Math.log(constrained.to / constrained.from)).toBeCloseTo(0.4)
-  })
-
-  it('uses multiplicative translation in logarithmic mode', () => {
-    const translated = translatePriceRange({ from: 10, to: 40 }, 200, 400, true)
-    expect(translated.from).toBeCloseTo(20)
-    expect(translated.to).toBeCloseTo(80)
-  })
-
-  it('scales normal and logarithmic price ranges around their centers', () => {
-    expect(scalePriceRange({ from: 80, to: 120 }, 2)).toEqual({ from: 60, to: 140 })
-    const logarithmic = scalePriceRange({ from: 10, to: 40 }, 2, true)
-    expect(logarithmic.from).toBeCloseTo(5)
-    expect(logarithmic.to).toBeCloseTo(80)
-  })
-
-  it('turns accumulated wheel input into bounded symmetric price zoom', () => {
-    expect(wheelPriceScaleFactor(120)).toBeGreaterThan(1)
-    expect(wheelPriceScaleFactor(-120)).toBeLessThan(1)
-    expect(wheelPriceScaleFactor(10_000)).toBeCloseTo(wheelPriceScaleFactor(3_000))
-  })
-
   it('encodes raw prices for the Lightweight Charts logarithmic range API', () => {
     const encoded = priceRangeForChartScale({ from: 100, to: 1000 }, true)
     expect(encoded.from).toBeCloseTo(6.0000004)
@@ -132,25 +80,6 @@ describe('bounded manual price viewport', () => {
     expect(priceRangeForChartScale({ from: 100, to: 1000 })).toEqual({ from: 100, to: 1000 })
   })
 
-  it('translates a logical range without changing its span', () => {
-    const translated = translateLogicalRange({ from: 100, to: 200 }, 24, 6)
-    expect(translated).toEqual({ from: 96, to: 196 })
-    expect(translated.to - translated.from).toBe(100)
-  })
-})
-
-describe('time viewport limits', () => {
-  it('caps zoom-out span at the complete data width plus bounded edge space', () => {
-    expect(clampLogicalRangeSpan({ from: -100, to: 300 }, 100)).toEqual({
-      from: 44.5,
-      to: 155.5,
-    })
-    expect(clampLogicalRangeSpan({ from: -5, to: 105 }, 100)).toBeUndefined()
-  })
-
-  it('does not constrain panning when the visible span is already bounded', () => {
-    expect(clampLogicalRangeSpan({ from: 500, to: 600 }, 100)).toBeUndefined()
-  })
 })
 
 describe('movingAverage', () => {
