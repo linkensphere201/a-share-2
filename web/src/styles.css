@@ -127,6 +127,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .signal-toolbar select { min-width: 180px; padding: 6px 8px; color: var(--theme-text); border: 1px solid var(--theme-border); border-radius: 3px; background: var(--theme-raised); }
 .signal-description { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .signal-toolbar .primary-button { margin-left: auto; display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+.signal-run-action { min-width: 148px; justify-content: center; }
 .signal-error { position: fixed; z-index: 60; top: 64px; right: 12px; max-width: 520px; padding: 8px 10px; color: #ffd5d5; border: 1px solid #8f4f4f; background: #3e2020; }
 .signal-grid { min-height: 0; display: grid; grid-template-columns: var(--signal-runs-width, 225px) 5px minmax(520px, 1fr); }
 .signal-grid.inspector-open { grid-template-columns: var(--signal-runs-width, 225px) 5px var(--signal-results-width, 360px) 5px minmax(540px, 1fr); }
@@ -160,6 +161,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .signal-runs button em.running { background: #d5a253; }
 .signal-runs button em.succeeded { background: #4fa77a; }
 .signal-runs button em.failed { background: #d16b6b; }
+.signal-run-pending { min-height: 58px; display: grid; grid-template-columns: 18px minmax(0, 1fr); align-items: center; gap: 7px; padding: 9px 12px; color: var(--theme-text-strong); border-bottom: 1px solid var(--theme-border); background: var(--theme-accent-soft); animation: signal-pending-pulse 1.2s ease-in-out infinite alternate; }
+.signal-run-pending svg { color: var(--theme-accent); }
+.signal-run-pending span { display: grid; gap: 3px; }
+.signal-run-pending small { color: var(--theme-muted); font-size: 9px; }
+@keyframes signal-pending-pulse { from { background: var(--theme-surface); } to { background: var(--theme-accent-soft); } }
 .signal-progress { background: var(--theme-border); }
 .signal-progress i { display: block; height: 100%; background: var(--theme-accent); transition: width .25s ease; }
 .signal-filters { min-width: 0; display: flex; gap: 2px; padding: 3px 6px; overflow-x: auto; border-bottom: 1px solid var(--theme-border); }

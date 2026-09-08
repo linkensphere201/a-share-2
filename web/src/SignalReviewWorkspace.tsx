@@ -45,6 +45,7 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
   const [selectedDefinition, setSelectedDefinition] = useState<SignalDefinition>()
   const [runs, setRuns] = useState<SignalRun[]>([])
   const [selectedRun, setSelectedRun] = useState<SignalRun>()
+  const [startingRun, setStartingRun] = useState(false)
   const [items, setItems] = useState<SignalItem[]>([])
   const [selectedItem, setSelectedItem] = useState<SignalItem>()
   const [profile, setProfile] = useState<ProfileFilter>('all')
@@ -188,6 +189,10 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
     : false
   const progress = selectedRun?.work_total
     ? Math.round(selectedRun.work_done / selectedRun.work_total * 100) : 0
+  const activeRun = runs.find(item => item.status === 'running')
+  const activeProgress = activeRun?.work_total
+    ? Math.round(activeRun.work_done / activeRun.work_total * 100) : 0
+  const runBusy = startingRun || Boolean(activeRun)
   const previewReference = (itemId?: string, evidenceId?: string) => {
     setHighlightedEvidenceId(itemId === selectedItem?.item_id ? evidenceId : undefined)
   }
@@ -200,13 +205,18 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
   }
 
   const run = async () => {
-    if (!selectedDefinition) return
+    if (!selectedDefinition || runBusy) return
+    setStartingRun(true)
     try {
       setError('')
       const next = await startSignalRun(selectedDefinition.signal_id)
       setRuns(current => [next, ...current])
       setSelectedRun(next)
-    } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)) }
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason))
+    } finally {
+      setStartingRun(false)
+    }
   }
 
   const togglePinned = async () => {
@@ -270,7 +280,7 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
     <header className="signal-toolbar">
       <button className="icon-button" title="返回工作台" aria-label="返回工作台" onClick={onClose}><ArrowLeft size={16}/></button>
       <span className="signal-title"><Radar size={17}/>信号复盘 <small>手工触发 · 结果可追溯</small></span>
-      <select aria-label="选择信号" value={selectedDefinition?.signal_id ?? ''} onChange={event => {
+      <select aria-label="选择信号" disabled={runBusy} value={selectedDefinition?.signal_id ?? ''} onChange={event => {
         const next = definitions.find(item => item.signal_id === event.target.value)
         setSelectedDefinition(next)
         setSelectedRun(undefined)
@@ -279,15 +289,19 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
         setSelectedObservation(undefined)
       }}>{definitions.map(item => <option key={item.signal_id} value={item.signal_id}>{item.name}</option>)}</select>
       {selectedDefinition && <span className="signal-description">{selectedDefinition.description}</span>}
-      <button className="primary-button" disabled={!selectedDefinition || runs.some(item => item.status === 'running')} onClick={() => void run()}>
-        {runs.some(item => item.status === 'running') ? <RefreshCw size={14} className="spin"/> : <Play size={14}/>}运行本期信号
+      <button className="primary-button signal-run-action" disabled={!selectedDefinition || runBusy} onClick={() => void run()}>
+        {runBusy ? <RefreshCw size={14} className="spin"/> : <Play size={14}/>}<span>{startingRun
+          ? '正在创建本期任务'
+          : activeRun ? `${phaseLabels[activeRun.phase] ?? activeRun.phase} ${activeProgress}%` : '运行本期信号'}</span>
       </button>
     </header>
     {error && <button className="signal-error" onClick={() => setError('')}>{error}</button>}
     <section className={`${inspected ? 'signal-grid inspector-open' : 'signal-grid'}${chatOpen ? ' chat-open' : ''}`} style={gridStyle}>
       <aside className="signal-runs">
         <header><span>历史轮次</span><small>{runs.length}</small></header>
-        <div className="signal-scroll">{runs.length === 0 && <div className="signal-empty compact">尚未运行</div>}{runs.map(item => <button key={item.run_id} className={selectedRun?.run_id === item.run_id ? 'active' : ''} onClick={() => setSelectedRun(item)}>
+        <div className="signal-scroll">{startingRun && <div className="signal-run-pending" role="status" aria-live="polite">
+          <RefreshCw size={14} className="spin"/><span>正在创建本期任务<small>准备运行记录与数据截止日</small></span>
+        </div>}{runs.length === 0 && !startingRun && <div className="signal-empty compact">尚未运行</div>}{runs.map(item => <button key={item.run_id} className={selectedRun?.run_id === item.run_id ? 'active' : ''} onClick={() => setSelectedRun(item)}>
           <span>{item.effective_date} <i>R{item.revision}</i></span>
           <small>{item.status === 'running' ? `${phaseLabels[item.phase] ?? item.phase} ${progress}%` : item.status === 'failed' ? '执行失败' : `${item.item_count} 项`}</small>
           <em className={item.status}/>

@@ -103,6 +103,33 @@ describe('SignalReviewWorkspace', () => {
     expect(fetchMock.mock.calls.some(call => call[1]?.method === 'POST')).toBe(true)
   })
 
+  it('shows immediate feedback while the run request is still pending', async () => {
+    let resolveStart: ((value: Response) => void) | undefined
+    const pendingStart = new Promise<Response>(resolve => { resolveStart = resolve })
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url === '/api/signals/definitions') return response({ items: [definition] })
+      if (url.includes('/api/signals/runs?')) return response({ items: [] })
+      if (url.includes('/api/signals/weekly-board-recognition/runs') && init?.method === 'POST') {
+        return pendingStart
+      }
+      if (url.endsWith('/items')) return response({ items: [] })
+      throw new Error(`unexpected URL ${url}`)
+    }))
+    const user = userEvent.setup()
+    render(<SignalReviewWorkspace theme={themes[0]} onClose={() => undefined}/>)
+
+    const action = await screen.findByRole('button', { name: '运行本期信号' })
+    await user.click(action)
+
+    expect(screen.getByRole('status').textContent).toContain('正在创建本期任务')
+    expect(action.textContent).toContain('正在创建本期任务')
+    expect((action as HTMLButtonElement).disabled).toBe(true)
+
+    resolveStart?.(await response({ ...run, status: 'running', phase: 'queued' }, 202))
+    await vi.waitFor(() => expect(screen.getAllByText(/等待执行 100%/).length).toBeGreaterThan(0))
+  })
+
   it('binds Codex chat to the selected signal result and its run', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
