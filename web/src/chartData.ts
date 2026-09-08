@@ -302,6 +302,19 @@ export function boundedPricePanDelta(
   return clamp(deltaPixels * sensitivity, -maximum, maximum)
 }
 
+/** Translates a logical time range without changing its span. */
+export function translateLogicalRange(
+  range: NumericRange,
+  deltaPixels: number,
+  barSpacing: number,
+): NumericRange {
+  const offset = deltaPixels / Math.max(0.01, barSpacing)
+  return {
+    from: range.from - offset,
+    to: range.to - offset,
+  }
+}
+
 export function calculateChangePercent(close: number, previousClose?: number): number | undefined {
   if (previousClose === undefined || previousClose === 0) return undefined
   return (close - previousClose) / previousClose * 100

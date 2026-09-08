@@ -52,6 +52,7 @@ import {
   snapLogicalRangeToDataEdge,
   subtractMonths,
   subtractYears,
+  translateLogicalRange,
   translatePriceRange,
   visibleBarStats,
   visibleExtrema,
@@ -70,6 +71,7 @@ import {
   PriceScaleMode,
   createChart,
   type CandlestickData,
+  type HandleScaleOptions,
   type HistogramData,
   type IChartApi,
   type IPaneApi,
@@ -224,6 +226,13 @@ export const compactCrosshairMarkerOptions = {
   crosshairMarkerRadius: 2,
   crosshairMarkerBorderWidth: 1,
 } as const
+
+export const chartHandleScaleOptions: HandleScaleOptions = {
+  mouseWheel: true,
+  pinch: true,
+  axisPressedMouseMove: { time: true, price: false },
+  axisDoubleClickReset: { time: true, price: true },
+}
 
 export function paneInteractionOptions(
   borderColor: string,
@@ -517,10 +526,11 @@ export function ChartCanvas({
       },
       handleScroll: {
         mouseWheel: true,
-        pressedMouseMove: true,
+        pressedMouseMove: false,
         horzTouchDrag: true,
         vertTouchDrag: true,
       },
+      handleScale: chartHandleScaleOptions,
       timeScale: {
         borderColor: initialTheme.colors.border,
         rightOffset: 3,
@@ -1065,10 +1075,14 @@ export function ChartCanvas({
     if (drag.axis === 'horizontal') {
       priceViewportStateRef.current = { mode: 'AUTO' }
       chart.priceScale('right', 0).setAutoScale(true)
+      chart.timeScale().setVisibleLogicalRange(translateLogicalRange(
+        drag.logicalRange,
+        event.clientX - drag.startX,
+        chart.timeScale().options().barSpacing,
+      ))
       return
     }
     if (drag.axis === 'pending') return
-    chart.timeScale().setVisibleLogicalRange(drag.logicalRange)
     const nextRange = translatePriceRange(
       drag.range,
       boundedPricePanDelta(event.clientY - drag.startY, drag.paneHeight),
@@ -1103,6 +1117,14 @@ export function ChartCanvas({
     }
     if (drag.axis === 'horizontal') {
       refitPriceViewportRef.current()
+    } else if (drag.axis === 'vertical') {
+      logInfo('chart-viewport', '价格轴拖拽完成', {
+        symbol,
+        deltaY: Math.round(drag.latestY - drag.startY),
+        paneHeight: Math.round(drag.paneHeight),
+        rangeFrom: Number(drag.range.from.toFixed(4)),
+        rangeTo: Number(drag.range.to.toFixed(4)),
+      })
     }
   }
 

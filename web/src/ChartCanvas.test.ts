@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  chartHandleScaleOptions,
   chartLayoutOptions,
   compactCrosshairMarkerOptions,
   dailyBarsUrl,
@@ -25,6 +26,7 @@ import {
   mergeProvisionalBar,
   millisecondsUntilMarketSession,
   shouldUseFinalDailyRefresh,
+  translateLogicalRange,
   translatePriceRange,
   visibleExtrema,
   visibleUnfilledPriceGaps,
@@ -67,6 +69,11 @@ describe('chart layout', () => {
       separatorColor: '#333', separatorHoverColor: '#4b84c6', enableResize: true,
     })
   })
+
+  it('leaves vertical price interaction to the bounded StockHarness viewport', () => {
+    expect(chartHandleScaleOptions.axisPressedMouseMove).toEqual({ time: true, price: false })
+    expect(chartHandleScaleOptions.mouseWheel).toBe(true)
+  })
 })
 
 describe('bounded manual price viewport', () => {
@@ -100,6 +107,12 @@ describe('bounded manual price viewport', () => {
     const translated = translatePriceRange({ from: 10, to: 40 }, 200, 400, true)
     expect(translated.from).toBeCloseTo(20)
     expect(translated.to).toBeCloseTo(80)
+  })
+
+  it('translates a logical range without changing its span', () => {
+    const translated = translateLogicalRange({ from: 100, to: 200 }, 24, 6)
+    expect(translated).toEqual({ from: 96, to: 196 })
+    expect(translated.to - translated.from).toBe(100)
   })
 })
 
