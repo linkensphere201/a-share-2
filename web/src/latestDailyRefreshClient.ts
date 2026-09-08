@@ -9,6 +9,11 @@ export type LatestDailyRefreshResult = {
   message: string
   error?: string
   rowsChanged?: number
+  provider?: string
+  requestedCount?: number
+  receivedCount?: number
+  missingCount?: number
+  missingSymbols?: string[]
 }
 export type LatestDailyRefreshFeedback = LatestDailyRefreshResult['feedback']
 
@@ -52,7 +57,15 @@ export async function refreshLatestDailyBar(
   const body = await response.json() as {
     items: DailyBar[]
     canonical_symbols?: string[]
-    status: { state: string; last_error?: string }
+    status: {
+      state: string
+      last_error?: string
+      provider?: string
+      last_requested_count?: number
+      last_received_count?: number
+      last_missing_count?: number
+      last_missing_symbols?: string[]
+    }
     futures?: {
       mode?: 'provisional' | 'final'
       state: string
@@ -85,6 +98,11 @@ export async function refreshLatestDailyBar(
       ? '盘中临时日线刷新完成'
       : '未获得新盘中数据，已保留现有数据',
     error: body.status.last_error,
+    provider: body.status.provider,
+    requestedCount: body.status.last_requested_count,
+    receivedCount: body.status.last_received_count,
+    missingCount: body.status.last_missing_count,
+    missingSymbols: body.status.last_missing_symbols,
   }
 }
 

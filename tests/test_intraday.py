@@ -96,6 +96,27 @@ def test_manual_refresh_fetches_only_requested_symbols_without_changing_subscrip
     assert service.status()["symbol_count"] == 2
 
 
+def test_partial_refresh_exposes_request_and_missing_symbol_diagnostics():
+    provider = FakeProvider()
+    original_fetch = provider.fetch
+    provider.fetch = lambda symbols: original_fetch(symbols)[:1]
+    service = IntradayQuoteService(_settings(), lambda _day: True, provider)
+
+    service.refresh_symbols(
+        ["600519.SH", "000001.SZ"],
+        datetime(2026, 8, 4, 14, 30, tzinfo=CHINA_TIME),
+    )
+
+    status = service.status()
+    assert status["state"] == "partial"
+    assert status["provider"] == "fake"
+    assert status["last_requested_count"] == 2
+    assert status["last_received_count"] == 1
+    assert status["last_missing_count"] == 1
+    assert status["last_missing_symbols"] == ["600519.SH"]
+    assert status["last_refresh_manual"] is True
+
+
 def test_persisted_provisional_bar_survives_service_restart():
     provider = FakeProvider()
     store = SQLiteMarketDataStore(":memory:")

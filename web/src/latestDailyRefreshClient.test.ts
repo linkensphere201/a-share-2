@@ -24,6 +24,27 @@ it('returns an isolated provisional bar during the market session', async () => 
   expect(fetchMock).toHaveBeenCalledTimes(1)
 })
 
+it('preserves partial refresh diagnostics for the warning log', async () => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response({
+    items: [{ trade_date: '2026-08-18', close: 12, bar_state: 'intraday' }],
+    status: {
+      state: 'partial', provider: 'eastmoney_selected',
+      last_requested_count: 2, last_received_count: 1,
+      last_missing_count: 1, last_missing_symbols: ['BK1600.DC'],
+    },
+  })))
+
+  const result = await refreshLatestDailyBar(
+    'BK1600.DC', new Date('2026-08-18T10:30:00+08:00'),
+  )
+
+  expect(result).toMatchObject({
+    warning: true, status: 'partial', provider: 'eastmoney_selected',
+    requestedCount: 2, receivedCount: 1, missingCount: 1,
+    missingSymbols: ['BK1600.DC'],
+  })
+})
+
 it('uses canonical history when the main store already covers today', async () => {
   const fetchMock = vi.fn()
     .mockResolvedValueOnce(response({

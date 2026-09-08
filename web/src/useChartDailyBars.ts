@@ -180,12 +180,21 @@ export function useChartDailyBars({
           publishCoverage(result.items)
         }
         showRefreshFeedback(result.feedback, result.message)
+        const retained = result.mode === 'provisional' ? result.items.at(-1) : undefined
         const details = {
           symbol,
           mode: result.mode,
           state: result.status,
           rowsChanged: result.rowsChanged,
           error: result.error,
+          provider: result.provider,
+          requestedCount: result.requestedCount,
+          receivedCount: result.receivedCount,
+          missingCount: result.missingCount,
+          missingSymbols: result.missingSymbols,
+          retainedTradeDate: retained?.trade_date,
+          retainedProviderTime: retained?.provider_time,
+          retainedStale: retained?.stale,
         }
         if (result.warning) {
           const now = Date.now()

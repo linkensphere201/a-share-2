@@ -202,6 +202,10 @@ class IntradayQuoteService:
         self._circuit_open_until: datetime | None = None
         self._unsupported_symbols: tuple[str, ...] = ()
         self._missing_symbols: tuple[str, ...] = ()
+        self._last_requested_symbols: tuple[str, ...] = ()
+        self._last_received_symbols: tuple[str, ...] = ()
+        self._last_missing_symbols: tuple[str, ...] = ()
+        self._last_refresh_manual = False
         self._warning_last_at: dict[str, datetime] = {}
 
     def start(self) -> None:
@@ -289,6 +293,12 @@ class IntradayQuoteService:
                 "circuit_open_until": _iso(self._circuit_open_until),
                 "unsupported_count": len(self._unsupported_symbols),
                 "missing_count": len(self._missing_symbols),
+                "provider": self._provider.code,
+                "last_requested_count": len(self._last_requested_symbols),
+                "last_received_count": len(self._last_received_symbols),
+                "last_missing_count": len(self._last_missing_symbols),
+                "last_missing_symbols": list(self._last_missing_symbols[:20]),
+                "last_refresh_manual": self._last_refresh_manual,
             }
 
     def refresh_once(self, now: datetime | None = None) -> None:
@@ -341,12 +351,18 @@ class IntradayQuoteService:
                 symbol for symbol in symbols
                 if not hasattr(self._provider, "supports") or self._provider.supports(symbol)  # type: ignore[attr-defined]
             )
+            with self._lock:
+                self._last_requested_symbols = requested
+                self._last_received_symbols = ()
+                self._last_missing_symbols = ()
+                self._last_refresh_manual = not track_missing
             if not requested:
                 self._set_state("unsupported")
                 self._warn_manual_skip("unsupported", symbols, now, track_missing)
                 return
             bars = self._provider.fetch(requested)
             received = {bar.symbol: bar for bar in bars}
+            missing_symbols = tuple(sorted(set(requested) - set(received)))
             persistence_error: Exception | None = None
             if received and self._repository is not None:
                 try:
@@ -363,6 +379,8 @@ class IntradayQuoteService:
                 if track_missing:
                     self._missing_symbols = tuple(sorted(set(requested) - set(received)))
                 self._cache.update(received)
+                self._last_received_symbols = tuple(sorted(received))
+                self._last_missing_symbols = missing_symbols
                 self._last_success_at = now
                 self._last_error = str(persistence_error) if persistence_error else None
                 self._consecutive_failures = 0
@@ -372,7 +390,6 @@ class IntradayQuoteService:
                     if len(received) == len(requested) and persistence_error is None
                     else "partial"
                 )
-            missing_symbols = tuple(sorted(set(requested) - set(received)))
             missing = len(missing_symbols)
             if missing:
                 if (
