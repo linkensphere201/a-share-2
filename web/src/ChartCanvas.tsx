@@ -50,6 +50,7 @@ import {
   previousCloseByDate,
   priceRangeForChartScale,
   remapLogicalRange,
+  scalePriceRange,
   snapLogicalRangeToDataEdge,
   subtractMonths,
   subtractYears,
@@ -57,6 +58,7 @@ import {
   translatePriceRange,
   visibleBarStats,
   visibleExtrema,
+  wheelPriceScaleFactor,
   type DailyBar,
   type NumericRange,
   type RangeMeasurement,
@@ -231,7 +233,7 @@ export const compactCrosshairMarkerOptions = {
 export const chartHandleScaleOptions: HandleScaleOptions = {
   mouseWheel: true,
   pinch: true,
-  axisPressedMouseMove: { time: true, price: false },
+  axisPressedMouseMove: { time: false, price: false },
   axisDoubleClickReset: { time: true, price: true },
 }
 
@@ -604,8 +606,12 @@ export function ChartCanvas({
     }
     syncPriceScaleRef.current = syncPriceScale
     let wheelRefitTimer = 0
+    let wheelZoomTimer = 0
+    let wheelZoomSnapshot: { range: NumericRange; deltaY: number } | undefined
     const beginPriceRefit = (settleDelayMs = 0) => {
       window.clearTimeout(wheelRefitTimer)
+      window.clearTimeout(wheelZoomTimer)
+      wheelZoomSnapshot = undefined
       const generation = ++priceRefitGenerationRef.current
       priceRefitPendingRef.current = true
       priceViewportStateRef.current = { mode: 'AUTO' }
@@ -629,7 +635,36 @@ export function ChartCanvas({
     refitPriceViewportRef.current = refitPriceViewport
     const stage = host.closest('.chart-stage')
     const refitAfterWheel = (event: WheelEvent) => {
-      if (stage?.contains(event.target as Node)) beginPriceRefit(180)
+      if (!stage?.contains(event.target as Node)) return
+      if (!wheelZoomSnapshot) {
+        const range = chart.priceScale('right', 0).getVisibleRange()
+        if (!range) return
+        wheelZoomSnapshot = { range, deltaY: 0 }
+        priceRefitPendingRef.current = true
+        pricePanDragRef.current = undefined
+      }
+      wheelZoomSnapshot.deltaY += event.deltaY
+      window.clearTimeout(wheelZoomTimer)
+      wheelZoomTimer = window.setTimeout(() => {
+        window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+          const snapshot = wheelZoomSnapshot
+          wheelZoomSnapshot = undefined
+          if (!snapshot || chartRef.current !== chart) return
+          const scaled = scalePriceRange(
+            snapshot.range,
+            wheelPriceScaleFactor(snapshot.deltaY),
+            priceModeRef.current === 'log',
+          )
+          const bounded = constrainToVisibleData(scaled)
+          chart.priceScale('right', 0).setVisibleRange(priceRangeForChartScale(
+            bounded,
+            priceModeRef.current === 'log',
+          ))
+          priceViewportStateRef.current = { mode: 'MANUAL_PAN', range: bounded }
+          priceRefitPendingRef.current = false
+          setOverlayRevision(value => value + 1)
+        }))
+      }, 180)
     }
     window.addEventListener('wheel', refitAfterWheel, { capture: true, passive: true })
 
@@ -669,7 +704,7 @@ export function ChartCanvas({
     let visibleRangeTimer = 0
     let edgeSnapTimer = 0
     const recalculateLod = () => {
-      if (suppressLodRef.current) return
+      if (suppressLodRef.current || timeAxisPointerActiveRef.current) return
       window.cancelAnimationFrame(lodFrame)
       lodFrame = window.requestAnimationFrame(() => {
         setOverlayRevision(value => value + 1)
@@ -685,7 +720,7 @@ export function ChartCanvas({
           return
         }
         const stats = visibleBarStats(barsRef.current, String(visible.from), String(visible.to))
-        if (!timeAxisPointerActiveRef.current) syncPriceScale()
+        syncPriceScale()
         const nextBucket = chooseLodBucket(stats.count, hostRef.current.clientWidth)
         if (nextBucket !== bucketRef.current) {
           applyBucketRef.current(nextBucket, captureViewport(chart, renderedBarListRef.current.length))
@@ -741,6 +776,7 @@ export function ChartCanvas({
       window.clearTimeout(edgeSnapTimer)
       resizeObserver.disconnect()
       window.clearTimeout(wheelRefitTimer)
+      window.clearTimeout(wheelZoomTimer)
       priceRefitGenerationRef.current += 1
       priceRefitPendingRef.current = false
       window.removeEventListener('wheel', refitAfterWheel, true)
@@ -1074,6 +1110,8 @@ export function ChartCanvas({
       drag.axis = horizontalDistance >= verticalDistance ? 'horizontal' : 'vertical'
     }
     if (drag.axis === 'horizontal') {
+      event.preventDefault()
+      event.stopPropagation()
       priceViewportStateRef.current = { mode: 'AUTO' }
       chart.priceScale('right', 0).setAutoScale(true)
       chart.timeScale().setVisibleLogicalRange(translateLogicalRange(
@@ -1084,6 +1122,9 @@ export function ChartCanvas({
       return
     }
     if (drag.axis === 'pending') return
+    event.preventDefault()
+    event.stopPropagation()
+    priceRefitPendingRef.current = true
     const nextRange = translatePriceRange(
       drag.range,
       boundedPricePanDelta(event.clientY - drag.startY, drag.paneHeight),
@@ -1109,6 +1150,7 @@ export function ChartCanvas({
       priceModeRef.current === 'log',
     ))
     priceViewportStateRef.current = { mode: 'MANUAL_PAN', range: boundedRange }
+    chart.timeScale().setVisibleLogicalRange(drag.logicalRange)
     setOverlayRevision(value => value + 1)
   }
 
@@ -1122,6 +1164,9 @@ export function ChartCanvas({
     if (drag.axis === 'horizontal') {
       refitPriceViewportRef.current()
     } else if (drag.axis === 'vertical') {
+      priceRefitPendingRef.current = false
+      chartRef.current?.timeScale().setVisibleLogicalRange(drag.logicalRange)
+      syncPriceScaleRef.current()
       logInfo('chart-viewport', '价格轴拖拽完成', {
         symbol,
         deltaY: Math.round(drag.latestY - drag.startY),
@@ -1594,6 +1639,8 @@ export function ChartCanvas({
         if (drag?.captureTarget.hasPointerCapture(event.pointerId)) {
           drag.captureTarget.releasePointerCapture(event.pointerId)
         }
+        priceRefitPendingRef.current = false
+        if (drag?.axis === 'vertical') syncPriceScaleRef.current()
         timeAxisPointerActiveRef.current = false
         recalculateLodRef.current()
       }}

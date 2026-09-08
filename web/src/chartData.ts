@@ -277,8 +277,8 @@ export function constrainPriceRangeToData(
   dataLow: number,
   dataHigh: number,
   logarithmic = false,
-  minimumDataOccupancy = 0.8,
-  maximumCenterOffsetFraction = 0.1,
+  minimumDataOccupancy = 0.4,
+  maximumCenterOffsetFraction = 0.3,
 ): NumericRange {
   const transformedLow = transformPrice(Math.min(dataLow, dataHigh), logarithmic)
   const transformedHigh = transformPrice(Math.max(dataLow, dataHigh), logarithmic)
@@ -321,11 +321,32 @@ export function translatePriceRange(
   return logarithmic ? result : positiveNormalRange(result.from, result.to)
 }
 
+/** Scales a raw price range around its center; log mode scales multiplicatively. */
+export function scalePriceRange(
+  range: NumericRange,
+  factor: number,
+  logarithmic = false,
+): NumericRange {
+  const from = transformPrice(range.from, logarithmic)
+  const to = transformPrice(range.to, logarithmic)
+  const center = (from + to) / 2
+  const halfSpan = (to - from) / 2 * Math.max(0.01, factor)
+  const result = {
+    from: restorePrice(center - halfSpan, logarithmic),
+    to: restorePrice(center + halfSpan, logarithmic),
+  }
+  return logarithmic ? result : positiveNormalRange(result.from, result.to)
+}
+
+export function wheelPriceScaleFactor(deltaY: number, intensity = 0.0005): number {
+  return Math.exp(clamp(deltaY, -3000, 3000) * intensity)
+}
+
 export function boundedPricePanDelta(
   deltaPixels: number,
   paneHeight: number,
-  sensitivity = 0.25,
-  maximumPaneFraction = 0.2,
+  sensitivity = 0.5,
+  maximumPaneFraction = 0.45,
 ): number {
   const maximum = Math.max(1, paneHeight) * maximumPaneFraction
   return clamp(deltaPixels * sensitivity, -maximum, maximum)

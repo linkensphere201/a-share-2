@@ -56,14 +56,28 @@ async function mainPaneCandleOccupancy(page: import('@playwright/test').Page) {
   })
 }
 
+async function persistedVisibleRange(page: import('@playwright/test').Page) {
+  return page.evaluate(() => {
+    const workspace = JSON.parse(localStorage.getItem('stock-harness.workspace.v3') ?? '{}')
+    const group = workspace.groups?.find((candidate: { id: string }) => candidate.id === workspace.activeGroupId)
+      ?? workspace.groups?.[0]
+    const chart = group?.windows?.find((candidate: { type: string }) => candidate.type === 'chart')
+    return chart?.chart?.visibleRange ?? null
+  })
+}
+
 test('vertical drag is dampened and capped without flattening prices', async ({ page }) => {
   await page.goto('http://127.0.0.1:5173')
   const stage = page.locator('.chart-stage').first()
   await expect(stage).toBeVisible()
   await expect(stage.locator('.chart-state')).toHaveCount(0, { timeout: 15_000 })
   await page.waitForTimeout(500)
+  await page.getByRole('button', { name: '1Y', exact: true }).first().click()
+  await page.getByRole('button', { name: '3Y', exact: true }).first().click()
+  await expect.poll(() => persistedVisibleRange(page)).not.toBeNull()
   expect(await mainPaneCandleOccupancy(page)).toBeGreaterThan(0.55)
   const before = await candleCentroid(page)
+  const beforeRange = await persistedVisibleRange(page)
   const box = await stage.boundingBox()
   if (!box) throw new Error('Chart has no bounds')
   const x = box.x + box.width * 0.56
@@ -76,10 +90,13 @@ test('vertical drag is dampened and capped without flattening prices', async ({ 
   }
   await page.waitForTimeout(350)
   const after = await candleCentroid(page)
-  expect(Math.abs(after.x - before.x)).toBeLessThan(8)
+  const afterRange = await persistedVisibleRange(page)
+  expect(afterRange?.to).toBe(beforeRange?.to)
+  expect(Math.abs(Date.parse(afterRange?.from ?? '') - Date.parse(beforeRange?.from ?? '')))
+    .toBeLessThanOrEqual(7 * 24 * 60 * 60 * 1000)
   expect(after.y - before.y).toBeGreaterThan(25)
   expect(after.y - before.y).toBeLessThan(100)
-  expect(await mainPaneCandleOccupancy(page)).toBeGreaterThan(0.6)
+  expect(await mainPaneCandleOccupancy(page)).toBeGreaterThan(0.32)
 })
 
 test('logarithmic price-axis drag keeps raw prices readable', async ({ page }) => {
@@ -117,14 +134,15 @@ test('dominant horizontal drag refits prices for the newly visible history', asy
   expect(await mainPaneCandleOccupancy(page)).toBeGreaterThan(0.6)
 })
 
-test('wheel zoom-out stops at the complete data span instead of scaling empty time', async ({ page }) => {
+test('wheel zoom-out keeps shrinking prices to a stable readability floor', async ({ page }) => {
   await page.goto('http://127.0.0.1:5173')
   const stage = page.locator('.chart-stage').first()
   await expect(stage.locator('.chart-state')).toHaveCount(0, { timeout: 15_000 })
   const box = await stage.boundingBox()
   if (!box) throw new Error('Chart has no bounds')
+  const beforeZoom = await mainPaneCandleOccupancy(page)
   await page.mouse.move(box.x + box.width * 0.6, box.y + box.height * 0.3)
-  for (let index = 0; index < 12; index += 1) {
+  for (let index = 0; index < 24; index += 1) {
     await page.mouse.wheel(0, 120)
     await page.waitForTimeout(80)
   }
@@ -136,8 +154,9 @@ test('wheel zoom-out stops at the complete data span instead of scaling empty ti
   }
   await page.waitForTimeout(500)
   const beyondLimit = await mainPaneCandleOccupancy(page)
-  expect(atLimit).toBeGreaterThan(0.6)
-  expect(beyondLimit).toBeGreaterThan(0.6)
+  expect(atLimit).toBeLessThan(beforeZoom - 0.15)
+  expect(atLimit).toBeGreaterThan(0.34)
+  expect(beyondLimit).toBeGreaterThan(0.34)
   expect(Math.abs(beyondLimit - atLimit)).toBeLessThan(0.03)
 })
 
