@@ -4,6 +4,7 @@ import type { DrawingMigrationCandidate, TrendLineDash, TrendLineDrawing } from 
 import { barsInRenderPeriod, type LineGeometry } from './trendLines'
 import type { ThemeDefinition } from './themeStore'
 import type { TrendAnalysisRun } from './trendAnalysisClient'
+import type { RiskRewardGeometry } from './tradeScenarioProjection'
 import type {
   GeneratedBreakoutState,
   GeneratedPatternGeometry,
@@ -278,6 +279,7 @@ export function GeneratedAnalysisOverlay({
   lines,
   zones,
   patterns,
+  riskReward,
   breakoutState,
   run,
   preview,
@@ -287,6 +289,7 @@ export function GeneratedAnalysisOverlay({
   lines: GeneratedTrendLineGeometry[]
   zones: GeneratedZoneGeometry[]
   patterns: GeneratedPatternGeometry[]
+  riskReward?: RiskRewardGeometry
   breakoutState?: GeneratedBreakoutState
   run: TrendAnalysisRun
   preview: boolean
@@ -296,6 +299,29 @@ export function GeneratedAnalysisOverlay({
   return (
     <div className={highlightedItemId ? 'chart-generated-analysis has-highlight' : 'chart-generated-analysis'} aria-label="自动趋势分析图层">
       <svg width="100%" height="100%" aria-hidden="true">
+        {riskReward && <g className={`generated-risk-reward ${riskReward.direction} ${riskReward.state}${highlightedItemId === riskReward.scenarioId ? ' highlighted' : ''}`}>
+          <rect
+            className="risk-region"
+            x={riskReward.x}
+            y={Math.min(riskReward.entryY, riskReward.invalidationY)}
+            width={riskReward.width}
+            height={Math.max(1, Math.abs(riskReward.invalidationY - riskReward.entryY))}
+          />
+          <rect
+            className="reward-region"
+            x={riskReward.x}
+            y={Math.min(riskReward.entryY, riskReward.targetY)}
+            width={riskReward.width}
+            height={Math.max(1, Math.abs(riskReward.targetY - riskReward.entryY))}
+          />
+          <line className="entry-line" x1={riskReward.x} y1={riskReward.entryY} x2={riskReward.x + riskReward.width} y2={riskReward.entryY}/>
+          <line className="invalidation-line" x1={riskReward.x} y1={riskReward.invalidationY} x2={riskReward.x + riskReward.width} y2={riskReward.invalidationY}/>
+          <line className="target-line" x1={riskReward.x} y1={riskReward.targetY} x2={riskReward.x + riskReward.width} y2={riskReward.targetY}/>
+          <text className="entry-label" x={riskReward.x + 4} y={riskReward.entryY - 3}>入 {riskReward.entryPrice.toFixed(2)}</text>
+          <text className="invalidation-label" x={riskReward.x + 4} y={riskReward.invalidationY + 10}>止 {riskReward.invalidationPrice.toFixed(2)}</text>
+          <text className="target-label" x={riskReward.x + 4} y={riskReward.targetY - 3}>{riskReward.target.label} {riskReward.target.price.toFixed(2)}</text>
+          <text className="rr-label" x={riskReward.x + 4} y={(riskReward.entryY + riskReward.targetY) / 2 + 3}>RR {riskReward.target.stressedRiskRewardRatio?.toFixed(2) ?? '-'}</text>
+        </g>}
         {zones.map(item => (
           <rect
             key={item.id}

@@ -137,9 +137,63 @@ class SQLiteMarketDataStore(
         self._ensure_custom_group_member_roles()
         self._ensure_market_snapshot_metrics()
         self._ensure_generated_analysis_target_settings()
+        self._ensure_generated_analysis_scenario_type()
         self._ensure_active_market_value_diagnostics()
         self._ensure_signal_observation_columns()
         self._backfill_pinyin_aliases()
+
+    def _ensure_generated_analysis_scenario_type(self) -> None:
+        """Extend the immutable generated-item vocabulary without rewriting runs."""
+        with self._lock, self._writer_lock:
+            row = self._connection.execute(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' "
+                "AND name = 'generated_analysis_items'"
+            ).fetchone()
+            if row is None or "'scenario'" in str(row[0]):
+                return
+            self._connection.execute("PRAGMA foreign_keys = OFF")
+            try:
+                self._connection.executescript(
+                    """
+                    BEGIN IMMEDIATE;
+                    CREATE TABLE generated_analysis_items_v2 (
+                        run_id TEXT NOT NULL,
+                        item_id TEXT NOT NULL,
+                        item_type TEXT NOT NULL CHECK (
+                            item_type IN (
+                                'anchor', 'line', 'zone', 'pattern',
+                                'transition', 'evidence', 'scenario'
+                            )
+                        ),
+                        parent_item_id TEXT,
+                        sequence INTEGER NOT NULL,
+                        payload_json TEXT NOT NULL,
+                        PRIMARY KEY (run_id, item_id),
+                        UNIQUE (run_id, sequence),
+                        FOREIGN KEY (run_id) REFERENCES generated_analysis_runs(run_id)
+                            ON DELETE CASCADE,
+                        FOREIGN KEY (run_id, parent_item_id)
+                            REFERENCES generated_analysis_items_v2(run_id, item_id)
+                    ) WITHOUT ROWID;
+                    INSERT INTO generated_analysis_items_v2(
+                        run_id, item_id, item_type, parent_item_id, sequence, payload_json
+                    )
+                    SELECT run_id, item_id, item_type, parent_item_id, sequence, payload_json
+                    FROM generated_analysis_items;
+                    DROP TABLE generated_analysis_items;
+                    ALTER TABLE generated_analysis_items_v2
+                        RENAME TO generated_analysis_items;
+                    CREATE INDEX generated_analysis_items_type
+                    ON generated_analysis_items(run_id, item_type, sequence);
+                    COMMIT;
+                    """
+                )
+            except Exception:
+                if self._connection.in_transaction:
+                    self._connection.execute("ROLLBACK")
+                raise
+            finally:
+                self._connection.execute("PRAGMA foreign_keys = ON")
 
     def _ensure_chat_conversation_sessions(self) -> None:
         """Remove the original one-conversation-per-result constraint without losing chat."""

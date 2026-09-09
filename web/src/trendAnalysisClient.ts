@@ -2,7 +2,7 @@ import type { TrendTradingSystemSettings } from './tradingSystems'
 
 export type GeneratedAnalysisItem = {
   item_id: string
-  item_type: 'anchor' | 'line' | 'zone' | 'pattern' | 'transition' | 'evidence'
+  item_type: 'anchor' | 'line' | 'zone' | 'pattern' | 'transition' | 'evidence' | 'scenario'
   parent_item_id?: string | null
   payload: Record<string, unknown>
 }

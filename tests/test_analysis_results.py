@@ -1,6 +1,7 @@
 from dataclasses import replace
 from datetime import date
 import time
+import sqlite3
 
 import pytest
 
@@ -59,6 +60,7 @@ def test_completed_run_persists_every_generated_item_type(store):
         GeneratedAnalysisItem("p1", GeneratedItemType.PATTERN, {"kind": "double-bottom"}),
         GeneratedAnalysisItem("t1", GeneratedItemType.TRANSITION, {"state": "breakout"}),
         GeneratedAnalysisItem("e1", GeneratedItemType.EVIDENCE, {"volume_ratio": 1.8}),
+        GeneratedAnalysisItem("s1", GeneratedItemType.SCENARIO, {"state": "waiting-trigger"}),
     ]
 
     completed = store.complete_generated_analysis_run(
@@ -73,7 +75,45 @@ def test_completed_run_persists_every_generated_item_type(store):
     assert latest["run_id"] == started.run_id
     assert latest["warnings"] == [{"code": "partial-period"}]
     assert [item["item_type"] for item in latest["items"]] == [
-        "anchor", "line", "zone", "pattern", "transition", "evidence",
+        "anchor", "line", "zone", "pattern", "transition", "evidence", "scenario",
+    ]
+
+
+def test_existing_generated_item_table_is_upgraded_for_scenarios(tmp_path):
+    path = tmp_path / "old-analysis.sqlite"
+    connection = sqlite3.connect(path)
+    connection.execute("""
+        CREATE TABLE generated_analysis_items (
+            run_id TEXT NOT NULL,
+            item_id TEXT NOT NULL,
+            item_type TEXT NOT NULL CHECK (
+                item_type IN ('anchor', 'line', 'zone', 'pattern', 'transition', 'evidence')
+            ),
+            parent_item_id TEXT,
+            sequence INTEGER NOT NULL,
+            payload_json TEXT NOT NULL,
+            PRIMARY KEY (run_id, item_id),
+            UNIQUE (run_id, sequence)
+        ) WITHOUT ROWID
+    """)
+    connection.execute(
+        "INSERT INTO generated_analysis_items VALUES (?, ?, ?, ?, ?, ?)",
+        ("legacy-run", "legacy-evidence", "evidence", None, 0, "{}"),
+    )
+    connection.commit()
+    connection.close()
+
+    with SQLiteMarketDataStore(path) as migrated:
+        table_sql = migrated._connection.execute(
+            "SELECT sql FROM sqlite_master WHERE name = 'generated_analysis_items'"
+        ).fetchone()[0]
+        rows = migrated._connection.execute(
+            "SELECT run_id, item_id, item_type FROM generated_analysis_items"
+        ).fetchall()
+
+    assert "'scenario'" in table_sql
+    assert [tuple(row) for row in rows] == [
+        ("legacy-run", "legacy-evidence", "evidence")
     ]
 
 

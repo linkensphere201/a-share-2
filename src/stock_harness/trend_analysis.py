@@ -42,6 +42,7 @@ from stock_harness.key_levels import (
 from stock_harness.major_descending_lines import detect_major_descending_lines
 from stock_harness.pattern_ranking import rank_pattern_candidates
 from stock_harness.sqlite_store import SQLiteMarketDataStore
+from stock_harness.structural_scenario_engine import build_structural_scenario_items
 from stock_harness.trend_pivots import (
     DirectionalChangeConfig,
     detect_directional_change_pivots,
@@ -56,7 +57,7 @@ from stock_harness.trend_context import (
 )
 
 
-ALGORITHM_VERSION = "trend-causal-replay-v26"
+ALGORITHM_VERSION = "trend-causal-replay-v27"
 LOGGER = logging.getLogger(__name__)
 
 
@@ -842,6 +843,7 @@ def _generated_items(
         ))
     ranked = rank_pattern_candidates(items)
     ranked.append(build_core_projection_item(ranked))
+    ranked.extend(build_structural_scenario_items(analysis_input.bars, ranked))
     return ranked
 
 def _structural_event_items(

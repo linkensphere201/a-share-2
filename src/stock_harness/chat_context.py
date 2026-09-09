@@ -39,14 +39,14 @@ def build_chat_context(
         AnalysisHorizons(long=MAX_CONTEXT_BARS),
     )
     bars = analysis_input.bars[-MAX_CONTEXT_BARS:]
-    items = list(run.get("items", []))[:MAX_CONTEXT_ITEMS]
+    items = _bounded_analysis_items(list(run.get("items", [])))
     prior_summary = next((item for item in store.list_generated_analysis_runs(
         symbol, "trend", timeframe, 50
     ) if item["run_id"] != source_run_id and item["namespace"] == "official"
         and item["as_of_date"] <= as_of_date), None)
     prior = store.get_generated_analysis_run(str(prior_summary["run_id"])) if prior_summary else None
-    counters = {"zone": 0, "line": 0, "pattern": 0}
-    prefixes = {"zone": "K", "line": "L", "pattern": "P"}
+    counters = {"zone": 0, "line": 0, "pattern": 0, "scenario": 0}
+    prefixes = {"zone": "K", "line": "L", "pattern": "P", "scenario": "S"}
     evidence: list[dict[str, object]] = []
     analysis_items: list[dict[str, object]] = []
     for raw in items:
@@ -108,11 +108,36 @@ def build_chat_context(
             "algorithm_version": prior["algorithm_version"],
             "config_version": prior["config_version"],
             "completion_state": prior["completion_state"],
-            "analysis_items": list(prior.get("items", []))[:MAX_CONTEXT_ITEMS],
+            "analysis_items": _bounded_analysis_items(list(prior.get("items", []))),
             "truncated": len(prior.get("items", [])) > MAX_CONTEXT_ITEMS,
         },
         "truncated": len(run.get("items", [])) > MAX_CONTEXT_ITEMS,
     }
+
+
+def _bounded_analysis_items(
+    items: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    scenarios = [item for item in items if item.get("item_type") == "scenario"]
+    referenced_ids = {
+        str(value)
+        for scenario in scenarios
+        for key in ("evidence_item_ids", "invalidation_evidence_item_ids")
+        for value in (
+            scenario.get("payload", {}).get(key, [])
+            if isinstance(scenario.get("payload"), dict) else []
+        )
+        if isinstance(value, str)
+    }
+    priority = [
+        *scenarios,
+        *(item for item in items if str(item.get("item_id", "")) in referenced_ids),
+    ]
+    priority_ids = {str(item.get("item_id", "")) for item in priority}
+    return [
+        *priority,
+        *(item for item in items if str(item.get("item_id", "")) not in priority_ids),
+    ][:MAX_CONTEXT_ITEMS]
 
 
 def build_signal_chat_context(

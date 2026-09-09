@@ -10,6 +10,8 @@ import {
 
 export function AnalysisWorkspacePanel({
   symbol, run, followingLatest, onRunChange, onHighlightItemChange, onClose,
+  selectedScenarioTarget, scenarioVisible, onScenarioTargetChange,
+  onScenarioVisibleChange,
 }: {
   symbol: string
   run: TrendAnalysisRun
@@ -17,6 +19,10 @@ export function AnalysisWorkspacePanel({
   onRunChange: (run: TrendAnalysisRun | null) => void
   onHighlightItemChange: (itemId?: string) => void
   onClose: () => void
+  selectedScenarioTarget?: string
+  scenarioVisible?: boolean
+  onScenarioTargetChange?: (label: string) => void
+  onScenarioVisibleChange?: (visible: boolean) => void
 }) {
   const [runs, setRuns] = useState<TrendAnalysisRunSummary[]>([])
   const [legacyReports, setLegacyReports] = useState<AiAnalysisReport[]>([])
@@ -77,6 +83,10 @@ export function AnalysisWorkspacePanel({
         run={run}
         onHighlightItemChange={onHighlightItemChange}
         onClose={onClose}
+        selectedScenarioTarget={selectedScenarioTarget}
+        scenarioVisible={scenarioVisible}
+        onScenarioTargetChange={onScenarioTargetChange}
+        onScenarioVisibleChange={onScenarioVisibleChange}
       />}
       {chatCollapsed ? <button className="analysis-chat-expand" title="展开Codex对话" aria-label="展开Codex对话" onClick={() => setChatCollapsed(false)}><PanelRightOpen size={13}/></button>
       : <AnalysisChatPanel symbol={symbol} run={run} onCollapse={() => setChatCollapsed(true)} onHighlightItemChange={onHighlightItemChange}/>}

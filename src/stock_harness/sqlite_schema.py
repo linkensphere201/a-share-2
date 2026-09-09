@@ -659,7 +659,7 @@ CREATE TABLE IF NOT EXISTS generated_analysis_items (
     run_id TEXT NOT NULL,
     item_id TEXT NOT NULL,
     item_type TEXT NOT NULL CHECK (
-        item_type IN ('anchor', 'line', 'zone', 'pattern', 'transition', 'evidence')
+        item_type IN ('anchor', 'line', 'zone', 'pattern', 'transition', 'evidence', 'scenario')
     ),
     parent_item_id TEXT,
     sequence INTEGER NOT NULL,

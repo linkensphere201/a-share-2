@@ -28,6 +28,18 @@ const run: TrendAnalysisRun = {
       primary: true, display_name: '对称三角形', timeframe: 'daily', score: 0.82,
       score_components: { contraction: 0.75 }, completion_state: 'forming',
     },
+  }, {
+    item_id: 'scenario-1', item_type: 'scenario', payload: {
+      kind: 'structural-trade-scenario', primary: true, rank: 1,
+      direction: 'long', state: 'waiting-trigger', setup_family: 'triangle',
+      horizon: 'medium', entry_price: 12.2, invalidation_price: 11.4,
+      risk_percent: 6.56, selected_target_label: 'T1', has_trade_space: true,
+      evidence_item_ids: ['primary-pattern', 'target-zone'],
+      invalidation_evidence_item_ids: ['short-support'],
+      targets: [{ label: 'T1', price: 14, basis: 'key-level',
+        risk_reward_ratio: 2.25, stressed_risk_reward_ratio: 2.01,
+        evidence_item_ids: ['target-zone'] }],
+    },
   }],
 }
 
@@ -35,6 +47,9 @@ describe('TrendExplanationPanel', () => {
   it('links pointer and keyboard inspection to the matching chart item', () => {
     const onHighlight = vi.fn()
     render(<TrendExplanationPanel run={run} onHighlightItemChange={onHighlight} onClose={vi.fn()}/>)
+    expect(screen.getByLabelText('盈亏比场景')).toBeTruthy()
+    expect(screen.getByText('压力 RR')).toBeTruthy()
+    expect(screen.getByText('2.01')).toBeTruthy()
     expect(screen.getByText('突破与破位')).toBeTruthy()
     expect(screen.getByText('分析证据')).toBeTruthy()
     expect(screen.getByText('对称三角形 · 82分')).toBeTruthy()

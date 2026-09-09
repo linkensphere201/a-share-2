@@ -26,6 +26,7 @@ class GeneratedItemType(StrEnum):
     PATTERN = "pattern"
     TRANSITION = "transition"
     EVIDENCE = "evidence"
+    SCENARIO = "scenario"
 
 
 @dataclass(frozen=True, slots=True)

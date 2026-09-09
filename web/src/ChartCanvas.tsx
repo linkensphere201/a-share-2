@@ -25,6 +25,7 @@ import {
   type GeneratedTrendLineGeometry,
   type GeneratedZoneGeometry,
 } from './generatedAnalysisProjection'
+import { projectRiskReward } from './tradeScenarioProjection'
 import {
   projectMarketAnnotations,
   projectMeasurement,
@@ -209,6 +210,8 @@ type ChartCanvasProps = {
   asOfDate?: string
   trendAnalysisOverride?: TrendAnalysisRun | null
   highlightedAnalysisItemId?: string
+  selectedScenarioTarget?: string
+  riskRewardVisible?: boolean
   supplementalAnalysisItems?: GeneratedAnalysisItem[]
   supplementalAnalysisOnly?: boolean
 }
@@ -295,6 +298,8 @@ export function ChartCanvas({
   asOfDate,
   trendAnalysisOverride,
   highlightedAnalysisItemId,
+  selectedScenarioTarget,
+  riskRewardVisible = true,
   supplementalAnalysisItems = [],
   supplementalAnalysisOnly = false,
 }: ChartCanvasProps) {
@@ -1631,6 +1636,13 @@ export function ChartCanvas({
     candleRef.current ?? closeLineRef.current,
     patternsVisible,
   )
+  const generatedRiskReward = riskRewardVisible ? projectRiskReward(
+    displayedTrendAnalysis,
+    chartRef.current,
+    candleRef.current ?? closeLineRef.current,
+    hostRef.current,
+    selectedScenarioTarget,
+  ) : undefined
   const generatedBreakoutState = readGeneratedBreakoutState(
     displayedTrendAnalysis, breakoutStateVisible,
   )
@@ -1803,6 +1815,7 @@ export function ChartCanvas({
           lines={generatedTrendLines}
           zones={generatedZones}
           patterns={generatedPatterns}
+          riskReward={generatedRiskReward}
           breakoutState={generatedBreakoutState}
           run={displayedTrendAnalysis}
           preview={trendAnalysisPreview}

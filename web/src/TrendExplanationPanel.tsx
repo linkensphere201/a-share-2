@@ -3,17 +3,26 @@ import { readGeneratedBreakoutState } from './generatedAnalysisProjection'
 import { buildTrendExplanation } from './trendExplanation'
 import { readTrendEvidence } from './trendEvidence'
 import type { TrendAnalysisRun } from './trendAnalysisClient'
+import { TradeScenarioPanel } from './TradeScenarioPanel'
 
 export function TrendExplanationPanel({
   run,
   onHighlightItemChange,
   onClose,
   embedded = false,
+  selectedScenarioTarget,
+  scenarioVisible = true,
+  onScenarioTargetChange,
+  onScenarioVisibleChange,
 }: {
   run: TrendAnalysisRun
   onHighlightItemChange: (itemId?: string) => void
   onClose: () => void
   embedded?: boolean
+  selectedScenarioTarget?: string
+  scenarioVisible?: boolean
+  onScenarioTargetChange?: (label: string) => void
+  onScenarioVisibleChange?: (visible: boolean) => void
 }) {
   const explanation = buildTrendExplanation(run)
   if (!explanation) return null
@@ -32,6 +41,14 @@ export function TrendExplanationPanel({
       </div>
       <p className="trend-explanation-summary">{explanation.summary}</p>
       <div className="trend-explanation-sections">
+        <TradeScenarioPanel
+          run={run}
+          selectedTargetLabel={selectedScenarioTarget}
+          visible={scenarioVisible}
+          onTargetChange={onScenarioTargetChange}
+          onVisibleChange={onScenarioVisibleChange}
+          onHighlightItemChange={onHighlightItemChange}
+        />
         {evidence && <section className="trend-explanation-evidence">
           <h3>分析证据</h3>
           <dl>

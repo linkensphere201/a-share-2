@@ -73,6 +73,8 @@ export function ChartWindow({
   const [trendRecalculationState, setTrendRecalculationState] = useState<'idle' | 'running' | 'failed'>('idle')
   const [explanationOpen, setExplanationOpen] = useState(false)
   const [highlightedAnalysisItemId, setHighlightedAnalysisItemId] = useState<string>()
+  const [selectedScenarioTarget, setSelectedScenarioTarget] = useState<string>()
+  const [scenarioVisible, setScenarioVisible] = useState(true)
   useEffect(() => {
     setBreakoutState(undefined)
     setTrendAnalysis(null)
@@ -80,6 +82,8 @@ export function ChartWindow({
     setTrendRecalculationState('idle')
     setExplanationOpen(false)
     setHighlightedAnalysisItemId(undefined)
+    setSelectedScenarioTarget(undefined)
+    setScenarioVisible(true)
   }, [instrument.symbol])
   return (
     <section className={focused ? 'instrument-window focused' : 'instrument-window'}>
@@ -174,6 +178,8 @@ export function ChartWindow({
           onTrendAnalysisChange={setTrendAnalysis}
           trendAnalysisOverride={viewedTrendAnalysis}
           highlightedAnalysisItemId={highlightedAnalysisItemId}
+          selectedScenarioTarget={selectedScenarioTarget}
+          riskRewardVisible={scenarioVisible}
         />
         {explanationOpen && (viewedTrendAnalysis ?? trendAnalysis) && <AnalysisWorkspacePanel
           symbol={instrument.symbol}
@@ -181,6 +187,10 @@ export function ChartWindow({
           followingLatest={viewedTrendAnalysis === null}
           onRunChange={setViewedTrendAnalysis}
           onHighlightItemChange={setHighlightedAnalysisItemId}
+          selectedScenarioTarget={selectedScenarioTarget}
+          scenarioVisible={scenarioVisible}
+          onScenarioTargetChange={setSelectedScenarioTarget}
+          onScenarioVisibleChange={setScenarioVisible}
           onClose={() => {
             setExplanationOpen(false)
             setHighlightedAnalysisItemId(undefined)
