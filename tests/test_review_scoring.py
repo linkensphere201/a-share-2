@@ -172,7 +172,8 @@ def test_stock_opportunity_scorer_requires_actionable_m4_and_stressed_three_r() 
                 "status": "succeeded", "warning_count": 0,
                 "core_item_ids": ["line-1", "scenario-1"],
                 "scenario": {
-                    "state": "retest", "scenario_item_id": "scenario-1",
+                    "state": "retest", "direction": "long",
+                    "scenario_item_id": "scenario-1",
                     "entry_price": 10, "invalidation_price": 9,
                     "targets": [{
                         "label": "T1", "price": 13.4,
@@ -205,3 +206,43 @@ def test_stock_opportunity_scorer_requires_actionable_m4_and_stressed_three_r() 
     assert accepted["components"]["independent_strength"] == 12.3
     assert rejected["eligible"] is False
     assert "no-credible-target-at-3r" in rejected["disqualifiers"]
+
+
+def test_stock_opportunity_scorer_rejects_short_scenario_explicitly() -> None:
+    scorer = default_scorer_registry().get(STOCK_OPPORTUNITY_SCORER)
+    result = score_entities(scorer, [{
+        "symbol": "000001.SZ", "payload": {"m4_analysis": {
+            "status": "succeeded", "warning_count": 0,
+            "scenario": {
+                "direction": "short", "state": "triggered",
+                "entry_price": 10, "invalidation_price": 11,
+                "targets": [{
+                    "label": "T1", "price": 7,
+                    "risk_reward_ratio": 3, "stressed_risk_reward_ratio": 3,
+                }],
+            },
+        }},
+    }])[0]
+
+    assert result["eligible"] is False
+    assert "scenario-direction-not-long" in result["disqualifiers"]
+
+
+def test_stock_opportunity_scorer_separates_risk_warning_name() -> None:
+    scorer = default_scorer_registry().get(STOCK_OPPORTUNITY_SCORER)
+    result = score_entities(scorer, [{
+        "symbol": "600818.SH", "payload": {
+            "risk_name": True,
+            "m4_analysis": {"status": "succeeded", "scenario": {
+                "direction": "long", "state": "triggered",
+                "entry_price": 8, "invalidation_price": 7,
+                "targets": [{
+                    "label": "T1", "price": 12,
+                    "risk_reward_ratio": 4, "stressed_risk_reward_ratio": 3.5,
+                }],
+            }},
+        },
+    }])[0]
+
+    assert result["eligible"] is False
+    assert "risk-warning-name" in result["disqualifiers"]

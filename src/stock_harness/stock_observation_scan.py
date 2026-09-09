@@ -6,6 +6,7 @@ from collections.abc import Callable, Mapping, Sequence
 from datetime import date
 from typing import Protocol
 
+from stock_harness.board_leader_scan import is_risk_name
 from stock_harness.models import StoredDailyBar
 from stock_harness.stock_relative_strength import (
     LOOKBACK_BARS,
@@ -14,9 +15,9 @@ from stock_harness.stock_relative_strength import (
 )
 
 
-BOARD_MEMBER_SCAN_VERSION = "board-member-lightweight-scan-v1"
-INDEPENDENT_SCAN_VERSION = "full-market-independent-scan-v1"
-UNIFIED_STOCK_POOL_VERSION = "unified-stock-observation-pool-v2"
+BOARD_MEMBER_SCAN_VERSION = "board-member-lightweight-scan-v2"
+INDEPENDENT_SCAN_VERSION = "full-market-independent-scan-v2"
+UNIFIED_STOCK_POOL_VERSION = "unified-stock-observation-pool-v3"
 BATCH_SIZE = 200
 
 
@@ -25,11 +26,17 @@ class StockScanStore(Protocol):
         self, symbols: Sequence[str], end_date: date, limit: int,
     ) -> dict[str, list[StoredDailyBar]]: ...
 
+    def get_recent_causally_adjusted_stock_bars_many(
+        self, symbols: Sequence[str], end_date: date, limit: int,
+    ) -> tuple[dict[str, list[StoredDailyBar]], dict[str, str]]: ...
+
     def list_board_members(
         self, board_symbol: str, limit: int = 500, offset: int = 0,
     ) -> list[dict[str, object]]: ...
 
-    def list_active_stock_symbols_for_screening(self) -> list[dict[str, str]]: ...
+    def list_active_stock_symbols_for_screening(
+        self, as_of_date: date | None = None,
+    ) -> list[dict[str, str]]: ...
 
     def list_stock_board_memberships_many(
         self, symbols: Sequence[str], board_limit: int = 3,
@@ -53,12 +60,14 @@ def build_board_member_scan_snapshot(
     }
     memberships: dict[str, list[dict[str, object]]] = {}
     recognition: dict[str, list[dict[str, object]]] = {}
+    names: dict[str, str] = {}
     for board in board_items:
         board_symbol = str(board["symbol"])
         for member in store.list_board_members(board_symbol, limit=5000):
             if member.get("kind") != "stock" or not member.get("available"):
                 continue
             symbol = str(member["symbol"])
+            names[symbol] = str(member.get("name") or symbol)
             memberships.setdefault(symbol, []).append({
                 "board_symbol": board_symbol,
                 "board_rank": board_rank[board_symbol],
@@ -87,7 +96,9 @@ def build_board_member_scan_snapshot(
     total = len(ordered_symbols)
     for offset in range(0, total, BATCH_SIZE):
         page = ordered_symbols[offset:offset + BATCH_SIZE]
-        stock_bars = store.get_recent_daily_bars_many(page, effective_date, LOOKBACK_BARS)
+        stock_bars, price_basis = store.get_recent_causally_adjusted_stock_bars_many(
+            page, effective_date, LOOKBACK_BARS,
+        )
         for symbol in page:
             associated = sorted(
                 memberships[symbol], key=lambda item: (item["board_rank"], item["board_symbol"])
@@ -104,6 +115,15 @@ def build_board_member_scan_snapshot(
             )
             record["associated_boards"] = associated
             record["recognized"] = symbol in recognition
+            record["price_basis"] = price_basis.get(symbol, "raw")
+            record["selection_qualified"] = record["price_basis"] in {
+                "forward-adjusted-as-of", "raw-continuity-checked",
+            }
+            if not record["selection_qualified"]:
+                record["eligible"] = False
+                record.setdefault("disqualifiers", []).append("adjustment-factors-incomplete")
+            record["name"] = names.get(symbol, symbol)
+            record["risk_name"] = is_risk_name(str(record["name"]))
             records.append(record)
         if progress is not None:
             progress(total, min(total, offset + len(page)))
@@ -153,13 +173,17 @@ def scan_full_market_independent_strength(
     seed_records: Sequence[Mapping[str, object]] = (),
 ) -> list[dict[str, object]]:
     """Scan active stocks causally in bounded batches without retaining all bars."""
-    universe = store.list_active_stock_symbols_for_screening()
+    universe = store.list_active_stock_symbols_for_screening(effective_date)
     seeded = {
         str(item["symbol"]): dict(item) for item in seed_records
         if item.get("coverage_state") == "complete"
     }
     symbols = [str(item["symbol"]) for item in universe if str(item["symbol"]) not in seeded]
     exchange_by_symbol = {str(item["symbol"]): str(item.get("exchange") or "") for item in universe}
+    name_by_symbol = {
+        str(item["symbol"]): str(item.get("name") or item["symbol"])
+        for item in universe
+    }
     references = _load_reference_bars(store, effective_date)
     board_cache: dict[str, list[StoredDailyBar]] = {}
     records: list[dict[str, object]] = list(seeded.values())
@@ -174,7 +198,9 @@ def scan_full_market_independent_strength(
             if str(item["symbol"]) not in board_cache
         })
         board_cache.update(_load_many(store, missing_boards, effective_date))
-        stock_bars = store.get_recent_daily_bars_many(page, effective_date, LOOKBACK_BARS)
+        stock_bars, price_basis = store.get_recent_causally_adjusted_stock_bars_many(
+            page, effective_date, LOOKBACK_BARS,
+        )
         for symbol in page:
             associated = memberships.get(symbol, [])
             record = analyze_relative_strength(
@@ -188,6 +214,15 @@ def scan_full_market_independent_strength(
                 },
             )
             record["associated_boards"] = associated
+            record["price_basis"] = price_basis.get(symbol, "raw")
+            record["selection_qualified"] = record["price_basis"] in {
+                "forward-adjusted-as-of", "raw-continuity-checked",
+            }
+            if not record["selection_qualified"]:
+                record["eligible"] = False
+                record.setdefault("disqualifiers", []).append("adjustment-factors-incomplete")
+            record["name"] = name_by_symbol.get(symbol, symbol)
+            record["risk_name"] = is_risk_name(str(record["name"]))
             records.append(record)
         if progress is not None:
             progress(len(symbols), min(len(symbols), offset + len(page)))
@@ -313,6 +348,9 @@ def build_unified_stock_pool_snapshot(
             "manual_pinned": value["manual"] is not None,
             "source_types": sorted({source["source_type"] for source in value["sources"]}),
             "independent_score": _independent_score(value),
+            "risk_name": bool(
+                (value["independent"] or value["member"] or {}).get("risk_name")
+            ),
         }
         items.append({
             "symbol": symbol,
@@ -364,6 +402,13 @@ def _select_independent_records(
     eligible = [record for record in records if bool(record.get("eligible"))][:100]
     for record in eligible:
         selected[str(record["symbol"])] = record
+    readiness = sorted(
+        (record for record in records
+         if record.get("selection_qualified", True) and _readiness_score(record) > 0),
+        key=lambda record: (-_readiness_score(record), str(record["symbol"])),
+    )[:100]
+    for record in readiness:
+        selected[str(record["symbol"])] = record
     limits = {
         "independent-decline": 50,
         "one-session-event-anomaly": 50,
@@ -387,6 +432,14 @@ def _select_independent_records(
         for record in matching:
             selected.setdefault(str(record["symbol"]), record)
     return list(selected.values())
+
+
+def _readiness_score(record: Mapping[str, object]) -> float:
+    metrics = record.get("metrics")
+    if not isinstance(metrics, Mapping):
+        return 0.0
+    value = metrics.get("opportunity_readiness_score")
+    return float(value) if isinstance(value, (int, float)) else 0.0
 
 
 def _independent_score(value: Mapping[str, object]) -> float:

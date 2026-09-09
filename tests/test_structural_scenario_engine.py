@@ -2,7 +2,10 @@ from datetime import date, timedelta
 
 from stock_harness.analysis_inputs import AnalysisBar
 from stock_harness.analysis_results import GeneratedAnalysisItem, GeneratedItemType
-from stock_harness.structural_scenario_engine import build_structural_scenario_items
+from stock_harness.structural_scenario_engine import (
+    build_structural_scenario_items,
+    project_scenario_summary,
+)
 from stock_harness.overhead_supply import build_overhead_supply_item
 
 
@@ -188,3 +191,22 @@ def test_overhead_supply_is_separate_uncertain_evidence() -> None:
     assert supply.payload["failed_upward_attempts"] == 1
     assert supply.payload["turnover_available"] is False
     assert "not actual holder cost" in supply.payload["uncertainty"]
+
+
+def test_projection_can_select_long_scenario_when_primary_scenario_is_short() -> None:
+    items = [{
+        "item_id": "short-primary", "item_type": "scenario", "payload": {
+            "kind": "structural-trade-scenario", "primary": True, "rank": 1,
+            "direction": "short", "state": "triggered", "targets": [],
+        },
+    }, {
+        "item_id": "long-secondary", "item_type": "scenario", "payload": {
+            "kind": "structural-trade-scenario", "primary": False, "rank": 2,
+            "direction": "long", "state": "retest", "targets": [],
+        },
+    }]
+
+    projected = project_scenario_summary(items, direction="long")
+
+    assert projected["scenario_item_id"] == "long-secondary"
+    assert projected["direction"] == "long"

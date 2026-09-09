@@ -50,8 +50,10 @@ from stock_harness.stock_observation_scan import (
 from stock_harness.stock_observation_layers import (
     ALGORITHM_VERSION as STOCK_PRESENTATION_VERSION,
     FOCUS_LIMIT as STOCK_FOCUS_LIMIT,
+    M4_ALLOCATOR_VERSION as STOCK_M4_ALLOCATOR_VERSION,
     RISK_LIMIT as STOCK_RISK_LIMIT,
     assign_stock_presentation_layers,
+    select_stock_m4_candidates,
 )
 
 
@@ -470,6 +472,7 @@ class SignalReviewService:
             ],
             prior_snapshot=prior_member_scan,
         )
+        assign_stock_presentation_layers(stock_pool)
         stock_m4_summary = self._run_stock_pool_analysis(run_id, cutoff, stock_pool)
         stock_prior, stock_recent = _score_history(
             self._store, score_context_runs, STOCK_OPPORTUNITY_SCORER,
@@ -533,8 +536,11 @@ class SignalReviewService:
             if item.get("lifecycle_state") not in {"cooldown", "invalidated"}
         ]
         limit = int(_daily_run_parameters()["stock_deep_analysis_limit"])
-        selected = eligible[:limit]
-        for item in eligible[limit:]:
+        selected = select_stock_m4_candidates(eligible, limit)
+        selected_symbols = {str(item["symbol"]) for item in selected}
+        for item in eligible:
+            if str(item["symbol"]) in selected_symbols:
+                continue
             payload = item.get("payload")
             if isinstance(payload, dict):
                 payload["m4_analysis"] = {
@@ -564,7 +570,7 @@ class SignalReviewService:
                     ))[0]
                 scenario = project_scenario_summary([
                     value for value in result.get("items", []) if isinstance(value, dict)
-                ])
+                ], direction="long")
                 core_ids = read_core_structural_item_ids(result.get("items", []))
                 payload["m4_analysis"] = {
                     "state": "reused" if was_reused else "confirmed",
@@ -1186,6 +1192,7 @@ def _daily_run_parameters() -> dict[str, object]:
         "full_observation_persistence": True,
         "deep_analysis_limit": 60,
         "stock_deep_analysis_limit": 30,
+        "stock_deep_analysis_allocator": STOCK_M4_ALLOCATOR_VERSION,
         "stock_presentation_version": STOCK_PRESENTATION_VERSION,
         "stock_focus_limit": STOCK_FOCUS_LIMIT,
         "stock_risk_limit": STOCK_RISK_LIMIT,

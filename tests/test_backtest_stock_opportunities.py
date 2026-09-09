@@ -56,6 +56,29 @@ def test_summarize_run_reports_each_strict_gate() -> None:
     assert result["disqualifiers"]["invalid-long-price-ordering"] == 3
 
 
+def test_focus_snapshot_summary_and_future_window_are_bounded() -> None:
+    snapshot = {
+        "effective_date": date(2026, 9, 8), "source_run_id": "focus-core",
+        "items": [{
+            "symbol": "A", "payload": {
+                "presentation_bucket": "focus", "presentation_rank": 1,
+                "presentation_lane": "critical", "presentation_reasons": ["critical"],
+                "independent_score": 80,
+                "independent_scan": {"price_basis": "raw-continuity-checked"},
+            },
+        }, {
+            "symbol": "R", "payload": {"presentation_bucket": "risk"},
+        }],
+    }
+
+    result = module.summarize_focus_snapshot(snapshot)
+
+    assert result["focus_count"] == 1
+    assert result["risk_count"] == 1
+    assert result["focus_lane_counts"] == {"critical": 1}
+    assert module._future_window_max([1, 5, 3, 8, 2], 2) == [5, 8, 8, None, None]
+
+
 def _score(symbol: str, *disqualifiers: str) -> dict[str, object]:
     return {
         "symbol": symbol, "name": symbol, "eligible": not disqualifiers,

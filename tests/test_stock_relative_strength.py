@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 
 from stock_harness.models import (
+    AdjustmentFactor,
     BoardMembership,
     DailyBar,
     Instrument,
@@ -224,6 +225,70 @@ def test_latest_screener_source_is_selected_by_effective_date() -> None:
     assert selected is not None
     assert selected["run_id"] == earlier["run_id"]
     store.close()
+
+
+def test_bulk_stock_bars_use_causal_adjustment_and_as_of_universe() -> None:
+    store = SQLiteMarketDataStore(":memory:")
+    days = [date(2026, 1, day) for day in (2, 5, 6)]
+    store.upsert_instruments([
+        Instrument("000001.SZ", "Historical", InstrumentKind.STOCK, "SZ", False),
+    ])
+    store.upsert_daily_bars("test", [
+        DailyBar("000001.SZ", days[0], 10, 10, 10, 10, 100),
+        DailyBar("000001.SZ", days[1], 5, 5, 5, 5, 100),
+        DailyBar("000001.SZ", days[2], 6, 6, 6, 6, 100),
+    ])
+    store.upsert_adjustment_factors("test", [
+        AdjustmentFactor("000001.SZ", days[0], 1),
+        AdjustmentFactor("000001.SZ", days[1], 2),
+        AdjustmentFactor("000001.SZ", days[2], 2),
+    ])
+
+    bars, basis = store.get_recent_causally_adjusted_stock_bars_many(
+        ["000001.SZ"], days[-1], 3,
+    )
+
+    assert [bar.close for bar in bars["000001.SZ"]] == [5, 5, 6]
+    assert basis["000001.SZ"] == "forward-adjusted-as-of"
+    assert store.list_active_stock_symbols_for_screening(days[-1])[0]["symbol"] == "000001.SZ"
+    assert store.list_active_stock_symbols_for_screening() == []
+    store.close()
+
+
+def test_watch_range_phase_distinguishes_critical_breakout_and_retest() -> None:
+    effective = date(2026, 6, 1)
+    market = _phase_bars("000001.SH", [10.0] * 140, effective)
+    critical = analyze_relative_strength(
+        "CRITICAL", _phase_bars("CRITICAL", [10.0] * 140, effective, contract=True),
+        effective, market_references={"market": market},
+    )
+    breakout = analyze_relative_strength(
+        "BREAKOUT", _phase_bars("BREAKOUT", [10.0] * 139 + [10.1], effective),
+        effective, market_references={"market": market},
+    )
+    retest = analyze_relative_strength(
+        "RETEST", _phase_bars(
+            "RETEST", [10.0] * 136 + [10.1, 10.08, 10.04, 10.01], effective,
+        ), effective, market_references={"market": market},
+    )
+
+    assert critical["metrics"]["opportunity_phase"] == "critical"
+    assert breakout["metrics"]["opportunity_phase"] == "breakout"
+    assert retest["metrics"]["opportunity_phase"] == "retest"
+
+
+def _phase_bars(
+    symbol: str, closes: list[float], end: date, *, contract: bool = False,
+) -> list[StoredDailyBar]:
+    start = end - timedelta(days=len(closes) - 1)
+    return [StoredDailyBar(
+        symbol=symbol, trade_date=start + timedelta(days=index),
+        open=close,
+        high=close * (1.005 if contract and index >= len(closes) - 10 else 1.02),
+        low=close * (0.995 if contract and index >= len(closes) - 10 else 0.98),
+        close=close, volume=500_000 if contract and index >= len(closes) - 5 else 1_000_000,
+        source="test", updated_at_ms=0,
+    ) for index, close in enumerate(closes)]
 
 
 def _record(

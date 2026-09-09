@@ -16,7 +16,7 @@ MARKET_REGIME_VERSION = "market-regime-score-v1"
 RECOGNITION_SCORER = "recognition"
 RECOGNITION_VERSION = "recognition-score-v1"
 STOCK_OPPORTUNITY_SCORER = "stock-trend-opportunity"
-STOCK_OPPORTUNITY_VERSION = "stock-trend-opportunity-score-v1"
+STOCK_OPPORTUNITY_VERSION = "stock-trend-opportunity-score-v2"
 
 
 class ReviewScorer(Protocol):
@@ -456,6 +456,10 @@ def _stock_opportunity_score(entity: Mapping[str, object]) -> dict[str, object]:
     disqualifiers = []
     if analysis.get("status") != "succeeded":
         disqualifiers.append("m4-analysis-unavailable")
+    if payload.get("risk_name"):
+        disqualifiers.append("risk-warning-name")
+    if scenario.get("direction") != "long":
+        disqualifiers.append("scenario-direction-not-long")
     if state not in {"waiting-trigger", "triggered", "retest"}:
         disqualifiers.append(f"scenario-{state}")
     if selected is None:

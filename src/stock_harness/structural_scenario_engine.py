@@ -135,13 +135,17 @@ def build_coarse_structural_scenario_items(
 
 def project_scenario_summary(
     items: Sequence[GeneratedAnalysisItem | Mapping[str, object]],
+    *, direction: str | None = None,
 ) -> dict[str, object]:
     """Project one engine-owned scenario into the compact legacy review shape."""
+    if direction not in {None, "long", "short"}:
+        raise ValueError("scenario direction must be long, short, or None")
     normalized = [_item_parts(item) for item in items]
     scenarios = [
         (item_id, payload) for item_id, item_type, payload in normalized
         if item_type == GeneratedItemType.SCENARIO.value
         and payload.get("kind") == "structural-trade-scenario"
+        and (direction is None or payload.get("direction") == direction)
     ]
     scenarios.sort(key=lambda value: (
         not bool(value[1].get("primary")), int(value[1].get("rank") or 999)
@@ -165,7 +169,8 @@ def project_scenario_summary(
         return {
             "contract_version": STRUCTURAL_SCENARIO_VERSION,
             "profile": "coarse", "method": "structural-scenario-engine",
-            "setup_basis": None, "entry_price": None,
+            "setup_basis": None, "direction": direction,
+            "entry_price": None,
             "invalidation_price": None, "risk_reward_ratio": None,
             "minimum_risk_reward": 1.5, "has_trade_space": False,
             "upside_target": upside, "downside_target": downside,

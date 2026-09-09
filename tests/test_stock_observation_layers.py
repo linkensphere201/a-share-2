@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from copy import deepcopy
 
-from stock_harness.stock_observation_layers import assign_stock_presentation_layers
+from stock_harness.stock_observation_layers import (
+    assign_stock_presentation_layers,
+    select_stock_m4_candidates,
+)
 
 
 def test_presentation_layers_bound_focus_and_risk_without_losing_archive() -> None:
@@ -58,19 +61,52 @@ def test_presentation_ranking_is_deterministic_and_strict_opportunity_is_not_inf
     )
 
 
+def test_focus_and_m4_allocation_preserve_discovery_lanes_and_separate_risk_names() -> None:
+    items = [
+        _item(f"B{index:02}", score=90 - index, phase="breakout")
+        for index in range(15)
+    ] + [
+        _item(f"C{index:02}", score=80 - index, phase="critical")
+        for index in range(15)
+    ] + [
+        _item("ST01", score=99, phase="breakout", risk_name=True)
+    ]
+    snapshot = {"summary": {}, "items": items}
+
+    assign_stock_presentation_layers(snapshot, focus_limit=20, risk_limit=5)
+    selected = select_stock_m4_candidates(items, 12)
+
+    focus = [item for item in items if item["payload"]["presentation_bucket"] == "focus"]
+    assert {item["payload"]["presentation_lane"] for item in focus} == {
+        "breakout", "critical",
+    }
+    assert items[-1]["payload"]["presentation_bucket"] == "risk"
+    assert len(selected) == 12
+    assert all(item["payload"]["presentation_bucket"] == "focus" for item in selected)
+    assert sum(item["payload"]["presentation_lane"] == "breakout" for item in selected) >= 6
+    assert sum(item["payload"]["presentation_lane"] == "critical" for item in selected) == 5
+    assert all(item["symbol"] != "ST01" for item in selected)
+
+
 def _item(
     symbol: str, *, score: float, recognized: bool = False,
     classification: str = "neutral", manual: bool = False,
     opportunity: bool = False,
+    phase: str | None = None, risk_name: bool = False,
 ) -> dict[str, object]:
     eligible = classification == "independent-advance"
     return {
         "symbol": symbol, "rank": 1, "lifecycle_state": "new",
         "payload": {
             "recognized": recognized, "manual_pinned": manual,
+            "risk_name": risk_name,
             "independent_score": score,
             "independent_scan": {
                 "classification": classification, "eligible": eligible,
+                "metrics": {
+                    "opportunity_phase": phase,
+                    "opportunity_readiness_score": 80 if phase else 0,
+                },
             },
             "member_scan": None, "screener_results": [],
             "m4_analysis": None,

@@ -213,7 +213,25 @@ class SQLiteScreenerStoreMixin:
             "exchange": str(row[9]), "kind": "stock",
         } for row in rows]
 
-    def list_active_stock_symbols_for_screening(self) -> list[dict[str, str]]:
+    def list_active_stock_symbols_for_screening(
+        self, as_of_date: date | None = None,
+    ) -> list[dict[str, str]]:
+        if as_of_date is not None:
+            with self._lock:
+                rows = self._connection.execute(
+                    """
+                    SELECT instrument.symbol, instrument.name, instrument.exchange
+                    FROM daily_bars AS bar
+                    JOIN instruments AS instrument USING (instrument_id)
+                    WHERE instrument.kind = 'stock' AND bar.trade_date = ?
+                    ORDER BY instrument.symbol
+                    """,
+                    (_date_key(as_of_date),),
+                ).fetchall()
+            return [{
+                "symbol": str(row[0]), "name": str(row[1]),
+                "exchange": str(row[2]),
+            } for row in rows]
         with self._lock:
             rows = self._connection.execute(
                 """
@@ -233,6 +251,23 @@ class SQLiteScreenerStoreMixin:
                 """
             ).fetchone()
         return _date_from_key(int(row[0])) if row and row[0] is not None else None
+
+    def list_stock_symbols_with_daily_bars(
+        self, start_date: date, end_date: date,
+    ) -> list[str]:
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT DISTINCT instrument.symbol
+                FROM daily_bars AS bar
+                JOIN instruments AS instrument USING (instrument_id)
+                WHERE instrument.kind = 'stock'
+                  AND bar.trade_date BETWEEN ? AND ?
+                ORDER BY instrument.symbol
+                """,
+                (_date_key(start_date), _date_key(end_date)),
+            ).fetchall()
+        return [str(row[0]) for row in rows]
 
 
 def _run_row(row) -> dict[str, object]:

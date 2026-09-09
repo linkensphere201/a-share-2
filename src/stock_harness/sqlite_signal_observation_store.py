@@ -394,6 +394,53 @@ class SQLiteSignalObservationStoreMixin:
             ))
         return result
 
+    def get_recent_causally_adjusted_stock_bars_many(
+        self, symbols: Sequence[str], end_date: date, limit: int,
+    ) -> tuple[dict[str, list[StoredDailyBar]], dict[str, str]]:
+        """Read bounded stock bars and anchor adjustment factors at ``end_date``."""
+        raw = self.get_recent_daily_bars_many(symbols, end_date, limit)
+        populated = [bars for bars in raw.values() if bars]
+        if not populated:
+            return raw, {symbol: "raw" for symbol in raw}
+        ordered = list(raw)
+        placeholders = ",".join("?" for _ in ordered)
+        first_date = min(bars[0].trade_date for bars in populated)
+        with self._lock:
+            rows = self._connection.execute(
+                f"""
+                SELECT instrument.symbol, factor.trade_date, factor.factor
+                FROM stock_adjustment_factors AS factor
+                JOIN instruments AS instrument USING (instrument_id)
+                WHERE instrument.symbol IN ({placeholders})
+                  AND factor.trade_date BETWEEN ? AND ?
+                ORDER BY instrument.symbol, factor.trade_date
+                """,
+                (*ordered, _date_key(first_date), _date_key(end_date)),
+            ).fetchall()
+        factors: dict[str, dict[date, float]] = {symbol: {} for symbol in ordered}
+        for row in rows:
+            factors[str(row[0])][_date_from_key(int(row[1]))] = float(row[2])
+        result: dict[str, list[StoredDailyBar]] = {}
+        basis: dict[str, str] = {}
+        for symbol, bars in raw.items():
+            by_date = factors.get(symbol, {})
+            if not bars or any(bar.trade_date not in by_date for bar in bars):
+                result[symbol] = bars
+                basis[symbol] = _raw_stock_price_basis(bars)
+                continue
+            anchor = by_date[bars[-1].trade_date]
+            result[symbol] = [StoredDailyBar(
+                symbol=bar.symbol, trade_date=bar.trade_date,
+                open=bar.open * by_date[bar.trade_date] / anchor,
+                high=bar.high * by_date[bar.trade_date] / anchor,
+                low=bar.low * by_date[bar.trade_date] / anchor,
+                close=bar.close * by_date[bar.trade_date] / anchor,
+                volume=bar.volume, source=bar.source,
+                updated_at_ms=bar.updated_at_ms,
+            ) for bar in bars]
+            basis[symbol] = "forward-adjusted-as-of"
+        return result, basis
+
     def save_board_daily_observations(
         self, run_id: str, observations: Sequence[dict[str, object]],
     ) -> int:
@@ -701,6 +748,19 @@ class SQLiteSignalObservationStoreMixin:
 
 def _json(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _raw_stock_price_basis(bars: Sequence[StoredDailyBar]) -> str:
+    """Permit a documented fallback only when raw prices have no extreme jumps."""
+    if len(bars) < 2:
+        return "raw"
+    discontinuous = any(
+        previous.close <= 0
+        or abs(current.open / previous.close - 1.0) > 0.25
+        or abs(current.close / previous.close - 1.0) > 0.30
+        for previous, current in zip(bars, bars[1:])
+    )
+    return "raw-discontinuous" if discontinuous else "raw-continuity-checked"
 
 
 def _observation_row(row) -> dict[str, object]:

@@ -17,7 +17,17 @@ from stock_harness.config import load_runtime_settings
 from stock_harness.review_scoring import STOCK_OPPORTUNITY_SCORER
 from stock_harness.signal_review import DAILY_MARKET_BOARD_SIGNAL, SignalReviewService
 from stock_harness.sqlite_store import SQLiteMarketDataStore
-from stock_harness.stock_observation_layers import ALGORITHM_VERSION as PRESENTATION_VERSION
+from stock_harness.stock_observation_layers import (
+    ALGORITHM_VERSION as PRESENTATION_VERSION,
+    assign_stock_presentation_layers,
+)
+from stock_harness.stock_observation_scan import (
+    INDEPENDENT_SCAN_VERSION,
+    UNIFIED_STOCK_POOL_VERSION,
+    build_unified_stock_pool_snapshot,
+    scan_full_market_independent_strength,
+)
+from stock_harness.stock_relative_strength import ALGORITHM_VERSION as RELATIVE_STRENGTH_VERSION
 
 
 def main() -> None:
@@ -27,6 +37,8 @@ def main() -> None:
     parser.add_argument("--start-date", type=date.fromisoformat)
     parser.add_argument("--end-date", type=date.fromisoformat)
     parser.add_argument("--sample-count", type=int, default=26)
+    parser.add_argument("--all-trading-days", action="store_true")
+    parser.add_argument("--mode", choices=("focus-core", "production"), default="focus-core")
     parser.add_argument("--output", type=Path)
     parser.add_argument("--no-resume", action="store_true")
     parser.add_argument("--require-opportunity", action="store_true")
@@ -58,17 +70,26 @@ def main() -> None:
             date_source = "tushare trading calendar fallback"
     finally:
         store.close()
-    dates = select_replay_dates(trading_dates, args.sample_count)
+    dates = trading_dates if args.all_trading_days else select_replay_dates(
+        trading_dates, args.sample_count,
+    )
     if not dates:
         raise SystemExit("no trading dates are available in the requested interval")
 
     report = _load_report(args.output) if not args.no_resume else None
-    if not _compatible_report(report, dates):
+    if not _compatible_report(report, dates, args.mode):
         report = {
             "algorithm_contract": {
                 "signal_id": DAILY_MARKET_BOARD_SIGNAL,
                 "presentation_version": PRESENTATION_VERSION,
-                "execution": "SignalReviewService.run_sync",
+                "relative_strength_version": RELATIVE_STRENGTH_VERSION,
+                "independent_scan_version": INDEPENDENT_SCAN_VERSION,
+                "stock_pool_version": UNIFIED_STOCK_POOL_VERSION,
+                "execution": (
+                    "shared full-market scan and presentation functions"
+                    if args.mode == "focus-core" else "SignalReviewService.run_sync"
+                ),
+                "mode": args.mode,
                 "parameter_changes_between_dates": False,
                 "historical_membership_limit": (
                     "Price inputs are cutoff-causal; board membership uses the locally "
@@ -95,6 +116,7 @@ def main() -> None:
             "--storage-config", str(args.storage_config),
             "--single-date", effective_date.isoformat(),
             "--single-result", str(single_result),
+            "--mode", args.mode,
         ]
         completed = subprocess.run(
             command, check=False,
@@ -117,6 +139,13 @@ def main() -> None:
         gc.collect()
 
     _finalize_report(report, started)
+    if args.mode == "focus-core" and len(report["results"]) == len(dates):
+        print("evaluate focus recall against future strong-move labels", flush=True)
+        store = _open_store(settings)
+        try:
+            report["recall_evaluation"] = evaluate_focus_recall(store, report["results"])
+        finally:
+            store.close()
     _write_report(args.output, report)
     print(json.dumps(report["summary"], ensure_ascii=False, indent=2))
     if args.require_opportunity and not report["summary"]["strict_opportunity_seen"]:
@@ -128,6 +157,18 @@ def _run_single_date(args: argparse.Namespace, settings: Any | None) -> None:
     started = time.perf_counter()
     store = _open_store(settings)
     try:
+        if args.mode == "focus-core":
+            records = scan_full_market_independent_strength(store, args.single_date)
+            snapshot = build_unified_stock_pool_snapshot(
+                f"historical-focus-core:{args.single_date}", args.single_date,
+                {"items": []}, records,
+            )
+            assign_stock_presentation_layers(snapshot)
+            result = summarize_focus_snapshot(snapshot)
+            result["reused"] = False
+            result["child_wall_seconds"] = round(time.perf_counter() - started, 3)
+            _write_report(args.single_result, result)
+            return
         run = _find_reusable_run(store, args.single_date)
         reused = run is not None
         if run is None:
@@ -140,6 +181,51 @@ def _run_single_date(args: argparse.Namespace, settings: Any | None) -> None:
     finally:
         store.close()
     _write_report(args.single_result, result)
+
+
+def summarize_focus_snapshot(snapshot: Mapping[str, object]) -> dict[str, object]:
+    items = [
+        item for item in _sequence(snapshot.get("items"))
+        if isinstance(item, Mapping)
+    ]
+    focus = [
+        item for item in items
+        if _mapping(item.get("payload")).get("presentation_bucket") == "focus"
+    ]
+    opportunity = [
+        item for item in items
+        if _mapping(item.get("payload")).get("presentation_bucket") == "opportunity"
+    ]
+    watch = [*opportunity, *focus]
+    lanes = Counter(
+        str(_mapping(item.get("payload")).get("presentation_lane") or "unknown")
+        for item in focus
+    )
+    price_basis = Counter(
+        _item_price_basis(item) for item in watch
+    )
+    return {
+        "effective_date": _iso(snapshot.get("effective_date")),
+        "run_id": snapshot.get("source_run_id"),
+        "status": "succeeded",
+        "stock_pool_count": len(items),
+        "focus_count": len(focus),
+        "strict_opportunity_count": len(opportunity),
+        "risk_count": sum(
+            _mapping(item.get("payload")).get("presentation_bucket") == "risk"
+            for item in items
+        ),
+        "focus_lane_counts": dict(sorted(lanes.items())),
+        "focus_price_basis_counts": dict(sorted(price_basis.items())),
+        "focus_range": [{
+            "symbol": item.get("symbol"),
+            "rank": _mapping(item.get("payload")).get("presentation_rank"),
+            "lane": _mapping(item.get("payload")).get("presentation_lane"),
+            "reasons": _mapping(item.get("payload")).get("presentation_reasons", []),
+            "score": _mapping(item.get("payload")).get("independent_score"),
+            "risk_name": bool(_mapping(item.get("payload")).get("risk_name")),
+        } for item in watch],
+    }
 
 
 def select_replay_dates(values: Sequence[date], sample_count: int) -> list[date]:
@@ -236,15 +322,212 @@ def _finalize_report(report: dict[str, Any], started: float) -> None:
         "aggregate_disqualifiers": dict(sorted(aggregate.items())),
         "session_wall_seconds": round(time.perf_counter() - started, 3),
     }
+    focus_counts = [int(item.get("focus_count", 0)) for item in results]
+    if focus_counts:
+        report["summary"].update({
+            "focus_count_min": min(focus_counts),
+            "focus_count_max": max(focus_counts),
+            "focus_count_average": round(sum(focus_counts) / len(focus_counts), 2),
+            "focus_unique_symbols": len({
+                str(candidate.get("symbol"))
+                for item in results
+                for candidate in item.get("focus_range", [])
+            }),
+            "focus_transitions": _focus_transitions(results),
+        })
 
 
-def _compatible_report(report: object, dates: Sequence[date]) -> bool:
+def _compatible_report(
+    report: object, dates: Sequence[date], mode: str,
+) -> bool:
     return bool(
         isinstance(report, dict)
         and _mapping(report.get("algorithm_contract")).get("presentation_version")
         == PRESENTATION_VERSION
+        and _mapping(report.get("algorithm_contract")).get("relative_strength_version")
+        == RELATIVE_STRENGTH_VERSION
+        and _mapping(report.get("algorithm_contract")).get("stock_pool_version")
+        == UNIFIED_STOCK_POOL_VERSION
+        and _mapping(report.get("algorithm_contract")).get("mode") == mode
         and report.get("requested_dates") == [value.isoformat() for value in dates]
     )
+
+
+def _focus_transitions(results: Sequence[Mapping[str, object]]) -> dict[str, object]:
+    overlaps: list[float] = []
+    entered = exited = 0
+    previous: set[str] | None = None
+    for result in sorted(results, key=lambda item: str(item.get("effective_date"))):
+        current = {
+            str(item.get("symbol")) for item in _sequence(result.get("focus_range"))
+            if isinstance(item, Mapping)
+        }
+        if previous is not None:
+            entered += len(current - previous)
+            exited += len(previous - current)
+            union = current | previous
+            overlaps.append(len(current & previous) / len(union) if union else 1.0)
+        previous = current
+    return {
+        "entered_total": entered, "exited_total": exited,
+        "average_daily_jaccard": (
+            round(sum(overlaps) / len(overlaps), 4) if overlaps else None
+        ),
+    }
+
+
+def evaluate_focus_recall(
+    store: SQLiteMarketDataStore,
+    results: Sequence[Mapping[str, object]],
+) -> dict[str, object]:
+    """Apply future labels only after all causal selections have been frozen."""
+    ordered_results = sorted(results, key=lambda item: str(item.get("effective_date")))
+    replay_dates = [date.fromisoformat(str(item["effective_date"])) for item in ordered_results]
+    if not replay_dates:
+        return {"status": "empty"}
+    focus_by_date = {
+        replay_date: {
+            str(item.get("symbol"))
+            for item in _sequence(result.get("focus_range"))
+            if isinstance(item, Mapping)
+        }
+        for replay_date, result in zip(replay_dates, ordered_results)
+    }
+    horizons = {20: 0.30, 60: 0.50, 120: 1.00}
+    event_symbols: dict[tuple[int, date], set[str]] = {}
+    symbols = store.list_stock_symbols_with_daily_bars(replay_dates[0], replay_dates[-1])
+    qualified_symbols = skipped_discontinuous = 0
+    for position, symbol in enumerate(symbols, 1):
+        bars = store.get_daily_bars(symbol, replay_dates[0], replay_dates[-1])
+        if not bars:
+            continue
+        factors = store.get_adjustment_factors(symbol, replay_dates[0], replay_dates[-1])
+        factor_by_date = {item.trade_date: item.factor for item in factors}
+        exact_adjusted = all(bar.trade_date in factor_by_date for bar in bars)
+        if not exact_adjusted and _raw_discontinuous(bars):
+            skipped_discontinuous += 1
+            continue
+        applied_factors = factor_by_date if exact_adjusted else {}
+        qualified_symbols += 1
+        index_by_date = {bar.trade_date: index for index, bar in enumerate(bars)}
+        highs = [
+            bar.high * applied_factors.get(bar.trade_date, 1.0) for bar in bars
+        ]
+        closes = [
+            bar.close * applied_factors.get(bar.trade_date, 1.0) for bar in bars
+        ]
+        future_max = {
+            horizon: _future_window_max(highs, horizon) for horizon in horizons
+        }
+        for replay_date in replay_dates:
+            index = index_by_date.get(replay_date)
+            if index is None or closes[index] <= 0:
+                continue
+            for horizon, threshold in horizons.items():
+                high = future_max[horizon][index]
+                if high is not None and high / closes[index] - 1.0 >= threshold:
+                    event_symbols.setdefault((horizon, replay_date), set()).add(symbol)
+        if position % 500 == 0:
+            print(f"recall labels {position}/{len(symbols)}", flush=True)
+
+    metrics = {}
+    for horizon, threshold in horizons.items():
+        events = {
+            replay_date: event_symbols.get((horizon, replay_date), set())
+            for replay_date in replay_dates
+        }
+        event_count = sum(len(values) for values in events.values())
+        hit_count = sum(
+            len(values & focus_by_date[replay_date])
+            for replay_date, values in events.items()
+        )
+        episodes = _event_episodes(events, replay_dates, focus_by_date)
+        metrics[str(horizon)] = {
+            "threshold_return": threshold,
+            "event_observation_count": event_count,
+            "recalled_observation_count": hit_count,
+            "observation_recall": round(hit_count / event_count, 4) if event_count else None,
+            **episodes,
+        }
+    return {
+        "status": "completed",
+        "selection_uses_future_labels": False,
+        "label_price": "maximum future session high",
+        "qualified_symbol_count": qualified_symbols,
+        "skipped_raw_discontinuous_count": skipped_discontinuous,
+        "horizons": metrics,
+    }
+
+
+def _future_window_max(values: Sequence[float], horizon: int) -> list[float | None]:
+    import heapq
+
+    result: list[float | None] = [None] * len(values)
+    heap: list[tuple[float, int]] = []
+    for index in range(len(values) - 1, -1, -1):
+        future_index = index + 1
+        if future_index < len(values):
+            heapq.heappush(heap, (-values[future_index], future_index))
+        while heap and heap[0][1] > index + horizon:
+            heapq.heappop(heap)
+        if index + horizon < len(values) and heap:
+            result[index] = -heap[0][0]
+    return result
+
+
+def _event_episodes(
+    events: Mapping[date, set[str]], replay_dates: Sequence[date],
+    focus_by_date: Mapping[date, set[str]],
+) -> dict[str, object]:
+    date_index = {value: index for index, value in enumerate(replay_dates)}
+    by_symbol: dict[str, list[int]] = {}
+    for event_date, symbols in events.items():
+        for symbol in symbols:
+            by_symbol.setdefault(symbol, []).append(date_index[event_date])
+    episode_count = recalled = 0
+    lead_sessions: list[int] = []
+    for symbol, indices in by_symbol.items():
+        ordered_indices = sorted(indices)
+        starts = [
+            index for offset, index in enumerate(ordered_indices)
+            if offset == 0 or index > ordered_indices[offset - 1] + 1
+        ]
+        for start in starts:
+            episode_count += 1
+            candidates = [
+                index for index in range(max(0, start - 20), start + 1)
+                if symbol in focus_by_date[replay_dates[index]]
+            ]
+            if candidates:
+                recalled += 1
+                lead_sessions.append(start - min(candidates))
+    lead_sessions.sort()
+    return {
+        "episode_count": episode_count,
+        "recalled_episode_count": recalled,
+        "episode_recall": round(recalled / episode_count, 4) if episode_count else None,
+        "median_first_discovery_lead_sessions": (
+            lead_sessions[len(lead_sessions) // 2] if lead_sessions else None
+        ),
+    }
+
+
+def _raw_discontinuous(bars: Sequence[object]) -> bool:
+    return any(
+        previous.close <= 0
+        or abs(current.open / previous.close - 1.0) > 0.25
+        or abs(current.close / previous.close - 1.0) > 0.30
+        for previous, current in zip(bars, bars[1:])
+    )
+
+
+def _item_price_basis(item: Mapping[str, object]) -> str:
+    payload = _mapping(item.get("payload"))
+    for key in ("independent_scan", "member_scan"):
+        basis = _mapping(payload.get(key)).get("price_basis")
+        if basis:
+            return str(basis)
+    return "unknown"
 
 
 def _load_report(path: Path) -> dict[str, Any] | None:

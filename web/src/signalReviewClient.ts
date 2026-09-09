@@ -225,6 +225,7 @@ export type ObservationPoolItem = {
     presentation_rank?: number
     presentation_reasons?: string[]
     presentation_version?: string
+    presentation_lane?: string
   }
   sources: ObservationPoolSource[]
 }

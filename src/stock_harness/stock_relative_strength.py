@@ -10,8 +10,8 @@ from statistics import fmean, median
 from stock_harness.models import StoredDailyBar
 
 
-ALGORITHM_VERSION = "stock-relative-strength-v1"
-SCORER_VERSION = "stock-independent-strength-v1"
+ALGORITHM_VERSION = "stock-relative-strength-v2"
+SCORER_VERSION = "stock-independent-strength-v2"
 MINIMUM_BARS = 120
 LOOKBACK_BARS = 260
 
@@ -84,6 +84,9 @@ def analyze_relative_strength(
     ma20 = fmean(closes[-20:])
     ma60 = fmean(closes[-60:])
     prior_high20 = max(closes[-21:-1])
+    opportunity_phase, readiness, readiness_evidence = _opportunity_readiness(
+        visible, ma20, ma60,
+    )
     trend_state = (
         "up" if closes[-1] > ma20 > ma60
         else "down" if closes[-1] < ma20 < ma60
@@ -113,6 +116,9 @@ def analyze_relative_strength(
         "turnover_proxy20_log": round(log1p(max(0.0, turnover_proxy20)), 6),
         "trend_state": trend_state,
         "above_prior_high20": closes[-1] > prior_high20,
+        "opportunity_phase": opportunity_phase,
+        "opportunity_readiness_score": readiness,
+        "opportunity_readiness_evidence": readiness_evidence,
         "price_volume_confirmation": round(price_volume_confirmation, 6),
         "market_reference_count": len(market_references),
         "board_reference_count": len(board_references),
@@ -130,6 +136,56 @@ def analyze_relative_strength(
     }
 
 
+def _opportunity_readiness(
+    bars: Sequence[StoredDailyBar], ma20: float, ma60: float,
+) -> tuple[str | None, float, dict[str, object]]:
+    """Describe a causal watch-range phase without claiming a trade entry."""
+    closes = [bar.close for bar in bars]
+    volumes = [max(0, bar.volume) for bar in bars]
+    prior_high20 = max(closes[-21:-1])
+    distance = closes[-1] / prior_high20 - 1.0
+    ranges = [(bar.high - bar.low) / bar.close for bar in bars if bar.close > 0]
+    recent_range = fmean(ranges[-10:])
+    baseline_ranges = ranges[-40:-10]
+    baseline_range = fmean(baseline_ranges) if baseline_ranges else recent_range
+    contraction = recent_range / baseline_range if baseline_range > 0 else 1.0
+    baseline_volume = median(volumes[-25:-5])
+    volume_dry_up = median(volumes[-5:]) / baseline_volume if baseline_volume > 0 else 1.0
+    volume20 = median(volumes[-21:-1])
+    latest_volume = volumes[-1] / volume20 if volume20 > 0 else 1.0
+
+    recent_break_boundary: float | None = None
+    for index in range(max(20, len(closes) - 6), len(closes) - 1):
+        boundary = max(closes[index - 20:index])
+        if closes[index] > boundary * 1.005:
+            recent_break_boundary = boundary
+    retest = bool(
+        recent_break_boundary is not None
+        and recent_break_boundary * 0.985 <= closes[-1] <= recent_break_boundary * 1.04
+    )
+    breakout = closes[-1] > prior_high20 * 1.005
+    critical = bool(
+        -0.03 <= distance <= 0.005
+        and ma20 >= ma60 * 0.98
+        and contraction <= 0.95
+    )
+    phase = "retest" if retest else "breakout" if breakout else "critical" if critical else None
+    base = {"retest": 88.0, "breakout": 84.0, "critical": 76.0}.get(phase, 0.0)
+    bonus = max(0.0, 1.0 - contraction) * 20.0
+    bonus += (
+        max(0.0, latest_volume - 1.0) * 4.0
+        if phase == "breakout"
+        else max(0.0, 1.0 - volume_dry_up) * 6.0
+    )
+    return phase, round(min(100.0, base + bonus), 2), {
+        "distance_to_prior_high20": round(distance, 6),
+        "range_contraction_ratio": round(contraction, 6),
+        "volume_dry_up_ratio": round(volume_dry_up, 6),
+        "latest_volume_ratio20": round(latest_volume, 6),
+        "recent_break_boundary": (
+            round(recent_break_boundary, 6) if recent_break_boundary is not None else None
+        ),
+    }
 def classify_relative_strength(metrics: Mapping[str, object]) -> str:
     residual = _mapping(metrics.get("adjusted_residual"))
     market = _mapping(metrics.get("market_excess"))
