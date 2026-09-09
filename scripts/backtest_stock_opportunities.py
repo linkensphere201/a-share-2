@@ -8,6 +8,8 @@ from datetime import date, timedelta
 import gc
 import json
 from pathlib import Path
+import subprocess
+import sys
 import time
 from typing import Any, Iterable, Mapping, Sequence
 
@@ -25,10 +27,19 @@ def main() -> None:
     parser.add_argument("--start-date", type=date.fromisoformat)
     parser.add_argument("--end-date", type=date.fromisoformat)
     parser.add_argument("--sample-count", type=int, default=26)
-    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--output", type=Path)
     parser.add_argument("--no-resume", action="store_true")
     parser.add_argument("--require-opportunity", action="store_true")
+    parser.add_argument("--single-date", type=date.fromisoformat, help=argparse.SUPPRESS)
+    parser.add_argument("--single-result", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.single_date:
+        if args.single_result is None:
+            parser.error("--single-result is required with --single-date")
+        _run_single_date(args, settings=None)
+        return
+    if args.output is None:
+        parser.error("--output is required")
     if args.sample_count < 2:
         parser.error("--sample-count must be at least 2")
 
@@ -39,7 +50,12 @@ def main() -> None:
         if end_date is None:
             raise SystemExit("no completed stock daily bars are available")
         start_date = args.start_date or end_date - timedelta(days=365)
-        trading_dates = store.list_trading_dates("tushare", start_date, end_date)
+        benchmark_bars = store.get_daily_bars("000001.SH", start_date, end_date)
+        trading_dates = [bar.trade_date for bar in benchmark_bars]
+        date_source = "000001.SH canonical daily bars"
+        if not trading_dates:
+            trading_dates = store.list_trading_dates("tushare", start_date, end_date)
+            date_source = "tushare trading calendar fallback"
     finally:
         store.close()
     dates = select_replay_dates(trading_dates, args.sample_count)
@@ -60,6 +76,7 @@ def main() -> None:
                 ),
             },
             "requested_dates": [value.isoformat() for value in dates],
+            "date_source": date_source,
             "results": [],
         }
     completed_dates = {str(item["effective_date"]) for item in report["results"]}
@@ -71,19 +88,24 @@ def main() -> None:
             continue
         print(f"[{index}/{len(dates)}] run {effective_date}", flush=True)
         date_started = time.perf_counter()
-        store = _open_store(settings)
-        try:
-            run = _find_reusable_run(store, effective_date)
-            reused = run is not None
-            if run is None:
-                run = SignalReviewService(store).run_sync(
-                    DAILY_MARKET_BOARD_SIGNAL, effective_date,
-                )
-            result = summarize_run(store, run)
-            result["reused"] = reused
-            result["wall_seconds"] = round(time.perf_counter() - date_started, 3)
-        finally:
-            store.close()
+        single_result = args.output.with_name(f"{args.output.stem}-single.json")
+        command = [
+            sys.executable, str(Path(__file__).resolve()),
+            "--provider-config", str(args.provider_config),
+            "--storage-config", str(args.storage_config),
+            "--single-date", effective_date.isoformat(),
+            "--single-result", str(single_result),
+        ]
+        completed = subprocess.run(
+            command, check=False,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        if completed.returncode:
+            raise RuntimeError(
+                f"single-date replay failed for {effective_date}: {completed.returncode}"
+            )
+        result = json.loads(single_result.read_text(encoding="utf-8"))
+        result["wall_seconds"] = round(time.perf_counter() - date_started, 3)
         report["results"].append(result)
         report["results"].sort(key=lambda item: str(item["effective_date"]))
         _finalize_report(report, started)
@@ -99,6 +121,25 @@ def main() -> None:
     print(json.dumps(report["summary"], ensure_ascii=False, indent=2))
     if args.require_opportunity and not report["summary"]["strict_opportunity_seen"]:
         raise SystemExit(2)
+
+
+def _run_single_date(args: argparse.Namespace, settings: Any | None) -> None:
+    settings = settings or load_runtime_settings(args.provider_config, args.storage_config)
+    started = time.perf_counter()
+    store = _open_store(settings)
+    try:
+        run = _find_reusable_run(store, args.single_date)
+        reused = run is not None
+        if run is None:
+            run = SignalReviewService(store).run_sync(
+                DAILY_MARKET_BOARD_SIGNAL, args.single_date,
+            )
+        result = summarize_run(store, run)
+        result["reused"] = reused
+        result["child_wall_seconds"] = round(time.perf_counter() - started, 3)
+    finally:
+        store.close()
+    _write_report(args.single_result, result)
 
 
 def select_replay_dates(values: Sequence[date], sample_count: int) -> list[date]:

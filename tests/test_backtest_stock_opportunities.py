@@ -22,6 +22,12 @@ def test_select_replay_dates_is_deterministic_and_includes_boundaries() -> None:
     assert selected == [dates[0], dates[3], dates[6], dates[9]]
 
 
+def test_select_replay_dates_uses_all_dates_when_window_is_short() -> None:
+    dates = [date(2026, 1, 2), date(2026, 1, 5)]
+
+    assert module.select_replay_dates(dates, 4) == dates
+
+
 def test_summarize_run_reports_each_strict_gate() -> None:
     class Store:
         def list_signal_review_scores(self, run_id, system_id):
