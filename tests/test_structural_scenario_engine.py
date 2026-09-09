@@ -3,6 +3,7 @@ from datetime import date, timedelta
 from stock_harness.analysis_inputs import AnalysisBar
 from stock_harness.analysis_results import GeneratedAnalysisItem, GeneratedItemType
 from stock_harness.structural_scenario_engine import build_structural_scenario_items
+from stock_harness.overhead_supply import build_overhead_supply_item
 
 
 def _bars(count: int = 40) -> list[AnalysisBar]:
@@ -123,3 +124,67 @@ def test_range_references_exclude_latest_bar() -> None:
 
     assert range_20.payload["high"] < 99
     assert range_20.payload["low"] > 1
+
+
+def test_retest_policy_and_projected_line_target_are_explicit() -> None:
+    items = [
+        GeneratedAnalysisItem("triangle", GeneratedItemType.PATTERN, {
+            "pattern_type": "triangle", "direction": "bullish",
+            "horizon": "medium", "neckline_price": 10.1,
+            "invalidation_price": 9.4, "score": 0.9, "primary": True,
+            "start_date": "2026-01-03",
+        }),
+        GeneratedAnalysisItem(
+            "triangle-event", GeneratedItemType.EVIDENCE,
+            {
+                "kind": "breakout-state-summary", "current_state": "retesting",
+                "direction": "up", "boundary_price": 10.1,
+                "invalidation_level": 9.4,
+            }, parent_item_id="triangle",
+        ),
+        GeneratedAnalysisItem("support", GeneratedItemType.ZONE, {
+            "kind": "key-level", "lower": 9.2, "upper": 9.5, "score": 0.8,
+        }),
+        GeneratedAnalysisItem("future-resistance", GeneratedItemType.LINE, {
+            "kind": "resistance", "horizon": "medium", "projected_price": 11.5,
+            "slope_per_bar": 0.03, "score": 0.8,
+        }),
+        GeneratedAnalysisItem("core-analysis-projection", GeneratedItemType.EVIDENCE, {
+            "kind": "core-analysis-projection",
+            "structural_item_ids": ["triangle", "support", "future-resistance"],
+        }),
+    ]
+
+    generated = build_structural_scenario_items(_bars(), items)
+    payload = next(
+        item.payload for item in generated if item.item_type is GeneratedItemType.SCENARIO
+    )
+
+    assert payload["state"] == "retest"
+    assert payload["entry_policy"] == "observed-retest-hold"
+    assert "touched the broken boundary" in payload["confirmation_rule"]
+    assert any(
+        target["basis"] == "trend-line-projection-10d"
+        for target in payload["targets"]
+    )
+
+
+def test_overhead_supply_is_separate_uncertain_evidence() -> None:
+    items = [
+        GeneratedAnalysisItem("volume-overhead", GeneratedItemType.ZONE, {
+            "kind": "estimated-volume-at-price", "lower": 10.5, "upper": 11,
+            "estimated_share": 0.25, "evidence_dates": ["2026-01-30"],
+        }),
+        GeneratedAnalysisItem("failed-break", GeneratedItemType.EVIDENCE, {
+            "kind": "breakout-state-summary", "current_state": "failed",
+            "direction": "up",
+        }),
+    ]
+
+    supply = build_overhead_supply_item(_bars(), items)
+
+    assert supply.item_id == "overhead-supply-proxy"
+    assert supply.payload["score"] > 0.5
+    assert supply.payload["failed_upward_attempts"] == 1
+    assert supply.payload["turnover_available"] is False
+    assert "not actual holder cost" in supply.payload["uncertainty"]

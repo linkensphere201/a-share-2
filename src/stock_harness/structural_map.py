@@ -17,6 +17,7 @@ class StructuralBoundary:
     lower: float
     upper: float
     score: float
+    slope_per_bar: float = 0
 
     @property
     def center(self) -> float:
@@ -73,6 +74,7 @@ def build_structural_map(
                 item.item_id, "trend-line", role,
                 str(payload.get("horizon", "long")), price, price,
                 _number(payload.get("score")) or 0,
+                _number(payload.get("slope_per_bar")) or 0,
             ))
         elif (
             item.item_type is GeneratedItemType.EVIDENCE

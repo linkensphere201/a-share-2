@@ -7,6 +7,7 @@ from typing import Sequence
 
 from stock_harness.analysis_inputs import AnalysisBar
 from stock_harness.analysis_results import GeneratedAnalysisItem, GeneratedItemType
+from stock_harness.overhead_supply import SUPPLY_ITEM_ID, build_overhead_supply_item
 from stock_harness.structural_map import (
     StructuralBoundary,
     StructuralSetup,
@@ -35,17 +36,21 @@ def build_structural_scenario_items(
     if len(bars) < 2:
         return []
     range_items = _range_reference_items(bars)
-    structural = build_structural_map([*items, *range_items], bars[-1].close)
+    supply_item = build_overhead_supply_item(bars, items)
+    structural = build_structural_map(
+        [*items, *range_items, supply_item], bars[-1].close
+    )
     atr = _latest_atr(bars)
     scenarios = []
     for rank, setup in enumerate(structural.setups[:3], start=1):
         scenario = _build_scenario(
             bars, structural.boundaries, setup, atr,
+            supply_score=float(supply_item.payload["score"]),
             rank=rank, minimum_risk_reward=minimum_risk_reward,
         )
         if scenario is not None:
             scenarios.append(scenario)
-    return [*range_items, *scenarios]
+    return [*range_items, supply_item, *scenarios]
 
 
 def _build_scenario(
@@ -54,11 +59,13 @@ def _build_scenario(
     setup: StructuralSetup,
     atr: float,
     *,
+    supply_score: float,
     rank: int,
     minimum_risk_reward: float,
 ) -> GeneratedAnalysisItem | None:
     direction = TradeDirection(setup.direction)
-    buffer = max(atr * 0.2, setup.boundary_price * 0.003)
+    policy = _setup_policy(setup)
+    buffer = max(atr * policy["buffer_atr"], setup.boundary_price * 0.003)
     entry = (
         setup.boundary_price + buffer
         if direction is TradeDirection.LONG
@@ -73,11 +80,15 @@ def _build_scenario(
     if risk <= 0:
         return None
     targets = _targets(boundaries, setup, entry, direction, atr)
-    state = _scenario_state(setup.state, bars[-1].close, entry, atr, direction)
+    state = _scenario_state(
+        setup.state, bars[-1].close, entry, atr, risk, direction
+    )
     target_payloads = []
     for index, target in enumerate(targets[:3], start=1):
         raw_rr = calculate_risk_reward(direction, entry, invalidation, target.price)
-        stressed_rr = _stressed_risk_reward(direction, entry, invalidation, target.price)
+        stressed_rr = _stressed_risk_reward(
+            direction, entry, invalidation, target.price, supply_score
+        )
         target_payloads.append({
             "label": f"T{index}",
             "price": round(target.price, 6),
@@ -96,6 +107,7 @@ def _build_scenario(
     )), target_payloads[0] if target_payloads else None)
     evidence_ids = tuple(dict.fromkeys((
         setup.source_item_id,
+        SUPPLY_ITEM_ID,
         *invalidation_sources,
         *(source for target in target_payloads for source in target["evidence_item_ids"]),
     )))
@@ -132,6 +144,8 @@ def _build_scenario(
                 for target in target_payloads
             ),
             "setup_basis": f"{setup.horizon} {setup.family} structural boundary",
+            "confirmation_rule": policy["confirmation_rule"],
+            "entry_policy": policy["name"],
             "invalidation_basis": "nearest independent structural support/resistance",
             "assumptions": [
                 "trigger buffer is max(0.2 ATR, 0.3% of boundary price)",
@@ -144,6 +158,8 @@ def _build_scenario(
             ],
             "evidence_item_ids": list(evidence_ids),
             "invalidation_evidence_item_ids": list(invalidation_sources),
+            "overhead_supply_item_id": SUPPLY_ITEM_ID,
+            "overhead_supply_score": round(supply_score, 6),
             "analytical_only": True,
         },
     )
@@ -199,18 +215,32 @@ def _targets(
     for boundary in boundaries:
         if boundary.source_item_id == setup.source_item_id:
             continue
-        price = boundary.lower if direction is TradeDirection.LONG else boundary.upper
+        checkpoint = {"short": 5, "medium": 10, "long": 20}.get(setup.horizon, 10)
+        projected = boundary.center + boundary.slope_per_bar * checkpoint
+        price = (
+            projected if boundary.slope_per_bar
+            else boundary.lower if direction is TradeDirection.LONG else boundary.upper
+        )
         if (
             direction is TradeDirection.LONG and price <= entry + tolerance
             or direction is TradeDirection.SHORT and price >= entry - tolerance
         ):
             continue
         raw.append(_TargetCandidate(
-            price, boundary.source_kind, (boundary.source_item_id,), boundary.score
+            price,
+            (
+                f"{boundary.source_kind}-projection-{checkpoint}d"
+                if boundary.slope_per_bar else boundary.source_kind
+            ),
+            (boundary.source_item_id,), boundary.score
         ))
     raw.sort(key=lambda value: value.price, reverse=direction is TradeDirection.SHORT)
     clusters: list[list[_TargetCandidate]] = []
+    used_sources: set[str] = set()
     for candidate in raw:
+        if any(source in used_sources for source in candidate.source_item_ids):
+            continue
+        used_sources.update(candidate.source_item_ids)
         if clusters and abs(candidate.price - clusters[-1][0].price) <= tolerance:
             clusters[-1].append(candidate)
         else:
@@ -234,6 +264,7 @@ def _scenario_state(
     latest_close: float,
     entry: float,
     atr: float,
+    risk: float,
     direction: TradeDirection,
 ) -> str:
     if source_state in {"failed", "invalidated"}:
@@ -242,7 +273,7 @@ def _scenario_state(
     if source_state == "retesting":
         return "retest"
     extension = latest_close - entry if direction is TradeDirection.LONG else entry - latest_close
-    if triggered and extension > 2 * atr:
+    if triggered and extension > max(2 * atr, 1.5 * risk):
         return "extended"
     return "triggered" if triggered else "waiting-trigger"
 
@@ -293,13 +324,45 @@ def _stressed_risk_reward(
     entry: float,
     invalidation: float,
     target: float,
+    supply_score: float,
 ) -> float | None:
+    entry_slippage = 0.001 + 0.001 * supply_score
+    target_haircut = 0.002 + 0.003 * supply_score
     if direction is TradeDirection.LONG:
-        stressed_entry = entry * 1.001
-        stressed_target = target * 0.998
+        stressed_entry = entry * (1 + entry_slippage)
+        stressed_target = target * (1 - target_haircut)
     else:
-        stressed_entry = entry * 0.999
-        stressed_target = target * 1.002
+        stressed_entry = entry * (1 - entry_slippage)
+        stressed_target = target * (1 + target_haircut)
     return calculate_risk_reward(
         direction, stressed_entry, invalidation, stressed_target
     )
+
+
+def _setup_policy(setup: StructuralSetup) -> dict[str, object]:
+    family = setup.family.lower()
+    if setup.state == "retesting":
+        return {
+            "name": "observed-retest-hold",
+            "buffer_atr": 0.1,
+            "confirmation_rule": "price touched the broken boundary and closed on the holding side",
+        }
+    if any(value in family for value in (
+        "double", "head-and-shoulders", "v-bottom", "v-top", "reversal",
+    )):
+        return {
+            "name": "reversal-neckline-confirmation",
+            "buffer_atr": 0.25,
+            "confirmation_rule": "close confirms the reversal neckline with structural low/high intact",
+        }
+    if any(value in family for value in ("flag", "triangle", "rectangle", "diamond")):
+        return {
+            "name": "bounded-pattern-breakout",
+            "buffer_atr": 0.2,
+            "confirmation_rule": "close clears the active pattern boundary; retest hold upgrades confidence",
+        }
+    return {
+        "name": "trend-boundary-break",
+        "buffer_atr": 0.2,
+        "confirmation_rule": "close clears the projected trend boundary without invalidating structure",
+    }
