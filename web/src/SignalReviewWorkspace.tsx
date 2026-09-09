@@ -2,14 +2,15 @@ import {
   useEffect, useMemo, useRef, useState, type CSSProperties,
   type PointerEvent as ReactPointerEvent,
 } from 'react'
-import { ArrowLeft, Eye, ListFilter, MessageSquare, Pin, PinOff, Play, Radar, RefreshCw, Search } from 'lucide-react'
+import { ArrowLeft, Boxes, Eye, Layers3, ListFilter, MessageSquare, Pin, PinOff, Play, Radar, RefreshCw, Search } from 'lucide-react'
 import { ChartCanvas } from './ChartCanvas'
 import { MarketBoardBadge } from './MarketBoardBadge'
 import type { ThemeDefinition } from './themeStore'
 import {
   listBoardObservations, listSignalAttention, listSignalDefinitions, listSignalItems,
-  listSignalRuns, listSignalScores, loadSignalRun, setSignalAttention, startSignalRun,
+  listSignalRuns, listSignalScores, loadObservationPool, loadSignalRun, setSignalAttention, startSignalRun,
   type BoardDailyObservation, type SignalAttention, type SignalChangeType,
+  type ObservationPoolItem, type ObservationPoolSnapshot, type ObservationPoolSource,
   type SignalDefinition, type SignalEvidence, type SignalItem, type SignalProfile,
   type SignalRun, type SignalScoreResult,
 } from './signalReviewClient'
@@ -20,6 +21,8 @@ import { TradeScenarioPanel } from './TradeScenarioPanel'
 type Props = { theme: ThemeDefinition; onClose: () => void }
 type ProfileFilter = 'all' | SignalProfile
 type ChangeFilter = 'all' | SignalChangeType
+type DailyView = 'results' | 'opportunities' | 'observations' | 'board-pool' | 'stock-pool'
+type PoolLifecycleFilter = 'all' | ObservationPoolItem['lifecycle_state']
 
 const phaseLabels: Record<string, string> = {
   queued: '等待执行', memberships: '读取板块成分',
@@ -58,11 +61,15 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
   const [selectedScenarioTarget, setSelectedScenarioTarget] = useState<string>()
   const [scenarioVisible, setScenarioVisible] = useState(true)
   const [selectedEvidenceId, setSelectedEvidenceId] = useState<string>()
-  const [dailyView, setDailyView] = useState<'results' | 'opportunities' | 'observations'>('results')
+  const [dailyView, setDailyView] = useState<DailyView>('results')
   const [observationQuery, setObservationQuery] = useState('')
   const [observations, setObservations] = useState<BoardDailyObservation[]>([])
   const [observationTotal, setObservationTotal] = useState(0)
   const [selectedObservation, setSelectedObservation] = useState<BoardDailyObservation>()
+  const [observationPool, setObservationPool] = useState<ObservationPoolSnapshot>()
+  const [selectedPoolItem, setSelectedPoolItem] = useState<ObservationPoolItem>()
+  const [poolQuery, setPoolQuery] = useState('')
+  const [poolLifecycle, setPoolLifecycle] = useState<PoolLifecycleFilter>('all')
   const [attention, setAttention] = useState<SignalAttention[]>([])
   const [scores, setScores] = useState<SignalScoreResult[]>([])
   const [selectedScoreSystem, setSelectedScoreSystem] = useState('trend-breakout')
@@ -152,7 +159,7 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
   }, [selectedDefinition, selectedRun?.status])
 
   useEffect(() => {
-    if (dailyView === 'results' || !selectedRun || selectedRun.status !== 'succeeded') {
+    if (!['opportunities', 'observations'].includes(dailyView) || !selectedRun || selectedRun.status !== 'succeeded') {
       setObservations([])
       setObservationTotal(0)
       setSelectedObservation(undefined)
@@ -172,7 +179,32 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
     return () => { window.clearTimeout(timer); controller.abort() }
   }, [dailyView, observationQuery, selectedRun?.run_id, selectedRun?.status, historySelection])
 
-  const deepAnalysisRunId = selectedObservation?.deep_analysis_run_id
+  useEffect(() => {
+    if (!['board-pool', 'stock-pool'].includes(dailyView)
+      || !selectedRun || selectedRun.status !== 'succeeded') {
+      setObservationPool(undefined)
+      setSelectedPoolItem(undefined)
+      return
+    }
+    const controller = new AbortController()
+    const poolKind = dailyView === 'board-pool' ? 'board' : 'stock'
+    loadObservationPool(selectedRun.run_id, poolKind, controller.signal)
+      .then(value => {
+        setObservationPool(value)
+        setSelectedPoolItem(current => value.items.find(item => item.symbol === current?.symbol))
+      })
+      .catch(reason => {
+        if (reason.name !== 'AbortError') {
+          setObservationPool(undefined)
+          setSelectedPoolItem(undefined)
+          setError(String(reason))
+        }
+      })
+    return () => controller.abort()
+  }, [dailyView, selectedRun?.run_id, selectedRun?.status])
+
+  const deepAnalysisRunId = selectedPoolItem?.payload.m4_analysis?.run_id
+    ?? selectedObservation?.deep_analysis_run_id
     ?? selectedItem?.payload.deep_analysis_run_id
   useEffect(() => {
     setExactAnalysis(null)
@@ -226,6 +258,14 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
         || (rightScore?.total_score ?? -1) - (leftScore?.total_score ?? -1)
         || left.symbol.localeCompare(right.symbol)
     }), [dailyView, observations, scoreBySymbol])
+  const displayedPoolItems = useMemo(() => {
+    const query = poolQuery.trim().toLocaleLowerCase()
+    return [...(observationPool?.items ?? [])].filter(item =>
+      (poolLifecycle === 'all' || item.lifecycle_state === poolLifecycle)
+      && (!query || `${item.name} ${item.symbol} ${item.sources.map(source => source.reason).join(' ')}`
+        .toLocaleLowerCase().includes(query)),
+    ).sort((left, right) => left.rank - right.rank || left.symbol.localeCompare(right.symbol))
+  }, [observationPool, poolLifecycle, poolQuery])
   useEffect(() => {
     if (filtered.some(item => item.item_id === selectedItem?.item_id)) return
     setSelectedItem(undefined)
@@ -235,15 +275,16 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
       .map(value => [value, items.filter(item => item.active && item.profile === value).length]),
   ) as Record<SignalProfile, number>, [items])
   const daily = selectedDefinition?.cadence === 'daily'
-  const inspected = selectedObservation ?? selectedItem
-  const inspectedScore = selectedObservation
+  const inspected = selectedPoolItem ?? selectedObservation ?? selectedItem
+  const inspectedScore = selectedPoolItem?.payload.opportunity_score
+    ?? (selectedObservation
     ? scoreBySymbol.get(selectedObservation.symbol)
-    : selectedItem?.payload.score_result
+    : selectedItem?.payload.score_result)
   const activeEvidenceId = highlightedEvidenceId ?? selectedEvidenceId
   const highlightedAnalysisItemId = scenarioHighlightedItemId ?? selectedItem?.evidence.find(
     evidence => evidence.evidence_id === activeEvidenceId,
   )?.source_item_id ?? undefined
-  const criticalAlert = buildCriticalAlert(inspected)
+  const criticalAlert = buildCriticalAlert(selectedObservation ?? selectedItem)
   const pinned = selectedObservation
     ? attention.find(item => item.symbol === selectedObservation.symbol)?.manual_pinned ?? false
     : false
@@ -254,9 +295,19 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
     ? Math.round(activeRun.work_done / activeRun.work_total * 100) : 0
   const runBusy = startingRun || Boolean(activeRun)
   const previewReference = (itemId?: string, evidenceId?: string) => {
+    if (itemId?.startsWith('pool:')) {
+      setHighlightedEvidenceId(evidenceId)
+      return
+    }
     setHighlightedEvidenceId(itemId === selectedItem?.item_id ? evidenceId : undefined)
   }
   const activateReference = (itemId: string, evidenceId: string) => {
+    if (itemId.startsWith('pool:')) {
+      const source = selectedPoolItem?.sources.find(value =>
+        `${value.source_type}:${value.source_entity_key}` === evidenceId)
+      if (source) void activatePoolSource(source)
+      return
+    }
     const item = items.find(value => value.item_id === itemId)
     if (!item) return
     setSelectedItem(item)
@@ -284,6 +335,23 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
       setHistorySelection({ symbol, entityKey })
       setSelectedRun(historicalRun)
       setRuns(current => current.some(item => item.run_id === runId) ? current : [...current, historicalRun])
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason))
+    }
+  }
+
+  async function activatePoolSource(source: ObservationPoolSource) {
+    setSelectedEvidenceId(`${source.source_type}:${source.source_entity_key}`)
+    const analysisRunId = source.source_type === 'm4-analysis'
+      ? source.source_reference
+      : typeof source.payload.analysis_run_id === 'string' ? source.payload.analysis_run_id : undefined
+    const analysisItemId = typeof source.payload.analysis_item_id === 'string'
+      ? source.payload.analysis_item_id
+      : typeof source.payload.scenario_item_id === 'string' ? source.payload.scenario_item_id : undefined
+    if (analysisItemId) setScenarioHighlightedItemId(analysisItemId)
+    if (!analysisRunId || analysisRunId === deepAnalysisRunId) return
+    try {
+      setExactAnalysis(await loadExactTrendAnalysis(analysisRunId))
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason))
     }
@@ -357,6 +425,7 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
         setDailyView('results')
         setProfile('all')
         setSelectedObservation(undefined)
+        setSelectedPoolItem(undefined)
       }}>{definitions.map(item => <option key={item.signal_id} value={item.signal_id}>{item.name}</option>)}</select>
       {selectedDefinition && <span className="signal-description">{selectedDefinition.description}</span>}
       <button className="primary-button signal-run-action" disabled={!selectedDefinition || runBusy} onClick={() => void run()}>
@@ -379,25 +448,51 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
       </aside>
       <div className="signal-column-resizer" role="separator" aria-orientation="vertical" aria-label="调整历史轮次栏宽度" title="左右拖动调整历史轮次栏宽度" onPointerDown={event => startColumnResize('runs', event)}/>
       <section className="signal-results">
-        <header><span>{dailyView === 'observations' ? '全部板块观察' : dailyView === 'opportunities' ? '板块机会评分' : '复盘结果'}</span><small>{dailyView !== 'results' ? `当前 ${displayedObservations.length} / 全量 ${observationTotal}` : selectedRun ? `+${selectedRun.added_count} =${selectedRun.retained_count} -${selectedRun.removed_count}` : '请选择轮次'}</small></header>
+        <header><span>{dailyView === 'observations' ? '全部板块观察'
+          : dailyView === 'opportunities' ? '板块机会评分'
+            : dailyView === 'board-pool' ? '板块观察池'
+              : dailyView === 'stock-pool' ? '个股观察池' : '复盘结果'}</span><small>{['board-pool', 'stock-pool'].includes(dailyView)
+          ? `当前 ${displayedPoolItems.length} / 全量 ${observationPool?.items.length ?? 0}`
+          : dailyView !== 'results' ? `当前 ${displayedObservations.length} / 全量 ${observationTotal}`
+            : selectedRun ? `+${selectedRun.added_count} =${selectedRun.retained_count} -${selectedRun.removed_count}` : '请选择轮次'}</small></header>
         {selectedRun?.status === 'running' && <div className="signal-progress"><i style={{ width: `${progress}%` }}/></div>}
         {daily && <div className="signal-view-switch">
-          <button className={dailyView === 'results' ? 'active' : ''} onClick={() => { setDailyView('results'); setSelectedObservation(undefined) }}><ListFilter size={12}/>今日关注</button>
-          <button className={dailyView === 'opportunities' ? 'active' : ''} onClick={() => { setDailyView('opportunities'); setSelectedItem(undefined); setChatOpen(false) }}><Radar size={12}/>机会评分</button>
-          <button className={dailyView === 'observations' ? 'active' : ''} onClick={() => { setDailyView('observations'); setSelectedItem(undefined); setChatOpen(false) }}><Eye size={12}/>全部观察</button>
+          <button className={dailyView === 'results' ? 'active' : ''} onClick={() => { setDailyView('results'); setSelectedObservation(undefined); setSelectedPoolItem(undefined) }}><ListFilter size={12}/>今日关注</button>
+          <button className={dailyView === 'opportunities' ? 'active' : ''} onClick={() => { setDailyView('opportunities'); setSelectedItem(undefined); setSelectedPoolItem(undefined); setChatOpen(false) }}><Radar size={12}/>机会评分</button>
+          <button className={dailyView === 'observations' ? 'active' : ''} onClick={() => { setDailyView('observations'); setSelectedItem(undefined); setSelectedPoolItem(undefined); setChatOpen(false) }}><Eye size={12}/>全部观察</button>
+          <button className={dailyView === 'board-pool' ? 'active' : ''} onClick={() => { setDailyView('board-pool'); setSelectedItem(undefined); setSelectedObservation(undefined) }}><Layers3 size={12}/>板块池</button>
+          <button className={dailyView === 'stock-pool' ? 'active' : ''} onClick={() => { setDailyView('stock-pool'); setSelectedItem(undefined); setSelectedObservation(undefined) }}><Boxes size={12}/>个股池</button>
         </div>}
         {daily && boardScoreSystems.length > 0 && <label className="signal-score-system-select">评分体系<select aria-label="评分体系" value={selectedScoreSystem} onChange={event => setSelectedScoreSystem(event.target.value)}>{boardScoreSystems.map(system => <option key={system} value={system}>{system === 'trend-breakout' ? '趋势突破' : system}</option>)}</select></label>}
         {daily && hardEventSummary.total > 0 && <div className="signal-hard-event-strip" role="status">
           <span>硬异动 {hardEventSummary.total}</span>
           {hardEventSummary.counts.slice(0, 4).map(([eventType, count]) => <small key={eventType}>{hardEventLabel(eventType)} {count}</small>)}
         </div>}
-        {dailyView !== 'results' ? <>
+        {['board-pool', 'stock-pool'].includes(dailyView) ? <>
+          <label className="signal-observation-search"><Search size={12}/><input aria-label="搜索观察池" value={poolQuery} onChange={event => setPoolQuery(event.target.value)} placeholder="名称、代码或入池原因"/></label>
+          <div className="signal-filters secondary pool-lifecycle">
+            {(['all', 'new', 'active', 'strengthened', 'weakened', 'manual-pinned', 'cooldown'] as PoolLifecycleFilter[]).map(value => <button key={value} className={poolLifecycle === value ? 'active' : ''} onClick={() => setPoolLifecycle(value)}>{poolLifecycleLabel(value)}</button>)}
+          </div>
+          <div className="signal-result-head pool"><span>评分</span><span>标的</span><span>状态</span><span>来源</span></div>
+          <div className="signal-scroll signal-pool-list">{displayedPoolItems.map(item => <button key={item.symbol} className={selectedPoolItem?.symbol === item.symbol ? 'active' : ''} onClick={() => {
+            setSelectedPoolItem(item)
+            setSelectedItem(undefined)
+            setSelectedObservation(undefined)
+            setSelectedEvidenceId(undefined)
+            setHighlightedEvidenceId(undefined)
+          }}>
+            <PoolScoreBadge item={item}/>
+            <span><span className="instrument-name-line"><b>{item.name}</b><MarketBoardBadge instrument={item}/></span><small>{item.symbol}</small></span>
+            <span className={`pool-lifecycle-state ${item.lifecycle_state}`}>{poolLifecycleLabel(item.lifecycle_state)}<small>{poolClassification(item)}</small></span>
+            <span className="pool-source-count">{item.sources.length}<small>{item.payload.recognized ? '含辨识度' : '条证据'}</small></span>
+          </button>)}</div>
+        </> : dailyView !== 'results' ? <>
           <label className="signal-observation-search"><Search size={12}/><input aria-label="搜索板块观察" value={observationQuery} onChange={event => setObservationQuery(event.target.value)} placeholder="板块名称或代码"/></label>
           <div className="signal-result-head observation"><span>评分</span><span>板块</span><span>状态</span><span>关注</span></div>
           <div className="signal-scroll">{displayedObservations.map(item => {
             const entry = attention.find(value => value.symbol === item.symbol)
             const score = scoreBySymbol.get(item.symbol)
-            return <button key={item.symbol} className={selectedObservation?.symbol === item.symbol ? 'active' : ''} onClick={() => { setSelectedObservation(item); setSelectedItem(undefined) }}>
+            return <button key={item.symbol} className={selectedObservation?.symbol === item.symbol ? 'active' : ''} onClick={() => { setSelectedObservation(item); setSelectedItem(undefined); setSelectedPoolItem(undefined) }}>
               <ScoreBadge score={score}/>
               <span><span className="instrument-name-line"><b>{item.name}</b></span><small>{item.symbol}</small></span>
               <SignalStateCell
@@ -415,7 +510,7 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
             {(['all', 'added', 'retained', 'removed'] as ChangeFilter[]).map(value => <button key={value} className={change === value ? 'active' : ''} onClick={() => setChange(value)}>{value === 'all' ? '全部变化' : changeLabels[value]}</button>)}
           </div>
           <div className="signal-result-head"><span>评分</span><span>标的</span><span>{daily ? '状态' : '板块'}</span><span>变化</span></div>
-          <div className="signal-scroll">{selectedRun?.status === 'failed' && <div className="signal-empty compact error">{selectedRun.error}</div>}{filtered.map(item => <button key={item.item_id} className={`${selectedItem?.item_id === item.item_id ? 'active ' : ''}${item.active ? '' : 'inactive'}`} onClick={() => { setSelectedItem(item); setSelectedObservation(undefined); setSelectedEvidenceId(undefined); setHighlightedEvidenceId(undefined) }}>
+          <div className="signal-scroll">{selectedRun?.status === 'failed' && <div className="signal-empty compact error">{selectedRun.error}</div>}{filtered.map(item => <button key={item.item_id} className={`${selectedItem?.item_id === item.item_id ? 'active ' : ''}${item.active ? '' : 'inactive'}`} onClick={() => { setSelectedItem(item); setSelectedObservation(undefined); setSelectedPoolItem(undefined); setSelectedEvidenceId(undefined); setHighlightedEvidenceId(undefined) }}>
             <ScoreBadge score={item.payload.score_result} fallback={item.score * 100} rank={item.rank}/><span><span className="instrument-name-line"><b>{item.name}</b><MarketBoardBadge instrument={item}/></span><small>{item.symbol}</small></span>{daily
               ? <SignalStateCell states={item.payload.state_codes} fallback={profileLabels[item.profile]}/>
               : <span>{item.payload.board_count ?? 0}<small>{profileLabels[item.profile]}</small></span>}
@@ -425,7 +520,9 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
       </section>
       {inspected && <div className="signal-column-resizer" role="separator" aria-orientation="vertical" aria-label="调整复盘结果栏宽度" title="左右拖动调整复盘结果栏宽度" onPointerDown={event => startColumnResize('results', event)}/>}
       {inspected && <section ref={inspectorRef} className={`signal-inspector${criticalAlert ? ' has-critical' : ''}`} style={{ gridTemplateRows: criticalAlert ? `42px auto minmax(220px, 1fr) ${evidenceHeight}px` : `42px minmax(220px, 1fr) ${evidenceHeight}px` }}>
-        <header><span className="instrument-name-line"><span>{inspected.name}</span>{selectedItem && <MarketBoardBadge instrument={selectedItem}/>}</span><small>{selectedItem ? `${profileLabels[selectedItem.profile]} · 得分 ${(selectedItem.score * 100).toFixed(1)} · 置信 ${(selectedItem.confidence * 100).toFixed(1)}` : `${selectedObservation?.effective_date} · 一级固定分析`}</small>{selectedObservation
+        <header><span className="instrument-name-line"><span>{inspected.name}</span>{(selectedItem || selectedPoolItem) && <MarketBoardBadge instrument={selectedPoolItem ?? selectedItem!}/>}</span><small>{selectedPoolItem
+          ? `${poolLifecycleLabel(selectedPoolItem.lifecycle_state)} · 排名 #${selectedPoolItem.rank} · ${selectedPoolItem.sources.length} 条来源`
+          : selectedItem ? `${profileLabels[selectedItem.profile]} · 得分 ${(selectedItem.score * 100).toFixed(1)} · 置信 ${(selectedItem.confidence * 100).toFixed(1)}` : `${selectedObservation?.effective_date} · 一级固定分析`}</small>{selectedObservation
           ? <button className="icon-button" title={pinned ? '取消手工固定' : '加入手工观察池'} aria-label={pinned ? '取消手工固定' : '加入手工观察池'} onClick={() => void togglePinned()}>{pinned ? <PinOff size={13}/> : <Pin size={13}/>}</button>
           : <button className="icon-button" title="Codex 信号讨论" aria-label="Codex 信号讨论" onClick={() => setChatOpen(value => !value)}><MessageSquare size={13}/></button>}</header>
         {criticalAlert && <div className={`signal-critical-alert ${criticalAlert.tone}`}>
@@ -433,22 +530,76 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
           <span>{criticalAlert.reason}<small>{criticalAlert.condition}</small></span>
         </div>}
         <div className="signal-chart">{inspected
-          ? <ChartCanvas key={`${selectedRun?.run_id}:${inspected.symbol}`} symbol={inspected.symbol} instrumentName={inspected.name} instrumentKind={selectedItem?.kind ?? 'sector'} focused theme={theme} range="1Y" priceMode="normal" volumeVisible indicator="none" settlementVisible={false} openInterestVisible={false} asOfDate={selectedRun?.effective_date} trendAnalysisEnabled={Boolean(exactAnalysis)} trendAnalysisOverride={exactAnalysis} highlightedAnalysisItemId={highlightedAnalysisItemId} selectedScenarioTarget={selectedScenarioTarget} riskRewardVisible={scenarioVisible}/>
+          ? <ChartCanvas key={`${selectedRun?.run_id}:${inspected.symbol}`} symbol={inspected.symbol} instrumentName={inspected.name} instrumentKind={selectedPoolItem?.kind ?? selectedItem?.kind ?? 'sector'} focused theme={theme} range="1Y" priceMode="normal" volumeVisible indicator="none" settlementVisible={false} openInterestVisible={false} asOfDate={selectedRun?.effective_date} trendAnalysisEnabled={Boolean(exactAnalysis)} trendAnalysisOverride={exactAnalysis} highlightedAnalysisItemId={highlightedAnalysisItemId} selectedScenarioTarget={selectedScenarioTarget} riskRewardVisible={scenarioVisible}/>
           : <div className="signal-empty">选择一项结果查看 K 线</div>}</div>
-        <div className="signal-evidence"><div className="signal-evidence-resizer" role="separator" aria-orientation="horizontal" aria-label="调整固定算法结论高度" title="上下拖动调整结论区域高度" onPointerDown={startEvidenceResize}/><header><span>{selectedObservation ? '一级分析' : selectedItem?.payload.rendered_summary ? '固定算法结论' : '引用证据'}</span><small>{selectedObservation ? selectedObservation.state_codes.length : selectedItem?.evidence.length ?? 0}</small></header>
+        <div className="signal-evidence"><div className="signal-evidence-resizer" role="separator" aria-orientation="horizontal" aria-label="调整固定算法结论高度" title="上下拖动调整结论区域高度" onPointerDown={startEvidenceResize}/><header><span>{selectedPoolItem ? '观察池依据' : selectedObservation ? '一级分析' : selectedItem?.payload.rendered_summary ? '固定算法结论' : '引用证据'}</span><small>{selectedPoolItem ? selectedPoolItem.sources.length : selectedObservation ? selectedObservation.state_codes.length : selectedItem?.evidence.length ?? 0}</small></header>
           <div className="signal-evidence-content">
             {inspectedScore && <ScoreSummary score={inspectedScore} onHistorySelect={openHistoricalScore}/>}
             {exactAnalysis && <TradeScenarioPanel run={exactAnalysis} selectedTargetLabel={selectedScenarioTarget} visible={scenarioVisible} onTargetChange={setSelectedScenarioTarget} onVisibleChange={setScenarioVisible} onHighlightItemChange={setScenarioHighlightedItemId}/>}
-            {selectedObservation ? <pre className="signal-fixed-summary">{observationSummary(selectedObservation)}</pre> : <div className="signal-analysis-details">{selectedItem?.payload.rendered_summary && <pre className="signal-fixed-summary">{selectedItem.payload.rendered_summary}</pre>}<div className="signal-evidence-list">{selectedItem?.evidence.map(evidence => <button key={evidence.evidence_id} className={(highlightedEvidenceId ?? selectedEvidenceId) === evidence.evidence_id ? 'active' : ''} onClick={() => setSelectedEvidenceId(evidence.evidence_id)} title="点击查看该轮固定算法引用的原始或 M4 证据">
+            {selectedPoolItem ? <PoolEvidence item={selectedPoolItem} selectedSourceId={highlightedEvidenceId ?? selectedEvidenceId} onSourceActivate={activatePoolSource}/>
+              : selectedObservation ? <pre className="signal-fixed-summary">{observationSummary(selectedObservation)}</pre> : <div className="signal-analysis-details">{selectedItem?.payload.rendered_summary && <pre className="signal-fixed-summary">{selectedItem.payload.rendered_summary}</pre>}<div className="signal-evidence-list">{selectedItem?.evidence.map(evidence => <button key={evidence.evidence_id} className={(highlightedEvidenceId ?? selectedEvidenceId) === evidence.evidence_id ? 'active' : ''} onClick={() => setSelectedEvidenceId(evidence.evidence_id)} title="点击查看该轮固定算法引用的原始或 M4 证据">
             <code>[{evidence.alias}]</code><span>{evidenceTitle(evidence)}<small>{evidenceDetail(evidence)}</small></span>
           </button>)}</div></div>}
           </div>
         </div>
       </section>}
       {chatOpen && <div className="signal-column-resizer" role="separator" aria-orientation="vertical" aria-label="调整Codex对话栏宽度" title="左右拖动调整Codex对话栏宽度" onPointerDown={event => startColumnResize('chat', event)}/>}
-      {chatOpen && selectedRun && <SignalChatPanel key={selectedRun.run_id} run={selectedRun} items={items} selectedItem={selectedItem} onReferencePreview={previewReference} onReferenceActivate={activateReference} onClose={() => setChatOpen(false)}/>}
+      {chatOpen && selectedRun && <SignalChatPanel key={selectedRun.run_id} run={selectedRun} items={items} selectedItem={selectedItem} selectedPoolItem={selectedPoolItem} onReferencePreview={previewReference} onReferenceActivate={activateReference} onClose={() => setChatOpen(false)}/>}
     </section>
   </main>
+}
+
+function poolLifecycleLabel(value: PoolLifecycleFilter) {
+  const labels: Record<PoolLifecycleFilter, string> = {
+    all: '全部状态', new: '新入池', active: '持续观察', strengthened: '增强',
+    weakened: '减弱', invalidated: '失效', cooldown: '冷却', 'manual-pinned': '手工固定',
+  }
+  return labels[value]
+}
+
+function poolClassification(item: ObservationPoolItem) {
+  const classification = item.payload.opportunity_classification?.classification
+  const labels: Record<string, string> = {
+    'recognition-opportunity': '辨识度机会',
+    'independent-opportunity': '独立行情机会',
+    'recognition-watch': '辨识度观察',
+    'independent-watch': '独立行情观察',
+    'board-opportunity': '板块机会',
+    'board-watch': '板块观察',
+  }
+  return classification ? (labels[classification] ?? classification) : item.kind === 'sector' ? '板块观察' : '个股观察'
+}
+
+function PoolScoreBadge({ item }: { item: ObservationPoolItem }) {
+  const score = item.payload.opportunity_score
+  const fallback = item.kind === 'sector'
+    ? item.payload.trend_score ?? undefined
+    : item.payload.independent_score
+  return <ScoreBadge score={score} fallback={fallback} rank={item.rank}/>
+}
+
+function PoolEvidence({ item, selectedSourceId, onSourceActivate }: {
+  item: ObservationPoolItem
+  selectedSourceId?: string
+  onSourceActivate: (source: ObservationPoolSource) => void
+}) {
+  const classification = item.payload.opportunity_classification
+  const m4 = item.payload.m4_analysis
+  return <div className="signal-pool-evidence">
+    <div className="signal-pool-summary">
+      <span>{poolClassification(item)}<small>{poolLifecycleLabel(item.lifecycle_state)}</small></span>
+      <span>来源 {item.sources.length}<small>{(item.payload.source_types ?? []).join(' · ') || '固定算法'}</small></span>
+      {classification && <span>{classification.opportunity_eligible ? '具备机会资格' : '继续观察'}<small>可信目标 {classification.credible_target_count ?? 0}</small></span>}
+      {m4 && <span>M4 {m4.status ?? m4.state ?? '已测算'}<small>{m4.warning_count ?? 0} 条警告</small></span>}
+    </div>
+    <div className="signal-pool-sources">{item.sources.map((source, index) => {
+      const sourceId = `${source.source_type}:${source.source_entity_key}`
+      return <button key={`${sourceId}:${index}`} className={selectedSourceId === sourceId ? 'active' : ''} onClick={() => void onSourceActivate(source)} title="打开该项来源证据">
+        <code>[O{index + 1}]</code>
+        <span>{source.reason}<small>{source.source_type} · {source.source_entity_key}</small></span>
+      </button>
+    })}</div>
+  </div>
 }
 
 function ScoreBadge({ score, fallback, rank }: {

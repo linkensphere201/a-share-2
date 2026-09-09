@@ -151,7 +151,25 @@ def build_signal_chat_context(
     if len(requested) > 20:
         raise ValueError("signal chat accepts at most 20 selected items")
     items = []
+    pool_items: list[dict[str, object]] = []
     for item_id in requested:
+        if item_id.startswith("pool:"):
+            parts = item_id.split(":", 2)
+            if len(parts) != 3 or parts[1] not in {"board", "stock"}:
+                raise ValueError("invalid observation pool item reference")
+            snapshot = store.get_observation_pool_snapshot(run_id, parts[1])
+            pool_item = next((
+                item for item in (snapshot or {}).get("items", [])
+                if str(item.get("symbol")) == parts[2].upper()
+            ), None)
+            if pool_item is None:
+                raise ValueError("selected observation pool item does not belong to the source run")
+            pool_items.append({
+                "pool_kind": parts[1],
+                "effective_date": _iso((snapshot or {}).get("effective_date")),
+                **pool_item,
+            })
+            continue
         item = store.get_signal_review_item(run_id, item_id)
         if item is None:
             raise ValueError("selected signal items do not belong to the source run")
@@ -179,9 +197,33 @@ def build_signal_chat_context(
             "confidence": item["confidence"], "metrics": item["payload"],
             "evidence": item_evidence,
         })
+    for pool_item in pool_items:
+        item_evidence = []
+        for source in pool_item.get("sources", []):
+            code = f"O{len(evidence) + 1}"
+            value = {
+                "code": code, "pool_kind": pool_item["pool_kind"],
+                "pool_symbol": pool_item["symbol"],
+                "kind": source["source_type"],
+                "source_run_id": source["source_reference"],
+                "source_item_id": source["source_entity_key"],
+                "reason": source["reason"], "payload": source.get("payload", {}),
+            }
+            evidence.append({**value, "analysis_item_id": source["source_entity_key"]})
+            item_evidence.append(value)
+        selected.append({
+            "item_id": f"pool:{pool_item['pool_kind']}:{pool_item['symbol']}",
+            "symbol": pool_item["symbol"], "name": pool_item["name"],
+            "profile": f"{pool_item['pool_kind']}-pool",
+            "rank": pool_item["rank"], "change_type": pool_item["lifecycle_state"],
+            "active": pool_item["lifecycle_state"] != "cooldown",
+            "score": pool_item.get("payload", {}).get("independent_score", 0),
+            "confidence": None, "metrics": pool_item.get("payload", {}),
+            "evidence": item_evidence,
+        })
     selected_keys = {
         str(value)
-        for item in items
+        for item in [*items, *pool_items]
         for value in (item.get("item_key"), item.get("symbol"))
         if value
     }
@@ -235,7 +277,7 @@ def render_signal_chat_prompt(
         "你正在分析 StockHarness 的一个不可变信号复盘结果。",
         "固定算法输出是观察事实；你的回答属于解释或质疑，不得改写信号结果。",
         "只把 selected_items 当作初始上下文；需要其他标的或证据时，按需调用 stock_harness_embedded MCP 只读工具。",
-        "引用信号证据时使用快照中的 [S*] 代号，并区分算法证据、AI 推断和不确定性。",
+        "引用信号证据时使用快照中的 [S*] 或观察池 [O*] 代号，并区分算法证据、AI 推断和不确定性。",
         f"本轮模板要求：{instruction}",
         "<stockharness_signal_context>",
         json.dumps(context, ensure_ascii=False, sort_keys=True, separators=(",", ":")),

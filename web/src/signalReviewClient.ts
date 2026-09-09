@@ -177,6 +177,64 @@ export type SignalScoreResult = {
   }>
 }
 
+export type ObservationPoolSource = {
+  source_type: string
+  source_reference: string
+  source_entity_key: string
+  reason: string
+  payload: Record<string, unknown>
+}
+
+export type ObservationPoolItem = {
+  symbol: string
+  name: string
+  kind: string
+  exchange: string
+  lifecycle_state: 'new' | 'active' | 'strengthened' | 'weakened' | 'invalidated' | 'cooldown' | 'manual-pinned'
+  rank: number
+  payload: {
+    trend_score?: number | null
+    trend_grade?: string | null
+    trend_eligible?: boolean
+    recognition_assignment_count?: number
+    recognized?: boolean
+    independent_score?: number
+    manual_pinned?: boolean
+    source_types?: string[]
+    member_scan?: Record<string, unknown> | null
+    independent_scan?: Record<string, unknown> | null
+    screener_results?: Array<Record<string, unknown>>
+    m4_analysis?: {
+      state?: string
+      run_id?: string
+      status?: string
+      scenario?: Record<string, unknown>
+      core_item_ids?: string[]
+      warning_count?: number
+    }
+    opportunity_classification?: {
+      classification?: string
+      recognition_state?: string
+      independent_strength_eligible?: boolean
+      opportunity_state?: string
+      opportunity_eligible?: boolean
+      credible_target_count?: number
+    }
+    opportunity_score?: SignalScoreResult
+  }
+  sources: ObservationPoolSource[]
+}
+
+export type ObservationPoolSnapshot = {
+  source_run_id: string
+  pool_kind: 'board' | 'stock'
+  effective_date: string
+  algorithm_version: string
+  summary: Record<string, unknown>
+  created_at_ms: number
+  items: ObservationPoolItem[]
+}
+
 async function json<T>(response: Response): Promise<T> {
   if (response.ok) return response.json() as Promise<T>
   let detail = `HTTP ${response.status}`
@@ -213,6 +271,14 @@ export async function listSignalScores(
   return (await json<{ items: SignalScoreResult[] }>(
     await fetch(`/api/signals/runs/${encodeURIComponent(runId)}/scores`, { signal }),
   )).items
+}
+
+export async function loadObservationPool(
+  runId: string, poolKind: 'board' | 'stock', signal?: AbortSignal,
+): Promise<ObservationPoolSnapshot> {
+  return json<ObservationPoolSnapshot>(await fetch(
+    `/api/observation-pools/runs/${encodeURIComponent(runId)}/${poolKind}`, { signal },
+  ))
 }
 
 export async function startSignalRun(signalId: string): Promise<SignalRun> {

@@ -6,14 +6,15 @@ import {
   openSignalChatConversation, startChatTurn, streamChatTurn,
   type ChatConversation, type ChatConversationSummary, type CodexCapabilities,
 } from './aiChatClient'
-import type { SignalItem, SignalRun } from './signalReviewClient'
+import type { ObservationPoolItem, SignalItem, SignalRun } from './signalReviewClient'
 
 export function SignalChatPanel({
-  run, items, selectedItem, onReferencePreview, onReferenceActivate, onClose,
+  run, items, selectedItem, selectedPoolItem, onReferencePreview, onReferenceActivate, onClose,
 }: {
   run: SignalRun
   items: SignalItem[]
   selectedItem?: SignalItem
+  selectedPoolItem?: ObservationPoolItem
   onReferencePreview: (itemId?: string, evidenceId?: string) => void
   onReferenceActivate: (itemId: string, evidenceId: string) => void
   onClose: () => void
@@ -30,7 +31,10 @@ export function SignalChatPanel({
   const streamRef = useRef<EventSource | null>(null)
   const runIdRef = useRef(run.run_id)
   runIdRef.current = run.run_id
-  const referenceMap = useMemo(() => buildSignalReferenceMap(items), [items])
+  const referenceMap = useMemo(
+    () => buildSignalReferenceMap(items, selectedPoolItem),
+    [items, selectedPoolItem],
+  )
   const previewReference = (reference?: string) => {
     if (!reference) { onReferencePreview(); return }
     const [itemId, evidenceId] = reference.split('\u0000', 2)
@@ -105,7 +109,11 @@ export function SignalChatPanel({
     try {
       const turn = await startChatTurn(
         conversation.conversation_id, content, templateId, undefined,
-        selectedItem ? [selectedItem.item_id] : [],
+        selectedItem
+          ? [selectedItem.item_id]
+          : selectedPoolItem
+            ? [`pool:${selectedPoolItem.kind === 'sector' ? 'board' : 'stock'}:${selectedPoolItem.symbol}`]
+            : [],
       )
       connect(turn.turn_id, conversation.conversation_id, run.run_id)
     } catch (reason) {
@@ -146,7 +154,9 @@ export function SignalChatPanel({
       <select aria-label="信号会话历史" value={conversation?.conversation_id ?? ''} onChange={event => void refreshHistory(event.target.value)}>
         {history.map(item => <option key={item.conversation_id} value={item.conversation_id}>{item.title} · {item.turn_count}</option>)}
       </select>
-      <small>{run.effective_date} R{run.revision} · {selectedItem ? `${selectedItem.name} ${selectedItem.symbol}` : '未选择标的'}</small>
+      <small>{run.effective_date} R{run.revision} · {selectedItem
+        ? `${selectedItem.name} ${selectedItem.symbol}`
+        : selectedPoolItem ? `${selectedPoolItem.name} ${selectedPoolItem.symbol}` : '未选择标的'}</small>
     </div>
     <div className="signal-chat-messages">
       {conversation?.turns.flatMap(turn => turn.messages.map(message => <article key={message.message_id} className={`analysis-chat-message ${message.role}`}>
@@ -165,7 +175,9 @@ export function SignalChatPanel({
   </section>
 }
 
-export function buildSignalReferenceMap(items: SignalItem[]): Map<string, string> {
+export function buildSignalReferenceMap(
+  items: SignalItem[], selectedPoolItem?: ObservationPoolItem,
+): Map<string, string> {
   const references = new Map<string, string>()
   const ambiguous = new Set<string>()
   for (const item of items) for (const evidence of item.evidence) {
@@ -173,5 +185,9 @@ export function buildSignalReferenceMap(items: SignalItem[]): Map<string, string
     else references.set(evidence.alias, `${item.item_id}\u0000${evidence.evidence_id}`)
   }
   for (const alias of ambiguous) references.delete(alias)
+  selectedPoolItem?.sources.forEach((source, index) => references.set(
+    `O${index + 1}`,
+    `pool:${selectedPoolItem.kind === 'sector' ? 'board' : 'stock'}:${selectedPoolItem.symbol}\u0000${source.source_type}:${source.source_entity_key}`,
+  ))
   return references
 }

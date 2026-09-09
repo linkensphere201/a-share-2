@@ -753,6 +753,17 @@ def test_board_observation_pool_unions_scores_anomalies_and_recognition() -> Non
     assert anomaly["payload"]["trend_eligible"] is False
     assert anomaly["sources"][0]["reason"] == "sudden-volume-expansion"
 
+    context = build_signal_chat_context(
+        store, run_id=str(daily["run_id"]),
+        selected_item_ids=["pool:board:BK001.DC"],
+    )
+    assert context["selected_items"][0]["symbol"] == "BK001.DC"
+    assert context["selected_items"][0]["item_id"] == "pool:board:BK001.DC"
+    assert {evidence["kind"] for evidence in context["evidence"]} == {
+        "trend-score", "recognition-assignment",
+    }
+    assert context["evidence"][0]["code"] == "O1"
+
     with TestClient(create_app(store=store)) as client:
         response = client.get(
             f"/api/observation-pools/runs/{daily['run_id']}/board"

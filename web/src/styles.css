@@ -172,7 +172,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .signal-filters button { min-width: max-content; padding: 0 7px; color: var(--theme-muted); border: 0; border-radius: 2px; background: transparent; font-size: 9px; }
 .signal-filters button.active { color: var(--theme-text-strong); background: var(--theme-accent-soft); }
 .signal-filters.secondary button { font-size: 8px; }
-.signal-view-switch { height: 31px; display: flex; gap: 3px; padding: 3px 6px; border-bottom: 1px solid var(--theme-border); }
+.signal-view-switch { height: 31px; display: flex; gap: 3px; padding: 3px 6px; overflow-x: auto; border-bottom: 1px solid var(--theme-border); }
 .signal-view-switch button { display: inline-flex; align-items: center; gap: 4px; padding: 0 8px; color: var(--theme-muted); border: 0; border-radius: 2px; background: transparent; font-size: 9px; }
 .signal-view-switch button.active { color: var(--theme-text-strong); background: var(--theme-accent-soft); }
 .signal-score-system-select { min-height: 27px; display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 3px 8px; color: var(--theme-muted); border-bottom: 1px solid var(--theme-border); font-size: 8px; }
@@ -199,6 +199,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .signal-result-head.observation, .signal-result-head.observation + .signal-scroll > button { grid-template-columns: 48px minmax(92px, .8fr) minmax(112px, 1.2fr) 36px; }
 .signal-result-head.observation + .signal-scroll > button { width: 100%; min-height: 54px; display: grid; align-items: center; gap: 6px; padding: 6px 8px; color: var(--theme-text); text-align: left; border: 0; border-bottom: 1px solid var(--theme-border); background: transparent; }
 .signal-result-head.observation + .signal-scroll > button:hover { background: var(--theme-hover); }
+.signal-filters.pool-lifecycle { min-height: 27px; }
+.signal-result-head.pool, .signal-pool-list > button { grid-template-columns: 48px minmax(96px, 1fr) minmax(82px, 106px) 42px; }
+.pool-lifecycle-state, .pool-source-count { color: var(--theme-text); font-size: 9px; }
+.pool-lifecycle-state.new, .pool-lifecycle-state.strengthened { color: #d8aa4f; }
+.pool-lifecycle-state.weakened, .pool-lifecycle-state.cooldown, .pool-lifecycle-state.invalidated { color: #b87d84; }
+.pool-lifecycle-state.manual-pinned { color: var(--theme-accent); }
+.pool-source-count { text-align: right; }
 .attention-state { color: var(--theme-muted); font-size: 9px; }
 .attention-state.manual-pinned { color: var(--theme-accent); }
 .attention-state.auto-promoted { color: #d5a253; }
@@ -252,6 +259,12 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .signal-analysis-details { min-height: 0; overflow: auto; }
 .signal-analysis-details .signal-fixed-summary { overflow: visible; border-bottom: 1px solid var(--theme-border); }
 .signal-evidence-list { display: grid; align-content: start; grid-template-columns: repeat(auto-fill, minmax(185px, 1fr)); gap: 1px; background: var(--theme-border); }
+.signal-pool-evidence { min-height: 0; }
+.signal-pool-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(135px, 1fr)); gap: 1px; background: var(--theme-border); border-bottom: 1px solid var(--theme-border); }
+.signal-pool-summary > span { min-width: 0; padding: 7px 9px; color: var(--theme-text-strong); background: var(--theme-surface); font-size: 10px; }
+.signal-pool-summary small { display: block; margin-top: 2px; overflow: hidden; color: var(--theme-muted); text-overflow: ellipsis; white-space: nowrap; font-size: 8px; }
+.signal-pool-sources { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 1px; background: var(--theme-border); }
+.signal-pool-sources > button { min-height: 45px; }
 .signal-empty { height: 100%; display: grid; place-items: center; color: var(--theme-muted); font-size: 11px; }
 .signal-empty.compact { min-height: 80px; height: auto; padding: 16px; text-align: center; }
 .signal-empty.error { color: #d98989; }

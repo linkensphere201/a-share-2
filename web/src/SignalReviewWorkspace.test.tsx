@@ -349,6 +349,60 @@ describe('SignalReviewWorkspace', () => {
     await user.click(screen.getByText('[S1]').closest('button')!)
     expect(screen.getByTestId('signal-chart').dataset.highlight).toBe('line-1')
   })
+
+  it('opens the persisted stock pool with sources and its exact M4 chart', async () => {
+    const dailyDefinition = {
+      ...definition, signal_id: 'daily-market-board-review', cadence: 'daily',
+      profiles: ['market', 'attention'],
+    }
+    const dailyRun = { ...run, signal_id: dailyDefinition.signal_id, cadence: 'daily' }
+    const pool = {
+      source_run_id: 'run-1', pool_kind: 'stock', effective_date: '2026-09-04',
+      algorithm_version: 'stock-pool-v1', summary: { item_count: 1 }, created_at_ms: 1,
+      items: [{
+        symbol: '300001.SZ', name: '池内标的', kind: 'stock', exchange: 'SZ',
+        lifecycle_state: 'strengthened', rank: 1,
+        payload: {
+          independent_score: 86, recognized: true,
+          source_types: ['independent-strength', 'm4-analysis'],
+          m4_analysis: { run_id: 'pool-m4-1', status: 'completed', warning_count: 0 },
+          opportunity_classification: {
+            classification: 'independent-opportunity', opportunity_eligible: true,
+            credible_target_count: 2,
+          },
+        },
+        sources: [{
+          source_type: 'm4-analysis', source_reference: 'pool-m4-1',
+          source_entity_key: 'scenario-1', reason: '独立强势且形成结构化交易场景',
+          payload: { analysis_item_id: 'line-1' },
+        }],
+      }],
+    }
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === '/api/signals/definitions') return response({ items: [dailyDefinition] })
+      if (url.includes('/api/signals/runs?')) return response({ items: [dailyRun] })
+      if (url.endsWith('/items')) return response({ items: [] })
+      if (url.endsWith('/scores')) return response({ items: [] })
+      if (url.endsWith('/attention')) return response({ items: [] })
+      if (url === '/api/observation-pools/runs/run-1/stock') return response(pool)
+      if (url === '/api/analysis/runs/pool-m4-1') return response({
+        run_id: 'pool-m4-1', items: [],
+      })
+      throw new Error(`unexpected URL ${url}`)
+    }))
+    const user = userEvent.setup()
+    render(<SignalReviewWorkspace theme={themes[0]} onClose={() => undefined}/>)
+
+    await user.click(await screen.findByRole('button', { name: /个股池/ }))
+    await user.click((await screen.findByText('300001.SZ')).closest('button')!)
+    expect(screen.getByTestId('signal-chart').textContent).toBe('300001.SZ')
+    expect(screen.getByTestId('signal-chart').dataset.analysisRun).toBe('pool-m4-1')
+    expect(screen.getByText('独立强势且形成结构化交易场景')).toBeTruthy()
+    expect(screen.getByText('具备机会资格')).toBeTruthy()
+    await user.click(screen.getByText('[O1]').closest('button')!)
+    expect(screen.getByText('[O1]').closest('button')?.classList.contains('active')).toBe(true)
+  })
 })
 
 const definition = {
