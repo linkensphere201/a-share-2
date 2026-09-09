@@ -870,6 +870,33 @@ CREATE TABLE IF NOT EXISTS signal_review_items (
 CREATE INDEX IF NOT EXISTS signal_review_items_rank
 ON signal_review_items(run_id, profile, active DESC, rank);
 
+CREATE TABLE IF NOT EXISTS signal_review_scores (
+    run_id TEXT NOT NULL,
+    entity_key TEXT NOT NULL,
+    instrument_id INTEGER NOT NULL,
+    system_id TEXT NOT NULL,
+    scorer_version TEXT NOT NULL,
+    entity_scope TEXT NOT NULL,
+    eligible INTEGER NOT NULL CHECK (eligible IN (0, 1)),
+    total_score REAL NOT NULL CHECK (total_score >= 0 AND total_score <= 100),
+    grade TEXT NOT NULL CHECK (grade IN ('S', 'A', 'B', 'C', 'D')),
+    rank INTEGER NOT NULL CHECK (rank > 0),
+    participant_count INTEGER NOT NULL CHECK (participant_count > 0),
+    ranking_universe_digest TEXT NOT NULL,
+    verdict TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    risk_summary TEXT NOT NULL,
+    change_summary TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    created_at_ms INTEGER NOT NULL,
+    PRIMARY KEY (run_id, entity_key, system_id),
+    FOREIGN KEY (run_id) REFERENCES signal_review_runs(run_id) ON DELETE CASCADE,
+    FOREIGN KEY (instrument_id) REFERENCES instruments(instrument_id)
+) WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS signal_review_scores_rank
+ON signal_review_scores(run_id, system_id, eligible DESC, rank);
+
 CREATE TABLE IF NOT EXISTS board_daily_observations (
     run_id TEXT NOT NULL,
     instrument_id INTEGER NOT NULL,

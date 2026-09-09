@@ -104,6 +104,22 @@ def create_analysis_router() -> APIRouter:
             raise HTTPException(status_code=404, detail="signal review item not found")
         return result
 
+    @router.get("/api/signals/runs/{run_id}/scores")
+    def list_signal_scores(
+        run_id: str, request: Request, system_id: str | None = None,
+        limit: int = Query(default=5000, ge=1, le=5000),
+        offset: int = Query(default=0, ge=0),
+    ) -> dict[str, object]:
+        selected_store = store(request)
+        if selected_store.get_signal_review_run(run_id) is None:
+            raise HTTPException(status_code=404, detail="signal review run not found")
+        return {
+            "items": selected_store.list_signal_review_scores(
+                run_id, system_id=system_id, limit=limit, offset=offset,
+            ),
+            "total": selected_store.count_signal_review_scores(run_id, system_id),
+        }
+
     @router.get("/api/signals/runs/{run_id}/board-observations")
     def list_board_observations(
         run_id: str, request: Request, symbol: str | None = None,

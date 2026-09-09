@@ -48,6 +48,7 @@ describe('SignalReviewWorkspace', () => {
       if (url === '/api/signals/definitions') return response({ items: [definition] })
       if (url.includes('/api/signals/runs?')) return response({ items: [run] })
       if (url.endsWith('/items')) return response({ items })
+      if (url.endsWith('/scores')) return response({ items: [] })
       throw new Error(`unexpected URL ${url}`)
     }))
     const user = userEvent.setup()
@@ -137,6 +138,7 @@ describe('SignalReviewWorkspace', () => {
       if (url === '/api/signals/definitions') return response({ items: [definition] })
       if (url.includes('/api/signals/runs?')) return response({ items: [run] })
       if (url.endsWith('/items')) return response({ items })
+      if (url.endsWith('/scores')) return response({ items: [] })
       if (url === '/api/ai/codex/status') return response({
         codex: { available: true, authenticated: true, experimental: true },
         templates: [], signal_templates: [{ id: 'signal-challenge', version: 'v1', label: '反例质疑', instruction: 'test' }],
@@ -217,6 +219,7 @@ describe('SignalReviewWorkspace', () => {
       if (url === '/api/signals/definitions') return response({ items: [dailyDefinition] })
       if (url.includes('/api/signals/runs?')) return response({ items: [dailyRun] })
       if (url.endsWith('/items')) return response({ items: [] })
+      if (url.endsWith('/scores')) return response({ items: [] })
       if (url.includes('/board-observations?')) return response({ items: [observation], total: 1 })
       if (url.endsWith('/attention') && init?.method !== 'PUT') return response({ items: pinned ? [{
         signal_id: dailyDefinition.signal_id, symbol: observation.symbol,
@@ -248,6 +251,47 @@ describe('SignalReviewWorkspace', () => {
     expect(await screen.findByRole('button', { name: '取消手工固定' })).toBeTruthy()
   })
 
+  it('orders the complete board universe by opportunity score and keeps hard events visible', async () => {
+    const dailyDefinition = {
+      ...definition, signal_id: 'daily-market-board-review', name: '每日大盘与板块复盘',
+      cadence: 'daily', profiles: ['market', 'attention'],
+    }
+    const dailyRun = { ...run, signal_id: dailyDefinition.signal_id, cadence: 'daily' }
+    const observations = [
+      dailyObservation('BK001.DC', '低分板块'),
+      dailyObservation('BK002.DC', '高分板块'),
+    ]
+    const scores = [
+      signalScore('BK001.DC', 58, false, 2, []),
+      signalScore('BK002.DC', 82, true, 1, [{
+        event_type: 'major-trend-breakout', direction: 'up', severity: 'high',
+        state: 'new', source_code: '6m-descending-envelope-broken',
+      }]),
+    ]
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === '/api/signals/definitions') return response({ items: [dailyDefinition] })
+      if (url.includes('/api/signals/runs?')) return response({ items: [dailyRun] })
+      if (url.endsWith('/items')) return response({ items: [] })
+      if (url.endsWith('/scores')) return response({ items: scores })
+      if (url.endsWith('/attention')) return response({ items: [] })
+      if (url.includes('/board-observations?')) return response({ items: observations, total: 2 })
+      throw new Error(`unexpected URL ${url}`)
+    }))
+    const user = userEvent.setup()
+    render(<SignalReviewWorkspace theme={themes[0]} onClose={() => undefined}/>)
+
+    await user.click(await screen.findByRole('button', { name: /机会评分/ }))
+    expect(await screen.findByText('硬异动 1')).toBeTruthy()
+    expect(await screen.findByText('高分板块')).toBeTruthy()
+    expect(screen.queryByText('低分板块')).toBeNull()
+    expect(screen.getByText('82')).toBeTruthy()
+    await user.click(screen.getByText('高分板块').closest('button')!)
+    expect(screen.getByText('趋势机会')).toBeTruthy()
+    expect(screen.getByText('固定算法摘要')).toBeTruthy()
+    expect(screen.getByText('较上一轮增强')).toBeTruthy()
+  })
+
   it('loads the exact M4 run and highlights the cited analysis item', async () => {
     const dailyDefinition = {
       ...definition, signal_id: 'daily-market-board-review', cadence: 'daily',
@@ -273,6 +317,7 @@ describe('SignalReviewWorkspace', () => {
       if (url === '/api/signals/definitions') return response({ items: [dailyDefinition] })
       if (url.includes('/api/signals/runs?')) return response({ items: [dailyRun] })
       if (url.endsWith('/items')) return response({ items: [dailyItem] })
+      if (url.endsWith('/scores')) return response({ items: [] })
       if (url.endsWith('/attention')) return response({ items: [] })
       if (url === '/api/analysis/runs/deep-1') return response({ run_id: 'deep-1', items: [{
         item_id: 'scenario-1', item_type: 'scenario', payload: {
@@ -333,6 +378,35 @@ const conversation = {
   symbol: null, timeframe: null, source_run_id: null, as_of_date: '2026-09-04',
   algorithm_version: 'a1', config_version: 'v1', completion_state: 'complete',
   preview: false, title: 'weekly · 2026-09-04 R2', status: 'active', turns: [],
+}
+
+function dailyObservation(symbol: string, name: string) {
+  return {
+    run_id: 'run-1', symbol, name, exchange: 'DC', effective_date: '2026-09-04',
+    coverage_state: 'complete', state_codes: [], metrics: {}, disqualifiers: [],
+    attention_reasons: [], attention_eligible: false, conclusion_code: 'neutral',
+    rendered_summary: '固定观察', comparison: { transition: 'new' },
+    deep_analysis_state: 'completed-no-structural-evidence',
+    deep_analysis_run_id: null, input_digest: `digest-${symbol}`,
+    algorithm_version: 'daily-v1', config_version: 'config-v1',
+  }
+}
+
+function signalScore(
+  symbol: string, totalScore: number, eligible: boolean, rank: number,
+  hardEvents: Array<Record<string, string>>,
+) {
+  return {
+    run_id: 'run-1', entity_key: symbol, symbol, name: symbol, kind: 'sector',
+    exchange: 'DC', effective_date: '2026-09-04', system_id: 'trend-breakout',
+    scorer_version: 'trend-breakout-score-v1', entity_scope: 'board', eligible,
+    total_score: totalScore, grade: totalScore >= 75 ? 'A' : 'C', rank,
+    participant_count: 2, eligible_count: 1, verdict: '趋势机会',
+    summary: '固定算法摘要', risk_summary: '固定风险摘要',
+    change_summary: '较上一轮增强', stressed_risk_reward: eligible ? 3.8 : 2.2,
+    components: {}, penalties: [], disqualifiers: eligible ? [] : ['below-3r'],
+    hard_events: hardEvents, history: [{ effective_date: '2026-09-03', total_score: 70 }],
+  }
 }
 
 function response(payload: unknown, status = 200) {

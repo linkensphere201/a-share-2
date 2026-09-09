@@ -9,7 +9,7 @@ from stock_harness.signal_review import (
     _apply_transition_attention,
     _aggregate_assignments, _assign_evidence_aliases,
     _compare_items, _order_daily_deep_candidates, _result_digest,
-    _market_style_divergence,
+    _market_style_divergence, _score_history,
 )
 from stock_harness.daily_signal_analysis import (
     _price_space, analyze_daily_series, build_board_analysis_record,
@@ -18,6 +18,9 @@ from stock_harness.daily_signal_analysis import (
 from stock_harness.models import DailyBar, StockDailyLimit
 from stock_harness.sqlite_store import SQLiteMarketDataStore
 from stock_harness.chat_context import build_signal_chat_context
+from stock_harness.review_scoring import (
+    RECOGNITION_SCORER, default_scorer_registry, score_entities,
+)
 
 
 def test_signal_review_snapshots_preserve_revisions_and_diffs() -> None:
@@ -103,6 +106,26 @@ def test_signal_review_only_compares_compatible_runs() -> None:
     store.close()
 
 
+def test_score_history_rejects_an_incompatible_scorer_version() -> None:
+    class StoreFixture:
+        def list_signal_review_scores(self, _run_id, system_id=None):
+            assert system_id == "trend-breakout"
+            return [
+                {"entity_key": "BK001.DC", "symbol": "BK001.DC",
+                 "scorer_version": "trend-breakout-score-v0"},
+                {"entity_key": "BK002.DC", "symbol": "BK002.DC",
+                 "scorer_version": "trend-breakout-score-v1"},
+            ]
+
+    prior, recent = _score_history(
+        StoreFixture(), [{"run_id": "prior"}],
+        "trend-breakout", "trend-breakout-score-v1",
+    )
+
+    assert set(prior) == {"BK002.DC"}
+    assert len(recent["BK002.DC"]) == 1
+
+
 def test_removed_signal_evidence_is_realiased_after_current_items() -> None:
     current = [_item("000001.SZ", "added")]
     previous_item = _item("000002.SZ", "added")
@@ -171,9 +194,13 @@ def test_signal_chat_is_run_bound_and_snapshots_only_selected_items() -> None:
         definition_version="definition-v1", algorithm_version="algorithm-v1",
         cadence="weekly", effective_date=date(2026, 9, 4), parameters={"top": 2},
     )
+    source_items = [_item("000001.SZ", "added"), _item("000002.SZ", "retained", 2)]
+    frozen_scores = score_entities(
+        default_scorer_registry().get(RECOGNITION_SCORER), source_items,
+    )
     store.complete_signal_review_run(
         str(run["run_id"]),
-        items=[_item("000001.SZ", "added"), _item("000002.SZ", "retained", 2)],
+        items=source_items, scores=frozen_scores,
         summary={"note": "frozen"}, input_digest="signal-digest",
     )
     conversation = store.get_or_create_signal_chat_conversation(run_id=str(run["run_id"]))
@@ -189,6 +216,10 @@ def test_signal_chat_is_run_bound_and_snapshots_only_selected_items() -> None:
     assert conversation["context_id"] == run["run_id"]
     assert [item["symbol"] for item in context["selected_items"]] == ["000002.SZ"]
     assert context["signal"]["summary"] == {"note": "frozen"}
+    assert context["schema_version"] == "signal-chat-context-v2"
+    assert len(context["selected_scores"]) == 1
+    assert context["selected_scores"][0]["symbol"] == "000002.SZ"
+    assert context["selected_scores"][0]["system_id"] == RECOGNITION_SCORER
     persisted = store.get_chat_turn_context(str(turn["turn_id"]))
     assert persisted is not None
     assert persisted["context_kind"] == "signal_run"
@@ -468,8 +499,15 @@ def test_daily_signal_persists_every_board_but_displays_attention_only() -> None
     }
     assert loud_observation["deep_analysis_run_id"]
     items = store.list_signal_review_items(str(run["run_id"]))
+    scores = store.list_signal_review_scores(str(run["run_id"]))
+    assert len(scores) == 4
+    assert {score["system_id"] for score in scores} == {
+        "market-regime", "trend-breakout",
+    }
+    assert all(score["participant_count"] == 2 for score in scores)
     assert {item["symbol"] for item in items if item["profile"] == "attention"} == {"BK002.DC"}
     focused_board = next(item for item in items if item["profile"] == "attention")
+    assert focused_board["payload"]["score_result"]["system_id"] == "trend-breakout"
     assert "- 证据：[S" in focused_board["payload"]["rendered_summary"]
     market_item = next(item for item in items if item["symbol"] == "000001.SH")
     assert "- 风格：" in market_item["payload"]["rendered_summary"]
@@ -478,6 +516,13 @@ def test_daily_signal_persists_every_board_but_displays_attention_only() -> None
         for evidence in market_item["evidence"]
     )
     assert run["summary"]["ai_used"] is False
+    with TestClient(create_app(store=store)) as client:
+        score_response = client.get(
+            f"/api/signals/runs/{run['run_id']}/scores",
+            params={"system_id": "trend-breakout"},
+        )
+    assert score_response.status_code == 200
+    assert score_response.json()["total"] == 2
 
     replay = service.run_sync(DAILY_MARKET_BOARD_SIGNAL, baseline[-1].trade_date)
     replay_observations = store.list_board_daily_observations(

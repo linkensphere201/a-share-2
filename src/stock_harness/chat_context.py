@@ -179,10 +179,29 @@ def build_signal_chat_context(
             "confidence": item["confidence"], "metrics": item["payload"],
             "evidence": item_evidence,
         })
+    selected_keys = {
+        str(value)
+        for item in items
+        for value in (item.get("item_key"), item.get("symbol"))
+        if value
+    }
+    selected_scores = [
+        {
+            **score,
+            "effective_date": (
+                score["effective_date"].isoformat()
+                if isinstance(score.get("effective_date"), date)
+                else score.get("effective_date")
+            ),
+        }
+        for score in store.list_signal_review_scores(run_id)
+        if str(score.get("entity_key")) in selected_keys
+        or str(score.get("symbol")) in selected_keys
+    ]
     effective_date = run["effective_date"]
     assert isinstance(effective_date, date)
     return {
-        "schema_version": "signal-chat-context-v1",
+        "schema_version": "signal-chat-context-v2",
         "context_kind": "signal_run", "context_id": run_id,
         "source_run_id": None,
         "workspace_reference": f"signal:{run['signal_id']}:{run_id}",
@@ -201,7 +220,8 @@ def build_signal_chat_context(
             "diff": {"added": run["added_count"], "retained": run["retained_count"],
                      "removed": run["removed_count"]},
         },
-        "selected_items": selected, "evidence": evidence,
+        "selected_items": selected, "selected_scores": selected_scores,
+        "evidence": evidence,
         "visible_evidence_codes": [item["code"] for item in evidence],
         "truncated": False,
     }

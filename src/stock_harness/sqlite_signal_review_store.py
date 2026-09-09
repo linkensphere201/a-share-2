@@ -107,6 +107,7 @@ class SQLiteSignalReviewStoreMixin:
     def complete_signal_review_run(
         self, run_id: str, *, items: Sequence[dict[str, object]],
         summary: dict[str, object], input_digest: str,
+        scores: Sequence[dict[str, object]] = (),
     ) -> dict[str, object]:
         now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
         counts = {name: sum(item["change_type"] == name for item in items)
@@ -123,6 +124,38 @@ class SQLiteSignalReviewStoreMixin:
             ).fetchone()
             if status is None or str(status[0]) != "running":
                 raise ValueError("signal review run is not running")
+            score_symbols = {str(value["symbol"]).upper() for value in scores}
+            score_instrument_ids = self._instrument_ids(score_symbols)
+            missing_score_symbols = score_symbols - score_instrument_ids.keys()
+            if missing_score_symbols:
+                raise ValueError(
+                    "unknown scored instruments: " + ", ".join(sorted(missing_score_symbols))
+                )
+            for score in scores:
+                symbol = str(score["symbol"]).upper()
+                self._connection.execute(
+                    """
+                    INSERT INTO signal_review_scores(
+                        run_id, entity_key, instrument_id, system_id, scorer_version,
+                        entity_scope, eligible, total_score, grade, rank,
+                        participant_count, ranking_universe_digest, verdict,
+                        summary, risk_summary, change_summary, payload_json,
+                        created_at_ms
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        run_id, score.get("entity_key", symbol),
+                        score_instrument_ids[symbol], score["system_id"],
+                        score["scorer_version"], score["entity_scope"],
+                        int(bool(score["eligible"])), float(score["total_score"]),
+                        score["grade"], int(score["rank"]),
+                        int(score["participant_count"]),
+                        score["ranking_universe_digest"], score["verdict"],
+                        score["summary"], score["risk_summary"],
+                        score["change_summary"],
+                        json.dumps(score, ensure_ascii=False, sort_keys=True), now_ms,
+                    ),
+                )
             for item in items:
                 identity = self._canonical_instrument_identity(str(item["symbol"]))
                 if identity is None:
@@ -169,6 +202,51 @@ class SQLiteSignalReviewStoreMixin:
                  now_ms, run_id),
             )
         return self.get_signal_review_run(run_id)  # type: ignore[return-value]
+
+    def list_signal_review_scores(
+        self, run_id: str, system_id: str | None = None,
+        limit: int = 5000, offset: int = 0,
+    ) -> list[dict[str, object]]:
+        if not 1 <= limit <= 5000:
+            raise ValueError("score limit must be between 1 and 5000")
+        if offset < 0:
+            raise ValueError("score offset must be non-negative")
+        system_clause = "AND score.system_id = ?" if system_id else ""
+        parameters: tuple[object, ...] = (
+            (run_id, system_id, limit, offset) if system_id
+            else (run_id, limit, offset)
+        )
+        with self._lock:
+            rows = self._connection.execute(
+                f"""
+                SELECT instrument.symbol, instrument.name, instrument.kind,
+                       instrument.exchange, run.effective_date, score.payload_json
+                FROM signal_review_scores AS score
+                JOIN instruments AS instrument USING (instrument_id)
+                JOIN signal_review_runs AS run USING (run_id)
+                WHERE score.run_id = ? {system_clause}
+                ORDER BY score.system_id, score.eligible DESC, score.rank,
+                         instrument.symbol
+                LIMIT ? OFFSET ?
+                """, parameters,
+            ).fetchall()
+        return [{
+            **json.loads(str(row[5])),
+            "run_id": run_id, "symbol": str(row[0]), "name": str(row[1]),
+            "kind": str(row[2]), "exchange": str(row[3]),
+            "effective_date": _date_from_key(int(row[4])),
+        } for row in rows]
+
+    def count_signal_review_scores(
+        self, run_id: str, system_id: str | None = None,
+    ) -> int:
+        clause = " AND system_id = ?" if system_id else ""
+        parameters: tuple[object, ...] = (run_id, system_id) if system_id else (run_id,)
+        with self._lock:
+            return int(self._connection.execute(
+                f"SELECT count(*) FROM signal_review_scores WHERE run_id = ?{clause}",
+                parameters,
+            ).fetchone()[0])
 
     def fail_signal_review_run(self, run_id: str, error: str) -> None:
         now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)

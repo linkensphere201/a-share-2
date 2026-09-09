@@ -8,10 +8,10 @@ import { MarketBoardBadge } from './MarketBoardBadge'
 import type { ThemeDefinition } from './themeStore'
 import {
   listBoardObservations, listSignalAttention, listSignalDefinitions, listSignalItems,
-  listSignalRuns, loadSignalRun, setSignalAttention, startSignalRun,
+  listSignalRuns, listSignalScores, loadSignalRun, setSignalAttention, startSignalRun,
   type BoardDailyObservation, type SignalAttention, type SignalChangeType,
   type SignalDefinition, type SignalEvidence, type SignalItem, type SignalProfile,
-  type SignalRun,
+  type SignalRun, type SignalScoreResult,
 } from './signalReviewClient'
 import { SignalChatPanel } from './SignalChatPanel'
 import { loadExactTrendAnalysis, type TrendAnalysisRun } from './trendAnalysisClient'
@@ -58,12 +58,13 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
   const [selectedScenarioTarget, setSelectedScenarioTarget] = useState<string>()
   const [scenarioVisible, setScenarioVisible] = useState(true)
   const [selectedEvidenceId, setSelectedEvidenceId] = useState<string>()
-  const [dailyView, setDailyView] = useState<'results' | 'observations'>('results')
+  const [dailyView, setDailyView] = useState<'results' | 'opportunities' | 'observations'>('results')
   const [observationQuery, setObservationQuery] = useState('')
   const [observations, setObservations] = useState<BoardDailyObservation[]>([])
   const [observationTotal, setObservationTotal] = useState(0)
   const [selectedObservation, setSelectedObservation] = useState<BoardDailyObservation>()
   const [attention, setAttention] = useState<SignalAttention[]>([])
+  const [scores, setScores] = useState<SignalScoreResult[]>([])
   const [exactAnalysis, setExactAnalysis] = useState<TrendAnalysisRun | null>(null)
   const [evidenceHeight, setEvidenceHeight] = useState(() => {
     const stored = Number(window.localStorage.getItem(EVIDENCE_HEIGHT_KEY))
@@ -112,6 +113,17 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
   }, [selectedRun?.run_id, selectedRun?.status])
 
   useEffect(() => {
+    if (!selectedRun || selectedRun.status !== 'succeeded') {
+      setScores([])
+      return
+    }
+    const controller = new AbortController()
+    listSignalScores(selectedRun.run_id, controller.signal).then(setScores)
+      .catch(reason => { if (reason.name !== 'AbortError') setError(String(reason)) })
+    return () => controller.abort()
+  }, [selectedRun?.run_id, selectedRun?.status])
+
+  useEffect(() => {
     if (selectedRun?.status !== 'running' || !selectedDefinition) return
     const timer = window.setInterval(async () => {
       try {
@@ -136,7 +148,7 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
   }, [selectedDefinition, selectedRun?.status])
 
   useEffect(() => {
-    if (dailyView !== 'observations' || !selectedRun || selectedRun.status !== 'succeeded') {
+    if (dailyView === 'results' || !selectedRun || selectedRun.status !== 'succeeded') {
       setObservations([])
       setObservationTotal(0)
       setSelectedObservation(undefined)
@@ -172,7 +184,35 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
   const filtered = useMemo(() => items.filter(item =>
     (profile === 'all' || item.profile === profile)
     && (change === 'all' || item.change_type === change),
-  ), [items, profile, change])
+  ).sort((left, right) => {
+    const profileOrder = (value: SignalProfile) => value === 'market' ? 0
+      : value === 'attention' || value === 'recent' ? 1 : 2
+    return profileOrder(left.profile) - profileOrder(right.profile)
+      || (right.payload.score_result?.total_score ?? right.score * 100)
+        - (left.payload.score_result?.total_score ?? left.score * 100)
+      || left.symbol.localeCompare(right.symbol)
+  }), [items, profile, change])
+  const scoreBySymbol = useMemo(() => new Map(
+    scores.filter(item => item.system_id === 'trend-breakout')
+      .map(item => [item.symbol, item]),
+  ), [scores])
+  const hardEventSummary = useMemo(() => {
+    const active = scores
+      .filter(score => score.entity_scope === 'board')
+      .flatMap(score => score.hard_events.filter(event => event.state !== 'resolved'))
+    const counts = new Map<string, number>()
+    active.forEach(event => counts.set(event.event_type, (counts.get(event.event_type) ?? 0) + 1))
+    return { total: active.length, counts: [...counts.entries()].sort((a, b) => b[1] - a[1]) }
+  }, [scores])
+  const displayedObservations = useMemo(() => [...observations]
+    .filter(item => dailyView !== 'opportunities' || scoreBySymbol.get(item.symbol)?.eligible)
+    .sort((left, right) => {
+      const leftScore = scoreBySymbol.get(left.symbol)
+      const rightScore = scoreBySymbol.get(right.symbol)
+      return Number(Boolean(rightScore?.eligible)) - Number(Boolean(leftScore?.eligible))
+        || (rightScore?.total_score ?? -1) - (leftScore?.total_score ?? -1)
+        || left.symbol.localeCompare(right.symbol)
+    }), [dailyView, observations, scoreBySymbol])
   useEffect(() => {
     if (filtered.some(item => item.item_id === selectedItem?.item_id)) return
     setSelectedItem(undefined)
@@ -183,6 +223,9 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
   ) as Record<SignalProfile, number>, [items])
   const daily = selectedDefinition?.cadence === 'daily'
   const inspected = selectedObservation ?? selectedItem
+  const inspectedScore = selectedObservation
+    ? scoreBySymbol.get(selectedObservation.symbol)
+    : selectedItem?.payload.score_result
   const activeEvidenceId = highlightedEvidenceId ?? selectedEvidenceId
   const highlightedAnalysisItemId = scenarioHighlightedItemId ?? selectedItem?.evidence.find(
     evidence => evidence.evidence_id === activeEvidenceId,
@@ -313,18 +356,25 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
       </aside>
       <div className="signal-column-resizer" role="separator" aria-orientation="vertical" aria-label="调整历史轮次栏宽度" title="左右拖动调整历史轮次栏宽度" onPointerDown={event => startColumnResize('runs', event)}/>
       <section className="signal-results">
-        <header><span>{dailyView === 'observations' ? '全部板块观察' : '复盘结果'}</span><small>{dailyView === 'observations' ? `当前 ${observations.length} / 全量 ${observationTotal}` : selectedRun ? `+${selectedRun.added_count} =${selectedRun.retained_count} -${selectedRun.removed_count}` : '请选择轮次'}</small></header>
+        <header><span>{dailyView === 'observations' ? '全部板块观察' : dailyView === 'opportunities' ? '板块机会评分' : '复盘结果'}</span><small>{dailyView !== 'results' ? `当前 ${displayedObservations.length} / 全量 ${observationTotal}` : selectedRun ? `+${selectedRun.added_count} =${selectedRun.retained_count} -${selectedRun.removed_count}` : '请选择轮次'}</small></header>
         {selectedRun?.status === 'running' && <div className="signal-progress"><i style={{ width: `${progress}%` }}/></div>}
         {daily && <div className="signal-view-switch">
           <button className={dailyView === 'results' ? 'active' : ''} onClick={() => { setDailyView('results'); setSelectedObservation(undefined) }}><ListFilter size={12}/>今日关注</button>
+          <button className={dailyView === 'opportunities' ? 'active' : ''} onClick={() => { setDailyView('opportunities'); setSelectedItem(undefined); setChatOpen(false) }}><Radar size={12}/>机会评分</button>
           <button className={dailyView === 'observations' ? 'active' : ''} onClick={() => { setDailyView('observations'); setSelectedItem(undefined); setChatOpen(false) }}><Eye size={12}/>全部观察</button>
         </div>}
-        {dailyView === 'observations' ? <>
+        {daily && hardEventSummary.total > 0 && <div className="signal-hard-event-strip" role="status">
+          <span>硬异动 {hardEventSummary.total}</span>
+          {hardEventSummary.counts.slice(0, 4).map(([eventType, count]) => <small key={eventType}>{hardEventLabel(eventType)} {count}</small>)}
+        </div>}
+        {dailyView !== 'results' ? <>
           <label className="signal-observation-search"><Search size={12}/><input aria-label="搜索板块观察" value={observationQuery} onChange={event => setObservationQuery(event.target.value)} placeholder="板块名称或代码"/></label>
-          <div className="signal-result-head observation"><span>板块</span><span>状态</span><span>关注</span></div>
-          <div className="signal-scroll">{observations.map(item => {
+          <div className="signal-result-head observation"><span>评分</span><span>板块</span><span>状态</span><span>关注</span></div>
+          <div className="signal-scroll">{displayedObservations.map(item => {
             const entry = attention.find(value => value.symbol === item.symbol)
+            const score = scoreBySymbol.get(item.symbol)
             return <button key={item.symbol} className={selectedObservation?.symbol === item.symbol ? 'active' : ''} onClick={() => { setSelectedObservation(item); setSelectedItem(undefined) }}>
+              <ScoreBadge score={score}/>
               <span><span className="instrument-name-line"><b>{item.name}</b></span><small>{item.symbol}</small></span>
               <SignalStateCell
                 states={item.state_codes}
@@ -340,9 +390,9 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
           <div className="signal-filters secondary">
             {(['all', 'added', 'retained', 'removed'] as ChangeFilter[]).map(value => <button key={value} className={change === value ? 'active' : ''} onClick={() => setChange(value)}>{value === 'all' ? '全部变化' : changeLabels[value]}</button>)}
           </div>
-          <div className="signal-result-head"><span>#</span><span>标的</span><span>{daily ? '状态' : '板块'}</span><span>变化</span></div>
+          <div className="signal-result-head"><span>评分</span><span>标的</span><span>{daily ? '状态' : '板块'}</span><span>变化</span></div>
           <div className="signal-scroll">{selectedRun?.status === 'failed' && <div className="signal-empty compact error">{selectedRun.error}</div>}{filtered.map(item => <button key={item.item_id} className={`${selectedItem?.item_id === item.item_id ? 'active ' : ''}${item.active ? '' : 'inactive'}`} onClick={() => { setSelectedItem(item); setSelectedObservation(undefined); setSelectedEvidenceId(undefined); setHighlightedEvidenceId(undefined) }}>
-            <span>{item.rank}</span><span><span className="instrument-name-line"><b>{item.name}</b><MarketBoardBadge instrument={item}/></span><small>{item.symbol}</small></span>{daily
+            <ScoreBadge score={item.payload.score_result} fallback={item.score * 100} rank={item.rank}/><span><span className="instrument-name-line"><b>{item.name}</b><MarketBoardBadge instrument={item}/></span><small>{item.symbol}</small></span>{daily
               ? <SignalStateCell states={item.payload.state_codes} fallback={profileLabels[item.profile]}/>
               : <span>{item.payload.board_count ?? 0}<small>{profileLabels[item.profile]}</small></span>}
             <span className={`change ${item.change_type}`}>{changeLabels[item.change_type]}</span>
@@ -363,6 +413,7 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
           : <div className="signal-empty">选择一项结果查看 K 线</div>}</div>
         <div className="signal-evidence"><div className="signal-evidence-resizer" role="separator" aria-orientation="horizontal" aria-label="调整固定算法结论高度" title="上下拖动调整结论区域高度" onPointerDown={startEvidenceResize}/><header><span>{selectedObservation ? '一级分析' : selectedItem?.payload.rendered_summary ? '固定算法结论' : '引用证据'}</span><small>{selectedObservation ? selectedObservation.state_codes.length : selectedItem?.evidence.length ?? 0}</small></header>
           <div className="signal-evidence-content">
+            {inspectedScore && <ScoreSummary score={inspectedScore}/>}
             {exactAnalysis && <TradeScenarioPanel run={exactAnalysis} selectedTargetLabel={selectedScenarioTarget} visible={scenarioVisible} onTargetChange={setSelectedScenarioTarget} onVisibleChange={setScenarioVisible} onHighlightItemChange={setScenarioHighlightedItemId}/>}
             {selectedObservation ? <pre className="signal-fixed-summary">{observationSummary(selectedObservation)}</pre> : <div className="signal-analysis-details">{selectedItem?.payload.rendered_summary && <pre className="signal-fixed-summary">{selectedItem.payload.rendered_summary}</pre>}<div className="signal-evidence-list">{selectedItem?.evidence.map(evidence => <button key={evidence.evidence_id} className={(highlightedEvidenceId ?? selectedEvidenceId) === evidence.evidence_id ? 'active' : ''} onClick={() => setSelectedEvidenceId(evidence.evidence_id)} title="点击查看该轮固定算法引用的原始或 M4 证据">
             <code>[{evidence.alias}]</code><span>{evidenceTitle(evidence)}<small>{evidenceDetail(evidence)}</small></span>
@@ -374,6 +425,61 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
       {chatOpen && selectedRun && <SignalChatPanel key={selectedRun.run_id} run={selectedRun} items={items} selectedItem={selectedItem} onReferencePreview={previewReference} onReferenceActivate={activateReference} onClose={() => setChatOpen(false)}/>}
     </section>
   </main>
+}
+
+function ScoreBadge({ score, fallback, rank }: {
+  score?: SignalScoreResult
+  fallback?: number
+  rank?: number
+}) {
+  const value = score?.total_score ?? fallback
+  if (value === undefined) return <span className="signal-score-badge unavailable">-</span>
+  const grade = score?.grade ?? (value >= 85 ? 'S' : value >= 75 ? 'A' : value >= 65 ? 'B' : value >= 50 ? 'C' : 'D')
+  return <span className={`signal-score-badge grade-${grade.toLowerCase()}${score && !score.eligible ? ' ineligible' : ''}`} title={score ? `${score.verdict}：${score.summary} ${score.risk_summary}` : `评分 ${value.toFixed(0)}`}>
+    <i>{grade}</i><strong>{value.toFixed(0)}</strong><small>#{score?.rank ?? rank ?? '-'}</small>
+  </span>
+}
+
+function ScoreSummary({ score }: { score: SignalScoreResult }) {
+  return <section className={`signal-score-summary grade-${score.grade.toLowerCase()}`} aria-label="固定算法综合评分">
+    <ScoreBadge score={score}/>
+    <div><span>{score.verdict}</span><p>{score.summary}</p><small>{score.risk_summary}</small></div>
+    <ScoreSparkline score={score}/>
+    <em>{score.change_summary}</em>
+    {score.hard_events.length > 0 && <div className="signal-hard-events">{score.hard_events.slice(0, 3).map(event => <span key={event.event_type} className={`${event.direction} ${event.severity}`}>{hardEventLabel(event.event_type)}</span>)}</div>}
+  </section>
+}
+
+function ScoreSparkline({ score }: { score: SignalScoreResult }) {
+  const values = [...score.history].reverse().flatMap(item => typeof item.total_score === 'number' ? [item.total_score] : [])
+  values.push(score.total_score)
+  if (values.length < 2) return <span className="signal-score-new">新基线</span>
+  const width = 68
+  const height = 24
+  const points = values.map((value, index) => {
+    const x = values.length === 1 ? width : index / (values.length - 1) * width
+    const y = height - 2 - Math.max(0, Math.min(100, value)) / 100 * (height - 4)
+    return `${x.toFixed(1)},${y.toFixed(1)}`
+  }).join(' ')
+  return <svg className="signal-score-sparkline" width={width} height={height} viewBox={`0 0 ${width} ${height}`} aria-label="最近兼容评分走势"><polyline points={points}/></svg>
+}
+
+function hardEventLabel(value: string): string {
+  return ({
+    'major-trend-breakout': '大级别突破',
+    'trend-breakout': '趋势突破',
+    'bullish-boundary-triggered': '多头边界触发',
+    'oversold-rebound-triggered': '超跌反弹触发',
+    'downside-exhaustion': '下跌衰竭',
+    'sudden-volume-expansion': '突然放量',
+    'trend-boundary-proximity': '趋势边界临界',
+    'boundary-volume-contraction': '边界缩量',
+    'relative-strength-regime': '相对强弱异动',
+    'prior-state-strengthened': '状态增强',
+    'prior-state-weakened': '状态减弱',
+    'prior-state-changed': '状态切换',
+    'structure-invalidated': '结构失效',
+  } as Record<string, string>)[value] ?? value
 }
 
 function readColumnWidths(): SignalColumnWidths {

@@ -32,6 +32,13 @@ from stock_harness.daily_signal_analysis import (
     render_board_summary,
 )
 from stock_harness.sqlite_store import SQLiteMarketDataStore
+from stock_harness.review_scoring import (
+    MARKET_REGIME_SCORER,
+    RECOGNITION_SCORER,
+    TREND_BREAKOUT_SCORER,
+    default_scorer_registry,
+    execute_scorer,
+)
 from stock_harness.structural_scenario_engine import project_scenario_summary
 
 
@@ -263,6 +270,21 @@ class SignalReviewService:
                 comparison=observation["comparison"],
             )
 
+        scorers = default_scorer_registry()
+        score_context_runs = ([correction_run] if correction_run else []) + session_runs
+        trend_prior, trend_recent = _score_history(
+            self._store, score_context_runs, TREND_BREAKOUT_SCORER,
+            scorers.get(TREND_BREAKOUT_SCORER).version,
+        )
+        trend_execution = execute_scorer(
+            scorers.get(TREND_BREAKOUT_SCORER), observations,
+            prior_by_symbol=trend_prior, recent_by_symbol=trend_recent,
+        )
+        trend_scores = trend_execution.results
+        trend_score_by_symbol = {
+            str(value["symbol"]): value for value in trend_scores
+        }
+
         board_names = {str(board["symbol"]): str(board["name"]) for board in boards}
         previous_items = {
             str(item["item_key"]): item
@@ -281,18 +303,47 @@ class SignalReviewService:
             cutoff, previous_items, emotion, prior_session_items,
             correction_items, recent_market_items,
         )
+        market_prior, market_recent = _score_history(
+            self._store, score_context_runs, MARKET_REGIME_SCORER,
+            scorers.get(MARKET_REGIME_SCORER).version,
+        )
+        market_execution = execute_scorer(
+            scorers.get(MARKET_REGIME_SCORER), items,
+            prior_by_symbol=market_prior, recent_by_symbol=market_recent,
+        )
+        market_scores = market_execution.results
+        for system_id, execution in (
+            (TREND_BREAKOUT_SCORER, trend_execution),
+            (MARKET_REGIME_SCORER, market_execution),
+        ):
+            if execution.error:
+                LOGGER.warning(
+                    "signal_review_scorer_failed run_id=%s system_id=%s error=%s",
+                    run_id, system_id, execution.error,
+                )
+        market_score_by_key = {
+            str(value["entity_key"]): value for value in market_scores
+        }
+        for item in items:
+            score_result = market_score_by_key.get(str(item["item_key"]))
+            if score_result:
+                item["payload"]["score_result"] = score_result
+                item["score"] = float(score_result["total_score"]) / 100
         for observation in promoted:
             symbol = str(observation["symbol"])
             item_key = f"attention:{symbol}"
             metrics = observation.get("metrics", {})
             reasons = list(observation.get("attention_reasons", []))
-            score = _daily_attention_score(observation)
+            score_result = trend_score_by_symbol.get(symbol)
             deep_result = deep_results.get(symbol)
             items.append({
                 "item_id": str(uuid4()), "item_key": item_key,
                 "rank": 0, "symbol": symbol, "profile": "attention",
                 "change_type": "retained" if item_key in previous_items else "added",
-                "active": True, "score": score,
+                "active": True, "score": (
+                    float(score_result["total_score"]) / 100
+                    if score_result else _daily_attention_score(observation)
+                ),
                 "confidence": _daily_confidence(observation),
                 "payload": {
                     "conclusion_code": observation["conclusion_code"],
@@ -308,6 +359,7 @@ class SignalReviewService:
                         deep_result.get("run_id") if deep_result else None
                     ),
                     "board_name": board_names.get(symbol, symbol),
+                    **({"score_result": score_result} if score_result else {}),
                 },
                 "evidence": [{
                     "evidence_id": str(uuid4()), "alias": "",
@@ -343,6 +395,17 @@ class SignalReviewService:
                 DAILY_MARKET_BOARD_SIGNAL,
             )),
             "emotion": emotion,
+            "scoring_systems": scorers.definitions(),
+            "trend_opportunity_count": sum(
+                bool(value["eligible"]) for value in trend_scores
+            ),
+            "scoring_errors": [
+                {"system_id": system_id, "error": execution.error}
+                for system_id, execution in (
+                    (TREND_BREAKOUT_SCORER, trend_execution),
+                    (MARKET_REGIME_SCORER, market_execution),
+                ) if execution.error
+            ],
             "elapsed_seconds": round(time.perf_counter() - started, 3),
             "ai_used": False,
         }
@@ -356,6 +419,7 @@ class SignalReviewService:
         }])
         self._store.complete_signal_review_run(
             run_id, items=items, summary=summary, input_digest=digest,
+            scores=[*trend_scores, *market_scores],
         )
         LOGGER.info(
             "daily_signal_review_completed run_id=%s date=%s observations=%s promoted=%s elapsed_ms=%.1f",
@@ -602,6 +666,32 @@ class SignalReviewService:
             if bool(item["active"])
         }
         items = _compare_items(current, previous)
+        scorers = default_scorer_registry()
+        context_runs = self._store.list_compatible_prior_signal_review_runs(run_id, 5)
+        recognition_prior, recognition_recent = _score_history(
+            self._store, context_runs, RECOGNITION_SCORER,
+            scorers.get(RECOGNITION_SCORER).version,
+        )
+        recognition_execution = execute_scorer(
+            scorers.get(RECOGNITION_SCORER),
+            [item for item in items if bool(item["active"])],
+            prior_by_symbol=recognition_prior,
+            recent_by_symbol=recognition_recent,
+        )
+        recognition_scores = recognition_execution.results
+        if recognition_execution.error:
+            LOGGER.warning(
+                "signal_review_scorer_failed run_id=%s system_id=%s error=%s",
+                run_id, RECOGNITION_SCORER, recognition_execution.error,
+            )
+        recognition_by_key = {
+            str(value["entity_key"]): value for value in recognition_scores
+        }
+        for item in items:
+            score_result = recognition_by_key.get(str(item["item_key"]))
+            if score_result:
+                item["payload"]["score_result"] = score_result
+                item["score"] = float(score_result["total_score"]) / 100
         _assign_evidence_aliases(items)
         digest = _result_digest(items)
         summary = {
@@ -612,7 +702,13 @@ class SignalReviewService:
             "elapsed_seconds": round(time.perf_counter() - started, 3),
         }
         self._store.complete_signal_review_run(
-            run_id, items=items, summary=summary, input_digest=digest,
+            run_id, items=items, summary={
+                **summary, "scoring_systems": scorers.definitions(),
+                "scoring_errors": ([{
+                    "system_id": RECOGNITION_SCORER,
+                    "error": recognition_execution.error,
+                }] if recognition_execution.error else []),
+            }, input_digest=digest, scores=recognition_scores,
         )
         LOGGER.info(
             "signal_review_run_completed run_id=%s effective_date=%s boards=%s stocks=%s items=%s elapsed_ms=%.1f",
@@ -644,6 +740,26 @@ class SignalReviewService:
         if done == total or (done and done % 500 == 0):
             LOGGER.info("signal_review_progress run_id=%s phase=%s done=%s total=%s",
                         run_id, phase, done, total)
+
+
+def _score_history(
+    store: SQLiteMarketDataStore,
+    runs: list[dict[str, object]],
+    system_id: str,
+    scorer_version: str,
+) -> tuple[dict[str, dict[str, object]], dict[str, list[dict[str, object]]]]:
+    recent: dict[str, list[dict[str, object]]] = defaultdict(list)
+    for run in runs[:5]:
+        for score in store.list_signal_review_scores(
+            str(run["run_id"]), system_id=system_id,
+        ):
+            if score.get("scorer_version") != scorer_version:
+                continue
+            key = str(score.get("entity_key") or score["symbol"])
+            for history_key in {key, str(score["symbol"])}:
+                recent[history_key].append(score)
+    prior = {key: values[0] for key, values in recent.items() if values}
+    return prior, recent
 
 
 def _bar_payload(bar) -> dict[str, object]:

@@ -78,6 +78,7 @@ export type SignalItem = {
     comparison?: Record<string, unknown>
     deep_analysis_state?: string
     deep_analysis_run_id?: string | null
+    score_result?: SignalScoreResult
   }
   evidence: SignalEvidence[]
 }
@@ -131,6 +132,49 @@ export type SignalAttention = {
   reasons: string[]
 }
 
+export type SignalHardEvent = {
+  event_type: string
+  direction: 'up' | 'down' | 'neutral'
+  severity: 'high' | 'medium' | 'low'
+  state: 'new' | 'continuing' | 'confirmed' | 'weakened' | 'resolved' | 'invalidated'
+  source_code: string
+}
+
+export type SignalScoreResult = {
+  run_id: string
+  entity_key: string
+  symbol: string
+  name: string
+  kind: string
+  exchange: string
+  effective_date: string
+  system_id: string
+  scorer_version: string
+  entity_scope: string
+  eligible: boolean
+  total_score: number
+  grade: 'S' | 'A' | 'B' | 'C' | 'D'
+  rank: number
+  participant_count: number
+  eligible_count: number
+  verdict: string
+  summary: string
+  risk_summary: string
+  change_summary: string
+  stressed_risk_reward?: number | null
+  components: Record<string, number>
+  penalties: Array<{ code: string; points: number }>
+  disqualifiers: string[]
+  hard_events: SignalHardEvent[]
+  history: Array<{
+    effective_date?: string
+    total_score?: number
+    grade?: string
+    rank?: number
+    eligible?: boolean
+  }>
+}
+
 async function json<T>(response: Response): Promise<T> {
   if (response.ok) return response.json() as Promise<T>
   let detail = `HTTP ${response.status}`
@@ -161,6 +205,14 @@ export async function listSignalItems(runId: string, signal?: AbortSignal): Prom
   )).items
 }
 
+export async function listSignalScores(
+  runId: string, signal?: AbortSignal,
+): Promise<SignalScoreResult[]> {
+  return (await json<{ items: SignalScoreResult[] }>(
+    await fetch(`/api/signals/runs/${encodeURIComponent(runId)}/scores`, { signal }),
+  )).items
+}
+
 export async function startSignalRun(signalId: string): Promise<SignalRun> {
   return json<SignalRun>(await fetch(`/api/signals/${encodeURIComponent(signalId)}/runs`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
@@ -170,7 +222,7 @@ export async function startSignalRun(signalId: string): Promise<SignalRun> {
 export async function listBoardObservations(
   runId: string, query = '', signal?: AbortSignal,
 ): Promise<{ items: BoardDailyObservation[]; total: number }> {
-  const params = new URLSearchParams({ limit: '200' })
+  const params = new URLSearchParams({ limit: '5000' })
   if (query.trim()) params.set('query', query.trim())
   return json<{ items: BoardDailyObservation[]; total: number }>(await fetch(
     `/api/signals/runs/${encodeURIComponent(runId)}/board-observations?${params}`, { signal },
