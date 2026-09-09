@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 
-ALGORITHM_VERSION = "stock-observation-presentation-v2"
+ALGORITHM_VERSION = "stock-observation-presentation-v3"
 M4_ALLOCATOR_VERSION = "stock-m4-multilane-v1"
 FOCUS_LIMIT = 100
 RISK_LIMIT = 100
@@ -240,7 +240,8 @@ def _bounded_focus(
     selected: list[dict[str, object]] = []
     used = set(assigned)
     candidates = [
-        item for item in items if _symbol(item) not in used and _focus(item)
+        item for item in items
+        if _symbol(item) not in used and not _risk(item) and _focus(item)
     ]
     for lane, quota in quotas:
         matching = sorted(

@@ -132,10 +132,18 @@ def main() -> None:
         report["results"].sort(key=lambda item: str(item["effective_date"]))
         _finalize_report(report, started)
         _write_report(args.output, report)
-        print(
-            f"[{index}/{len(dates)}] strict={result['strict_opportunity_count']} "
-            f"funnel={result['funnel']}", flush=True,
-        )
+        if args.mode == "focus-core":
+            print(
+                f"[{index}/{len(dates)}] focus={result['focus_count']} "
+                f"risk={result['risk_count']} lanes={result['focus_lane_counts']}",
+                flush=True,
+            )
+        else:
+            print(
+                f"[{index}/{len(dates)}] "
+                f"strict={result['strict_opportunity_count']} "
+                f"funnel={result['funnel']}", flush=True,
+            )
         gc.collect()
 
     _finalize_report(report, started)

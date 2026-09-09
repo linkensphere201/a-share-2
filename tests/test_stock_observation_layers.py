@@ -88,6 +88,23 @@ def test_focus_and_m4_allocation_preserve_discovery_lanes_and_separate_risk_name
     assert all(item["symbol"] != "ST01" for item in selected)
 
 
+def test_risk_overflow_is_archived_instead_of_spilling_into_focus() -> None:
+    items = [
+        _item(f"ST{index:02}", score=100 - index, phase="breakout", risk_name=True)
+        for index in range(3)
+    ] + [
+        _item("CLEAN", score=50, phase="critical")
+    ]
+    snapshot = {"summary": {}, "items": items}
+
+    assign_stock_presentation_layers(snapshot, focus_limit=2, risk_limit=1)
+
+    assert _payload(items, "ST00")["presentation_bucket"] == "risk"
+    assert _payload(items, "ST01")["presentation_bucket"] == "archive"
+    assert _payload(items, "ST02")["presentation_bucket"] == "archive"
+    assert _payload(items, "CLEAN")["presentation_bucket"] == "focus"
+
+
 def _item(
     symbol: str, *, score: float, recognized: bool = False,
     classification: str = "neutral", manual: bool = False,
