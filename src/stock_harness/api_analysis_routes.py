@@ -140,6 +140,17 @@ def create_analysis_router() -> APIRouter:
             "total": selected_store.count_board_daily_observations(run_id),
         }
 
+    @router.get("/api/observation-pools/runs/{run_id}/{pool_kind}")
+    def get_observation_pool(
+        run_id: str, pool_kind: str, request: Request,
+    ) -> dict[str, object]:
+        if pool_kind not in {"board", "stock"}:
+            raise HTTPException(status_code=422, detail="unknown observation pool kind")
+        result = store(request).get_observation_pool_snapshot(run_id, pool_kind)
+        if result is None:
+            raise HTTPException(status_code=404, detail="observation pool not found")
+        return result
+
     @router.get("/api/signals/{signal_id}/attention")
     def list_signal_attention(
         signal_id: str, request: Request, include_inactive: bool = False,

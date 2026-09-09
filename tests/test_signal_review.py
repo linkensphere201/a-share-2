@@ -10,6 +10,7 @@ from stock_harness.signal_review import (
     _aggregate_assignments, _assign_evidence_aliases,
     _compare_items, _order_daily_deep_candidates, _result_digest,
     _market_style_divergence, _score_history,
+    _build_board_pool_snapshot,
 )
 from stock_harness.daily_signal_analysis import (
     _price_space, analyze_daily_series, build_board_analysis_record,
@@ -124,6 +125,33 @@ def test_score_history_rejects_an_incompatible_scorer_version() -> None:
 
     assert set(prior) == {"BK002.DC"}
     assert len(recent["BK002.DC"]) == 1
+
+
+def test_latest_succeeded_signal_run_uses_effective_date_not_creation_order() -> None:
+    store = SQLiteMarketDataStore(":memory:")
+    newer = store.create_signal_review_run(
+        signal_id=WEEKLY_RECOGNITION_SIGNAL, definition_version="v1",
+        algorithm_version="v1", cadence="weekly",
+        effective_date=date(2026, 9, 8), parameters={},
+    )
+    store.complete_signal_review_run(
+        str(newer["run_id"]), items=[], summary={}, input_digest="newer",
+    )
+    replay = store.create_signal_review_run(
+        signal_id=WEEKLY_RECOGNITION_SIGNAL, definition_version="v1",
+        algorithm_version="v1", cadence="weekly",
+        effective_date=date(2026, 9, 1), parameters={},
+    )
+    store.complete_signal_review_run(
+        str(replay["run_id"]), items=[], summary={}, input_digest="replay",
+    )
+
+    selected = store.get_latest_succeeded_signal_review_run(
+        WEEKLY_RECOGNITION_SIGNAL, date(2026, 9, 9),
+    )
+    assert selected is not None
+    assert selected["run_id"] == newer["run_id"]
+    store.close()
 
 
 def test_removed_signal_evidence_is_realiased_after_current_items() -> None:
@@ -659,6 +687,78 @@ def test_signal_observation_and_attention_api() -> None:
             f"/api/signals/{DAILY_MARKET_BOARD_SIGNAL}/attention"
         ).json()["items"]
         assert attention[0]["status"] == "manual-pinned"
+    store.close()
+
+
+def test_board_observation_pool_unions_scores_anomalies_and_recognition() -> None:
+    store = SQLiteMarketDataStore(":memory:")
+    effective = date(2026, 9, 4)
+    store.upsert_instruments([
+        Instrument("BK001.DC", "Score Board", InstrumentKind.SECTOR, "DC"),
+        Instrument("BK002.DC", "Anomaly Board", InstrumentKind.SECTOR, "DC"),
+        Instrument("000001.SZ", "Leader", InstrumentKind.STOCK, "SZ"),
+    ])
+    recognition = store.create_signal_review_run(
+        signal_id=WEEKLY_RECOGNITION_SIGNAL,
+        definition_version="weekly-v1", algorithm_version="recognition-v1",
+        cadence="weekly", effective_date=effective - timedelta(days=1), parameters={},
+    )
+    recognition_item = _item("000001.SZ", "added")
+    recognition_item["evidence"][0]["payload"] = {
+        "board_symbol": "BK001.DC", "board_name": "Score Board",
+        "rank": 1, "score": .9, "confidence": .8,
+    }
+    store.complete_signal_review_run(
+        str(recognition["run_id"]), items=[recognition_item],
+        summary={}, input_digest="recognition",
+    )
+    daily = store.create_signal_review_run(
+        signal_id=DAILY_MARKET_BOARD_SIGNAL,
+        definition_version="daily-v1", algorithm_version="daily-v1",
+        cadence="daily", effective_date=effective, parameters={},
+    )
+    scores = [{
+        "symbol": "BK001.DC", "entity_key": "BK001.DC", "eligible": True,
+        "rank": 1, "total_score": 82, "grade": "A", "comparison": {"state": "new"},
+        "hard_events": [],
+    }, {
+        "symbol": "BK002.DC", "entity_key": "BK002.DC", "eligible": False,
+        "rank": 2, "total_score": 42, "grade": "D", "comparison": {"state": "new"},
+        "hard_events": [{"event_type": "sudden-volume-expansion", "state": "new"}],
+    }]
+    snapshot = _build_board_pool_snapshot(
+        store, str(daily["run_id"]), effective, scores, [], None,
+    )
+    store.complete_signal_review_run(
+        str(daily["run_id"]), items=[], summary={}, input_digest="daily",
+        pool_snapshots=[snapshot],
+    )
+
+    stored = store.get_observation_pool_snapshot(str(daily["run_id"]), "board")
+    assert stored is not None
+    assert [item["symbol"] for item in stored["items"]] == ["BK001.DC", "BK002.DC"]
+    scored = stored["items"][0]
+    assert scored["lifecycle_state"] == "new"
+    assert {source["source_type"] for source in scored["sources"]} == {
+        "trend-score", "recognition-assignment",
+    }
+    recognition_source = next(
+        source for source in scored["sources"]
+        if source["source_type"] == "recognition-assignment"
+    )
+    assert recognition_source["source_reference"] == recognition["run_id"]
+    assert recognition_source["payload"]["member_symbol"] == "000001.SZ"
+    assert recognition_source["payload"]["recognition_role"] == "recent-rank-1"
+    anomaly = stored["items"][1]
+    assert anomaly["payload"]["trend_eligible"] is False
+    assert anomaly["sources"][0]["reason"] == "sudden-volume-expansion"
+
+    with TestClient(create_app(store=store)) as client:
+        response = client.get(
+            f"/api/observation-pools/runs/{daily['run_id']}/board"
+        )
+    assert response.status_code == 200
+    assert response.json()["summary"]["item_count"] == 2
     store.close()
 
 

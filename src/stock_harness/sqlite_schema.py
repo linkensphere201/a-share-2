@@ -961,6 +961,59 @@ CREATE TABLE IF NOT EXISTS signal_attention_registry (
 CREATE INDEX IF NOT EXISTS signal_attention_registry_status
 ON signal_attention_registry(signal_id, status, last_observed_date DESC);
 
+CREATE TABLE IF NOT EXISTS observation_pool_snapshots (
+    source_run_id TEXT NOT NULL,
+    pool_kind TEXT NOT NULL CHECK (pool_kind IN ('board', 'stock')),
+    effective_date INTEGER NOT NULL,
+    algorithm_version TEXT NOT NULL,
+    summary_json TEXT NOT NULL,
+    created_at_ms INTEGER NOT NULL,
+    PRIMARY KEY (source_run_id, pool_kind),
+    FOREIGN KEY (source_run_id) REFERENCES signal_review_runs(run_id)
+        ON DELETE CASCADE
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS observation_pool_items (
+    source_run_id TEXT NOT NULL,
+    pool_kind TEXT NOT NULL,
+    instrument_id INTEGER NOT NULL,
+    lifecycle_state TEXT NOT NULL CHECK (
+        lifecycle_state IN (
+            'new', 'active', 'strengthened', 'weakened', 'invalidated',
+            'cooldown', 'manual-pinned'
+        )
+    ),
+    rank INTEGER NOT NULL CHECK (rank > 0),
+    payload_json TEXT NOT NULL,
+    PRIMARY KEY (source_run_id, pool_kind, instrument_id),
+    FOREIGN KEY (source_run_id, pool_kind)
+        REFERENCES observation_pool_snapshots(source_run_id, pool_kind)
+        ON DELETE CASCADE,
+    FOREIGN KEY (instrument_id) REFERENCES instruments(instrument_id)
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS observation_pool_sources (
+    source_run_id TEXT NOT NULL,
+    pool_kind TEXT NOT NULL,
+    instrument_id INTEGER NOT NULL,
+    source_type TEXT NOT NULL,
+    source_reference TEXT NOT NULL,
+    source_entity_key TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    position INTEGER NOT NULL CHECK (position > 0),
+    PRIMARY KEY (
+        source_run_id, pool_kind, instrument_id, source_type,
+        source_reference, source_entity_key, reason
+    ),
+    FOREIGN KEY (source_run_id, pool_kind, instrument_id)
+        REFERENCES observation_pool_items(source_run_id, pool_kind, instrument_id)
+        ON DELETE CASCADE
+) WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS observation_pool_items_rank
+ON observation_pool_items(source_run_id, pool_kind, rank);
+
 CREATE TABLE IF NOT EXISTS signal_review_evidence (
     run_id TEXT NOT NULL,
     item_id TEXT NOT NULL,

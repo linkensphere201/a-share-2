@@ -108,6 +108,7 @@ class SQLiteSignalReviewStoreMixin:
         self, run_id: str, *, items: Sequence[dict[str, object]],
         summary: dict[str, object], input_digest: str,
         scores: Sequence[dict[str, object]] = (),
+        pool_snapshots: Sequence[dict[str, object]] = (),
     ) -> dict[str, object]:
         now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
         counts = {name: sum(item["change_type"] == name for item in items)
@@ -124,6 +125,7 @@ class SQLiteSignalReviewStoreMixin:
             ).fetchone()
             if status is None or str(status[0]) != "running":
                 raise ValueError("signal review run is not running")
+            self._insert_observation_pool_snapshots(run_id, pool_snapshots)
             score_symbols = {str(value["symbol"]).upper() for value in scores}
             score_instrument_ids = self._instrument_ids(score_symbols)
             missing_score_symbols = score_symbols - score_instrument_ids.keys()
@@ -288,6 +290,19 @@ class SQLiteSignalReviewStoreMixin:
             row = self._connection.execute(
                 f"SELECT {_SIGNAL_RUN_COLUMNS} FROM signal_review_runs WHERE run_id = ?",
                 (run_id,),
+            ).fetchone()
+        return _run_row(row) if row else None
+
+    def get_latest_succeeded_signal_review_run(
+        self, signal_id: str, on_or_before: date,
+    ) -> dict[str, object] | None:
+        with self._lock:
+            row = self._connection.execute(
+                f"""
+                SELECT {_SIGNAL_RUN_COLUMNS} FROM signal_review_runs
+                WHERE signal_id = ? AND status = 'succeeded' AND effective_date <= ?
+                ORDER BY effective_date DESC, revision DESC LIMIT 1
+                """, (signal_id, _date_key(on_or_before)),
             ).fetchone()
         return _run_row(row) if row else None
 
