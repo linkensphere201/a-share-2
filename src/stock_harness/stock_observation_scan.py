@@ -16,7 +16,7 @@ from stock_harness.stock_relative_strength import (
 
 BOARD_MEMBER_SCAN_VERSION = "board-member-lightweight-scan-v1"
 INDEPENDENT_SCAN_VERSION = "full-market-independent-scan-v1"
-UNIFIED_STOCK_POOL_VERSION = "unified-stock-observation-pool-v1"
+UNIFIED_STOCK_POOL_VERSION = "unified-stock-observation-pool-v2"
 BATCH_SIZE = 200
 
 

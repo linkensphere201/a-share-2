@@ -200,6 +200,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .signal-result-head.observation + .signal-scroll > button { width: 100%; min-height: 54px; display: grid; align-items: center; gap: 6px; padding: 6px 8px; color: var(--theme-text); text-align: left; border: 0; border-bottom: 1px solid var(--theme-border); background: transparent; }
 .signal-result-head.observation + .signal-scroll > button:hover { background: var(--theme-hover); }
 .signal-filters.pool-lifecycle { min-height: 27px; }
+.signal-filters.pool-presentation { min-height: 31px; gap: 4px; padding-block: 4px; }
+.signal-filters.pool-presentation button { padding-inline: 9px; font-size: 9px; }
 .signal-result-head.pool, .signal-pool-list > button { grid-template-columns: 48px minmax(96px, 1fr) minmax(82px, 106px) 42px; }
 .pool-lifecycle-state, .pool-source-count { color: var(--theme-text); font-size: 9px; }
 .pool-lifecycle-state.new, .pool-lifecycle-state.strengthened { color: #d8aa4f; }

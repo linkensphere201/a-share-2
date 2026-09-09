@@ -47,6 +47,12 @@ from stock_harness.stock_observation_scan import (
     build_unified_stock_pool_snapshot,
     scan_full_market_independent_strength,
 )
+from stock_harness.stock_observation_layers import (
+    ALGORITHM_VERSION as STOCK_PRESENTATION_VERSION,
+    FOCUS_LIMIT as STOCK_FOCUS_LIMIT,
+    RISK_LIMIT as STOCK_RISK_LIMIT,
+    assign_stock_presentation_layers,
+)
 
 
 LOGGER = logging.getLogger(__name__)
@@ -481,12 +487,14 @@ class SignalReviewService:
             score = stock_score_by_symbol.get(str(item["symbol"]))
             if score is not None:
                 item["payload"]["opportunity_score"] = score
+        presentation = assign_stock_presentation_layers(stock_pool)
         summary["stock_pool_count"] = stock_pool["summary"]["item_count"]
         summary["independent_stock_candidate_count"] = stock_pool["summary"]["independent_count"]
         summary["stock_m4_analysis"] = stock_m4_summary
         summary["stock_opportunity_count"] = sum(
             bool(score["eligible"]) for score in stock_scores
         )
+        summary["stock_presentation"] = presentation
         if stock_execution.error:
             summary["scoring_errors"].append({
                 "system_id": STOCK_OPPORTUNITY_SCORER,
@@ -1178,6 +1186,9 @@ def _daily_run_parameters() -> dict[str, object]:
         "full_observation_persistence": True,
         "deep_analysis_limit": 60,
         "stock_deep_analysis_limit": 30,
+        "stock_presentation_version": STOCK_PRESENTATION_VERSION,
+        "stock_focus_limit": STOCK_FOCUS_LIMIT,
+        "stock_risk_limit": STOCK_RISK_LIMIT,
     }
 
 

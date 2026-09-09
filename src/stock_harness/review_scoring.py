@@ -471,6 +471,7 @@ def _stock_opportunity_score(entity: Mapping[str, object]) -> dict[str, object]:
     total = round(max(0.0, min(100.0, sum(components.values()))), 2)
     return {
         "symbol": symbol, "eligible": eligible,
+        "setup_state": state,
         "total_score": total, "grade": score_grade(total),
         "verdict": "eligible" if eligible else "waiting",
         "summary": (

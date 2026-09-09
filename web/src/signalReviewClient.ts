@@ -221,6 +221,10 @@ export type ObservationPoolItem = {
       credible_target_count?: number
     }
     opportunity_score?: SignalScoreResult
+    presentation_bucket?: 'opportunity' | 'focus' | 'risk' | 'archive'
+    presentation_rank?: number
+    presentation_reasons?: string[]
+    presentation_version?: string
   }
   sources: ObservationPoolSource[]
 }

@@ -379,6 +379,9 @@ describe('SignalReviewWorkspace', () => {
         payload: {
           independent_score: 86, recognized: true,
           source_types: ['independent-strength', 'm4-analysis'],
+          presentation_bucket: 'focus', presentation_rank: 1,
+          presentation_reasons: ['independent-strength'],
+          presentation_version: 'stock-observation-presentation-v1',
           m4_analysis: { run_id: 'pool-m4-1', status: 'completed', warning_count: 0 },
           opportunity_classification: {
             classification: 'independent-opportunity', opportunity_eligible: true,
@@ -390,6 +393,14 @@ describe('SignalReviewWorkspace', () => {
           source_entity_key: 'scenario-1', reason: '独立强势且形成结构化交易场景',
           payload: { analysis_item_id: 'line-1' },
         }],
+      }, {
+        symbol: '300002.SZ', name: '归档标的', kind: 'stock', exchange: 'SZ',
+        lifecycle_state: 'active', rank: 2,
+        payload: {
+          presentation_bucket: 'archive', presentation_rank: 1,
+          presentation_reasons: ['candidate-evidence-retained'],
+        },
+        sources: [],
       }],
     }
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
@@ -409,6 +420,8 @@ describe('SignalReviewWorkspace', () => {
     render(<SignalReviewWorkspace theme={themes[0]} onClose={() => undefined}/>)
 
     await user.click(await screen.findByRole('button', { name: /个股池/ }))
+    expect(await screen.findByRole('button', { name: '重点观察 1' })).toBeTruthy()
+    expect(screen.queryByText('归档标的')).toBeNull()
     await user.click((await screen.findByText('300001.SZ')).closest('button')!)
     expect(screen.getByTestId('signal-chart').textContent).toBe('300001.SZ')
     expect(screen.getByTestId('signal-chart').dataset.analysisRun).toBe('pool-m4-1')
@@ -416,6 +429,8 @@ describe('SignalReviewWorkspace', () => {
     expect(screen.getByText('具备机会资格')).toBeTruthy()
     await user.click(screen.getByText('[O1]').closest('button')!)
     expect(screen.getByText('[O1]').closest('button')?.classList.contains('active')).toBe(true)
+    await user.click(screen.getByRole('button', { name: '完整归档 2' }))
+    expect(await screen.findByText('归档标的')).toBeTruthy()
   })
 })
 

@@ -131,6 +131,8 @@ def audit(
     errors.extend(f"invalid board membership: {value}" for value in invalid_memberships[:10])
 
     stock_items = list(stock["items"])
+    stock_scores = store.list_signal_review_scores(run_id, "stock-trend-opportunity")
+    strict_opportunity_count = sum(bool(score.get("eligible")) for score in stock_scores)
     m4_items = [
         item for item in stock_items
         if _mapping(_mapping(item.get("payload")).get("m4_analysis"))
@@ -150,6 +152,30 @@ def audit(
             invalid_independent.append(str(item["symbol"]))
     errors.extend(f"invalid independent eligibility: {value}" for value in invalid_independent[:10])
     lifecycle_counts = _counts(item.get("lifecycle_state") for item in stock_items)
+    presentation_counts = _counts(
+        _mapping(item.get("payload")).get("presentation_bucket")
+        for item in stock_items
+    )
+    presentation_summary = _mapping(_mapping(stock.get("summary")).get("presentation"))
+    if presentation_summary:
+        invalid_presentation = [
+            str(item["symbol"]) for item in stock_items
+            if _mapping(item.get("payload")).get("presentation_bucket")
+            not in {"opportunity", "focus", "risk", "archive"}
+        ]
+        errors.extend(
+            f"invalid presentation bucket: {value}"
+            for value in invalid_presentation[:10]
+        )
+        manual_focus = int(presentation_summary.get("manual_focus_count") or 0)
+        focus_limit = int(presentation_summary.get("focus_automatic_limit") or 0)
+        risk_limit = int(presentation_summary.get("risk_automatic_limit") or 0)
+        if presentation_counts.get("focus", 0) - manual_focus > focus_limit:
+            errors.append("automatic focus presentation limit exceeded")
+        if presentation_counts.get("risk", 0) > risk_limit:
+            errors.append("risk presentation limit exceeded")
+        if presentation_counts.get("opportunity", 0) != strict_opportunity_count:
+            errors.append("strict opportunity presentation count does not match scorer")
     classification_counts = _counts(
         _mapping(_mapping(item.get("payload")).get("opportunity_classification")).get("classification")
         or _mapping(_mapping(item.get("payload")).get("independent_scan")).get("classification")
@@ -169,6 +195,8 @@ def audit(
             "item_count": len(stock_items),
             "summary": stock.get("summary", {}),
             "lifecycle_counts": lifecycle_counts,
+            "presentation_counts": presentation_counts,
+            "presentation_summary": presentation_summary,
             "classification_counts": classification_counts,
             "recognized_count": sum(bool(_mapping(item.get("payload")).get("recognized")) for item in stock_items),
             "unrecognized_independent_eligible_count": sum(
@@ -196,6 +224,7 @@ def audit(
                 bool(_mapping(_mapping(item.get("payload")).get("opportunity_classification")).get("opportunity_eligible"))
                 for item in stock_items
             ),
+            "strict_opportunity_count": strict_opportunity_count,
         },
         "provenance": {
             "future_source_count": len(future_sources),

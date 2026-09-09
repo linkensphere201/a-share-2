@@ -23,6 +23,7 @@ type ProfileFilter = 'all' | SignalProfile
 type ChangeFilter = 'all' | SignalChangeType
 type DailyView = 'results' | 'opportunities' | 'observations' | 'board-pool' | 'stock-pool'
 type PoolLifecycleFilter = 'all' | ObservationPoolItem['lifecycle_state']
+type PoolPresentationView = 'focus' | 'opportunity' | 'risk' | 'all'
 
 const phaseLabels: Record<string, string> = {
   queued: '等待执行', memberships: '读取板块成分',
@@ -70,6 +71,7 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
   const [selectedPoolItem, setSelectedPoolItem] = useState<ObservationPoolItem>()
   const [poolQuery, setPoolQuery] = useState('')
   const [poolLifecycle, setPoolLifecycle] = useState<PoolLifecycleFilter>('all')
+  const [poolPresentation, setPoolPresentation] = useState<PoolPresentationView>('focus')
   const [attention, setAttention] = useState<SignalAttention[]>([])
   const [scores, setScores] = useState<SignalScoreResult[]>([])
   const [selectedScoreSystem, setSelectedScoreSystem] = useState('trend-breakout')
@@ -191,6 +193,10 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
     loadObservationPool(selectedRun.run_id, poolKind, controller.signal)
       .then(value => {
         setObservationPool(value)
+        if (poolKind === 'stock') {
+          setPoolPresentation(value.items.some(item => item.payload.presentation_bucket)
+            ? 'focus' : 'all')
+        }
         setSelectedPoolItem(current => value.items.find(item => item.symbol === current?.symbol))
       })
       .catch(reason => {
@@ -262,10 +268,20 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
     const query = poolQuery.trim().toLocaleLowerCase()
     return [...(observationPool?.items ?? [])].filter(item =>
       (poolLifecycle === 'all' || item.lifecycle_state === poolLifecycle)
+      && (dailyView !== 'stock-pool' || poolPresentation === 'all'
+        || item.payload.presentation_bucket === poolPresentation)
       && (!query || `${item.name} ${item.symbol} ${item.sources.map(source => source.reason).join(' ')}`
         .toLocaleLowerCase().includes(query)),
-    ).sort((left, right) => left.rank - right.rank || left.symbol.localeCompare(right.symbol))
-  }, [observationPool, poolLifecycle, poolQuery])
+    ).sort((left, right) => (
+      poolPresentation === 'all' ? left.rank - right.rank
+        : (left.payload.presentation_rank ?? left.rank)
+          - (right.payload.presentation_rank ?? right.rank)
+    ) || left.symbol.localeCompare(right.symbol))
+  }, [dailyView, observationPool, poolLifecycle, poolPresentation, poolQuery])
+  useEffect(() => {
+    if (displayedPoolItems.some(item => item.symbol === selectedPoolItem?.symbol)) return
+    setSelectedPoolItem(undefined)
+  }, [displayedPoolItems, selectedPoolItem?.symbol])
   useEffect(() => {
     if (filtered.some(item => item.item_id === selectedItem?.item_id)) return
     setSelectedItem(undefined)
@@ -470,6 +486,9 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
         </div>}
         {['board-pool', 'stock-pool'].includes(dailyView) ? <>
           <label className="signal-observation-search"><Search size={12}/><input aria-label="搜索观察池" value={poolQuery} onChange={event => setPoolQuery(event.target.value)} placeholder="名称、代码或入池原因"/></label>
+          {dailyView === 'stock-pool' && <div className="signal-filters pool-presentation">
+            {(['focus', 'opportunity', 'risk', 'all'] as PoolPresentationView[]).map(value => <button key={value} className={poolPresentation === value ? 'active' : ''} onClick={() => setPoolPresentation(value)}>{poolPresentationLabel(value)} {poolPresentationCount(observationPool, value)}</button>)}
+          </div>}
           <div className="signal-filters secondary pool-lifecycle">
             {(['all', 'new', 'active', 'strengthened', 'weakened', 'manual-pinned', 'cooldown'] as PoolLifecycleFilter[]).map(value => <button key={value} className={poolLifecycle === value ? 'active' : ''} onClick={() => setPoolLifecycle(value)}>{poolLifecycleLabel(value)}</button>)}
           </div>
@@ -555,6 +574,20 @@ function poolLifecycleLabel(value: PoolLifecycleFilter) {
     weakened: '减弱', invalidated: '失效', cooldown: '冷却', 'manual-pinned': '手工固定',
   }
   return labels[value]
+}
+
+function poolPresentationLabel(value: PoolPresentationView) {
+  return {
+    focus: '重点观察', opportunity: '严格机会', risk: '风险异动', all: '完整归档',
+  }[value]
+}
+
+function poolPresentationCount(
+  snapshot: ObservationPoolSnapshot | undefined, value: PoolPresentationView,
+) {
+  if (!snapshot) return 0
+  if (value === 'all') return snapshot.items.length
+  return snapshot.items.filter(item => item.payload.presentation_bucket === value).length
 }
 
 function poolClassification(item: ObservationPoolItem) {
