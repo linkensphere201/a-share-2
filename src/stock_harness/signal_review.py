@@ -40,6 +40,7 @@ from stock_harness.review_scoring import (
     execute_scorer,
 )
 from stock_harness.structural_scenario_engine import project_scenario_summary
+from stock_harness.stock_observation_scan import build_board_member_scan_snapshot
 
 
 LOGGER = logging.getLogger(__name__)
@@ -420,6 +421,17 @@ class SignalReviewService:
             prior_pool,
         )
         summary["board_pool_count"] = len(board_pool["items"])
+        prior_member_scan = self._store.get_observation_pool_snapshot(
+            str(prior_pool_run["run_id"]), "stock",
+        ) if prior_pool_run else None
+        member_scan = build_board_member_scan_snapshot(
+            self._store, run_id, cutoff, board_pool, prior_member_scan,
+            progress=lambda total, done: self._progress(
+                run_id, "stock-member-scan", total, done,
+            ),
+        )
+        summary["board_member_scan_count"] = member_scan["summary"]["item_count"]
+        summary["board_member_eligible_count"] = member_scan["summary"]["eligible_count"]
         digest = _result_digest(items + [{
             "active": True, "item_key": "all-board-observations",
             "rank": 0, "score": 0, "confidence": 1,
@@ -431,7 +443,7 @@ class SignalReviewService:
         self._store.complete_signal_review_run(
             run_id, items=items, summary=summary, input_digest=digest,
             scores=[*trend_scores, *market_scores],
-            pool_snapshots=[board_pool],
+            pool_snapshots=[board_pool, member_scan],
         )
         LOGGER.info(
             "daily_signal_review_completed run_id=%s date=%s observations=%s promoted=%s elapsed_ms=%.1f",

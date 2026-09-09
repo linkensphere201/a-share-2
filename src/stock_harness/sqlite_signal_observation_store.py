@@ -11,6 +11,68 @@ from stock_harness.sqlite_mapping import _date_from_key, _date_key
 
 
 class SQLiteSignalObservationStoreMixin:
+    def list_stock_board_memberships_many(
+        self, symbols: Sequence[str], board_limit: int = 3,
+    ) -> dict[str, list[dict[str, object]]]:
+        ordered = list(dict.fromkeys(
+            symbol.strip().upper() for symbol in symbols if symbol.strip()
+        ))
+        if len(ordered) > 200:
+            raise ValueError("bulk board membership query exceeds 200 symbols")
+        if not 1 <= board_limit <= 10:
+            raise ValueError("board membership limit must be between 1 and 10")
+        if not ordered:
+            return {}
+        placeholders = ",".join("?" for _ in ordered)
+        with self._lock:
+            rows = self._connection.execute(
+                f"""
+                WITH candidates AS (
+                    SELECT membership.member_symbol, board.symbol, board.name,
+                           min(source.code) AS code,
+                           min(catalog.family) AS family,
+                           min(catalog.category) AS category
+                    FROM board_memberships AS membership
+                    JOIN instruments AS board
+                      ON board.instrument_id = membership.board_instrument_id
+                    JOIN sources AS source USING (source_id)
+                    LEFT JOIN instrument_catalog_entries AS catalog
+                      ON catalog.instrument_id = board.instrument_id
+                     AND catalog.catalog_source_id = membership.source_id
+                    WHERE membership.active = 1 AND board.active = 1
+                      AND membership.member_symbol IN ({placeholders})
+                    GROUP BY membership.member_symbol, board.instrument_id
+                ), ranked AS (
+                    SELECT member_symbol, symbol, name, code, family, category,
+                           row_number() OVER (
+                               PARTITION BY member_symbol
+                               ORDER BY
+                                 CASE
+                                   WHEN lower(coalesce(category, '')) = 'industry' THEN 0
+                                   WHEN lower(coalesce(category, '')) = 'concept' THEN 1
+                                   ELSE 2
+                                 END,
+                                 symbol
+                           ) AS position
+                    FROM candidates
+                )
+                SELECT member_symbol, symbol, name, code, family, category
+                FROM ranked WHERE position <= ?
+                ORDER BY member_symbol, position
+                """, (*ordered, board_limit),
+            ).fetchall()
+        result: dict[str, list[dict[str, object]]] = {
+            symbol: [] for symbol in ordered
+        }
+        for row in rows:
+            result.setdefault(str(row[0]), []).append({
+                "symbol": str(row[1]), "name": str(row[2]),
+                "source": str(row[3]),
+                "family": str(row[4]) if row[4] is not None else None,
+                "category": str(row[5]) if row[5] is not None else None,
+            })
+        return result
+
     def calculate_board_breadth_snapshots(
         self, effective_date: date,
     ) -> dict[str, dict[str, object]]:
