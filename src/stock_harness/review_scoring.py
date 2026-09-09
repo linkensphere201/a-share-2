@@ -15,6 +15,8 @@ MARKET_REGIME_SCORER = "market-regime"
 MARKET_REGIME_VERSION = "market-regime-score-v1"
 RECOGNITION_SCORER = "recognition"
 RECOGNITION_VERSION = "recognition-score-v1"
+STOCK_OPPORTUNITY_SCORER = "stock-trend-opportunity"
+STOCK_OPPORTUNITY_VERSION = "stock-trend-opportunity-score-v1"
 
 
 class ReviewScorer(Protocol):
@@ -121,6 +123,17 @@ def default_scorer_registry() -> ReviewScorerRegistry:
         ("recognition-result", "board-memberships"), (),
         ("recognition_baseline",), (), ("total_score", "symbol"),
         ("board-recognition-ranking",),
+    ))
+    registry.register(_Scorer(
+        STOCK_OPPORTUNITY_SCORER, STOCK_OPPORTUNITY_VERSION, "stock",
+        _stock_opportunity_score, "daily", "dated-stock-observation-pool",
+        ("stock-observation-pool", "structural-trade-scenario"),
+        ("successful-m4", "actionable-state", "stressed-rr-at-least-3"),
+        ("risk_reward", "setup_state", "independent_strength",
+         "target_quality", "analysis_quality"),
+        ("extended-entry", "missing-target", "analysis-warning"),
+        ("eligible", "total_score", "stressed_rr", "setup_state", "symbol"),
+        ("m4-analysis", "scenario", "target"),
     ))
     return registry
 
@@ -398,6 +411,80 @@ def _recognition_score(entity: Mapping[str, object]) -> dict[str, object]:
         "selected_scenario_id": None, "selected_target_label": None,
         "selected_target_price": None, "raw_risk_reward": None,
         "stressed_risk_reward": None,
+    }
+
+
+def _stock_opportunity_score(entity: Mapping[str, object]) -> dict[str, object]:
+    symbol = str(entity["symbol"]).upper()
+    payload = _mapping(entity.get("payload"))
+    analysis = _mapping(payload.get("m4_analysis"))
+    scenario = _mapping(analysis.get("scenario"))
+    state = str(scenario.get("state") or "unavailable")
+    targets = [
+        _mapping(value) for value in _sequence(scenario.get("targets"))
+        if isinstance(value, Mapping)
+    ]
+    selected = next((target for target in targets if (
+        _optional_number(target.get("stressed_risk_reward_ratio")) is not None
+        and _number(target.get("stressed_risk_reward_ratio"), 0) >= 3.0
+    )), None)
+    stressed_rr = (
+        _optional_number(selected.get("stressed_risk_reward_ratio"))
+        if selected else None
+    )
+    raw_rr = _optional_number(selected.get("risk_reward_ratio")) if selected else None
+    setup_points = {
+        "retest": 25.0, "triggered": 22.0, "waiting-trigger": 16.0,
+        "extended": 5.0, "invalidated": 0.0, "no-entry": 0.0,
+    }.get(state, 0.0)
+    independent = _mapping(payload.get("independent_scan"))
+    member = _mapping(payload.get("member_scan"))
+    independent_score = max(
+        _number(independent.get("score"), 0), _number(member.get("score"), 0),
+    )
+    target_points = min(10.0, len(targets) * 3.0 + (2.0 if selected else 0.0))
+    warning_count = int(_number(analysis.get("warning_count"), 0))
+    analysis_points = 10.0 if analysis.get("status") == "succeeded" else 0.0
+    analysis_points = max(0.0, analysis_points - min(5.0, warning_count * 1.5))
+    components = {
+        "risk_reward": round(_risk_reward_points(stressed_rr), 2),
+        "setup_state": setup_points,
+        "independent_strength": round(min(15.0, independent_score * .15), 2),
+        "target_quality": round(target_points, 2),
+        "analysis_quality": round(analysis_points, 2),
+    }
+    disqualifiers = []
+    if analysis.get("status") != "succeeded":
+        disqualifiers.append("m4-analysis-unavailable")
+    if state not in {"waiting-trigger", "triggered", "retest"}:
+        disqualifiers.append(f"scenario-{state}")
+    if selected is None:
+        disqualifiers.append("no-credible-target-at-3r")
+    entry = _optional_number(scenario.get("entry_price"))
+    invalidation = _optional_number(scenario.get("invalidation_price"))
+    target_price = _optional_number(selected.get("price")) if selected else None
+    if entry is None or invalidation is None or target_price is None or not (
+        target_price > entry > invalidation
+    ):
+        disqualifiers.append("invalid-long-price-ordering")
+    eligible = not disqualifiers
+    total = round(max(0.0, min(100.0, sum(components.values()))), 2)
+    return {
+        "symbol": symbol, "eligible": eligible,
+        "total_score": total, "grade": score_grade(total),
+        "verdict": "eligible" if eligible else "waiting",
+        "summary": (
+            f"{state}; stressed RR {stressed_rr:.2f}:1"
+            if stressed_rr is not None else f"{state}; no target reaches stressed 3R"
+        ),
+        "risk_summary": ", ".join(disqualifiers) if disqualifiers else "gates passed",
+        "components": components, "penalties": [],
+        "disqualifiers": disqualifiers, "hard_events": [],
+        "evidence_refs": list(analysis.get("core_item_ids", [])),
+        "selected_scenario_id": scenario.get("scenario_item_id"),
+        "selected_target_label": selected.get("label") if selected else None,
+        "selected_target_price": target_price,
+        "raw_risk_reward": raw_rr, "stressed_risk_reward": stressed_rr,
     }
 
 

@@ -36,6 +36,7 @@ from stock_harness.sqlite_store import SQLiteMarketDataStore
 from stock_harness.review_scoring import (
     MARKET_REGIME_SCORER,
     RECOGNITION_SCORER,
+    STOCK_OPPORTUNITY_SCORER,
     TREND_BREAKOUT_SCORER,
     default_scorer_registry,
     execute_scorer,
@@ -463,8 +464,34 @@ class SignalReviewService:
             ],
             prior_snapshot=prior_member_scan,
         )
+        stock_m4_summary = self._run_stock_pool_analysis(run_id, cutoff, stock_pool)
+        stock_prior, stock_recent = _score_history(
+            self._store, score_context_runs, STOCK_OPPORTUNITY_SCORER,
+            scorers.get(STOCK_OPPORTUNITY_SCORER).version,
+        )
+        stock_execution = execute_scorer(
+            scorers.get(STOCK_OPPORTUNITY_SCORER),
+            [{"symbol": item["symbol"], "payload": item["payload"]}
+             for item in stock_pool["items"] if item["lifecycle_state"] != "cooldown"],
+            prior_by_symbol=stock_prior, recent_by_symbol=stock_recent,
+        )
+        stock_scores = stock_execution.results
+        stock_score_by_symbol = {str(score["symbol"]): score for score in stock_scores}
+        for item in stock_pool["items"]:
+            score = stock_score_by_symbol.get(str(item["symbol"]))
+            if score is not None:
+                item["payload"]["opportunity_score"] = score
         summary["stock_pool_count"] = stock_pool["summary"]["item_count"]
         summary["independent_stock_candidate_count"] = stock_pool["summary"]["independent_count"]
+        summary["stock_m4_analysis"] = stock_m4_summary
+        summary["stock_opportunity_count"] = sum(
+            bool(score["eligible"]) for score in stock_scores
+        )
+        if stock_execution.error:
+            summary["scoring_errors"].append({
+                "system_id": STOCK_OPPORTUNITY_SCORER,
+                "error": stock_execution.error,
+            })
         digest = _result_digest(items + [{
             "active": True, "item_key": "all-board-observations",
             "rank": 0, "score": 0, "confidence": 1,
@@ -475,7 +502,7 @@ class SignalReviewService:
         }])
         self._store.complete_signal_review_run(
             run_id, items=items, summary=summary, input_digest=digest,
-            scores=[*trend_scores, *market_scores],
+            scores=[*trend_scores, *market_scores, *stock_scores],
             pool_snapshots=[board_pool, stock_pool],
         )
         LOGGER.info(
@@ -483,6 +510,96 @@ class SignalReviewService:
             run_id, cutoff, len(observations), len(promoted),
             (time.perf_counter() - started) * 1000,
         )
+
+    def _run_stock_pool_analysis(
+        self, run_id: str, cutoff: date, stock_pool: dict[str, object],
+    ) -> dict[str, object]:
+        from stock_harness.analysis_inputs import AnalysisHorizons, AnalysisTimeframe
+        from stock_harness.pattern_analysis import PatternAnalysisRequest, PatternAnalysisService
+
+        items = [
+            item for item in stock_pool.get("items", []) if isinstance(item, dict)
+        ]
+        eligible = [
+            item for item in items
+            if item.get("lifecycle_state") not in {"cooldown", "invalidated"}
+        ]
+        limit = int(_daily_run_parameters()["stock_deep_analysis_limit"])
+        selected = eligible[:limit]
+        for item in eligible[limit:]:
+            payload = item.get("payload")
+            if isinstance(payload, dict):
+                payload["m4_analysis"] = {
+                    "state": "deferred-resource-limit", "limit": limit,
+                }
+                payload["opportunity_classification"] = _stock_opportunity_classification(
+                    payload, None,
+                )
+        service = PatternAnalysisService(self._store)
+        confirmed = reused = failed = 0
+        self._progress(run_id, "stock-m4-analysis", len(selected), 0)
+        for index, item in enumerate(selected, 1):
+            symbol = str(item["symbol"])
+            payload = item.get("payload")
+            if not isinstance(payload, dict):
+                continue
+            try:
+                result = _reusable_stock_analysis(self._store, payload, cutoff)
+                was_reused = result is not None
+                if result is None:
+                    result = service.analyze(PatternAnalysisRequest(
+                        symbol=symbol,
+                        timeframes=(AnalysisTimeframe.DAILY,),
+                        horizons=AnalysisHorizons(14, 28, 250),
+                        config_version="signal-review-stock-v1",
+                        include_preview=False, as_of_date=cutoff,
+                    ))[0]
+                scenario = project_scenario_summary([
+                    value for value in result.get("items", []) if isinstance(value, dict)
+                ])
+                core_ids = read_core_structural_item_ids(result.get("items", []))
+                payload["m4_analysis"] = {
+                    "state": "reused" if was_reused else "confirmed",
+                    "run_id": result["run_id"], "status": result.get("status"),
+                    "algorithm_version": result.get("algorithm_version"),
+                    "config_version": result.get("config_version"),
+                    "scenario": scenario, "core_item_ids": core_ids,
+                    "warning_count": len(result.get("warnings", [])),
+                }
+                payload["opportunity_classification"] = _stock_opportunity_classification(
+                    payload, scenario,
+                )
+                item.setdefault("sources", []).append(_pool_source(
+                    "m4-analysis", str(result["run_id"]), symbol,
+                    "reused-screener-analysis" if was_reused else "bounded-pool-analysis",
+                    {
+                        "scenario_item_id": scenario.get("scenario_item_id"),
+                        "state": scenario.get("state"),
+                        "core_item_ids": core_ids,
+                    },
+                ))
+                confirmed += 1
+                reused += int(was_reused)
+            except Exception as error:
+                payload["m4_analysis"] = {
+                    "state": "failed", "error_type": type(error).__name__,
+                    "message": str(error)[:500],
+                }
+                payload["opportunity_classification"] = _stock_opportunity_classification(
+                    payload, None,
+                )
+                failed += 1
+                LOGGER.warning(
+                    "stock_pool_m4_analysis_failed run_id=%s symbol=%s error_type=%s",
+                    run_id, symbol, type(error).__name__,
+                )
+            self._progress(run_id, "stock-m4-analysis", len(selected), index)
+        return {
+            "limit": limit, "selected_count": len(selected),
+            "confirmed_count": confirmed, "reused_count": reused,
+            "failed_count": failed,
+            "deferred_count": max(0, len(eligible) - len(selected)),
+        }
 
     def _run_daily_deep_analysis(
         self, run_id: str, cutoff: date,
@@ -967,6 +1084,66 @@ def _pool_source(
     }
 
 
+def _reusable_stock_analysis(
+    store: SQLiteMarketDataStore, payload: dict[str, object], cutoff: date,
+) -> dict[str, object] | None:
+    screener_results = payload.get("screener_results")
+    if not isinstance(screener_results, list):
+        return None
+    for candidate in screener_results:
+        if not isinstance(candidate, dict) or not candidate.get("analysis_run_id"):
+            continue
+        result = store.get_generated_analysis_run(str(candidate["analysis_run_id"]))
+        if result is not None and result.get("as_of_date") == cutoff:
+            return result
+    return None
+
+
+def _stock_opportunity_classification(
+    payload: dict[str, object], scenario: dict[str, object] | None,
+) -> dict[str, object]:
+    recognized = bool(payload.get("recognized"))
+    independent = payload.get("independent_scan")
+    member = payload.get("member_scan")
+    independent_eligible = any(
+        bool(scan.get("eligible")) for scan in (independent, member)
+        if isinstance(scan, dict)
+    )
+    state = str((scenario or {}).get("state") or "unavailable")
+    targets = (
+        scenario.get("targets", []) if isinstance(scenario, dict) else []
+    )
+    credible_targets = [
+        target for target in targets
+        if isinstance(target, dict)
+        and isinstance(target.get("stressed_risk_reward_ratio"), (int, float))
+        and float(target["stressed_risk_reward_ratio"]) >= 3.0
+    ]
+    opportunity_eligible = (
+        state in {"waiting-trigger", "triggered", "retest"}
+        and bool(credible_targets)
+    )
+    if recognized and opportunity_eligible:
+        classification = "recognized-and-eligible"
+    elif recognized:
+        classification = "recognized-but-ineligible"
+    elif independent_eligible and opportunity_eligible:
+        classification = "emerging-core-candidate"
+    elif opportunity_eligible:
+        classification = "ordinary-structure-candidate"
+    else:
+        classification = "ordinary-observation"
+    return {
+        "classification": classification,
+        "recognition_state": "recognized" if recognized else "unrecognized",
+        "independent_strength_eligible": independent_eligible,
+        "opportunity_state": state,
+        "opportunity_eligible": opportunity_eligible,
+        "credible_target_count": len(credible_targets),
+        "minimum_stressed_risk_reward": 3.0,
+    }
+
+
 def _bar_payload(bar) -> dict[str, object]:
     return {
         "trade_date": bar.trade_date.isoformat(), "open": bar.open,
@@ -1000,6 +1177,7 @@ def _daily_run_parameters() -> dict[str, object]:
         "manual_trigger": True,
         "full_observation_persistence": True,
         "deep_analysis_limit": 60,
+        "stock_deep_analysis_limit": 30,
     }
 
 

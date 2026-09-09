@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from stock_harness.review_scoring import (
+    STOCK_OPPORTUNITY_SCORER,
     TREND_BREAKOUT_SCORER,
     ReviewScorerRegistry,
     default_scorer_registry,
@@ -158,3 +159,49 @@ def test_scorer_failure_is_isolated_as_an_explicit_execution_error() -> None:
 
     assert execution.results == []
     assert execution.error == "RuntimeError: fixture failure"
+
+
+def test_stock_opportunity_scorer_requires_actionable_m4_and_stressed_three_r() -> None:
+    scorer = default_scorer_registry().get(STOCK_OPPORTUNITY_SCORER)
+    entity = {
+        "symbol": "000001.SZ",
+        "payload": {
+            "independent_scan": {"score": 82},
+            "member_scan": None,
+            "m4_analysis": {
+                "status": "succeeded", "warning_count": 0,
+                "core_item_ids": ["line-1", "scenario-1"],
+                "scenario": {
+                    "state": "retest", "scenario_item_id": "scenario-1",
+                    "entry_price": 10, "invalidation_price": 9,
+                    "targets": [{
+                        "label": "T1", "price": 13.4,
+                        "risk_reward_ratio": 3.4,
+                        "stressed_risk_reward_ratio": 3.1,
+                    }],
+                },
+            },
+        },
+    }
+
+    accepted = score_entities(scorer, [entity])[0]
+    rejected_entity = {**entity, "payload": {
+        **entity["payload"], "m4_analysis": {
+            **entity["payload"]["m4_analysis"],
+            "scenario": {
+                **entity["payload"]["m4_analysis"]["scenario"],
+                "targets": [{
+                    "label": "T1", "price": 12.5,
+                    "risk_reward_ratio": 2.5,
+                    "stressed_risk_reward_ratio": 2.4,
+                }],
+            },
+        },
+    }}
+    rejected = score_entities(scorer, [rejected_entity])[0]
+
+    assert accepted["eligible"] is True
+    assert accepted["selected_scenario_id"] == "scenario-1"
+    assert accepted["components"]["independent_strength"] == 12.3
+    assert rejected["eligible"] is False
+    assert "no-credible-target-at-3r" in rejected["disqualifiers"]

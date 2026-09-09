@@ -5,12 +5,12 @@ from fastapi.testclient import TestClient
 from stock_harness.api import create_app
 from stock_harness.models import BoardMembership, Instrument, InstrumentKind
 from stock_harness.signal_review import (
-    DAILY_MARKET_BOARD_SIGNAL, WEEKLY_RECOGNITION_SIGNAL,
+    DAILY_MARKET_BOARD_SIGNAL, WEEKLY_RECOGNITION_SIGNAL, SignalReviewService,
     _apply_transition_attention,
     _aggregate_assignments, _assign_evidence_aliases,
     _compare_items, _order_daily_deep_candidates, _result_digest,
     _market_style_divergence, _score_history,
-    _build_board_pool_snapshot,
+    _build_board_pool_snapshot, _stock_opportunity_classification,
 )
 from stock_harness.daily_signal_analysis import (
     _price_space, analyze_daily_series, build_board_analysis_record,
@@ -759,6 +759,68 @@ def test_board_observation_pool_unions_scores_anomalies_and_recognition() -> Non
         )
     assert response.status_code == 200
     assert response.json()["summary"]["item_count"] == 2
+    store.close()
+
+
+def test_stock_opportunity_classification_keeps_recognition_and_m4_separate() -> None:
+    scenario = {
+        "state": "retest",
+        "targets": [{"stressed_risk_reward_ratio": 3.4}],
+    }
+    recognized = _stock_opportunity_classification({
+        "recognized": True,
+        "independent_scan": {"eligible": False},
+    }, scenario)
+    emerging = _stock_opportunity_classification({
+        "recognized": False,
+        "independent_scan": {"eligible": True},
+    }, scenario)
+    waiting = _stock_opportunity_classification({
+        "recognized": True,
+        "independent_scan": {"eligible": True},
+    }, {"state": "waiting-trigger", "targets": [
+        {"stressed_risk_reward_ratio": 2.9},
+    ]})
+
+    assert recognized["classification"] == "recognized-and-eligible"
+    assert emerging["classification"] == "emerging-core-candidate"
+    assert waiting["classification"] == "recognized-but-ineligible"
+    assert waiting["opportunity_eligible"] is False
+
+
+def test_stock_pool_runs_and_links_bounded_authoritative_m4_analysis() -> None:
+    store = SQLiteMarketDataStore(":memory:")
+    store.upsert_instruments([
+        Instrument("000001.SZ", "Stock", InstrumentKind.STOCK, "SZ"),
+    ])
+    bars = _daily_bars("000001.SZ", 320)
+    store.upsert_daily_bars("test", bars)
+    service = SignalReviewService(store)
+    run = store.create_signal_review_run(
+        signal_id=DAILY_MARKET_BOARD_SIGNAL,
+        definition_version="daily-v1", algorithm_version="daily-v1",
+        cadence="daily", effective_date=bars[-1].trade_date, parameters={},
+    )
+    pool = {"items": [{
+        "symbol": "000001.SZ", "lifecycle_state": "new", "rank": 1,
+        "payload": {
+            "recognized": True, "independent_scan": {"eligible": True},
+            "member_scan": None, "screener_results": [],
+        },
+        "sources": [],
+    }]}
+
+    summary = service._run_stock_pool_analysis(
+        str(run["run_id"]), bars[-1].trade_date, pool,
+    )
+
+    payload = pool["items"][0]["payload"]
+    assert summary["confirmed_count"] == 1
+    assert payload["m4_analysis"]["run_id"]
+    assert payload["m4_analysis"]["state"] == "confirmed"
+    assert payload["opportunity_classification"]["recognition_state"] == "recognized"
+    assert pool["items"][0]["sources"][0]["source_type"] == "m4-analysis"
+    store.fail_signal_review_run(str(run["run_id"]), "fixture complete")
     store.close()
 
 
