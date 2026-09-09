@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { IChartApi } from 'lightweight-charts'
 import {
+  isVolumeZoneTarget,
   projectRiskReward,
   readPrimaryStructuralScenario,
+  targetBasisLabel,
 } from './tradeScenarioProjection'
 import type { TrendAnalysisRun } from './trendAnalysisClient'
 
@@ -29,6 +31,9 @@ const run: TrendAnalysisRun = {
       }, {
         label: 'T2', price: 14, basis: 'range-high', risk_reward_ratio: 4,
         stressed_risk_reward_ratio: 3.7, evidence_item_ids: ['target-2'],
+      }, {
+        label: 'T3', price: 16, basis: 'estimated-volume-at-price', risk_reward_ratio: 6,
+        stressed_risk_reward_ratio: 5.4, evidence_item_ids: ['target-3'],
       }],
     },
   }],
@@ -48,8 +53,10 @@ describe('structural trade scenario projection', () => {
       id: 'scenario-1', direction: 'long', state: 'triggered',
       entryPrice: 10, invalidationPrice: 9, selectedTargetLabel: 'T2',
     }))
-    expect(scenario?.targets).toHaveLength(2)
+    expect(scenario?.targets).toHaveLength(3)
     expect(scenario?.targets[1].evidenceItemIds).toEqual(['target-2'])
+    expect(targetBasisLabel(scenario!.targets[2].basis)).toBe('成交密集区')
+    expect(isVolumeZoneTarget(scenario!.targets[2])).toBe(true)
   })
 
   it('projects the selected target through live chart price coordinates', () => {
@@ -57,9 +64,18 @@ describe('structural trade scenario projection', () => {
 
     expect(geometry).toEqual(expect.objectContaining({
       scenarioId: 'scenario-1', entryY: 100, invalidationY: 110,
-      targetY: 80, state: 'triggered',
+      selectedTargetLabel: 'T1', state: 'triggered',
     }))
-    expect(geometry?.target.label).toBe('T1')
+    expect(geometry?.targets).toHaveLength(3)
+    expect(geometry?.targets[0]).toEqual(expect.objectContaining({
+      targetY: 80, selected: true,
+    }))
+    expect(geometry?.targets[1]).toEqual(expect.objectContaining({
+      targetY: 60, selected: false,
+    }))
+    expect(geometry!.targets[1].x).toBeGreaterThan(geometry!.targets[0].x)
+    expect(geometry!.targets[1].width).toBeLessThan(geometry!.targets[0].width)
+    expect(geometry!.targets[2]).toEqual(expect.objectContaining({ targetY: 40, selected: false }))
     expect(geometry?.width).toBeGreaterThanOrEqual(80)
   })
 })

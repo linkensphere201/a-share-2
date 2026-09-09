@@ -1088,9 +1088,16 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .trade-scenario-summary dt { color: var(--theme-muted); }
 .trade-scenario-summary dd { margin: 0; color: var(--theme-text-strong); }
 .trade-scenario-summary dd small { color: var(--theme-muted); font-size: 9px; }
+.trade-scenario-target-filter { display: flex; align-items: center; gap: 2px; }
+.trade-scenario-target-filter button { height: 21px; padding: 0 7px; border: 1px solid transparent; border-radius: 2px; background: transparent; color: var(--theme-faint); font-size: 8px; }
+.trade-scenario-target-filter button:hover:not(:disabled) { color: var(--theme-text-strong); background: var(--theme-hover); }
+.trade-scenario-target-filter button.active { border-color: var(--theme-border); background: var(--theme-surface-alt); color: var(--theme-text-strong); }
+.trade-scenario-target-filter button:disabled { opacity: .38; cursor: default; }
 .trade-scenario-targets { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
-.trade-scenario-targets button { display: flex; align-items: center; justify-content: space-between; gap: 4px; min-width: 0; padding: 5px 6px; border: 1px solid var(--theme-border); border-radius: 3px; background: transparent; color: var(--theme-muted); font-size: 10px; }
-.trade-scenario-targets button small { overflow: hidden; color: inherit; font-size: 9px; text-overflow: ellipsis; }
+.trade-scenario-targets button { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 4px; min-width: 0; padding: 5px 6px; border: 1px solid var(--theme-border); border-radius: 3px; background: transparent; color: var(--theme-muted); font-size: 10px; text-align: left; }
+.trade-scenario-targets button > span { min-width: 0; display: grid; gap: 2px; }
+.trade-scenario-targets button small { overflow: hidden; color: var(--theme-faint); font-size: 8px; font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
+.trade-scenario-target-value { justify-items: end; color: var(--theme-text-strong); }
 .trade-scenario-targets button.active { border-color: var(--theme-accent); background: color-mix(in srgb, var(--theme-accent) 13%, transparent); color: var(--theme-text-strong); }
 .trade-scenario-ratios { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }
 .trade-scenario-ratios > span { display: flex; align-items: baseline; justify-content: space-between; padding: 5px 6px; background: color-mix(in srgb, var(--theme-base) 35%, transparent); color: var(--theme-muted); font-size: 9px; }
@@ -1213,10 +1220,16 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .chart-generated-analysis.has-highlight .generated-risk-reward:not(.highlighted) { opacity: .16; }
 .generated-risk-reward rect, .generated-risk-reward line { vector-effect: non-scaling-stroke; }
 .generated-risk-reward .risk-region { fill: #ef535026; stroke: #ef53508f; stroke-width: .7; }
-.generated-risk-reward .reward-region { fill: #26a26924; stroke: #26a2698f; stroke-width: .7; }
+.generated-risk-reward .reward-region { fill: #26a26912; stroke: #26a26970; stroke-width: .7; }
+.generated-risk-reward .reward-region.target-t2 { fill: #49a88616; }
+.generated-risk-reward .reward-region.target-t3 { fill: #6daf9a1a; }
+.generated-risk-reward .reward-region.selected { fill: #26a2692b; stroke: #56bd91; stroke-width: 1.15; }
 .generated-risk-reward .entry-line { stroke: var(--theme-text-strong); stroke-width: 1; }
 .generated-risk-reward .invalidation-line { stroke: #ef5350; stroke-width: 1; stroke-dasharray: 3 2; }
 .generated-risk-reward .target-line { stroke: #26a269; stroke-width: 1; stroke-dasharray: 3 2; }
+.generated-risk-reward .risk-reward-target { opacity: .62; }
+.generated-risk-reward .risk-reward-target.selected { opacity: 1; }
+.generated-risk-reward .risk-reward-target.selected .target-line { stroke-width: 1.5; }
 .generated-risk-reward text { fill: var(--theme-text-strong); font-family: "Microsoft YaHei UI", "Microsoft YaHei", sans-serif; font-size: 9px; font-weight: 400; paint-order: stroke; stroke: color-mix(in srgb, var(--theme-base) 88%, transparent); stroke-width: 2px; }
 .generated-risk-reward.invalidated .reward-region,
 .generated-risk-reward.extended .reward-region,

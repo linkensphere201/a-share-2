@@ -19,6 +19,8 @@ const run = {
           stressed_risk_reward_ratio: 1.8, evidence_item_ids: ['target-1'] },
         { label: 'T2', price: 14, basis: 'range-high', risk_reward_ratio: 4,
           stressed_risk_reward_ratio: 3.7, evidence_item_ids: ['target-2'] },
+        { label: 'T3', price: 16, basis: 'estimated-volume-at-price', risk_reward_ratio: 6,
+          stressed_risk_reward_ratio: 5.4, evidence_item_ids: ['target-3'] },
       ],
     },
   }],
@@ -41,6 +43,11 @@ describe('TradeScenarioPanel', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /T1/ }))
     expect(onTargetChange).toHaveBeenCalledWith('T1')
+    expect(screen.getByRole('button', { name: /T1.*关键位.*RR 1.80/ })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '成交密集区' }))
+    expect(onTargetChange).toHaveBeenLastCalledWith('T3')
+    expect(screen.queryByRole('button', { name: /T1.*关键位/ })).toBeNull()
+    expect(screen.getByRole('button', { name: /T3.*成交密集区.*RR 5.40/ })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: /隐藏盈亏比图层/ }))
     expect(onVisibleChange).toHaveBeenCalledWith(false)
     const setup = screen.getByRole('button', { name: /向上场景/ })

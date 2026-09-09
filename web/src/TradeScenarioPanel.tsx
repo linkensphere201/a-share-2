@@ -1,6 +1,9 @@
 import { Eye, EyeOff } from 'lucide-react'
+import { useState } from 'react'
 import {
+  isVolumeZoneTarget,
   readPrimaryStructuralScenario,
+  targetBasisLabel,
   type StructuralTradeScenario,
 } from './tradeScenarioProjection'
 import type { TrendAnalysisRun } from './trendAnalysisClient'
@@ -20,6 +23,7 @@ export function TradeScenarioPanel({
   onVisibleChange?: (visible: boolean) => void
   onHighlightItemChange: (itemId?: string) => void
 }) {
+  const [targetFilter, setTargetFilter] = useState<'all' | 'volume-zone'>('all')
   const scenario = readPrimaryStructuralScenario(run)
   if (!scenario) return null
   const activeTarget = scenario.targets.find(item => item.label === selectedTargetLabel)
@@ -27,6 +31,8 @@ export function TradeScenarioPanel({
     ?? scenario.targets[0]
   const setupEvidence = scenario.evidenceItemIds[0]
   const invalidationEvidence = scenario.invalidationEvidenceItemIds[0]
+  const volumeTargets = scenario.targets.filter(isVolumeZoneTarget)
+  const visibleTargets = targetFilter === 'volume-zone' ? volumeTargets : scenario.targets
   return <section className={`trade-scenario-panel ${scenario.state}`} aria-label="盈亏比场景">
     <h3>
       <span>交易场景</span>
@@ -54,20 +60,37 @@ export function TradeScenarioPanel({
         >{scenario.invalidationPrice.toFixed(2)} <small>-{scenario.riskPercent.toFixed(2)}%</small></dd>
       </dl>
       {scenario.targets.length > 0 ? <>
+        <div className="trade-scenario-target-filter" role="group" aria-label="目标来源筛选">
+          <button className={targetFilter === 'all' ? 'active' : ''} aria-pressed={targetFilter === 'all'} onClick={() => setTargetFilter('all')}>全部目标</button>
+          <button
+            className={targetFilter === 'volume-zone' ? 'active' : ''}
+            aria-pressed={targetFilter === 'volume-zone'}
+            disabled={volumeTargets.length === 0}
+            onClick={() => {
+              setTargetFilter('volume-zone')
+              if (volumeTargets.length > 0 && !activeTarget?.basis.includes('estimated-volume-at-price')) {
+                onTargetChange?.(volumeTargets[0].label)
+              }
+            }}
+          >成交密集区</button>
+        </div>
         <div className="trade-scenario-targets" role="group" aria-label="盈亏比目标位">
-          {scenario.targets.map(target => <button
+          {visibleTargets.map(target => <button
             key={target.label}
             className={activeTarget?.label === target.label ? 'active' : ''}
             aria-pressed={activeTarget?.label === target.label}
             onClick={() => onTargetChange?.(target.label)}
             onPointerEnter={() => onHighlightItemChange(target.evidenceItemIds[0])}
             onPointerLeave={() => onHighlightItemChange(undefined)}
-          >{target.label}<small>{target.price.toFixed(2)}</small></button>)}
+          >
+            <span>{target.label}<small>{targetBasisLabel(target.basis)}</small></span>
+            <span className="trade-scenario-target-value">{target.price.toFixed(2)}<small>RR {target.stressedRiskRewardRatio?.toFixed(2) ?? '-'}</small></span>
+          </button>)}
         </div>
         {activeTarget && <div className="trade-scenario-ratios">
           <Ratio label="原始 RR" value={activeTarget.riskRewardRatio}/>
           <Ratio label="压力 RR" value={activeTarget.stressedRiskRewardRatio}/>
-          <small>{activeTarget.basis}</small>
+          <small>{targetBasisLabel(activeTarget.basis)}</small>
         </div>}
       </> : <p className="trade-scenario-unavailable">当前结构没有可复现的目标位，不给出盈亏比。</p>}
     </div>

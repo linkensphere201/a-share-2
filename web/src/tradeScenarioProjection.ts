@@ -34,11 +34,19 @@ export type RiskRewardGeometry = {
   width: number
   entryY: number
   invalidationY: number
-  targetY: number
   entryPrice: number
   invalidationPrice: number
-  target: StructuralScenarioTarget
+  targets: RiskRewardTargetGeometry[]
+  selectedTargetLabel: string
   riskPercent: number
+}
+
+export type RiskRewardTargetGeometry = {
+  target: StructuralScenarioTarget
+  targetY: number
+  x: number
+  width: number
+  selected: boolean
 }
 
 export function readPrimaryStructuralScenario(
@@ -101,10 +109,23 @@ export function projectRiskReward(
   if (asOfX === null || asOfX < -12 || asOfX > chartWidth + 12 || chartWidth < 40) return undefined
   const entryY = priceSeries.priceToCoordinate(scenario.entryPrice)
   const invalidationY = priceSeries.priceToCoordinate(scenario.invalidationPrice)
-  const targetY = priceSeries.priceToCoordinate(target.price)
-  if (entryY === null || invalidationY === null || targetY === null) return undefined
-  const x = Math.max(3, Math.min(asOfX, chartWidth - Math.min(112, chartWidth - 6)))
-  const width = Math.max(20, Math.min(112, chartWidth - x - 3))
+  if (entryY === null || invalidationY === null) return undefined
+  const maxWidth = Math.min(156, chartWidth - 6)
+  const x = Math.max(3, Math.min(asOfX, chartWidth - maxWidth - 3))
+  const width = Math.max(20, Math.min(maxWidth, chartWidth - x - 3))
+  const targets = scenario.targets.flatMap((item, index) => {
+    const targetY = priceSeries.priceToCoordinate(item.price)
+    if (targetY === null) return []
+    const inset = Math.min(index * 12, Math.max(0, width - 42))
+    return [{
+      target: item,
+      targetY,
+      x: x + inset,
+      width: width - inset,
+      selected: item.label === target.label,
+    }]
+  })
+  if (targets.length === 0) return undefined
   return {
     scenarioId: scenario.id,
     direction: scenario.direction,
@@ -113,12 +134,30 @@ export function projectRiskReward(
     width,
     entryY,
     invalidationY,
-    targetY,
     entryPrice: scenario.entryPrice,
     invalidationPrice: scenario.invalidationPrice,
-    target,
+    targets,
+    selectedTargetLabel: target.label,
     riskPercent: scenario.riskPercent,
   }
+}
+
+export function targetBasisLabel(value: string): string {
+  const labels = value.split('+').map(item => {
+    if (item === 'estimated-volume-at-price') return '成交密集区'
+    if (item === 'key-level') return '关键位'
+    if (item.startsWith('range-high')) return '区间高点'
+    if (item.startsWith('range-low')) return '区间低点'
+    if (item.includes('trend-line') || item.includes('-projection-')) return '趋势线投影'
+    if (item.includes('pattern')) return '形态边界'
+    if (item.includes('gap')) return '缺口边界'
+    return item
+  })
+  return [...new Set(labels)].join(' + ')
+}
+
+export function isVolumeZoneTarget(target: StructuralScenarioTarget): boolean {
+  return target.basis.split('+').includes('estimated-volume-at-price')
 }
 
 function parseTarget(value: unknown): StructuralScenarioTarget[] {
