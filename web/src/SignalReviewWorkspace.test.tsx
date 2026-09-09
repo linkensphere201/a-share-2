@@ -5,7 +5,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { SignalReviewWorkspace, stateDetailLabels } from './SignalReviewWorkspace'
 import { buildSignalReferenceMap } from './SignalChatPanel'
-import type { SignalItem } from './signalReviewClient'
+import type { ObservationPoolItem, SignalItem } from './signalReviewClient'
 import { themes } from './themeStore'
 
 vi.mock('./ChartCanvas', () => ({
@@ -40,6 +40,20 @@ describe('SignalReviewWorkspace', () => {
     expect(buildSignalReferenceMap(
       [items[0], duplicate] as unknown as SignalItem[],
     ).has('S1')).toBe(false)
+  })
+
+  it('maps selected observation-pool sources to O-series references', () => {
+    const poolItem = {
+      symbol: '300001.SZ', name: '池内标的', kind: 'stock', exchange: 'SZ',
+      lifecycle_state: 'active', rank: 1, payload: {},
+      sources: [{
+        source_type: 'm4-analysis', source_reference: 'm4-1',
+        source_entity_key: 'line-1', reason: '结构证据', payload: {},
+      }],
+    }
+    expect(buildSignalReferenceMap(
+      [], poolItem as ObservationPoolItem,
+    ).get('O1')).toBe('pool:stock:300001.SZ\u0000m4-analysis:line-1')
   })
 
   it('loads an immutable run, filters changes, and opens its chart evidence', async () => {
