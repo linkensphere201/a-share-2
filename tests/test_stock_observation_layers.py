@@ -105,6 +105,30 @@ def test_risk_overflow_is_archived_instead_of_spilling_into_focus() -> None:
     assert _payload(items, "CLEAN")["presentation_bucket"] == "focus"
 
 
+def test_focus_retains_at_most_seventy_prior_qualified_names() -> None:
+    retained = [
+        _item(f"OLD{index:02}", score=50 - index / 10, phase="breakout")
+        for index in range(80)
+    ]
+    for item in retained:
+        item["payload"]["previous_presentation_bucket"] = "focus"
+    entrants = [
+        _item(f"NEW{index:02}", score=100 - index / 10, phase="breakout")
+        for index in range(80)
+    ]
+    snapshot = {"summary": {}, "items": [*retained, *entrants]}
+
+    assign_stock_presentation_layers(snapshot, focus_limit=100, risk_limit=1)
+
+    focus_symbols = {
+        item["symbol"] for item in snapshot["items"]
+        if item["payload"]["presentation_bucket"] == "focus"
+    }
+    assert len(focus_symbols) == 100
+    assert sum(symbol.startswith("OLD") for symbol in focus_symbols) == 70
+    assert sum(symbol.startswith("NEW") for symbol in focus_symbols) == 30
+
+
 def _item(
     symbol: str, *, score: float, recognized: bool = False,
     classification: str = "neutral", manual: bool = False,

@@ -79,6 +79,22 @@ def test_focus_snapshot_summary_and_future_window_are_bounded() -> None:
     assert module._future_window_max([1, 5, 3, 8, 2], 2) == [5, 8, 8, None, None]
 
 
+def test_replay_state_must_match_latest_result_and_algorithm_versions() -> None:
+    state = {
+        "effective_date": "2026-09-08",
+        "algorithm_version": module.UNIFIED_STOCK_POOL_VERSION,
+        "summary": {"presentation": {
+            "algorithm_version": module.PRESENTATION_VERSION,
+        }},
+    }
+    report = {"results": [{"effective_date": "2026-09-08"}]}
+
+    assert module._state_matches_report(state, report)
+    assert not module._state_matches_report(
+        {**state, "effective_date": "2026-09-07"}, report,
+    )
+
+
 def _score(symbol: str, *disqualifiers: str) -> dict[str, object]:
     return {
         "symbol": symbol, "name": symbol, "eligible": not disqualifiers,

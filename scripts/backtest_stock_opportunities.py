@@ -44,6 +44,8 @@ def main() -> None:
     parser.add_argument("--require-opportunity", action="store_true")
     parser.add_argument("--single-date", type=date.fromisoformat, help=argparse.SUPPRESS)
     parser.add_argument("--single-result", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--prior-snapshot", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--next-snapshot", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.single_date:
         if args.single_result is None:
@@ -76,7 +78,15 @@ def main() -> None:
     if not dates:
         raise SystemExit("no trading dates are available in the requested interval")
 
+    state_path = args.output.with_name(f"{args.output.stem}-state.json")
     report = _load_report(args.output) if not args.no_resume else None
+    if (
+        _compatible_report(report, dates, args.mode)
+        and args.mode == "focus-core"
+        and _sequence(_mapping(report).get("results"))
+        and not _state_matches_report(_load_report(state_path), report)
+    ):
+        report = None
     if not _compatible_report(report, dates, args.mode):
         report = {
             "algorithm_contract": {
@@ -86,7 +96,7 @@ def main() -> None:
                 "independent_scan_version": INDEPENDENT_SCAN_VERSION,
                 "stock_pool_version": UNIFIED_STOCK_POOL_VERSION,
                 "execution": (
-                    "shared full-market scan and presentation functions"
+                    "stateful full-market scan and presentation functions"
                     if args.mode == "focus-core" else "SignalReviewService.run_sync"
                 ),
                 "mode": args.mode,
@@ -118,6 +128,10 @@ def main() -> None:
             "--single-result", str(single_result),
             "--mode", args.mode,
         ]
+        if args.mode == "focus-core":
+            command.extend(["--next-snapshot", str(state_path)])
+            if report["results"]:
+                command.extend(["--prior-snapshot", str(state_path)])
         completed = subprocess.run(
             command, check=False,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
@@ -167,14 +181,19 @@ def _run_single_date(args: argparse.Namespace, settings: Any | None) -> None:
     try:
         if args.mode == "focus-core":
             records = scan_full_market_independent_strength(store, args.single_date)
+            prior_snapshot = (
+                _load_report(args.prior_snapshot) if args.prior_snapshot else None
+            )
             snapshot = build_unified_stock_pool_snapshot(
                 f"historical-focus-core:{args.single_date}", args.single_date,
-                {"items": []}, records,
+                {"items": []}, records, prior_snapshot=prior_snapshot,
             )
             assign_stock_presentation_layers(snapshot)
             result = summarize_focus_snapshot(snapshot)
             result["reused"] = False
             result["child_wall_seconds"] = round(time.perf_counter() - started, 3)
+            if args.next_snapshot:
+                _write_report(args.next_snapshot, snapshot)
             _write_report(args.single_result, result)
             return
         run = _find_reusable_run(store, args.single_date)
@@ -358,6 +377,26 @@ def _compatible_report(
         == UNIFIED_STOCK_POOL_VERSION
         and _mapping(report.get("algorithm_contract")).get("mode") == mode
         and report.get("requested_dates") == [value.isoformat() for value in dates]
+    )
+
+
+def _state_matches_report(
+    state: object, report: object,
+) -> bool:
+    if not isinstance(state, Mapping) or not isinstance(report, Mapping):
+        return False
+    results = [
+        item for item in _sequence(report.get("results"))
+        if isinstance(item, Mapping)
+    ]
+    if not results:
+        return True
+    latest = max(results, key=lambda item: str(item.get("effective_date")))
+    presentation = _mapping(_mapping(state.get("summary")).get("presentation"))
+    return bool(
+        _iso(state.get("effective_date")) == str(latest.get("effective_date"))
+        and state.get("algorithm_version") == UNIFIED_STOCK_POOL_VERSION
+        and presentation.get("algorithm_version") == PRESENTATION_VERSION
     )
 
 

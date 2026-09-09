@@ -5,10 +5,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 
-ALGORITHM_VERSION = "stock-observation-presentation-v3"
+ALGORITHM_VERSION = "stock-observation-presentation-v4"
 M4_ALLOCATOR_VERSION = "stock-m4-multilane-v1"
 FOCUS_LIMIT = 100
 RISK_LIMIT = 100
+FOCUS_RETENTION_LIMIT = 70
 ACTIONABLE_STATES = {"waiting-trigger", "triggered", "retest"}
 RISK_CLASSIFICATIONS = {
     "independent-decline", "one-session-event-anomaly",
@@ -143,6 +144,7 @@ def _focus(item: Mapping[str, object]) -> bool:
         or payload.get("screener_results")
         or _readiness(payload) > 0
         or _scan_eligible(payload)
+        or _was_focus(item)
         or str(scenario.get("state")) in ACTIONABLE_STATES
     )
 
@@ -243,11 +245,25 @@ def _bounded_focus(
         item for item in items
         if _symbol(item) not in used and not _risk(item) and _focus(item)
     ]
+    retained = sorted(
+        (item for item in candidates if _was_focus(item)), key=_focus_key,
+    )[:min(limit, FOCUS_RETENTION_LIMIT)]
+    for item in retained:
+        selected.append(item)
+        used.add(_symbol(item))
+    retained_lanes: dict[str, int] = {}
+    for item in retained:
+        lane = _focus_lane(item)
+        retained_lanes[lane] = retained_lanes.get(lane, 0) + 1
     for lane, quota in quotas:
+        remaining_quota = max(0, quota - retained_lanes.get(lane, 0))
         matching = sorted(
-            (item for item in candidates if _focus_lane(item) == lane),
+            (
+                item for item in candidates
+                if _symbol(item) not in used and _focus_lane(item) == lane
+            ),
             key=_focus_key,
-        )[:quota]
+        )[:remaining_quota]
         for item in matching:
             symbol = _symbol(item)
             if symbol not in used:
@@ -261,6 +277,12 @@ def _bounded_focus(
             selected.append(item)
             used.add(symbol)
     return selected[:limit]
+
+
+def _was_focus(item: Mapping[str, object]) -> bool:
+    return _payload(item).get("previous_presentation_bucket") in {
+        "focus", "opportunity",
+    }
 
 
 def select_stock_m4_candidates(

@@ -17,7 +17,7 @@ from stock_harness.stock_relative_strength import (
 
 BOARD_MEMBER_SCAN_VERSION = "board-member-lightweight-scan-v2"
 INDEPENDENT_SCAN_VERSION = "full-market-independent-scan-v2"
-UNIFIED_STOCK_POOL_VERSION = "unified-stock-observation-pool-v3"
+UNIFIED_STOCK_POOL_VERSION = "unified-stock-observation-pool-v4"
 BATCH_SIZE = 200
 
 
@@ -241,6 +241,15 @@ def build_unified_stock_pool_snapshot(
     prior_snapshot: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     candidates: dict[str, dict[str, object]] = {}
+    prior_items = {
+        str(item["symbol"]): item for item in (prior_snapshot or {}).get("items", [])
+        if isinstance(item, Mapping)
+    }
+    prior_focus_symbols = {
+        symbol for symbol, item in prior_items.items()
+        if isinstance(item.get("payload"), Mapping)
+        and item["payload"].get("presentation_bucket") in {"focus", "opportunity"}
+    }
 
     def candidate(symbol: str) -> dict[str, object]:
         return candidates.setdefault(symbol.upper(), {
@@ -269,7 +278,9 @@ def build_unified_stock_pool_snapshot(
             if isinstance(source, Mapping)
         )
 
-    selected_independent = _select_independent_records(independent_records)
+    selected_independent = _select_independent_records(
+        independent_records, preserve_symbols=prior_focus_symbols,
+    )
     for record in selected_independent:
         symbol = str(record["symbol"])
         value = candidate(symbol)
@@ -325,10 +336,6 @@ def build_unified_stock_pool_snapshot(
             },
         })
 
-    prior_items = {
-        str(item["symbol"]): item for item in (prior_snapshot or {}).get("items", [])
-        if isinstance(item, Mapping)
-    }
     ordered = sorted(candidates.values(), key=lambda value: (
         value["manual"] is None,
         not bool(value["screener"]),
@@ -340,6 +347,10 @@ def build_unified_stock_pool_snapshot(
     items = []
     for rank, value in enumerate(ordered, 1):
         symbol = str(value["symbol"])
+        previous = prior_items.get(symbol)
+        prior_payload = previous.get("payload") if isinstance(previous, Mapping) else None
+        prior_payload = prior_payload if isinstance(prior_payload, Mapping) else {}
+        was_focus = prior_payload.get("presentation_bucket") in {"focus", "opportunity"}
         payload = {
             "recognized": bool((value["member"] or {}).get("recognized")),
             "member_scan": value["member"],
@@ -351,10 +362,15 @@ def build_unified_stock_pool_snapshot(
             "risk_name": bool(
                 (value["independent"] or value["member"] or {}).get("risk_name")
             ),
+            "previous_presentation_bucket": prior_payload.get("presentation_bucket"),
+            "focus_streak_sessions": (
+                int(prior_payload.get("focus_streak_sessions") or 0) + 1
+                if was_focus else 0
+            ),
         }
         items.append({
             "symbol": symbol,
-            "lifecycle_state": _merged_lifecycle(payload, prior_items.get(symbol)),
+            "lifecycle_state": _merged_lifecycle(payload, previous),
             "rank": rank, "payload": payload,
             "sources": _deduplicate_sources(value["sources"]),
         })
@@ -396,7 +412,8 @@ def build_unified_stock_pool_snapshot(
 
 
 def _select_independent_records(
-    records: Sequence[Mapping[str, object]],
+    records: Sequence[Mapping[str, object]], *,
+    preserve_symbols: set[str] | frozenset[str] = frozenset(),
 ) -> list[Mapping[str, object]]:
     selected: dict[str, Mapping[str, object]] = {}
     eligible = [record for record in records if bool(record.get("eligible"))][:100]
@@ -409,6 +426,18 @@ def _select_independent_records(
     )[:100]
     for record in readiness:
         selected[str(record["symbol"])] = record
+    for record in records:
+        symbol = str(record["symbol"])
+        if (
+            symbol in preserve_symbols
+            and record.get("selection_qualified", True)
+            and not record.get("risk_name")
+            and record.get("classification") not in {
+                "independent-decline", "one-session-event-anomaly",
+                "decaying-independent-move",
+            }
+        ):
+            selected.setdefault(symbol, record)
     limits = {
         "independent-decline": 50,
         "one-session-event-anomaly": 50,

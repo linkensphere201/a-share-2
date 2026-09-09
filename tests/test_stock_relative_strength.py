@@ -203,7 +203,15 @@ def test_unified_stock_pool_deduplicates_symbols_without_losing_sources() -> Non
         "daily-run", "screen-run",
     }
     assert snapshot["items"][0]["lifecycle_state"] == "manual-pinned"
+    merged["payload"]["presentation_bucket"] = "focus"
+    merged["payload"]["focus_streak_sessions"] = 4
     prior = {**snapshot, "source_run_id": "daily-run"}
+    carried = build_unified_stock_pool_snapshot(
+        "next-run", effective + timedelta(days=1), {"items": []}, independent,
+        prior_snapshot=prior,
+    )
+    assert carried["items"][0]["payload"]["previous_presentation_bucket"] == "focus"
+    assert carried["items"][0]["payload"]["focus_streak_sessions"] == 5
     cooling = build_unified_stock_pool_snapshot(
         "next-run", effective + timedelta(days=1), {"items": []}, [],
         prior_snapshot=prior,
@@ -225,6 +233,36 @@ def test_latest_screener_source_is_selected_by_effective_date() -> None:
     assert selected is not None
     assert selected["run_id"] == earlier["run_id"]
     store.close()
+
+
+def test_unified_pool_preserves_prior_focus_with_current_safe_scan_record() -> None:
+    prior = {
+        "source_run_id": "prior-run",
+        "items": [{
+            "symbol": "000001.SZ", "rank": 1, "lifecycle_state": "active",
+            "payload": {
+                "presentation_bucket": "focus", "focus_streak_sessions": 3,
+                "independent_score": 60,
+            },
+            "sources": [],
+        }],
+    }
+    record = {
+        "symbol": "000001.SZ", "score": 55, "rank": 500,
+        "eligible": False, "selection_qualified": True,
+        "classification": "neutral", "risk_name": False,
+        "metrics": {"opportunity_readiness_score": 0},
+    }
+
+    snapshot = build_unified_stock_pool_snapshot(
+        "current-run", date(2026, 9, 9), {"items": []}, [record],
+        prior_snapshot=prior,
+    )
+
+    assert len(snapshot["items"]) == 1
+    payload = snapshot["items"][0]["payload"]
+    assert payload["previous_presentation_bucket"] == "focus"
+    assert payload["focus_streak_sessions"] == 4
 
 
 def test_bulk_stock_bars_use_causal_adjustment_and_as_of_universe() -> None:
