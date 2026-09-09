@@ -12,6 +12,7 @@ from stock_harness.models import (
 from stock_harness.sqlite_store import SQLiteMarketDataStore
 from stock_harness.stock_observation_scan import (
     build_board_member_scan_snapshot,
+    build_unified_stock_pool_snapshot,
     scan_full_market_independent_strength,
 )
 from stock_harness.stock_relative_strength import (
@@ -141,6 +142,87 @@ def test_board_member_scan_reads_every_member_and_preserves_sources() -> None:
     assert len(market_scan) == 4
     assert market_scan[0]["symbol"] == "000001.SZ"
     assert market_scan[0]["classification"] == "independent-advance"
+    store.close()
+
+
+def test_unified_stock_pool_deduplicates_symbols_without_losing_sources() -> None:
+    effective = date(2026, 9, 9)
+    member = {
+        "items": [{
+            "symbol": "000001.SZ", "payload": {
+                **_record(
+                    "000001.SZ", "independent-advance", residual20=.12,
+                    persistence=.8, trend="up",
+                ),
+                "score": 78, "recognized": True,
+            },
+            "sources": [{
+                "source_type": "board-membership", "source_reference": "daily-run",
+                "source_entity_key": "BK001.DC", "reason": "pooled-board-member",
+                "payload": {},
+            }],
+        }],
+    }
+    independent = [{
+        **_record(
+            "000001.SZ", "independent-advance", residual20=.14,
+            persistence=.9, trend="up",
+        ),
+        "score": 86, "rank": 1, "eligible": True,
+    }]
+    screener_run = {
+        "run_id": "screen-run", "strategy_id": "major-line",
+        "strategy_version": "v3", "as_of_date": effective,
+    }
+    screener = [{
+        "symbol": "000001.SZ", "state": "retest", "rank": 1, "score": 88,
+        "analysis_run_id": "m4-run", "line_item_id": "L1",
+    }]
+    manual = [{
+        "signal_id": "stock-observation-pool", "symbol": "000002.SZ",
+        "manual_pinned": True, "first_observed_date": effective,
+        "last_observed_date": effective, "reasons": ["manual"],
+    }]
+
+    snapshot = build_unified_stock_pool_snapshot(
+        "daily-run", effective, member, independent,
+        screener_run=screener_run, screener_candidates=screener,
+        manual_attention=manual,
+    )
+
+    assert [item["symbol"] for item in snapshot["items"]] == [
+        "000002.SZ", "000001.SZ",
+    ]
+    merged = snapshot["items"][1]
+    assert merged["payload"]["independent_score"] == 86
+    assert merged["payload"]["source_types"] == [
+        "board-membership", "independent-strength", "screener-result",
+    ]
+    assert {source["source_reference"] for source in merged["sources"]} == {
+        "daily-run", "screen-run",
+    }
+    assert snapshot["items"][0]["lifecycle_state"] == "manual-pinned"
+    prior = {**snapshot, "source_run_id": "daily-run"}
+    cooling = build_unified_stock_pool_snapshot(
+        "next-run", effective + timedelta(days=1), {"items": []}, [],
+        prior_snapshot=prior,
+    )
+    assert cooling["summary"]["cooldown_count"] == 2
+    assert all(item["lifecycle_state"] == "cooldown" for item in cooling["items"])
+    assert cooling["items"][0]["sources"][0]["source_reference"] == "daily-run"
+
+
+def test_latest_screener_source_is_selected_by_effective_date() -> None:
+    store = SQLiteMarketDataStore(":memory:")
+    later = store.create_screener_run("major-line", "v3", date(2026, 9, 9), {})
+    store.complete_screener_run(str(later["run_id"]), [])
+    earlier = store.create_screener_run("major-line", "v3", date(2026, 9, 8), {})
+    store.complete_screener_run(str(earlier["run_id"]), [])
+
+    selected = store.get_latest_succeeded_screener_run(date(2026, 9, 8))
+
+    assert selected is not None
+    assert selected["run_id"] == earlier["run_id"]
     store.close()
 
 

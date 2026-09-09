@@ -160,6 +160,23 @@ class SQLiteScreenerStoreMixin:
             ).fetchone()
         return _run_row(row) if row else None
 
+    def get_latest_succeeded_screener_run(
+        self, on_or_before: date,
+    ) -> dict[str, object] | None:
+        with self._lock:
+            row = self._connection.execute(
+                """
+                SELECT run_id, strategy_id, strategy_version, as_of_date,
+                       parameters_json, status, universe_count, scanned_count,
+                       candidate_count, error, started_at_ms, completed_at_ms
+                FROM screener_runs
+                WHERE status = 'succeeded' AND as_of_date <= ?
+                ORDER BY as_of_date DESC, completed_at_ms DESC, run_id DESC
+                LIMIT 1
+                """, (_date_key(on_or_before),),
+            ).fetchone()
+        return _run_row(row) if row else None
+
     def delete_screener_run(self, run_id: str) -> bool:
         with self._lock, self._transaction():
             row = self._connection.execute(

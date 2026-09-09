@@ -31,6 +31,7 @@ from stock_harness.daily_signal_analysis import (
     observation_digest,
     render_board_summary,
 )
+from stock_harness.models import InstrumentKind
 from stock_harness.sqlite_store import SQLiteMarketDataStore
 from stock_harness.review_scoring import (
     MARKET_REGIME_SCORER,
@@ -40,7 +41,11 @@ from stock_harness.review_scoring import (
     execute_scorer,
 )
 from stock_harness.structural_scenario_engine import project_scenario_summary
-from stock_harness.stock_observation_scan import build_board_member_scan_snapshot
+from stock_harness.stock_observation_scan import (
+    build_board_member_scan_snapshot,
+    build_unified_stock_pool_snapshot,
+    scan_full_market_independent_strength,
+)
 
 
 LOGGER = logging.getLogger(__name__)
@@ -49,6 +54,7 @@ DEFINITION_VERSION = "weekly-board-recognition-v1"
 DAILY_MARKET_BOARD_SIGNAL = "daily-market-board-review"
 DAILY_DEFINITION_VERSION = "daily-market-board-review-v1"
 BOARD_POOL_VERSION = "board-observation-pool-v1"
+STOCK_OBSERVATION_SIGNAL = "stock-observation-pool"
 HISTORICAL_LIMIT = 5
 
 
@@ -432,6 +438,33 @@ class SignalReviewService:
         )
         summary["board_member_scan_count"] = member_scan["summary"]["item_count"]
         summary["board_member_eligible_count"] = member_scan["summary"]["eligible_count"]
+        independent_records = scan_full_market_independent_strength(
+            self._store, cutoff,
+            progress=lambda total, done: self._progress(
+                run_id, "independent-stock-scan", total, done,
+            ),
+            seed_records=[
+                item["payload"] for item in member_scan["items"]
+                if item["payload"].get("coverage_state") == "complete"
+            ],
+        )
+        latest_screener = self._store.get_latest_succeeded_screener_run(cutoff)
+        screener_candidates = (
+            self._store.list_screener_candidates(str(latest_screener["run_id"]))
+            if latest_screener else []
+        )
+        stock_pool = build_unified_stock_pool_snapshot(
+            run_id, cutoff, member_scan, independent_records,
+            screener_run=latest_screener,
+            screener_candidates=screener_candidates,
+            manual_attention=[
+                entry for entry in self._store.list_signal_attention(STOCK_OBSERVATION_SIGNAL)
+                if self._store.get_instrument_kind(str(entry["symbol"])) is InstrumentKind.STOCK
+            ],
+            prior_snapshot=prior_member_scan,
+        )
+        summary["stock_pool_count"] = stock_pool["summary"]["item_count"]
+        summary["independent_stock_candidate_count"] = stock_pool["summary"]["independent_count"]
         digest = _result_digest(items + [{
             "active": True, "item_key": "all-board-observations",
             "rank": 0, "score": 0, "confidence": 1,
@@ -443,7 +476,7 @@ class SignalReviewService:
         self._store.complete_signal_review_run(
             run_id, items=items, summary=summary, input_digest=digest,
             scores=[*trend_scores, *market_scores],
-            pool_snapshots=[board_pool, member_scan],
+            pool_snapshots=[board_pool, stock_pool],
         )
         LOGGER.info(
             "daily_signal_review_completed run_id=%s date=%s observations=%s promoted=%s elapsed_ms=%.1f",
