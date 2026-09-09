@@ -49,8 +49,7 @@ def test_detects_year_line_with_stable_identity_and_no_future_dependency():
     assert detected[0].independent_touch_count >= 1
     assert detected[0].wick_breach_count == 0
     assert detected[0].close_breach_count == 0
-    assert detected[0].trade_scenario["contract_version"] == "trade-scenario-v1"
-    assert detected[0].trade_scenario["evidence_item_ids"] == [detected[0].item_id]
+    assert "trade_scenario" not in detected[0].__dataclass_fields__
     before = detect_major_descending_lines(bars[:-1], [MajorLinePeriod.YEAR])
     mutated = (*bars[:-1], _bars([20.0])[0])
     assert before == detect_major_descending_lines(mutated[:-1], [MajorLinePeriod.YEAR])

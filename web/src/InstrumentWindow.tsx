@@ -34,6 +34,8 @@ type InstrumentWindowProps = {
   onOpenInterestVisibleChange: (visible: boolean) => void
   onPaneRatiosChange: (ratios: ChartPaneRatios) => void
   onToolbarCollapsedChange: (collapsed: boolean) => void
+  onRiskRewardVisibleChange: (visible: boolean) => void
+  onScenarioTargetChange: (target?: string) => void
   onTradingSystemsChange: (systems: TradingSystemWindowStates) => void
   onTradingSystemRecalculate: (
     systemId: string,
@@ -63,6 +65,8 @@ export function ChartWindow({
   onOpenInterestVisibleChange,
   onPaneRatiosChange,
   onToolbarCollapsedChange,
+  onRiskRewardVisibleChange,
+  onScenarioTargetChange,
   onTradingSystemsChange,
   onTradingSystemRecalculate,
 }: InstrumentWindowProps) {
@@ -73,8 +77,6 @@ export function ChartWindow({
   const [trendRecalculationState, setTrendRecalculationState] = useState<'idle' | 'running' | 'failed'>('idle')
   const [explanationOpen, setExplanationOpen] = useState(false)
   const [highlightedAnalysisItemId, setHighlightedAnalysisItemId] = useState<string>()
-  const [selectedScenarioTarget, setSelectedScenarioTarget] = useState<string>()
-  const [scenarioVisible, setScenarioVisible] = useState(true)
   useEffect(() => {
     setBreakoutState(undefined)
     setTrendAnalysis(null)
@@ -82,8 +84,6 @@ export function ChartWindow({
     setTrendRecalculationState('idle')
     setExplanationOpen(false)
     setHighlightedAnalysisItemId(undefined)
-    setSelectedScenarioTarget(undefined)
-    setScenarioVisible(true)
   }, [instrument.symbol])
   return (
     <section className={focused ? 'instrument-window focused' : 'instrument-window'}>
@@ -178,8 +178,8 @@ export function ChartWindow({
           onTrendAnalysisChange={setTrendAnalysis}
           trendAnalysisOverride={viewedTrendAnalysis}
           highlightedAnalysisItemId={highlightedAnalysisItemId}
-          selectedScenarioTarget={selectedScenarioTarget}
-          riskRewardVisible={scenarioVisible}
+          selectedScenarioTarget={chart.selectedScenarioTarget}
+          riskRewardVisible={chart.riskRewardVisible}
         />
         {explanationOpen && (viewedTrendAnalysis ?? trendAnalysis) && <AnalysisWorkspacePanel
           symbol={instrument.symbol}
@@ -187,10 +187,10 @@ export function ChartWindow({
           followingLatest={viewedTrendAnalysis === null}
           onRunChange={setViewedTrendAnalysis}
           onHighlightItemChange={setHighlightedAnalysisItemId}
-          selectedScenarioTarget={selectedScenarioTarget}
-          scenarioVisible={scenarioVisible}
-          onScenarioTargetChange={setSelectedScenarioTarget}
-          onScenarioVisibleChange={setScenarioVisible}
+          selectedScenarioTarget={chart.selectedScenarioTarget}
+          scenarioVisible={chart.riskRewardVisible}
+          onScenarioTargetChange={onScenarioTargetChange}
+          onScenarioVisibleChange={onRiskRewardVisibleChange}
           onClose={() => {
             setExplanationOpen(false)
             setHighlightedAnalysisItemId(undefined)

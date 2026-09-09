@@ -274,7 +274,18 @@ describe('SignalReviewWorkspace', () => {
       if (url.includes('/api/signals/runs?')) return response({ items: [dailyRun] })
       if (url.endsWith('/items')) return response({ items: [dailyItem] })
       if (url.endsWith('/attention')) return response({ items: [] })
-      if (url === '/api/analysis/runs/deep-1') return response({ run_id: 'deep-1', items: [] })
+      if (url === '/api/analysis/runs/deep-1') return response({ run_id: 'deep-1', items: [{
+        item_id: 'scenario-1', item_type: 'scenario', payload: {
+          kind: 'structural-trade-scenario', primary: true, rank: 1,
+          direction: 'long', state: 'triggered', setup_family: 'triangle',
+          horizon: 'medium', entry_price: 10, invalidation_price: 9,
+          risk_percent: 10, selected_target_label: 'T1', has_trade_space: true,
+          evidence_item_ids: ['line-1'], invalidation_evidence_item_ids: ['line-1'],
+          targets: [{ label: 'T1', price: 12, basis: 'key-level',
+            risk_reward_ratio: 2, stressed_risk_reward_ratio: 1.8,
+            evidence_item_ids: ['line-1'] }],
+        },
+      }] })
       throw new Error(`unexpected URL ${url}`)
     }))
     const user = userEvent.setup()
@@ -283,6 +294,7 @@ describe('SignalReviewWorkspace', () => {
     await user.click((await screen.findByText('BK001.DC')).closest('button')!)
     expect(document.querySelectorAll('.signal-result-details > span')).toHaveLength(3)
     expect(await screen.findByText('固定结论')).toBeTruthy()
+    expect(screen.getByRole('region', { name: '盈亏比场景' })).toBeTruthy()
     expect(screen.getByTestId('signal-chart').dataset.analysisRun).toBe('deep-1')
     await user.click(screen.getByText('[S1]').closest('button')!)
     expect(screen.getByTestId('signal-chart').dataset.highlight).toBe('line-1')

@@ -159,6 +159,8 @@ describe('workspace persistence', () => {
     chart.chart.settlementVisible = true
     chart.chart.openInterestVisible = true
     chart.chart.drawingToolbarCollapsed = true
+    chart.chart.riskRewardVisible = false
+    chart.chart.selectedScenarioTarget = 'T3'
     chart.chart.paneRatios = { price: 0.55, volume: 0.15, macd: 0.12, openInterest: 0.18 }
 
     saveWorkspace(state)
@@ -169,6 +171,8 @@ describe('workspace persistence', () => {
         settlementVisible: true,
         openInterestVisible: true,
         drawingToolbarCollapsed: true,
+        riskRewardVisible: false,
+        selectedScenarioTarget: 'T3',
         paneRatios: chart.chart.paneRatios,
       },
     })
@@ -323,12 +327,14 @@ describe('workspace persistence', () => {
       mode: 'detached',
       presentation: { mode: 'docked' },
       instrument: instrument('510300.SH'),
-      chart: { range: '1Y', priceMode: 'normal', volumeVisible: true, indicator: 'macd', settlementVisible: false, openInterestVisible: false, drawingToolbarCollapsed: false, tradingSystems: createTradingSystemWindowStates() },
+      chart: { range: '1Y', priceMode: 'normal', volumeVisible: true, indicator: 'macd', settlementVisible: false, openInterestVisible: false, drawingToolbarCollapsed: false, riskRewardVisible: true, tradingSystems: createTradingSystemWindowStates() },
     })
     window.localStorage.setItem(workspaceStorageKey, JSON.stringify(state))
 
     const recovered = loadWorkspace()
     expect(recovered.groups[0].layout).toMatchObject({ type: 'split', direction: 'horizontal' })
+    const recoveredChart = recovered.groups[0].windows.find(item => item.id === 'window-second')
+    expect(recoveredChart?.type === 'chart' && recoveredChart.chart.riskRewardVisible).toBe(true)
   })
 
   it('restores a corrupt group from its last known good snapshot', () => {

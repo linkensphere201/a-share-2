@@ -558,6 +558,18 @@ export function StockWorkspace() {
       : item)
   }, [updateWindow])
 
+  const handleRiskRewardVisible = useCallback((id: string, riskRewardVisible: boolean) => {
+    updateWindow(id, item => item.type === 'chart'
+      ? { ...item, chart: { ...item.chart, riskRewardVisible } }
+      : item)
+  }, [updateWindow])
+
+  const handleScenarioTarget = useCallback((id: string, selectedScenarioTarget?: string) => {
+    updateWindow(id, item => item.type === 'chart'
+      ? { ...item, chart: { ...item.chart, selectedScenarioTarget } }
+      : item)
+  }, [updateWindow])
+
   const handleTradingSystems = useCallback((id: string, tradingSystems: TradingSystemWindowStates) => {
     updateWindow(id, item => item.type === 'chart'
       ? { ...item, chart: { ...item.chart, tradingSystems } }
@@ -606,6 +618,8 @@ export function StockWorkspace() {
     onOpenInterestVisibleChange={handleOpenInterestVisible}
     onPaneRatiosChange={handlePaneRatios}
     onToolbarCollapsedChange={handleToolbarCollapsed}
+    onRiskRewardVisibleChange={handleRiskRewardVisible}
+    onScenarioTargetChange={handleScenarioTarget}
     onTradingSystemsChange={handleTradingSystems}
     onTradingSystemRecalculate={handleTradingSystemRecalculate}
     onReferencedSymbolsChange={updateReferencedSymbols}

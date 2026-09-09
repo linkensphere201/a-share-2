@@ -242,8 +242,8 @@ export function ScreenerWorkspace({
           <span><small>边界</small>{selected.evidence.projected_price.toFixed(2)}</span>
           <span><small>收盘</small>{latestClose(selected).toFixed(2)}</span>
           <span><small>距斜边</small>{signed(selected.evidence.distance_percent)}%</span>
-          <span><small>失效位</small>{selected.evidence.invalidation_price.toFixed(2)}</span>
-          <span><small>目标位</small>{selected.evidence.first_target_price.toFixed(2)}</span>
+          <span><small>失效位</small>{selected.evidence.invalidation_price?.toFixed(2) ?? '—'}</span>
+          <span><small>目标位</small>{selected.evidence.first_target_price?.toFixed(2) ?? '—'}</span>
           <span><small>盈亏比</small>{selected.evidence.first_risk_reward?.toFixed(2) ?? '—'}</span>
           <span><small>小周期 14</small>{signed(selected.evidence.small_14.return_percent)}%</span>
           <span><small>中周期 28</small>{signed(selected.evidence.medium_28.return_percent)}%</span>
@@ -296,6 +296,8 @@ const ScreenerChart = memo(function ScreenerChart({
   }))
   const [explanationOpen, setExplanationOpen] = useState(false)
   const [highlightedItemId, setHighlightedItemId] = useState<string | undefined>(candidate.line_item_id)
+  const [selectedScenarioTarget, setSelectedScenarioTarget] = useState<string>()
+  const [scenarioVisible, setScenarioVisible] = useState(true)
   const layers = trendState.layers
   return <div className={explanationOpen ? 'screener-chart-runtime explanation-open' : 'screener-chart-runtime'}>
     <ChartCanvas
@@ -337,10 +339,16 @@ const ScreenerChart = memo(function ScreenerChart({
       asOfDate={asOfDate}
       trendAnalysisOverride={trendState.enabled ? analysis : null}
       highlightedAnalysisItemId={highlightedItemId}
+      selectedScenarioTarget={selectedScenarioTarget}
+      riskRewardVisible={scenarioVisible}
     />
     {explanationOpen && <TrendExplanationPanel
       run={analysis}
       onHighlightItemChange={itemId => setHighlightedItemId(itemId ?? candidate.line_item_id)}
+      selectedScenarioTarget={selectedScenarioTarget}
+      scenarioVisible={scenarioVisible}
+      onScenarioTargetChange={setSelectedScenarioTarget}
+      onScenarioVisibleChange={setScenarioVisible}
       onClose={() => {
         setExplanationOpen(false)
         setHighlightedItemId(candidate.line_item_id)

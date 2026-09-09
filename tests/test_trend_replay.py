@@ -75,6 +75,7 @@ def test_replay_captures_complete_production_outputs_in_chronological_order():
         assert all(len(item.input_digest) == 64 for item in snapshots)
         assert all(len(item.output_digest) == 64 for item in snapshots)
         assert all(dict(item.item_counts)["anchor"] > 0 for item in snapshots)
+        assert all(dict(item.item_counts).get("scenario", 0) > 0 for item in snapshots)
         assert all(item.items for item in snapshots)
         assert len({item.output_digest for item in snapshots}) == len(snapshots)
     finally:
@@ -98,6 +99,10 @@ def test_future_suffix_mutation_cannot_change_any_historical_production_output()
 
         assert compare_replays(baseline, mutated) == ()
         assert [item.items for item in baseline] == [item.items for item in mutated]
+        assert all(
+            any(item.item_type == "scenario" for item in snapshot.items)
+            for snapshot in baseline
+        )
     finally:
         baseline_store.close()
         mutated_store.close()

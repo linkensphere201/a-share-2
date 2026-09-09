@@ -9,12 +9,12 @@ import json
 import math
 from statistics import fmean, median
 
+from stock_harness.analysis_inputs import AnalysisBar
 from stock_harness.models import StoredDailyBar
 from stock_harness.pattern_analysis import PatternAnalysisService
-from stock_harness.trade_scenarios import (
-    TradeDirection,
-    TradeTargetSide,
-    build_trade_scenario,
+from stock_harness.structural_scenario_engine import (
+    build_coarse_structural_scenario_items,
+    project_scenario_summary,
 )
 
 
@@ -329,88 +329,22 @@ def _return(values: Sequence[float], periods: int) -> float | None:
 
 def _price_space(
     bars: Sequence[StoredDailyBar], states: Sequence[str],
-    envelopes: dict[str, dict[str, object] | None], atr14: float,
+    envelopes: dict[str, dict[str, object] | None], _atr14: float,
 ) -> dict[str, object]:
-    """Build a causal, reproducible long-side scenario from visible range levels."""
-    latest = bars[-1]
-    history = list(bars[:-1])
-    buffer = max(atr14 * .25, latest.close * .003)
-    highs: list[tuple[int, float]] = []
-    lows: list[tuple[int, float]] = []
-    for period in (20, 60, 120):
-        selected = history[-period:]
-        if len(selected) < period:
-            continue
-        highs.append((period, max(bar.high for bar in selected)))
-        lows.append((period, min(bar.low for bar in selected)))
-
-    primary = _primary_state(states)
-    entry: float | None = None
-    invalidation: float | None = None
-    setup_basis: str | None = None
-    if primary in {"bullish-transition-candidate", "bullish-boundary-triggered"}:
-        wanted_state = "broken" if primary == "bullish-boundary-triggered" else "approaching"
-        candidates = [
-            (label, float(value["boundary"]))
-            for label, value in envelopes.items()
-            if isinstance(value, dict) and value.get("state") == wanted_state
-            and value.get("boundary") is not None
-        ]
-        if candidates:
-            label, boundary = min(candidates, key=lambda item: abs(item[1] - latest.close))
-            entry = latest.close if wanted_state == "broken" else boundary + buffer
-            invalidation = boundary - buffer
-            setup_basis = f"{label}-descending-envelope"
-    elif primary in {"oversold-exhaustion-candidate", "oversold-rebound-triggered"}:
-        reversal_high = max(bar.high for bar in bars[-6:-1])
-        reversal_low = min(bar.low for bar in bars[-6:])
-        entry = latest.close if primary == "oversold-rebound-triggered" else reversal_high + buffer
-        invalidation = reversal_low - buffer
-        setup_basis = "five-session-reversal-boundary"
-
-    target_reference = entry if entry is not None else latest.close
-    upside = min(
-        ((period, value) for period, value in highs if value > target_reference + buffer),
-        key=lambda item: item[1], default=None,
+    generated = build_coarse_structural_scenario_items(
+        tuple(_analysis_bar(bar) for bar in bars), states, envelopes,
     )
-    downside = max(
-        ((period, value) for period, value in lows if value < latest.close - buffer),
-        key=lambda item: item[1], default=None,
-    )
-    targets = []
-    if upside is not None:
-        targets.append((upside[1], f"{upside[0]}-session-high", TradeTargetSide.UPSIDE))
-    if downside is not None:
-        targets.append((downside[1], f"{downside[0]}-session-low", TradeTargetSide.DOWNSIDE))
-    scenario = build_trade_scenario(
-        method="causal-range-levels-v1",
-        direction=TradeDirection.LONG,
-        entry_price=entry,
-        invalidation_price=invalidation,
-        targets=targets,
-        setup_basis=setup_basis,
-        assumptions=("daily bars only", "historical range levels exclude the latest bar"),
-    )
-    upside_target = next(
-        (target for target in scenario.targets if target.side is TradeTargetSide.UPSIDE),
-        None,
-    )
-    risk_reward = upside_target.risk_reward_ratio if upside_target is not None else None
-
-    return {
-        **scenario.to_payload(),
-        "upside_target": _target_payload(upside),
-        "downside_target": _target_payload(downside),
-        "entry_price": _round(entry),
-        "invalidation_price": _round(invalidation),
-        "risk_reward_ratio": _round(risk_reward),
-    }
+    return project_scenario_summary(generated)
 
 
-def _target_payload(target: tuple[int, float] | None) -> dict[str, object] | None:
-    if target is None:
-        return None
-    return {"price": _round(target[1]), "lookback_sessions": target[0]}
+def _analysis_bar(bar: StoredDailyBar) -> AnalysisBar:
+    return AnalysisBar(
+        period_start=bar.trade_date, period_end=bar.trade_date,
+        open=bar.open, high=bar.high, low=bar.low, close=bar.close,
+        volume=bar.volume, sources=(str(getattr(bar, "source", "daily-scan")),),
+        contains_provisional=False, period_complete=True,
+        observed_at_ms=int(getattr(bar, "updated_at_ms", 0)),
+    )
 
 
 def _safe_ratio(left: float, right: float) -> float | None:

@@ -274,9 +274,11 @@ def test_daily_price_space_calculates_only_reproducible_long_risk_reward() -> No
     _, rendered = render_board_summary(observation, None)
 
     price_space = metrics["price_space"]
-    assert price_space["setup_basis"] == "3m-descending-envelope"
-    assert price_space["entry_price"] == bars[-1].close
-    assert price_space["invalidation_price"] == 82.25
+    assert price_space["method"] == "structural-scenario-engine"
+    assert price_space["profile"] == "coarse"
+    assert price_space["scenario_item_id"] == "structural-trade-scenario-1"
+    assert price_space["entry_price"] > 82.5
+    assert price_space["invalidation_price"] < 82.5
     assert price_space["risk_reward_ratio"] > 1.5
     assert price_space["has_trade_space"] is True
     assert "上涨目标位" in rendered
@@ -289,7 +291,10 @@ def test_daily_price_space_does_not_claim_trade_space_without_a_setup() -> None:
     observation = analyze_daily_series("BK001.DC", bars, bars[-1].trade_date)
     price_space = observation["metrics"]["price_space"]
 
-    assert price_space["method"] == "causal-range-levels-v1"
+    assert price_space["method"] == "structural-scenario-engine"
+    assert price_space["profile"] == "coarse"
+    assert price_space["upside_target"] is not None
+    assert price_space["downside_target"] is not None
     assert price_space["risk_reward_ratio"] is None
     assert price_space["has_trade_space"] is False
     _, rendered = render_board_summary(observation, None)

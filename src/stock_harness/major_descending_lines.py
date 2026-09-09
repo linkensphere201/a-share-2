@@ -15,11 +15,6 @@ from stock_harness.trend_line_envelope import (
     dominates_prior_extremes,
     evaluate_trend_line_envelope,
 )
-from stock_harness.trade_scenarios import (
-    TradeDirection,
-    TradeTargetSide,
-    build_trade_scenario,
-)
 from stock_harness.trend_pivots import causal_average_true_range
 
 
@@ -87,13 +82,6 @@ class MajorDescendingLine:
     decline_percent: float
     breakout_date: str | None
     volume_ratio_5: float | None
-    support_price: float
-    invalidation_price: float
-    first_target_price: float
-    major_target_price: float
-    first_risk_reward: float | None
-    major_risk_reward: float | None
-    trade_scenario: dict[str, object]
     score: float
 
 
@@ -231,32 +219,10 @@ def _detect_profile(
             continue
         latest = bars[-1]
         distance = (latest.close / projected - 1) * 100
-        support = min(item.low for item in bars[-14:])
-        invalidation = support * 0.99
-        overhead = sorted({
-            item.high for item in bars[-120:-1] if item.high > latest.close * 1.01
-        })
-        first_target = overhead[0] if overhead else max(highs[second], latest.close)
-        major_target = max(highs[first], latest.close)
         identity = (
             f"major-descending-{profile.period.value}-"
             f"{bars[first].period_end:%Y%m%d}-{bars[second].period_end:%Y%m%d}"
         )
-        scenario = build_trade_scenario(
-            method="major-descending-envelope-v1",
-            direction=TradeDirection.LONG,
-            entry_price=latest.close,
-            invalidation_price=invalidation,
-            targets=(
-                (first_target, "nearest-overhead-high", TradeTargetSide.UPSIDE),
-                (major_target, "first-anchor-high", TradeTargetSide.UPSIDE),
-            ),
-            setup_basis=f"{profile.period.value}-descending-envelope",
-            assumptions=("daily bars only", "entry proxy is the latest close"),
-            evidence_item_ids=(identity,),
-        )
-        first_rr = scenario.targets[0].risk_reward_ratio
-        major_rr = scenario.targets[1].risk_reward_ratio
         volume_ratio = _volume_ratio_5(bars)
         recency = 1 - (len(bars) - 1 - second) / max(1, len(bars) - 1)
         score = (
@@ -303,13 +269,6 @@ def _detect_profile(
             decline_percent=decline,
             breakout_date=(bars[breakout_index].period_end.isoformat() if breakout_index is not None else None),
             volume_ratio_5=volume_ratio,
-            support_price=support,
-            invalidation_price=invalidation,
-            first_target_price=first_target,
-            major_target_price=major_target,
-            first_risk_reward=first_rr,
-            major_risk_reward=major_rr,
-            trade_scenario=scenario.to_payload(),
             score=round(score, 6),
         ))
         if diagnostics is not None:

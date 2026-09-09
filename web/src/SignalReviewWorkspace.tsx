@@ -15,6 +15,7 @@ import {
 } from './signalReviewClient'
 import { SignalChatPanel } from './SignalChatPanel'
 import { loadExactTrendAnalysis, type TrendAnalysisRun } from './trendAnalysisClient'
+import { TradeScenarioPanel } from './TradeScenarioPanel'
 
 type Props = { theme: ThemeDefinition; onClose: () => void }
 type ProfileFilter = 'all' | SignalProfile
@@ -53,6 +54,9 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
   const [error, setError] = useState('')
   const [chatOpen, setChatOpen] = useState(false)
   const [highlightedEvidenceId, setHighlightedEvidenceId] = useState<string>()
+  const [scenarioHighlightedItemId, setScenarioHighlightedItemId] = useState<string>()
+  const [selectedScenarioTarget, setSelectedScenarioTarget] = useState<string>()
+  const [scenarioVisible, setScenarioVisible] = useState(true)
   const [selectedEvidenceId, setSelectedEvidenceId] = useState<string>()
   const [dailyView, setDailyView] = useState<'results' | 'observations'>('results')
   const [observationQuery, setObservationQuery] = useState('')
@@ -180,7 +184,7 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
   const daily = selectedDefinition?.cadence === 'daily'
   const inspected = selectedObservation ?? selectedItem
   const activeEvidenceId = highlightedEvidenceId ?? selectedEvidenceId
-  const highlightedAnalysisItemId = selectedItem?.evidence.find(
+  const highlightedAnalysisItemId = scenarioHighlightedItemId ?? selectedItem?.evidence.find(
     evidence => evidence.evidence_id === activeEvidenceId,
   )?.source_item_id ?? undefined
   const criticalAlert = buildCriticalAlert(inspected)
@@ -355,12 +359,15 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
           <span>{criticalAlert.reason}<small>{criticalAlert.condition}</small></span>
         </div>}
         <div className="signal-chart">{inspected
-          ? <ChartCanvas key={`${selectedRun?.run_id}:${inspected.symbol}`} symbol={inspected.symbol} instrumentName={inspected.name} instrumentKind={selectedItem?.kind ?? 'sector'} focused theme={theme} range="1Y" priceMode="normal" volumeVisible indicator="none" settlementVisible={false} openInterestVisible={false} asOfDate={selectedRun?.effective_date} trendAnalysisEnabled={Boolean(exactAnalysis)} trendAnalysisOverride={exactAnalysis} highlightedAnalysisItemId={highlightedAnalysisItemId}/>
+          ? <ChartCanvas key={`${selectedRun?.run_id}:${inspected.symbol}`} symbol={inspected.symbol} instrumentName={inspected.name} instrumentKind={selectedItem?.kind ?? 'sector'} focused theme={theme} range="1Y" priceMode="normal" volumeVisible indicator="none" settlementVisible={false} openInterestVisible={false} asOfDate={selectedRun?.effective_date} trendAnalysisEnabled={Boolean(exactAnalysis)} trendAnalysisOverride={exactAnalysis} highlightedAnalysisItemId={highlightedAnalysisItemId} selectedScenarioTarget={selectedScenarioTarget} riskRewardVisible={scenarioVisible}/>
           : <div className="signal-empty">选择一项结果查看 K 线</div>}</div>
         <div className="signal-evidence"><div className="signal-evidence-resizer" role="separator" aria-orientation="horizontal" aria-label="调整固定算法结论高度" title="上下拖动调整结论区域高度" onPointerDown={startEvidenceResize}/><header><span>{selectedObservation ? '一级分析' : selectedItem?.payload.rendered_summary ? '固定算法结论' : '引用证据'}</span><small>{selectedObservation ? selectedObservation.state_codes.length : selectedItem?.evidence.length ?? 0}</small></header>
-          {selectedObservation ? <pre className="signal-fixed-summary">{observationSummary(selectedObservation)}</pre> : <div className="signal-analysis-details">{selectedItem?.payload.rendered_summary && <pre className="signal-fixed-summary">{selectedItem.payload.rendered_summary}</pre>}<div className="signal-evidence-list">{selectedItem?.evidence.map(evidence => <button key={evidence.evidence_id} className={(highlightedEvidenceId ?? selectedEvidenceId) === evidence.evidence_id ? 'active' : ''} onClick={() => setSelectedEvidenceId(evidence.evidence_id)} title="点击查看该轮固定算法引用的原始或 M4 证据">
+          <div className="signal-evidence-content">
+            {exactAnalysis && <TradeScenarioPanel run={exactAnalysis} selectedTargetLabel={selectedScenarioTarget} visible={scenarioVisible} onTargetChange={setSelectedScenarioTarget} onVisibleChange={setScenarioVisible} onHighlightItemChange={setScenarioHighlightedItemId}/>}
+            {selectedObservation ? <pre className="signal-fixed-summary">{observationSummary(selectedObservation)}</pre> : <div className="signal-analysis-details">{selectedItem?.payload.rendered_summary && <pre className="signal-fixed-summary">{selectedItem.payload.rendered_summary}</pre>}<div className="signal-evidence-list">{selectedItem?.evidence.map(evidence => <button key={evidence.evidence_id} className={(highlightedEvidenceId ?? selectedEvidenceId) === evidence.evidence_id ? 'active' : ''} onClick={() => setSelectedEvidenceId(evidence.evidence_id)} title="点击查看该轮固定算法引用的原始或 M4 证据">
             <code>[{evidence.alias}]</code><span>{evidenceTitle(evidence)}<small>{evidenceDetail(evidence)}</small></span>
           </button>)}</div></div>}
+          </div>
         </div>
       </section>}
       {chatOpen && <div className="signal-column-resizer" role="separator" aria-orientation="vertical" aria-label="调整Codex对话栏宽度" title="左右拖动调整Codex对话栏宽度" onPointerDown={event => startColumnResize('chat', event)}/>}

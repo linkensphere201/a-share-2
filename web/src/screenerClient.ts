@@ -33,9 +33,10 @@ export type ScreenerCandidate = {
     latest_close?: number
     projected_price: number
     distance_percent: number
-    invalidation_price: number
-    first_target_price: number
-    major_target_price: number
+    invalidation_price?: number | null
+    first_target_price?: number | null
+    major_target_price?: number | null
+    scenario_item_id?: string | null
     first_risk_reward?: number | null
     major_risk_reward?: number | null
     first_date: string

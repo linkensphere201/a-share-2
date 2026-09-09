@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Sequence
+from typing import Mapping, Sequence
 
 from stock_harness.analysis_inputs import AnalysisBar
 from stock_harness.analysis_results import GeneratedAnalysisItem, GeneratedItemType
@@ -51,6 +51,142 @@ def build_structural_scenario_items(
         if scenario is not None:
             scenarios.append(scenario)
     return [*range_items, supply_item, *scenarios]
+
+
+def build_coarse_structural_scenario_items(
+    bars: Sequence[AnalysisBar],
+    states: Sequence[str],
+    envelopes: Mapping[str, Mapping[str, object] | None],
+) -> list[GeneratedAnalysisItem]:
+    """Run the shared engine from the bounded evidence available to a daily scan."""
+    if len(bars) < 6:
+        return []
+    primary = _primary_coarse_state(states)
+    source_items: list[GeneratedAnalysisItem] = []
+    if primary in {"bullish-transition-candidate", "bullish-boundary-triggered"}:
+        wanted = "broken" if primary == "bullish-boundary-triggered" else "approaching"
+        candidates = [
+            (label, float(value["boundary"]))
+            for label, value in envelopes.items()
+            if isinstance(value, Mapping) and value.get("state") == wanted
+            and isinstance(value.get("boundary"), (int, float))
+        ]
+        if candidates:
+            label, boundary = min(
+                candidates, key=lambda value: abs(value[1] - bars[-1].close)
+            )
+            source_id = f"coarse-{label}-descending-envelope"
+            source_items.extend((
+                GeneratedAnalysisItem(source_id, GeneratedItemType.LINE, {
+                    "kind": "resistance", "horizon": "long",
+                    "projected_price": boundary, "score": 0.4,
+                    "first_pivot_date": bars[max(0, len(bars) - 120)].period_end.isoformat(),
+                }),
+                GeneratedAnalysisItem(
+                    f"{source_id}-event", GeneratedItemType.EVIDENCE,
+                    {
+                        "kind": "latest-structural-event-summary",
+                        "current_state": "triggered" if wanted == "broken" else "ready",
+                        "direction": "up", "boundary_price": boundary,
+                        "invalidation_level": boundary,
+                    }, parent_item_id=source_id,
+                ),
+            ))
+    elif primary in {"oversold-exhaustion-candidate", "oversold-rebound-triggered"}:
+        boundary = max(bar.high for bar in bars[-6:-1])
+        invalidation = min(bar.low for bar in bars[-6:])
+        source_id = "coarse-five-session-reversal"
+        source_items.extend((
+            GeneratedAnalysisItem(source_id, GeneratedItemType.PATTERN, {
+                "pattern_type": "reversal", "direction": "bullish",
+                "horizon": "short", "neckline_price": boundary,
+                "invalidation_price": invalidation, "score": 0.4,
+                "primary": True, "start_date": bars[-6].period_end.isoformat(),
+            }),
+            GeneratedAnalysisItem(
+                f"{source_id}-event", GeneratedItemType.EVIDENCE,
+                {
+                    "kind": "breakout-state-summary",
+                    "current_state": (
+                        "triggered" if primary == "oversold-rebound-triggered" else "ready"
+                    ),
+                    "direction": "up", "boundary_price": boundary,
+                    "invalidation_level": invalidation,
+                }, parent_item_id=source_id,
+            ),
+        ))
+    source_items.append(GeneratedAnalysisItem(
+        "core-analysis-projection", GeneratedItemType.EVIDENCE,
+        {
+            "kind": "core-analysis-projection",
+            "structural_item_ids": [item.item_id for item in source_items],
+        },
+    ))
+    generated = build_structural_scenario_items(bars, source_items)
+    return [
+        GeneratedAnalysisItem(
+            item.item_id, item.item_type,
+            {**item.payload, **({"profile": "coarse"} if item.item_type is GeneratedItemType.SCENARIO else {})},
+            item.parent_item_id,
+        )
+        for item in generated
+    ]
+
+
+def project_scenario_summary(
+    items: Sequence[GeneratedAnalysisItem | Mapping[str, object]],
+) -> dict[str, object]:
+    """Project one engine-owned scenario into the compact legacy review shape."""
+    normalized = [_item_parts(item) for item in items]
+    scenarios = [
+        (item_id, payload) for item_id, item_type, payload in normalized
+        if item_type == GeneratedItemType.SCENARIO.value
+        and payload.get("kind") == "structural-trade-scenario"
+    ]
+    scenarios.sort(key=lambda value: (
+        not bool(value[1].get("primary")), int(value[1].get("rank") or 999)
+    ))
+    scenario = scenarios[0][1] if scenarios else None
+    reference = _number((scenario or {}).get("reference_price"))
+    ranges = [
+        payload for _, item_type, payload in normalized
+        if item_type == GeneratedItemType.EVIDENCE.value
+        and payload.get("kind") == "structural-range-reference"
+    ]
+    if reference is None:
+        reference = next(
+            (_number(payload.get("reference_price")) for payload in ranges
+             if _number(payload.get("reference_price")) is not None),
+            None,
+        )
+    upside = _nearest_range(ranges, reference, "high")
+    downside = _nearest_range(ranges, reference, "low")
+    if scenario is None:
+        return {
+            "contract_version": STRUCTURAL_SCENARIO_VERSION,
+            "profile": "coarse", "method": "structural-scenario-engine",
+            "setup_basis": None, "entry_price": None,
+            "invalidation_price": None, "risk_reward_ratio": None,
+            "minimum_risk_reward": 1.5, "has_trade_space": False,
+            "upside_target": upside, "downside_target": downside,
+            "scenario_item_id": None,
+        }
+    targets = scenario.get("targets") if isinstance(scenario.get("targets"), list) else []
+    selected_label = scenario.get("selected_target_label")
+    selected = next((
+        value for value in targets
+        if isinstance(value, dict) and value.get("label") == selected_label
+    ), next((value for value in targets if isinstance(value, dict)), None))
+    return {
+        **scenario,
+        "method": "structural-scenario-engine",
+        "scenario_item_id": scenarios[0][0],
+        "risk_reward_ratio": (
+            _number(selected.get("risk_reward_ratio")) if isinstance(selected, dict) else None
+        ),
+        "upside_target": upside,
+        "downside_target": downside,
+    }
 
 
 def _build_scenario(
@@ -148,7 +284,7 @@ def _build_scenario(
             "entry_policy": policy["name"],
             "invalidation_basis": "nearest independent structural support/resistance",
             "assumptions": [
-                "trigger buffer is max(0.2 ATR, 0.3% of boundary price)",
+                f"trigger buffer is max({policy['buffer_atr']} ATR, 0.3% of boundary price)",
                 "targets use conservative near edges of independent structure clusters",
                 "stress RR includes 0.1% entry slippage and 0.2% target haircut",
             ],
@@ -295,6 +431,7 @@ def _range_reference_items(
             payload={
                 "kind": "structural-range-reference",
                 "horizon_bars": horizon,
+                "reference_price": bars[-1].close,
                 "low": low_bar.low,
                 "low_date": low_bar.period_end.isoformat(),
                 "high": high_bar.high,
@@ -366,3 +503,52 @@ def _setup_policy(setup: StructuralSetup) -> dict[str, object]:
         "buffer_atr": 0.2,
         "confirmation_rule": "close clears the projected trend boundary without invalidating structure",
     }
+
+
+def _primary_coarse_state(states: Sequence[str]) -> str:
+    order = (
+        "bullish-boundary-triggered", "oversold-rebound-triggered",
+        "bullish-transition-candidate", "oversold-exhaustion-candidate",
+    )
+    return next((value for value in order if value in states), "neutral")
+
+
+def _item_parts(
+    item: GeneratedAnalysisItem | Mapping[str, object],
+) -> tuple[str, str, Mapping[str, object]]:
+    if isinstance(item, GeneratedAnalysisItem):
+        return item.item_id, item.item_type.value, item.payload
+    payload = item.get("payload")
+    return (
+        str(item.get("item_id") or ""),
+        str(item.get("item_type") or ""),
+        payload if isinstance(payload, Mapping) else {},
+    )
+
+
+def _nearest_range(
+    ranges: Sequence[Mapping[str, object]],
+    reference: float | None,
+    side: str,
+) -> dict[str, object] | None:
+    if reference is None:
+        return None
+    candidates = []
+    for payload in ranges:
+        price = _number(payload.get(side))
+        horizon = payload.get("horizon_bars")
+        if price is None or not isinstance(horizon, int):
+            continue
+        if (side == "high" and price > reference) or (side == "low" and price < reference):
+            candidates.append((price, horizon))
+    if not candidates:
+        return None
+    selected = (
+        min(candidates, key=lambda value: value[0])
+        if side == "high" else max(candidates, key=lambda value: value[0])
+    )
+    return {"price": round(selected[0], 6), "lookback_sessions": selected[1]}
+
+
+def _number(value: object) -> float | None:
+    return float(value) if isinstance(value, (int, float)) else None

@@ -58,6 +58,8 @@ export type ChartViewState = {
   settlementVisible: boolean
   openInterestVisible: boolean
   drawingToolbarCollapsed: boolean
+  riskRewardVisible: boolean
+  selectedScenarioTarget?: string
   paneRatios?: ChartPaneRatios
   visibleRange?: VisibleRange
   seriesMode?: 'line' | 'candles'
@@ -185,7 +187,7 @@ export function createWindowGroup(
     mode,
     presentation: { mode: 'docked' },
     instrument: { ...fallbackInstrument },
-    chart: { range: '3Y', priceMode: 'normal', volumeVisible: true, indicator: 'macd', settlementVisible: false, openInterestVisible: false, drawingToolbarCollapsed: false, tradingSystems: createTradingSystemWindowStates() },
+    chart: { range: '3Y', priceMode: 'normal', volumeVisible: true, indicator: 'macd', settlementVisible: false, openInterestVisible: false, drawingToolbarCollapsed: false, riskRewardVisible: true, tradingSystems: createTradingSystemWindowStates() },
   })
   const list = (): InstrumentListWindowState => ({
     id: createId('list'),
@@ -265,7 +267,7 @@ export function createDefaultWorkspace(): WorkspaceState {
     mode: 'attached',
     presentation: { mode: 'docked' },
     instrument: fallbackInstrument,
-    chart: { range: '3Y', priceMode: 'normal', volumeVisible: true, indicator: 'macd', settlementVisible: false, openInterestVisible: false, drawingToolbarCollapsed: false, tradingSystems: createTradingSystemWindowStates() },
+    chart: { range: '3Y', priceMode: 'normal', volumeVisible: true, indicator: 'macd', settlementVisible: false, openInterestVisible: false, drawingToolbarCollapsed: false, riskRewardVisible: true, tradingSystems: createTradingSystemWindowStates() },
   }
   const group = createGroup('group-primary', '默认窗口组', [listWindow, chartWindow], chartWindow.id, [{
     id: 'attachment-primary',
@@ -469,6 +471,10 @@ function normalizeChartWindow(value: unknown): ChartWindowState | undefined {
       settlementVisible: value.chart.settlementVisible === true,
       openInterestVisible: value.chart.openInterestVisible === true,
       drawingToolbarCollapsed: value.chart.drawingToolbarCollapsed === true,
+      riskRewardVisible: value.chart.riskRewardVisible !== false,
+      selectedScenarioTarget: typeof value.chart.selectedScenarioTarget === 'string'
+        ? value.chart.selectedScenarioTarget
+        : undefined,
       paneRatios: normalizePaneRatios(value.chart.paneRatios),
       visibleRange: normalizeVisibleRange(value.chart.visibleRange),
       seriesMode: value.chart.seriesMode === 'line' ? 'line' : value.chart.seriesMode === 'candles' ? 'candles' : undefined,
@@ -569,6 +575,7 @@ function migrateLegacyWindow(value: unknown): ChartWindowState | undefined {
       settlementVisible: false,
       openInterestVisible: false,
       drawingToolbarCollapsed: false,
+      riskRewardVisible: true,
       visibleRange: normalizeVisibleRange(legacy.visibleRange),
       tradingSystems: createTradingSystemWindowStates(),
     },

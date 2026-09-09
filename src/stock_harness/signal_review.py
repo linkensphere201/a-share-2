@@ -32,6 +32,7 @@ from stock_harness.daily_signal_analysis import (
     render_board_summary,
 )
 from stock_harness.sqlite_store import SQLiteMarketDataStore
+from stock_harness.structural_scenario_engine import project_scenario_summary
 
 
 LOGGER = logging.getLogger(__name__)
@@ -240,6 +241,27 @@ class SignalReviewService:
             run_id, cutoff, promoted, attention_registry,
             correction_observations or prior_observations,
         )
+        for observation in promoted:
+            symbol = str(observation["symbol"])
+            if not _apply_deep_structural_scenario(
+                observation, deep_results.get(symbol)
+            ):
+                continue
+            prior = prior_observations.get(symbol)
+            observation.update(build_board_analysis_record(
+                observation, _daily_prior_payload(prior),
+                [
+                    payload for item in recent_observations.get(symbol, [])
+                    if (payload := _daily_prior_payload(item)) is not None
+                ],
+                _daily_prior_payload(correction_observations.get(symbol)),
+            ))
+            self._store.update_board_daily_structural_scenario(
+                run_id, symbol, metrics=observation["metrics"],
+                conclusion_code=str(observation["conclusion_code"]),
+                rendered_summary=str(observation["rendered_summary"]),
+                comparison=observation["comparison"],
+            )
 
         board_names = {str(board["symbol"]): str(board["name"]) for board in boards}
         previous_items = {
@@ -910,10 +932,21 @@ def _deep_analysis_evidence(
         item for item in result.get("items", []) if isinstance(item, dict)
     ]
     core_ids = set(read_core_structural_item_ids(result_items))
+    scenario = next((item for item in result_items if (
+        item.get("item_type") == "scenario"
+        and isinstance(item.get("payload"), dict)
+        and item["payload"].get("kind") == "structural-trade-scenario"
+        and item["payload"].get("primary") is True
+    )), None)
+    if scenario is not None:
+        core_ids.add(str(scenario["item_id"]))
+        supply_id = scenario["payload"].get("overhead_supply_item_id")
+        if isinstance(supply_id, str):
+            core_ids.add(supply_id)
     evidence = []
     for item in result_items:
         if item.get("item_id") not in core_ids or item.get("item_type") not in {
-            "line", "zone", "pattern", "transition",
+            "line", "zone", "pattern", "transition", "evidence", "scenario",
         }:
             continue
         evidence.append({
@@ -927,6 +960,22 @@ def _deep_analysis_evidence(
             },
         })
     return evidence
+
+
+def _apply_deep_structural_scenario(
+    observation: dict[str, object], result: dict[str, object] | None,
+) -> bool:
+    if not result or result.get("status") != "succeeded":
+        return False
+    items = [item for item in result.get("items", []) if isinstance(item, dict)]
+    summary = project_scenario_summary(items)
+    if summary.get("scenario_item_id") is None:
+        return False
+    metrics = observation.get("metrics")
+    if not isinstance(metrics, dict):
+        return False
+    metrics["price_space"] = summary
+    return True
 
 
 def _attach_daily_evidence_references(items: list[dict[str, object]]) -> None:

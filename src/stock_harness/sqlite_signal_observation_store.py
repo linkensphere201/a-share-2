@@ -444,6 +444,34 @@ class SQLiteSignalObservationStoreMixin:
             if cursor.rowcount != 1:
                 raise ValueError("board daily observation was not found")
 
+    def update_board_daily_structural_scenario(
+        self, run_id: str, symbol: str, *, metrics: dict[str, object],
+        conclusion_code: str, rendered_summary: str,
+        comparison: dict[str, object],
+    ) -> None:
+        """Replace a running observation's coarse scenario with its linked M4 result."""
+        with self._lock, self._transaction():
+            cursor = self._connection.execute(
+                """
+                UPDATE board_daily_observations
+                SET metrics_json = ?, conclusion_code = ?, rendered_summary = ?,
+                    comparison_json = ?
+                WHERE run_id = ? AND instrument_id = (
+                    SELECT instrument_id FROM instruments
+                    WHERE symbol = ? COLLATE NOCASE
+                ) AND EXISTS (
+                    SELECT 1 FROM signal_review_runs
+                    WHERE run_id = ? AND status = 'running'
+                )
+                """,
+                (
+                    _json(metrics), conclusion_code, rendered_summary,
+                    _json(comparison), run_id, symbol.upper(), run_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("running board daily observation was not found")
+
     def count_board_daily_observations(self, run_id: str) -> int:
         with self._lock:
             return int(self._connection.execute(

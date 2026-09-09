@@ -92,5 +92,8 @@ def test_service_http_and_snapshot_share_identical_structural_output() -> None:
         assert through_http["run_id"] == direct["run_id"]
         assert through_http["items"] == direct["items"]
         assert json.loads(json.dumps(snapshot["items"], sort_keys=True)) == direct["items"]
+        scenarios = [item for item in direct["items"] if item["item_type"] == "scenario"]
+        assert scenarios
+        assert all(item in through_http["items"] for item in scenarios)
     finally:
         store.close()

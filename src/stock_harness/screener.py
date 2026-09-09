@@ -22,8 +22,8 @@ from stock_harness.sqlite_store import SQLiteMarketDataStore
 
 LOGGER = logging.getLogger(__name__)
 STRATEGY_ID = "major-descending-breakout"
-STRATEGY_VERSION = "major-descending-breakout-v2"
-CONFIG_VERSION = "screener-major-descending-v2"
+STRATEGY_VERSION = "major-descending-breakout-v3"
+CONFIG_VERSION = "screener-major-descending-v3"
 DEFAULT_HORIZONS = AnalysisHorizons(60, 120, 250)
 
 
@@ -173,6 +173,7 @@ class ScreenerService:
                 "small_14": structure["small_14"],
                 "medium_28": structure["medium_28"],
                 "as_of_date": cutoff.isoformat(),
+                **_scenario_evidence(analysis, line.item_id),
             })
             retained.append({
                 "symbol": instrument["symbol"], "state": line.state.value,
@@ -226,3 +227,42 @@ def _state_priority(state: MajorLineState) -> int:
         MajorLineState.BROKEN_OUT: 2,
         MajorLineState.CRITICAL_BREAKOUT: 1,
     }[state]
+
+
+def _scenario_evidence(
+    analysis: dict[str, object], line_item_id: str,
+) -> dict[str, object]:
+    scenarios = [
+        item for item in analysis.get("items", [])
+        if isinstance(item, dict) and item.get("item_type") == "scenario"
+        and isinstance(item.get("payload"), dict)
+        and item["payload"].get("kind") == "structural-trade-scenario"
+    ]
+    scenarios.sort(key=lambda item: (
+        line_item_id not in item["payload"].get("evidence_item_ids", []),
+        not bool(item["payload"].get("primary")),
+        int(item["payload"].get("rank") or 999),
+    ))
+    if not scenarios:
+        return {
+            "scenario_item_id": None, "invalidation_price": None,
+            "first_target_price": None, "major_target_price": None,
+            "first_risk_reward": None, "major_risk_reward": None,
+            "trade_scenario": None,
+        }
+    scenario = scenarios[0]
+    payload = scenario["payload"]
+    targets = [
+        target for target in payload.get("targets", []) if isinstance(target, dict)
+    ]
+    first = targets[0] if targets else None
+    major = targets[-1] if targets else None
+    return {
+        "scenario_item_id": scenario["item_id"],
+        "invalidation_price": payload.get("invalidation_price"),
+        "first_target_price": first.get("price") if first else None,
+        "major_target_price": major.get("price") if major else None,
+        "first_risk_reward": first.get("risk_reward_ratio") if first else None,
+        "major_risk_reward": major.get("risk_reward_ratio") if major else None,
+        "trade_scenario": payload,
+    }
