@@ -65,6 +65,8 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
   const [selectedObservation, setSelectedObservation] = useState<BoardDailyObservation>()
   const [attention, setAttention] = useState<SignalAttention[]>([])
   const [scores, setScores] = useState<SignalScoreResult[]>([])
+  const [selectedScoreSystem, setSelectedScoreSystem] = useState('trend-breakout')
+  const [historySelection, setHistorySelection] = useState<{ symbol: string; entityKey?: string }>()
   const [exactAnalysis, setExactAnalysis] = useState<TrendAnalysisRun | null>(null)
   const [evidenceHeight, setEvidenceHeight] = useState(() => {
     const stored = Number(window.localStorage.getItem(EVIDENCE_HEIGHT_KEY))
@@ -107,10 +109,12 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
     const controller = new AbortController()
     listSignalItems(selectedRun.run_id, controller.signal).then(value => {
       setItems(value)
-      setSelectedItem(current => value.find(item => item.item_id === current?.item_id))
+      setSelectedItem(current => historySelection
+        ? value.find(item => item.item_key === historySelection.entityKey || item.symbol === historySelection.symbol)
+        : value.find(item => item.item_id === current?.item_id))
     }).catch(reason => { if (reason.name !== 'AbortError') setError(String(reason)) })
     return () => controller.abort()
-  }, [selectedRun?.run_id, selectedRun?.status])
+  }, [selectedRun?.run_id, selectedRun?.status, historySelection])
 
   useEffect(() => {
     if (!selectedRun || selectedRun.status !== 'succeeded') {
@@ -160,12 +164,13 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
         .then(value => {
           setObservations(value.items)
           setObservationTotal(value.total)
-          setSelectedObservation(current => value.items.find(item => item.symbol === current?.symbol))
+          setSelectedObservation(current => value.items.find(item =>
+            item.symbol === (historySelection?.symbol ?? current?.symbol)))
         })
         .catch(reason => { if (reason.name !== 'AbortError') setError(String(reason)) })
     }, 180)
     return () => { window.clearTimeout(timer); controller.abort() }
-  }, [dailyView, observationQuery, selectedRun?.run_id, selectedRun?.status])
+  }, [dailyView, observationQuery, selectedRun?.run_id, selectedRun?.status, historySelection])
 
   const deepAnalysisRunId = selectedObservation?.deep_analysis_run_id
     ?? selectedItem?.payload.deep_analysis_run_id
@@ -192,10 +197,18 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
         - (left.payload.score_result?.total_score ?? left.score * 100)
       || left.symbol.localeCompare(right.symbol)
   }), [items, profile, change])
+  const boardScoreSystems = useMemo(() => [...new Set(
+    scores.filter(item => item.entity_scope === 'board').map(item => item.system_id),
+  )], [scores])
+  useEffect(() => {
+    if (boardScoreSystems.length && !boardScoreSystems.includes(selectedScoreSystem)) {
+      setSelectedScoreSystem(boardScoreSystems[0])
+    }
+  }, [boardScoreSystems, selectedScoreSystem])
   const scoreBySymbol = useMemo(() => new Map(
-    scores.filter(item => item.system_id === 'trend-breakout')
+    scores.filter(item => item.system_id === selectedScoreSystem)
       .map(item => [item.symbol, item]),
-  ), [scores])
+  ), [scores, selectedScoreSystem])
   const hardEventSummary = useMemo(() => {
     const active = scores
       .filter(score => score.entity_scope === 'board')
@@ -263,6 +276,16 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
       setError(reason instanceof Error ? reason.message : String(reason))
     } finally {
       setStartingRun(false)
+    }
+  }
+  const openHistoricalScore = async (runId: string, symbol: string, entityKey?: string) => {
+    try {
+      const historicalRun = await loadSignalRun(runId)
+      setHistorySelection({ symbol, entityKey })
+      setSelectedRun(historicalRun)
+      setRuns(current => current.some(item => item.run_id === runId) ? current : [...current, historicalRun])
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason))
     }
   }
 
@@ -363,6 +386,7 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
           <button className={dailyView === 'opportunities' ? 'active' : ''} onClick={() => { setDailyView('opportunities'); setSelectedItem(undefined); setChatOpen(false) }}><Radar size={12}/>机会评分</button>
           <button className={dailyView === 'observations' ? 'active' : ''} onClick={() => { setDailyView('observations'); setSelectedItem(undefined); setChatOpen(false) }}><Eye size={12}/>全部观察</button>
         </div>}
+        {daily && boardScoreSystems.length > 0 && <label className="signal-score-system-select">评分体系<select aria-label="评分体系" value={selectedScoreSystem} onChange={event => setSelectedScoreSystem(event.target.value)}>{boardScoreSystems.map(system => <option key={system} value={system}>{system === 'trend-breakout' ? '趋势突破' : system}</option>)}</select></label>}
         {daily && hardEventSummary.total > 0 && <div className="signal-hard-event-strip" role="status">
           <span>硬异动 {hardEventSummary.total}</span>
           {hardEventSummary.counts.slice(0, 4).map(([eventType, count]) => <small key={eventType}>{hardEventLabel(eventType)} {count}</small>)}
@@ -413,7 +437,7 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
           : <div className="signal-empty">选择一项结果查看 K 线</div>}</div>
         <div className="signal-evidence"><div className="signal-evidence-resizer" role="separator" aria-orientation="horizontal" aria-label="调整固定算法结论高度" title="上下拖动调整结论区域高度" onPointerDown={startEvidenceResize}/><header><span>{selectedObservation ? '一级分析' : selectedItem?.payload.rendered_summary ? '固定算法结论' : '引用证据'}</span><small>{selectedObservation ? selectedObservation.state_codes.length : selectedItem?.evidence.length ?? 0}</small></header>
           <div className="signal-evidence-content">
-            {inspectedScore && <ScoreSummary score={inspectedScore}/>}
+            {inspectedScore && <ScoreSummary score={inspectedScore} onHistorySelect={openHistoricalScore}/>}
             {exactAnalysis && <TradeScenarioPanel run={exactAnalysis} selectedTargetLabel={selectedScenarioTarget} visible={scenarioVisible} onTargetChange={setSelectedScenarioTarget} onVisibleChange={setScenarioVisible} onHighlightItemChange={setScenarioHighlightedItemId}/>}
             {selectedObservation ? <pre className="signal-fixed-summary">{observationSummary(selectedObservation)}</pre> : <div className="signal-analysis-details">{selectedItem?.payload.rendered_summary && <pre className="signal-fixed-summary">{selectedItem.payload.rendered_summary}</pre>}<div className="signal-evidence-list">{selectedItem?.evidence.map(evidence => <button key={evidence.evidence_id} className={(highlightedEvidenceId ?? selectedEvidenceId) === evidence.evidence_id ? 'active' : ''} onClick={() => setSelectedEvidenceId(evidence.evidence_id)} title="点击查看该轮固定算法引用的原始或 M4 证据">
             <code>[{evidence.alias}]</code><span>{evidenceTitle(evidence)}<small>{evidenceDetail(evidence)}</small></span>
@@ -440,28 +464,43 @@ function ScoreBadge({ score, fallback, rank }: {
   </span>
 }
 
-function ScoreSummary({ score }: { score: SignalScoreResult }) {
+function ScoreSummary({ score, onHistorySelect }: {
+  score: SignalScoreResult
+  onHistorySelect?: (runId: string, symbol: string, entityKey?: string) => void
+}) {
   return <section className={`signal-score-summary grade-${score.grade.toLowerCase()}`} aria-label="固定算法综合评分">
     <ScoreBadge score={score}/>
     <div><span>{score.verdict}</span><p>{score.summary}</p><small>{score.risk_summary}</small></div>
-    <ScoreSparkline score={score}/>
+    <ScoreSparkline score={score} onHistorySelect={onHistorySelect}/>
     <em>{score.change_summary}</em>
     {score.hard_events.length > 0 && <div className="signal-hard-events">{score.hard_events.slice(0, 3).map(event => <span key={event.event_type} className={`${event.direction} ${event.severity}`}>{hardEventLabel(event.event_type)}</span>)}</div>}
+    <details className="signal-score-diagnostics"><summary>评分明细</summary>
+      <div>{Object.entries(score.components).map(([name, value]) => <span key={name}>{name}<small>{value.toFixed(1)}</small></span>)}</div>
+      {score.disqualifiers.length > 0 && <p>失格：{score.disqualifiers.join(' · ')}</p>}
+      {score.penalties.length > 0 && <p>扣分：{score.penalties.map(item => `${item.code} ${item.points}`).join(' · ')}</p>}
+    </details>
   </section>
 }
 
-function ScoreSparkline({ score }: { score: SignalScoreResult }) {
-  const values = [...score.history].reverse().flatMap(item => typeof item.total_score === 'number' ? [item.total_score] : [])
+function ScoreSparkline({ score, onHistorySelect }: {
+  score: SignalScoreResult
+  onHistorySelect?: (runId: string, symbol: string, entityKey?: string) => void
+}) {
+  const pointsWithHistory = [...score.history].reverse().filter(item => typeof item.total_score === 'number')
+  const values = pointsWithHistory.map(item => item.total_score as number)
   values.push(score.total_score)
   if (values.length < 2) return <span className="signal-score-new">新基线</span>
   const width = 68
   const height = 24
-  const points = values.map((value, index) => {
+  const coordinates = values.map((value, index) => {
     const x = values.length === 1 ? width : index / (values.length - 1) * width
     const y = height - 2 - Math.max(0, Math.min(100, value)) / 100 * (height - 4)
-    return `${x.toFixed(1)},${y.toFixed(1)}`
-  }).join(' ')
-  return <svg className="signal-score-sparkline" width={width} height={height} viewBox={`0 0 ${width} ${height}`} aria-label="最近兼容评分走势"><polyline points={points}/></svg>
+    return [x.toFixed(1), y.toFixed(1)] as const
+  })
+  return <svg className="signal-score-sparkline" width={width} height={height} viewBox={`0 0 ${width} ${height}`} aria-label="最近兼容评分走势"><polyline points={coordinates.map(point => point.join(',')).join(' ')}/>{pointsWithHistory.map((item, index) => {
+    const [cx, cy] = coordinates[index]
+    return <circle key={`${item.run_id}:${index}`} cx={cx} cy={cy} r="2.5" tabIndex={item.run_id ? 0 : -1} role={item.run_id ? 'button' : undefined} aria-label={item.run_id ? `打开 ${item.effective_date} 冻结评分` : undefined} onClick={() => item.run_id && onHistorySelect?.(item.run_id, score.symbol, item.entity_key)} onKeyDown={event => { if ((event.key === 'Enter' || event.key === ' ') && item.run_id) onHistorySelect?.(item.run_id, score.symbol, item.entity_key) }}/>
+  })}</svg>
 }
 
 function hardEventLabel(value: string): string {

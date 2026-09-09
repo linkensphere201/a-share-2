@@ -555,6 +555,8 @@ def _change_summary(
 def _history_point(value: Mapping[str, object]) -> dict[str, object]:
     effective_date = value.get("effective_date")
     return {
+        "run_id": value.get("run_id"),
+        "entity_key": value.get("entity_key"),
         "effective_date": (
             effective_date.isoformat() if hasattr(effective_date, "isoformat")
             else effective_date

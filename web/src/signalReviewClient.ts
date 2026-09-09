@@ -167,6 +167,8 @@ export type SignalScoreResult = {
   disqualifiers: string[]
   hard_events: SignalHardEvent[]
   history: Array<{
+    run_id?: string
+    entity_key?: string
     effective_date?: string
     total_score?: number
     grade?: string

@@ -43,14 +43,15 @@ describe('SignalReviewWorkspace', () => {
   })
 
   it('loads an immutable run, filters changes, and opens its chart evidence', async () => {
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
       if (url === '/api/signals/definitions') return response({ items: [definition] })
       if (url.includes('/api/signals/runs?')) return response({ items: [run] })
       if (url.endsWith('/items')) return response({ items })
       if (url.endsWith('/scores')) return response({ items: [] })
       throw new Error(`unexpected URL ${url}`)
-    }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
     const user = userEvent.setup()
     render(<SignalReviewWorkspace theme={themes[0]} onClose={() => undefined}/>)
 
@@ -268,16 +269,18 @@ describe('SignalReviewWorkspace', () => {
         state: 'new', source_code: '6m-descending-envelope-broken',
       }]),
     ]
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
       if (url === '/api/signals/definitions') return response({ items: [dailyDefinition] })
       if (url.includes('/api/signals/runs?')) return response({ items: [dailyRun] })
+      if (url === '/api/signals/runs/run-0') return response({ ...dailyRun, run_id: 'run-0', revision: 1 })
       if (url.endsWith('/items')) return response({ items: [] })
       if (url.endsWith('/scores')) return response({ items: scores })
       if (url.endsWith('/attention')) return response({ items: [] })
       if (url.includes('/board-observations?')) return response({ items: observations, total: 2 })
       throw new Error(`unexpected URL ${url}`)
-    }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
     const user = userEvent.setup()
     render(<SignalReviewWorkspace theme={themes[0]} onClose={() => undefined}/>)
 
@@ -290,6 +293,8 @@ describe('SignalReviewWorkspace', () => {
     expect(screen.getByText('趋势机会')).toBeTruthy()
     expect(screen.getByText('固定算法摘要')).toBeTruthy()
     expect(screen.getByText('较上一轮增强')).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: /打开 2026-09-03 冻结评分/ }))
+    expect(fetchMock.mock.calls.some(call => String(call[0]) === '/api/signals/runs/run-0')).toBe(true)
   })
 
   it('loads the exact M4 run and highlights the cited analysis item', async () => {
@@ -405,7 +410,9 @@ function signalScore(
     summary: '固定算法摘要', risk_summary: '固定风险摘要',
     change_summary: '较上一轮增强', stressed_risk_reward: eligible ? 3.8 : 2.2,
     components: {}, penalties: [], disqualifiers: eligible ? [] : ['below-3r'],
-    hard_events: hardEvents, history: [{ effective_date: '2026-09-03', total_score: 70 }],
+    hard_events: hardEvents, history: [{
+      run_id: 'run-0', entity_key: symbol, effective_date: '2026-09-03', total_score: 70,
+    }],
   }
 }
 
