@@ -34,6 +34,7 @@ from stock_harness.stock_relative_strength import ALGORITHM_VERSION as RELATIVE_
 
 FEATURE_CACHE_VERSION = "stock-focus-replay-features-v1"
 DEFAULT_SCAN_WORKERS = 4
+FUTURE_MOVE_HORIZONS = {7: 0.10, 20: 0.30, 60: 0.50, 120: 1.00}
 
 
 def main() -> None:
@@ -57,6 +58,8 @@ def main() -> None:
     parser.add_argument("--feature-cache-dir", type=Path,
                         default=Path(".tmp/replay-features/stock-focus-v1"))
     parser.add_argument("--scan-workers", type=int, default=DEFAULT_SCAN_WORKERS)
+    parser.add_argument("--evaluation-split-date", type=date.fromisoformat)
+    parser.add_argument("--evaluation-period-start", type=date.fromisoformat)
     args = parser.parse_args()
     if args.scan_date:
         if args.scan_result is None:
@@ -201,7 +204,10 @@ def main() -> None:
         print("evaluate focus recall against future strong-move labels", flush=True)
         store = _open_store(settings)
         try:
-            report["recall_evaluation"] = evaluate_focus_recall(store, report["results"])
+            report["recall_evaluation"] = evaluate_focus_recall(
+                store, report["results"], split_date=args.evaluation_split_date,
+                period_start=args.evaluation_period_start,
+            )
         finally:
             store.close()
     _write_report(args.output, report)
@@ -591,6 +597,7 @@ def _percentile(values: Sequence[int], percentile: float) -> int | None:
 def evaluate_focus_recall(
     store: SQLiteMarketDataStore,
     results: Sequence[Mapping[str, object]],
+    *, split_date: date | None = None, period_start: date | None = None,
 ) -> dict[str, object]:
     """Apply future labels only after all causal selections have been frozen."""
     ordered_results = sorted(results, key=lambda item: str(item.get("effective_date")))
@@ -605,7 +612,7 @@ def evaluate_focus_recall(
         }
         for replay_date, result in zip(replay_dates, ordered_results)
     }
-    horizons = {20: 0.30, 60: 0.50, 120: 1.00}
+    horizons = FUTURE_MOVE_HORIZONS
     event_symbols: dict[tuple[int, date], set[str]] = {}
     eligible_symbols: dict[tuple[int, date], set[str]] = {}
     symbols = store.list_stock_symbols_with_daily_bars(replay_dates[0], replay_dates[-1])
@@ -662,6 +669,25 @@ def evaluate_focus_recall(
             **quality,
             **episodes,
         }
+        if split_date is not None:
+            metrics[str(horizon)]["periods"] = {
+                f"before_{split_date.isoformat()}": _selection_quality_metrics(
+                    {value: symbols for value, symbols in events.items()
+                     if (period_start is None or value >= period_start)
+                     and value < split_date},
+                    {value: symbols for value, symbols in eligible.items()
+                     if (period_start is None or value >= period_start)
+                     and value < split_date},
+                    focus_by_date,
+                ),
+                f"from_{split_date.isoformat()}": _selection_quality_metrics(
+                    {value: symbols for value, symbols in events.items()
+                     if value >= split_date},
+                    {value: symbols for value, symbols in eligible.items()
+                     if value >= split_date},
+                    focus_by_date,
+                ),
+            }
     return {
         "status": "completed",
         "selection_uses_future_labels": False,
@@ -699,7 +725,15 @@ def _selection_quality_metrics(
         recall / selection_rate
         if recall is not None and selection_rate not in {None, 0.0} else None
     )
+    eligible_dates = sorted(value for value, symbols in eligible.items() if symbols)
     return {
+        "eligible_selection_date_count": len(eligible_dates),
+        "first_eligible_selection_date": (
+            eligible_dates[0].isoformat() if eligible_dates else None
+        ),
+        "last_eligible_selection_date": (
+            eligible_dates[-1].isoformat() if eligible_dates else None
+        ),
         "eligible_observation_count": eligible_count,
         "event_observation_count": event_count,
         "selected_observation_count": selected_count,

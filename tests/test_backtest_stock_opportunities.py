@@ -19,6 +19,9 @@ _SPEC.loader.exec_module(module)
 
 def test_replay_defaults_to_four_bounded_feature_workers() -> None:
     assert module.DEFAULT_SCAN_WORKERS == 4
+    assert module.FUTURE_MOVE_HORIZONS == {
+        7: 0.10, 20: 0.30, 60: 0.50, 120: 1.00,
+    }
 
 
 def test_select_replay_dates_is_deterministic_and_includes_boundaries() -> None:
@@ -111,6 +114,9 @@ def test_selection_quality_reports_precision_baseline_and_capacity_lift() -> Non
     )
 
     assert result == {
+        "eligible_selection_date_count": 2,
+        "first_eligible_selection_date": "2026-01-02",
+        "last_eligible_selection_date": "2026-01-05",
         "eligible_observation_count": 8,
         "event_observation_count": 3,
         "selected_observation_count": 4,
