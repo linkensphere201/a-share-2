@@ -42,7 +42,7 @@ export type ChatTurn = {
 
 export type ChatConversation = {
   conversation_id: string
-  context_kind?: 'trend_analysis' | 'signal_run'
+  context_kind?: 'trend_analysis' | 'signal_run' | 'signal_workspace'
   context_id?: string
   symbol: string | null
   timeframe: string | null
@@ -61,7 +61,7 @@ export type ChatConversation = {
 
 export type ChatConversationSummary = {
   conversation_id: string
-  context_kind?: 'trend_analysis' | 'signal_run'
+  context_kind?: 'trend_analysis' | 'signal_run' | 'signal_workspace'
   context_id?: string
   source_run_id: string | null
   title: string
@@ -147,6 +147,22 @@ export function listSignalChatConversations(
   return jsonRequest(`/api/ai/conversations?${query}`)
 }
 
+export function openSignalWorkspaceConversation(
+  signalId: string, forceNew = false,
+): Promise<ChatConversation> {
+  return jsonRequest('/api/ai/conversations', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ context_kind: 'signal_workspace', context_id: signalId, force_new: forceNew }),
+  })
+}
+
+export function listSignalWorkspaceConversations(
+  signalId: string,
+): Promise<{ items: ChatConversationSummary[] }> {
+  const query = new URLSearchParams({ context_kind: 'signal_workspace', context_id: signalId })
+  return jsonRequest(`/api/ai/conversations?${query}`)
+}
+
 export function updateChatConversation(
   conversationId: string, update: { title?: string; status?: 'active' | 'archived' },
 ): Promise<ChatConversation> {
@@ -174,12 +190,14 @@ export function startChatTurn(
     risk_reward?: { direction: 'long' | 'short'; entry_price: number; stop_price: number; target_price: number }
   },
   selectedSignalItemIds?: string[],
+  selectedSignalRunId?: string,
 ): Promise<{ turn_id: string; status: string }> {
   return jsonRequest(`/api/ai/conversations/${encodeURIComponent(conversationId)}/turns`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ content, template_id: templateId || null, ...userInputs,
-      selected_signal_item_ids: selectedSignalItemIds ?? [] }),
+      selected_signal_item_ids: selectedSignalItemIds ?? [],
+      selected_signal_run_id: selectedSignalRunId ?? null }),
   })
 }
 

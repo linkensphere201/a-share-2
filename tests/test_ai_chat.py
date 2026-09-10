@@ -184,6 +184,66 @@ def test_signal_result_chat_uses_signal_template_and_retries_from_saved_context(
     store.close()
 
 
+def test_signal_workspace_chat_freezes_multiple_runs_and_keeps_signal_access() -> None:
+    store = SQLiteMarketDataStore(":memory:")
+    store.upsert_instruments([
+        Instrument("000001.SZ", "平安银行", InstrumentKind.STOCK, "SZ")
+    ])
+    run_ids = []
+    for index, effective in enumerate((date(2026, 9, 3), date(2026, 9, 4)), 1):
+        run = store.create_signal_review_run(
+            signal_id="daily-market-board-review",
+            definition_version="daily-v1", algorithm_version="daily-algo-v1",
+            cadence="daily", effective_date=effective, parameters={},
+        )
+        store.complete_signal_review_run(str(run["run_id"]), items=[{
+            "item_id": f"item-{index}", "item_key": "market:000001.SZ",
+            "rank": 1, "symbol": "000001.SZ", "profile": "market",
+            "change_type": "retained" if index > 1 else "added",
+            "active": True, "score": .7 + index / 10, "confidence": .8,
+            "payload": {"state_codes": [f"state-{index}"]},
+            "evidence": [{
+                "evidence_id": f"evidence-{index}", "alias": "S1",
+                "evidence_type": "market-daily-series",
+                "payload": {"effective_date": effective.isoformat()},
+            }],
+        }], summary={"sequence": index}, input_digest=f"digest-{index}")
+        run_ids.append(str(run["run_id"]))
+    bridge = FakeCodexBridge()
+    with TestClient(create_app(store, codex_bridge=bridge)) as client:
+        response = client.post("/api/ai/conversations", json={
+            "context_kind": "signal_workspace",
+            "context_id": "daily-market-board-review",
+        })
+        assert response.status_code == 201
+        conversation = response.json()
+        listed = client.get(
+            "/api/ai/conversations?context_kind=signal_workspace"
+            "&context_id=daily-market-board-review"
+        ).json()["items"]
+        turn = client.post(
+            f"/api/ai/conversations/{conversation['conversation_id']}/turns",
+            json={
+                "content": "比较最近两轮",
+                "template_id": "signal-weekly-change",
+                "selected_signal_run_id": run_ids[0],
+                "selected_signal_item_ids": ["item-1"],
+            },
+        ).json()
+        client.get(f"/api/ai/turns/{turn['turn_id']}/events")
+
+    assert conversation["context_kind"] == "signal_workspace"
+    assert conversation["context_id"] == "daily-market-board-review"
+    assert listed[0]["conversation_id"] == conversation["conversation_id"]
+    assert "多轮不可变结果" in bridge.prompts[0]
+    assert '"run_count":2' in bridge.prompts[0]
+    assert '"effective_date":"2026-09-03"' in bridge.prompts[0]
+    assert '"effective_date":"2026-09-04"' in bridge.prompts[0]
+    assert '"selected_run_id":"' + run_ids[0] + '"' in bridge.prompts[0]
+    assert bridge.access_profiles == ["signal_run"]
+    store.close()
+
+
 def test_chat_context_excludes_bars_after_the_bound_analysis_date() -> None:
     store, run_id = _store_with_run()
     conversation = store.get_or_create_chat_conversation(

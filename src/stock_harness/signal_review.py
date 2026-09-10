@@ -124,8 +124,8 @@ class SignalReviewService:
             "profiles": [RECENT_PROFILE, HISTORICAL_PROFILE],
         }, {
             "signal_id": DAILY_MARKET_BOARD_SIGNAL,
-            "name": "每日大盘与板块复盘",
-            "description": "保存全板块一级固定分析，并筛选值得持续关注的异动。",
+            "name": "每日复盘",
+            "description": "复盘大盘、板块和个股，保存固定分析并筛选值得持续关注的异动。",
             "cadence": "daily",
             "definition_version": DAILY_DEFINITION_VERSION,
             "algorithm_version": DAILY_REVIEW_ALGORITHM_VERSION,

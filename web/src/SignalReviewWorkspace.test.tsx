@@ -146,7 +146,7 @@ describe('SignalReviewWorkspace', () => {
     await vi.waitFor(() => expect(screen.getAllByText(/等待执行 100%/).length).toBeGreaterThan(0))
   })
 
-  it('binds Codex chat to the selected signal result and its run', async () => {
+  it('opens Codex chat from the workspace and keeps the selected run as turn focus', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
@@ -187,19 +187,21 @@ describe('SignalReviewWorkspace', () => {
     const user = userEvent.setup()
     render(<SignalReviewWorkspace theme={themes[0]} onClose={() => undefined}/>)
 
-    await user.click((await screen.findByText('000001.SZ')).closest('button')!)
+    await screen.findByText('000001.SZ')
     await user.click(screen.getByRole('button', { name: 'Codex 信号讨论' }))
     const input = await screen.findByRole('textbox', { name: '信号讨论输入' })
+    await user.click(screen.getByText('000001.SZ').closest('button')!)
     await user.type(input, '复核这个变化')
     await user.click(screen.getByRole('button', { name: '发送信号问题' }))
 
     const create = fetchMock.mock.calls.find(call => String(call[0]) === '/api/ai/conversations')
     expect(JSON.parse(String(create?.[1]?.body))).toMatchObject({
-      context_kind: 'signal_run', context_id: 'run-1',
+      context_kind: 'signal_workspace', context_id: definition.signal_id,
     })
     const turn = fetchMock.mock.calls.find(call => String(call[0]).endsWith('/turns'))
     expect(JSON.parse(String(turn?.[1]?.body))).toMatchObject({
-      content: '复核这个变化', selected_signal_item_ids: ['item-1'],
+      content: '复核这个变化', selected_signal_run_id: 'run-1',
+      selected_signal_item_ids: ['item-1'],
     })
     await vi.waitFor(() => expect(eventSource).toBeDefined())
     eventSource?.emit('failed', { message: 'invalid MCP transport' })
@@ -213,7 +215,7 @@ describe('SignalReviewWorkspace', () => {
   it('searches complete daily observations and pins one into the attention registry', async () => {
     let pinned = false
     const dailyDefinition = {
-      ...definition, signal_id: 'daily-market-board-review', name: '每日大盘与板块复盘',
+      ...definition, signal_id: 'daily-market-board-review', name: '每日复盘',
       cadence: 'daily', profiles: ['market', 'attention'],
     }
     const dailyRun = { ...run, signal_id: dailyDefinition.signal_id, cadence: 'daily' }
@@ -268,7 +270,7 @@ describe('SignalReviewWorkspace', () => {
 
   it('orders the complete board universe by opportunity score and keeps hard events visible', async () => {
     const dailyDefinition = {
-      ...definition, signal_id: 'daily-market-board-review', name: '每日大盘与板块复盘',
+      ...definition, signal_id: 'daily-market-board-review', name: '每日复盘',
       cadence: 'daily', profiles: ['market', 'attention'],
     }
     const dailyRun = { ...run, signal_id: dailyDefinition.signal_id, cadence: 'daily' }
@@ -313,7 +315,7 @@ describe('SignalReviewWorkspace', () => {
 
   it('shows the leading radar as an independent filtered system', async () => {
     const dailyDefinition = {
-      ...definition, signal_id: 'daily-market-board-review', name: '每日大盘与板块复盘',
+      ...definition, signal_id: 'daily-market-board-review', name: '每日复盘',
       cadence: 'daily', profiles: ['market', 'attention'],
     }
     const dailyRun = { ...run, signal_id: dailyDefinition.signal_id, cadence: 'daily' }
@@ -503,10 +505,10 @@ const items = [{
 }]
 
 const conversation = {
-  conversation_id: 'conversation-1', context_kind: 'signal_run', context_id: 'run-1',
+  conversation_id: 'conversation-1', context_kind: 'signal_workspace', context_id: definition.signal_id,
   symbol: null, timeframe: null, source_run_id: null, as_of_date: '2026-09-04',
   algorithm_version: 'a1', config_version: 'v1', completion_state: 'complete',
-  preview: false, title: 'weekly · 2026-09-04 R2', status: 'active', turns: [],
+  preview: false, title: '信号复盘 · 多轮讨论', status: 'active', turns: [],
 }
 
 function dailyObservation(symbol: string, name: string) {

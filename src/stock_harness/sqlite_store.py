@@ -136,6 +136,7 @@ class SQLiteMarketDataStore(
         self._ensure_chat_policy_version()
         self._ensure_chat_conversation_sessions()
         self._ensure_chat_typed_contexts()
+        self._ensure_chat_workspace_contexts()
         self._ensure_chat_context_index()
         self._ensure_chat_template_version()
         self._futures_storage_ready = False
@@ -345,6 +346,97 @@ class SQLiteMarketDataStore(
                 self._connection.execute(
                     "ALTER TABLE ai_chat_conversations ADD COLUMN codex_policy_version TEXT"
                 )
+
+    def _ensure_chat_workspace_contexts(self) -> None:
+        """Allow signal-level conversations while preserving existing chat history."""
+        with self._lock, self._writer_lock:
+            conversation_sql = self._connection.execute(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' "
+                "AND name = 'ai_chat_conversations'"
+            ).fetchone()
+            turn_context_sql = self._connection.execute(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' "
+                "AND name = 'ai_chat_turn_contexts'"
+            ).fetchone()
+            if (
+                conversation_sql is not None
+                and turn_context_sql is not None
+                and "signal_workspace" in str(conversation_sql[0])
+                and "signal_workspace" in str(turn_context_sql[0])
+            ):
+                return
+            self._connection.execute("PRAGMA foreign_keys = OFF")
+            try:
+                self._connection.executescript(
+                    """
+                    BEGIN IMMEDIATE;
+                    CREATE TABLE ai_chat_conversations_v4 (
+                        conversation_id TEXT PRIMARY KEY,
+                        context_kind TEXT NOT NULL CHECK (
+                            context_kind IN (
+                                'trend_analysis', 'signal_run', 'signal_workspace'
+                            )
+                        ),
+                        context_id TEXT NOT NULL,
+                        instrument_id INTEGER,
+                        timeframe TEXT CHECK (timeframe IN ('daily', 'weekly', 'monthly')),
+                        source_run_id TEXT,
+                        title TEXT NOT NULL,
+                        codex_thread_id TEXT,
+                        codex_policy_version TEXT,
+                        status TEXT NOT NULL CHECK (status IN ('active', 'archived')),
+                        created_at_ms INTEGER NOT NULL,
+                        updated_at_ms INTEGER NOT NULL,
+                        FOREIGN KEY (instrument_id) REFERENCES instruments(instrument_id)
+                    );
+                    INSERT INTO ai_chat_conversations_v4(
+                        conversation_id, context_kind, context_id, instrument_id,
+                        timeframe, source_run_id, title, codex_thread_id,
+                        codex_policy_version, status, created_at_ms, updated_at_ms
+                    )
+                    SELECT conversation_id, context_kind, context_id, instrument_id,
+                           timeframe, source_run_id, title, codex_thread_id,
+                           codex_policy_version, status, created_at_ms, updated_at_ms
+                    FROM ai_chat_conversations;
+
+                    CREATE TABLE ai_chat_turn_contexts_v3 (
+                        turn_id TEXT PRIMARY KEY,
+                        schema_version TEXT NOT NULL,
+                        context_kind TEXT NOT NULL CHECK (
+                            context_kind IN (
+                                'trend_analysis', 'signal_run', 'signal_workspace'
+                            )
+                        ),
+                        context_id TEXT NOT NULL,
+                        source_run_id TEXT,
+                        as_of_date INTEGER NOT NULL,
+                        input_digest TEXT NOT NULL,
+                        context_json TEXT NOT NULL,
+                        FOREIGN KEY (turn_id) REFERENCES ai_chat_turns(turn_id) ON DELETE CASCADE
+                    ) WITHOUT ROWID;
+                    INSERT INTO ai_chat_turn_contexts_v3(
+                        turn_id, schema_version, context_kind, context_id,
+                        source_run_id, as_of_date, input_digest, context_json
+                    )
+                    SELECT turn_id, schema_version, context_kind, context_id,
+                           source_run_id, as_of_date, input_digest, context_json
+                    FROM ai_chat_turn_contexts;
+
+                    DROP TABLE ai_chat_turn_contexts;
+                    ALTER TABLE ai_chat_turn_contexts_v3 RENAME TO ai_chat_turn_contexts;
+                    DROP TABLE ai_chat_conversations;
+                    ALTER TABLE ai_chat_conversations_v4 RENAME TO ai_chat_conversations;
+                    CREATE INDEX ai_chat_conversations_latest
+                    ON ai_chat_conversations(context_kind, context_id, updated_at_ms DESC);
+                    COMMIT;
+                    """
+                )
+            except Exception:
+                if self._connection.in_transaction:
+                    self._connection.execute("ROLLBACK")
+                raise
+            finally:
+                self._connection.execute("PRAGMA foreign_keys = ON")
 
     def _ensure_chat_context_index(self) -> None:
         with self._lock, self._writer_lock:

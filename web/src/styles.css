@@ -131,6 +131,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .signal-run-action { min-width: 148px; justify-content: center; }
 .signal-error { position: fixed; z-index: 60; top: 64px; right: 12px; max-width: 520px; padding: 8px 10px; color: #ffd5d5; border: 1px solid #8f4f4f; background: #3e2020; }
 .signal-grid { min-height: 0; display: grid; grid-template-columns: var(--signal-runs-width, 225px) 5px minmax(520px, 1fr); }
+.signal-grid.chat-open { grid-template-columns: var(--signal-runs-width, 225px) 5px minmax(460px, 1fr) 5px var(--signal-chat-width, 340px); }
 .signal-grid.inspector-open { grid-template-columns: var(--signal-runs-width, 225px) 5px var(--signal-results-width, 360px) 5px minmax(540px, 1fr); }
 .signal-grid.inspector-open.chat-open { grid-template-columns: var(--signal-runs-width, 225px) 5px var(--signal-results-width, 360px) 5px minmax(460px, 1fr) 5px var(--signal-chat-width, 340px); }
 .signal-column-resizer { position: relative; z-index: 8; min-width: 5px; cursor: col-resize; touch-action: none; background: var(--theme-base); }
@@ -304,7 +305,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 @media (max-width: 1180px) {
   .signal-title small, .signal-description { display: none; }
   .signal-grid { grid-template-columns: minmax(180px, var(--signal-runs-width, 205px)) 5px minmax(520px, 1fr); }
+  .signal-grid.chat-open { grid-template-columns: minmax(180px, var(--signal-runs-width, 205px)) 5px minmax(400px, 1fr) 5px minmax(280px, var(--signal-chat-width, 320px)); }
   .signal-grid.inspector-open { grid-template-columns: minmax(180px, var(--signal-runs-width, 205px)) 5px minmax(280px, var(--signal-results-width, 330px)) 5px minmax(470px, 1fr); }
+  .signal-grid.inspector-open.chat-open { grid-template-columns: minmax(180px, var(--signal-runs-width, 205px)) 5px minmax(280px, var(--signal-results-width, 330px)) 5px minmax(400px, 1fr) 5px minmax(280px, var(--signal-chat-width, 320px)); }
 }
 
 .workstation {

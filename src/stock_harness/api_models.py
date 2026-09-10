@@ -119,7 +119,7 @@ class AiAnalysisReportInput(BaseModel):
 
 
 class AiChatConversationInput(BaseModel):
-    context_kind: Literal["trend_analysis", "signal_run"] = "trend_analysis"
+    context_kind: Literal["trend_analysis", "signal_run", "signal_workspace"] = "trend_analysis"
     context_id: str | None = Field(default=None, min_length=1, max_length=64)
     symbol: str | None = Field(default=None, min_length=1, max_length=200)
     timeframe: Literal["daily"] = "daily"
@@ -175,6 +175,7 @@ class AiChatTurnInput(BaseModel):
     position: AiPositionContextInput | None = None
     risk_reward: AiRiskRewardContextInput | None = None
     selected_signal_item_ids: list[str] = Field(default_factory=list, max_length=20)
+    selected_signal_run_id: str | None = Field(default=None, min_length=1, max_length=64)
 
 
 class TrendReviewSourceInput(BaseModel):

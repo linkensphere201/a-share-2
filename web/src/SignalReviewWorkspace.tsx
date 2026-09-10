@@ -328,6 +328,7 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
       .map(value => [value, items.filter(item => item.active && item.profile === value).length]),
   ) as Record<SignalProfile, number>, [items])
   const daily = selectedDefinition?.cadence === 'daily'
+  const workspaceChatAvailable = runs.some(item => item.status === 'succeeded')
   const inspected = selectedPoolItem ?? selectedObservation ?? selectedItem
   const inspectedScore = selectedPoolItem?.payload.opportunity_score
     ?? (selectedObservation
@@ -481,6 +482,7 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
         setSelectedPoolItem(undefined)
       }}>{definitions.map(item => <option key={item.signal_id} value={item.signal_id}>{item.name}</option>)}</select>
       {selectedDefinition && <span className="signal-description">{selectedDefinition.description}</span>}
+      <button className={`icon-button${chatOpen ? ' active' : ''}`} title={workspaceChatAvailable ? 'Codex 多轮复盘讨论' : '完成至少一轮复盘后可讨论'} aria-label="Codex 信号讨论" disabled={!selectedDefinition || !workspaceChatAvailable} onClick={() => setChatOpen(value => !value)}><MessageSquare size={14}/></button>
       <button className="primary-button signal-run-action" disabled={!selectedDefinition || runBusy} onClick={() => void run()}>
         {runBusy ? <RefreshCw size={14} className="spin"/> : <Play size={14}/>}<span>{startingRun
           ? '正在创建本期任务'
@@ -513,10 +515,10 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
         {selectedRun?.status === 'running' && <div className="signal-progress"><i style={{ width: `${progress}%` }}/></div>}
         {daily && <div className="signal-view-switch">
           <button className={dailyView === 'results' ? 'active' : ''} onClick={() => { setDailyView('results'); setSelectedObservation(undefined); setSelectedPoolItem(undefined) }}><ListFilter size={12}/>今日关注</button>
-          <button className={dailyView === 'opportunities' ? 'active' : ''} onClick={() => { setDailyView('opportunities'); setSelectedItem(undefined); setSelectedPoolItem(undefined); setChatOpen(false) }}><Radar size={12}/>机会评分</button>
-          <button className={dailyView === 'leading' ? 'active' : ''} onClick={() => { setDailyView('leading'); setSelectedScoreSystem('board-hotspot-leading'); setSelectedItem(undefined); setSelectedPoolItem(undefined); setChatOpen(false) }}><Radar size={12}/>前导雷达</button>
-          <button className={dailyView === 'hotspots' ? 'active' : ''} onClick={() => { setDailyView('hotspots'); setSelectedScoreSystem('board-hotspot-emergence'); setSelectedItem(undefined); setSelectedPoolItem(undefined); setChatOpen(false) }}><Radar size={12}/>近期热点</button>
-          <button className={dailyView === 'observations' ? 'active' : ''} onClick={() => { setDailyView('observations'); setSelectedItem(undefined); setSelectedPoolItem(undefined); setChatOpen(false) }}><Eye size={12}/>全部观察</button>
+          <button className={dailyView === 'opportunities' ? 'active' : ''} onClick={() => { setDailyView('opportunities'); setSelectedItem(undefined); setSelectedPoolItem(undefined) }}><Radar size={12}/>机会评分</button>
+          <button className={dailyView === 'leading' ? 'active' : ''} onClick={() => { setDailyView('leading'); setSelectedScoreSystem('board-hotspot-leading'); setSelectedItem(undefined); setSelectedPoolItem(undefined) }}><Radar size={12}/>前导雷达</button>
+          <button className={dailyView === 'hotspots' ? 'active' : ''} onClick={() => { setDailyView('hotspots'); setSelectedScoreSystem('board-hotspot-emergence'); setSelectedItem(undefined); setSelectedPoolItem(undefined) }}><Radar size={12}/>近期热点</button>
+          <button className={dailyView === 'observations' ? 'active' : ''} onClick={() => { setDailyView('observations'); setSelectedItem(undefined); setSelectedPoolItem(undefined) }}><Eye size={12}/>全部观察</button>
           <button className={dailyView === 'board-pool' ? 'active' : ''} onClick={() => { setDailyView('board-pool'); setSelectedItem(undefined); setSelectedObservation(undefined) }}><Layers3 size={12}/>板块池</button>
           <button className={dailyView === 'stock-pool' ? 'active' : ''} onClick={() => { setDailyView('stock-pool'); setSelectedItem(undefined); setSelectedObservation(undefined) }}><Boxes size={12}/>个股池</button>
         </div>}
@@ -592,7 +594,7 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
           ? `${poolLifecycleLabel(selectedPoolItem.lifecycle_state)} · 排名 #${selectedPoolItem.rank} · ${selectedPoolItem.sources.length} 条来源`
           : selectedItem ? `${profileLabels[selectedItem.profile]} · 得分 ${(selectedItem.score * 100).toFixed(1)} · 置信 ${(selectedItem.confidence * 100).toFixed(1)}` : `${selectedObservation?.effective_date} · 一级固定分析`}</small>{selectedObservation
           ? <button className="icon-button" title={pinned ? '取消手工固定' : '加入手工观察池'} aria-label={pinned ? '取消手工固定' : '加入手工观察池'} onClick={() => void togglePinned()}>{pinned ? <PinOff size={13}/> : <Pin size={13}/>}</button>
-          : <button className="icon-button" title="Codex 信号讨论" aria-label="Codex 信号讨论" onClick={() => setChatOpen(value => !value)}><MessageSquare size={13}/></button>}</header>
+          : null}</header>
         {criticalAlert && <div className={`signal-critical-alert ${criticalAlert.tone}`}>
           <span>{criticalAlert.title}<small>{criticalAlert.facts}</small></span>
           <span>{criticalAlert.reason}<small>{criticalAlert.condition}</small></span>
@@ -612,7 +614,7 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
         </div>
       </section>}
       {chatOpen && <div className="signal-column-resizer" role="separator" aria-orientation="vertical" aria-label="调整Codex对话栏宽度" title="左右拖动调整Codex对话栏宽度" onPointerDown={event => startColumnResize('chat', event)}/>}
-      {chatOpen && selectedRun && <SignalChatPanel key={selectedRun.run_id} run={selectedRun} items={items} selectedItem={selectedItem} selectedPoolItem={selectedPoolItem} onReferencePreview={previewReference} onReferenceActivate={activateReference} onClose={() => setChatOpen(false)}/>}
+      {chatOpen && selectedDefinition && <SignalChatPanel key={selectedDefinition.signal_id} signalId={selectedDefinition.signal_id} runs={runs} run={selectedRun} items={items} selectedItem={selectedItem} selectedPoolItem={selectedPoolItem} onReferencePreview={previewReference} onReferenceActivate={activateReference} onClose={() => setChatOpen(false)}/>}
     </section>
   </main>
 }

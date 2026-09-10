@@ -2,16 +2,19 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Bot, PanelRightClose, Plus, Send, Trash2 } from 'lucide-react'
 import { ChatMarkdown } from './AnalysisChatPanel'
 import {
-  deleteChatConversation, listSignalChatConversations, loadChatConversation, loadCodexCapabilities,
-  openSignalChatConversation, startChatTurn, streamChatTurn,
+  deleteChatConversation, listSignalWorkspaceConversations, loadChatConversation, loadCodexCapabilities,
+  openSignalWorkspaceConversation, startChatTurn, streamChatTurn,
   type ChatConversation, type ChatConversationSummary, type CodexCapabilities,
 } from './aiChatClient'
 import type { ObservationPoolItem, SignalItem, SignalRun } from './signalReviewClient'
 
 export function SignalChatPanel({
-  run, items, selectedItem, selectedPoolItem, onReferencePreview, onReferenceActivate, onClose,
+  signalId, runs, run, items, selectedItem, selectedPoolItem,
+  onReferencePreview, onReferenceActivate, onClose,
 }: {
-  run: SignalRun
+  signalId: string
+  runs: SignalRun[]
+  run?: SignalRun
   items: SignalItem[]
   selectedItem?: SignalItem
   selectedPoolItem?: ObservationPoolItem
@@ -29,8 +32,8 @@ export function SignalChatPanel({
   const [activeTurnId, setActiveTurnId] = useState<string>()
   const [error, setError] = useState('')
   const streamRef = useRef<EventSource | null>(null)
-  const runIdRef = useRef(run.run_id)
-  runIdRef.current = run.run_id
+  const signalIdRef = useRef(signalId)
+  signalIdRef.current = signalId
   const referenceMap = useMemo(
     () => buildSignalReferenceMap(items, selectedPoolItem),
     [items, selectedPoolItem],
@@ -46,14 +49,14 @@ export function SignalChatPanel({
   }
 
   const refreshHistory = async (
-    conversationId?: string, expectedRunId = run.run_id,
+    conversationId?: string, expectedSignalId = signalId,
   ) => {
-    const value = await listSignalChatConversations(expectedRunId)
-    if (runIdRef.current !== expectedRunId) return
+    const value = await listSignalWorkspaceConversations(expectedSignalId)
+    if (signalIdRef.current !== expectedSignalId) return
     setHistory(value.items)
     if (conversationId) {
       const loaded = await loadChatConversation(conversationId)
-      if (runIdRef.current === expectedRunId) setConversation(loaded)
+      if (signalIdRef.current === expectedSignalId) setConversation(loaded)
     }
   }
 
@@ -67,23 +70,23 @@ export function SignalChatPanel({
     setLive('')
     setActiveTurnId(undefined)
     setError('')
-    Promise.all([loadCodexCapabilities(), openSignalChatConversation(run.run_id)])
+    Promise.all([loadCodexCapabilities(), openSignalWorkspaceConversation(signalId)])
       .then(async ([nextCapabilities, nextConversation]) => {
         if (cancelled) return
         setCapabilities(nextCapabilities)
         setConversation(nextConversation)
-        setHistory((await listSignalChatConversations(run.run_id)).items)
+        setHistory((await listSignalWorkspaceConversations(signalId)).items)
       }).catch(reason => { if (!cancelled) setError(String(reason)) })
     return () => { cancelled = true; streamRef.current?.close() }
-  }, [run.run_id])
+  }, [signalId])
 
-  const connect = (turnId: string, conversationId: string, expectedRunId: string) => {
+  const connect = (turnId: string, conversationId: string, expectedSignalId: string) => {
     streamRef.current?.close()
     setActiveTurnId(turnId)
     streamRef.current = streamChatTurn(turnId, {
       onDelta: delta => setLive(value => value + delta),
       onTerminal: async (type, data) => {
-        if (runIdRef.current !== expectedRunId) return
+        if (signalIdRef.current !== expectedSignalId) return
         setActiveTurnId(undefined)
         setPending(undefined)
         setLive('')
@@ -93,7 +96,7 @@ export function SignalChatPanel({
             : 'Codex 对话失败，请查看应用日志。'
           setError(message)
         }
-        await refreshHistory(conversationId, expectedRunId)
+        await refreshHistory(conversationId, expectedSignalId)
       },
       onError: () => setError('Codex 流式连接中断，服务端结果已保留。'),
     })
@@ -101,7 +104,7 @@ export function SignalChatPanel({
 
   const send = async () => {
     const content = draft.trim()
-    if (!conversation || conversation.context_id !== run.run_id || !content || activeTurnId) return
+    if (!conversation || conversation.context_id !== signalId || !content || activeTurnId) return
     setDraft('')
     setPending(content)
     setLive('')
@@ -114,8 +117,9 @@ export function SignalChatPanel({
           : selectedPoolItem
             ? [`pool:${selectedPoolItem.kind === 'sector' ? 'board' : 'stock'}:${selectedPoolItem.symbol}`]
             : [],
+        run?.run_id,
       )
-      connect(turn.turn_id, conversation.conversation_id, run.run_id)
+      connect(turn.turn_id, conversation.conversation_id, signalId)
     } catch (reason) {
       setDraft(content)
       setPending(undefined)
@@ -129,13 +133,13 @@ export function SignalChatPanel({
     try {
       setError('')
       await deleteChatConversation(conversation.conversation_id)
-      const remaining = (await listSignalChatConversations(run.run_id)).items
+      const remaining = (await listSignalWorkspaceConversations(signalId)).items
       setHistory(remaining)
       if (remaining[0]) setConversation(await loadChatConversation(remaining[0].conversation_id))
       else {
-        const created = await openSignalChatConversation(run.run_id, true)
+        const created = await openSignalWorkspaceConversation(signalId, true)
         setConversation(created)
-        setHistory((await listSignalChatConversations(run.run_id)).items)
+        setHistory((await listSignalWorkspaceConversations(signalId)).items)
       }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason))
@@ -146,7 +150,7 @@ export function SignalChatPanel({
   return <section className="signal-chat-pane">
     <header><span><Bot size={13}/>Codex 信号讨论</span><div>
       <small className={available ? 'available' : 'unavailable'}>{available ? '已连接' : '不可用'}</small>
-      <button title="新建会话" aria-label="新建信号会话" onClick={() => void openSignalChatConversation(run.run_id, true).then(value => { setConversation(value); void refreshHistory() })}><Plus size={12}/></button>
+      <button title="新建会话" aria-label="新建信号会话" onClick={() => void openSignalWorkspaceConversation(signalId, true).then(value => { setConversation(value); void refreshHistory() })}><Plus size={12}/></button>
       <button title="删除当前会话" aria-label="删除当前信号会话" disabled={!conversation || Boolean(activeTurnId)} onClick={() => void removeConversation()}><Trash2 size={11}/></button>
       <button title="关闭对话" aria-label="关闭信号对话" onClick={onClose}><PanelRightClose size={12}/></button>
     </div></header>
@@ -154,7 +158,7 @@ export function SignalChatPanel({
       <select aria-label="信号会话历史" value={conversation?.conversation_id ?? ''} onChange={event => void refreshHistory(event.target.value)}>
         {history.map(item => <option key={item.conversation_id} value={item.conversation_id}>{item.title} · {item.turn_count}</option>)}
       </select>
-      <small>{run.effective_date} R{run.revision} · {selectedItem
+      <small>最近 {runs.filter(item => item.status === 'succeeded').slice(0, 5).length} 轮 · {run ? `${run.effective_date} R${run.revision}` : '自动使用最新轮'} · {selectedItem
         ? `${selectedItem.name} ${selectedItem.symbol}`
         : selectedPoolItem ? `${selectedPoolItem.name} ${selectedPoolItem.symbol}` : '未选择标的'}</small>
     </div>
@@ -170,7 +174,7 @@ export function SignalChatPanel({
     </div>
     <div className="signal-chat-compose">
       <div className="signal-chat-templates">{capabilities?.signal_templates?.map(template => <button key={template.id} className={templateId === template.id ? 'active' : ''} onClick={() => setTemplateId(value => value === template.id ? undefined : template.id)}>{template.label}</button>)}</div>
-      <div><textarea aria-label="信号讨论输入" value={draft} disabled={!available || Boolean(activeTurnId)} placeholder="就本轮信号结果继续分析..." onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send() } }}/><button title="发送" aria-label="发送信号问题" disabled={!available || !draft.trim() || Boolean(activeTurnId)} onClick={() => void send()}><Send size={13}/></button></div>
+      <div><textarea aria-label="信号讨论输入" value={draft} disabled={!available || Boolean(activeTurnId)} placeholder="比较多轮复盘，或就当前选择继续分析..." onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send() } }}/><button title="发送" aria-label="发送信号问题" disabled={!available || !draft.trim() || Boolean(activeTurnId)} onClick={() => void send()}><Send size={13}/></button></div>
     </div>
   </section>
 }

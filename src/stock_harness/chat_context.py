@@ -269,6 +269,77 @@ def build_signal_chat_context(
     }
 
 
+def build_signal_workspace_chat_context(
+    store: "SQLiteMarketDataStore", *, signal_id: str,
+    selected_run_id: str | None = None,
+    selected_item_ids: list[str] | None = None,
+) -> dict[str, object]:
+    runs = sorted(
+        (
+            run for run in store.list_signal_review_runs(signal_id, limit=20)
+            if run["status"] == "succeeded"
+        ),
+        key=lambda run: (run["effective_date"], int(run["revision"])),
+        reverse=True,
+    )
+    if not runs:
+        raise ValueError("signal workspace chat requires a succeeded review run")
+    if selected_run_id:
+        selected_run = next(
+            (run for run in runs if str(run["run_id"]) == selected_run_id), None,
+        )
+        if selected_run is None:
+            raise ValueError("selected signal run does not belong to this workspace")
+    else:
+        selected_run = runs[0]
+    recent = [selected_run, *(
+        run for run in runs if run["run_id"] != selected_run["run_id"]
+    )][:5]
+    context = build_signal_chat_context(
+        store, run_id=str(selected_run["run_id"]),
+        selected_item_ids=selected_item_ids,
+    )
+    context.update({
+        "schema_version": "signal-workspace-chat-context-v1",
+        "context_kind": "signal_workspace",
+        "context_id": signal_id,
+        "workspace_reference": f"signal-workspace:{signal_id}",
+        "selected_run_id": str(selected_run["run_id"]),
+        "recent_runs": [_signal_workspace_run(store, run) for run in recent],
+        "run_count": len(recent),
+    })
+    return context
+
+
+def _signal_workspace_run(
+    store: "SQLiteMarketDataStore", run: dict[str, object],
+) -> dict[str, object]:
+    items = store.list_signal_review_items(str(run["run_id"]), limit=20)
+    return {
+        "run_id": str(run["run_id"]),
+        "effective_date": _iso(run["effective_date"]),
+        "revision": int(run["revision"]),
+        "definition_version": str(run["definition_version"]),
+        "algorithm_version": str(run["algorithm_version"]),
+        "diff": {
+            "added": int(run["added_count"]),
+            "retained": int(run["retained_count"]),
+            "removed": int(run["removed_count"]),
+        },
+        "summary": run.get("summary", {}),
+        "top_results": [{
+            "item_id": str(item["item_id"]), "symbol": str(item["symbol"]),
+            "name": str(item["name"]), "profile": str(item["profile"]),
+            "rank": int(item["rank"]), "change_type": str(item["change_type"]),
+            "active": bool(item["active"]), "score": float(item["score"]),
+            "confidence": float(item["confidence"]),
+            "conclusion_code": item.get("payload", {}).get("conclusion_code"),
+            "state_codes": item.get("payload", {}).get("state_codes", []),
+        } for item in items],
+        "top_results_truncated": int(run.get("item_count") or 0) > len(items),
+    }
+
+
 def render_signal_chat_prompt(
     context: dict[str, object], user_message: str, template_instruction: str | None,
 ) -> str:
@@ -282,6 +353,24 @@ def render_signal_chat_prompt(
         "<stockharness_signal_context>",
         json.dumps(context, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
         "</stockharness_signal_context>",
+        "<user_question>", user_message.strip(), "</user_question>",
+    ])
+
+
+def render_signal_workspace_chat_prompt(
+    context: dict[str, object], user_message: str, template_instruction: str | None,
+) -> str:
+    instruction = template_instruction or "直接回答用户关于多轮复盘结果的问题。"
+    return "\n".join([
+        "你正在分析 StockHarness 的每日复盘工作区和多轮不可变结果。",
+        "recent_runs 是最近多轮复盘的冻结摘要，selected_run_id 只是当前聚焦轮次，不限制你的比较范围。",
+        "固定算法输出是观察事实；你的回答属于比较、解释或质疑，不得改写复盘结果。",
+        "需要更完整的某轮、某标的或证据时，按需调用 stock_harness_embedded MCP 只读工具。",
+        "引用 selected_items 的证据时使用快照中的 [S*] 或 [O*] 代号，并明确所比较的日期和轮次。",
+        f"本轮模板要求：{instruction}",
+        "<stockharness_signal_workspace_context>",
+        json.dumps(context, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+        "</stockharness_signal_workspace_context>",
         "<user_question>", user_message.strip(), "</user_question>",
     ])
 

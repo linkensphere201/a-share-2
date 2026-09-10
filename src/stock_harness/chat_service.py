@@ -10,8 +10,9 @@ import threading
 from typing import Callable, Iterator
 
 from stock_harness.chat_context import (
-    build_chat_context, build_signal_chat_context, render_chat_prompt,
-    render_signal_chat_prompt,
+    build_chat_context, build_signal_chat_context,
+    build_signal_workspace_chat_context, render_chat_prompt,
+    render_signal_chat_prompt, render_signal_workspace_chat_prompt,
 )
 from stock_harness.ai_provider import AiConversationProvider, PROVIDER_EVENT_TYPES
 from stock_harness.sqlite_store import SQLiteMarketDataStore
@@ -123,6 +124,10 @@ class CodexChatService:
             return self._store.get_or_create_signal_chat_conversation(
                 run_id=str(context_id or source_run_id or ""), force_new=force_new,
             )
+        if context_kind == "signal_workspace":
+            return self._store.get_or_create_signal_workspace_chat_conversation(
+                signal_id=str(context_id or ""), force_new=force_new,
+            )
         return self._store.get_or_create_chat_conversation(
             symbol=str(symbol or ""), timeframe=timeframe,
             source_run_id=str(source_run_id or context_id or ""),
@@ -135,6 +140,13 @@ class CodexChatService:
                 raise ValueError("signal chat requires context_id")
             return self._store.list_signal_chat_conversations(
                 run_id=str(filters.get("context_id") or ""),
+                include_archived=bool(filters.get("include_archived", True)),
+            )
+        if filters.get("context_kind") == "signal_workspace":
+            if not filters.get("context_id"):
+                raise ValueError("signal workspace chat requires context_id")
+            return self._store.list_signal_workspace_chat_conversations(
+                signal_id=str(filters.get("context_id") or ""),
                 include_archived=bool(filters.get("include_archived", True)),
             )
         if filters.get("context_kind") != "trend_analysis":
@@ -166,12 +178,14 @@ class CodexChatService:
         template_id: str | None,
         user_inputs: dict[str, object] | None = None,
         selected_signal_item_ids: list[str] | None = None,
+        selected_signal_run_id: str | None = None,
     ) -> dict[str, object]:
         self._ensure_stream_capacity()
         conversation = self._store.get_chat_conversation(conversation_id)
         if conversation is None:
             raise ValueError("chat conversation not found")
-        templates = SIGNAL_CHAT_TEMPLATES if conversation.get("context_kind") == "signal_run" else CHAT_TEMPLATES
+        signal_context = conversation.get("context_kind") in {"signal_run", "signal_workspace"}
+        templates = SIGNAL_CHAT_TEMPLATES if signal_context else CHAT_TEMPLATES
         template = next((item for item in templates if item["id"] == template_id), None)
         if template_id is not None and template is None:
             raise ValueError("unknown chat template")
@@ -182,6 +196,12 @@ class CodexChatService:
         if conversation.get("context_kind") == "signal_run":
             context = build_signal_chat_context(
                 self._store, run_id=str(conversation["context_id"]),
+                selected_item_ids=selected_signal_item_ids,
+            )
+        elif conversation.get("context_kind") == "signal_workspace":
+            context = build_signal_workspace_chat_context(
+                self._store, signal_id=str(conversation["context_id"]),
+                selected_run_id=selected_signal_run_id,
                 selected_item_ids=selected_signal_item_ids,
             )
         else:
@@ -236,7 +256,7 @@ class CodexChatService:
             raise ValueError("chat turn context not found")
         template_id = str(previous["template_id"]) if previous["template_id"] else None
         templates = (SIGNAL_CHAT_TEMPLATES
-                     if context.get("context_kind") == "signal_run"
+                     if context.get("context_kind") in {"signal_run", "signal_workspace"}
                      else CHAT_TEMPLATES)
         template = next((item for item in templates if item["id"] == template_id), None)
         if template_id is not None and template is None:
@@ -332,7 +352,8 @@ class CodexChatService:
         try:
             conversation = self._store.get_chat_conversation(conversation_id)
             assert conversation is not None
-            access_profile = str(conversation.get("context_kind") or "trend_analysis")
+            context_kind = str(conversation.get("context_kind") or "trend_analysis")
+            access_profile = "signal_run" if context_kind == "signal_workspace" else context_kind
             codex_thread_id = conversation.get("codex_thread_id")
             policy_version = _thread_policy_version(self._bridge, access_profile)
             stored_policy = str(conversation.get("codex_policy_version") or "")
@@ -357,7 +378,13 @@ class CodexChatService:
                 )
             self._store.update_chat_turn(turn_id, "running")
             stream.publish("started", {"turn_id": turn_id})
-            renderer = render_signal_chat_prompt if context.get("context_kind") == "signal_run" else render_chat_prompt
+            renderer = (
+                render_signal_workspace_chat_prompt
+                if context.get("context_kind") == "signal_workspace"
+                else render_signal_chat_prompt
+                if context.get("context_kind") == "signal_run"
+                else render_chat_prompt
+            )
             prompt = renderer(context, content, template["instruction"] if template else None)
             if policy_migrated:
                 prompt = _with_migration_history(

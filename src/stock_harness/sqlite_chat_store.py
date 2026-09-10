@@ -209,6 +209,112 @@ class SQLiteChatStoreMixin:
             "turns": turns,
         }
 
+    def get_or_create_signal_workspace_chat_conversation(
+        self, *, signal_id: str, force_new: bool = False,
+    ) -> dict[str, object]:
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        with self._lock, self._transaction():
+            source = self._connection.execute(
+                """SELECT effective_date FROM signal_review_runs
+                   WHERE signal_id = ? AND status = 'succeeded'
+                   ORDER BY effective_date DESC, revision DESC LIMIT 1""",
+                (signal_id,),
+            ).fetchone()
+            if source is None:
+                raise ValueError("signal workspace chat requires a succeeded review run")
+            existing = None if force_new else self._connection.execute(
+                """SELECT conversation_id FROM ai_chat_conversations
+                   WHERE context_kind = 'signal_workspace' AND context_id = ?
+                     AND status = 'active'
+                   ORDER BY updated_at_ms DESC LIMIT 1""",
+                (signal_id,),
+            ).fetchone()
+            if existing is None:
+                conversation_id = str(uuid4())
+                self._connection.execute(
+                    """INSERT INTO ai_chat_conversations(
+                           conversation_id, context_kind, context_id, title,
+                           status, created_at_ms, updated_at_ms
+                       ) VALUES (?, 'signal_workspace', ?, ?, 'active', ?, ?)""",
+                    (conversation_id, signal_id, "信号复盘 · 多轮讨论", now_ms, now_ms),
+                )
+            else:
+                conversation_id = str(existing[0])
+                self._connection.execute(
+                    "UPDATE ai_chat_conversations SET updated_at_ms = ? WHERE conversation_id = ?",
+                    (now_ms, conversation_id),
+                )
+        result = self.get_signal_workspace_chat_conversation(conversation_id)
+        assert result is not None
+        return result
+
+    def list_signal_workspace_chat_conversations(
+        self, *, signal_id: str, include_archived: bool = True,
+    ) -> list[dict[str, object]]:
+        archived = "" if include_archived else "AND status = 'active'"
+        with self._lock:
+            latest = self._connection.execute(
+                """SELECT effective_date FROM signal_review_runs
+                   WHERE signal_id = ? AND status = 'succeeded'
+                   ORDER BY effective_date DESC, revision DESC LIMIT 1""",
+                (signal_id,),
+            ).fetchone()
+            rows = self._connection.execute(
+                f"""SELECT conversation_id, context_id, title, status,
+                           created_at_ms, updated_at_ms,
+                           (SELECT count(*) FROM ai_chat_turns AS turn
+                            WHERE turn.conversation_id = ai_chat_conversations.conversation_id)
+                    FROM ai_chat_conversations
+                    WHERE context_kind = 'signal_workspace' AND context_id = ? {archived}
+                    ORDER BY updated_at_ms DESC""",
+                (signal_id,),
+            ).fetchall()
+        as_of_date = _date_from_key(int(latest[0])) if latest else None
+        return [{
+            "conversation_id": str(row[0]), "context_kind": "signal_workspace",
+            "context_id": str(row[1]), "source_run_id": None,
+            "title": str(row[2]), "status": str(row[3]),
+            "created_at_ms": int(row[4]), "updated_at_ms": int(row[5]),
+            "as_of_date": as_of_date, "turn_count": int(row[6]),
+        } for row in rows]
+
+    def get_signal_workspace_chat_conversation(
+        self, conversation_id: str,
+    ) -> dict[str, object] | None:
+        with self._lock:
+            row = self._connection.execute(
+                """SELECT conversation_id, context_id, title, codex_thread_id,
+                          codex_policy_version, status, created_at_ms, updated_at_ms
+                   FROM ai_chat_conversations
+                   WHERE conversation_id = ? AND context_kind = 'signal_workspace'""",
+                (conversation_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            latest = self._connection.execute(
+                """SELECT effective_date, algorithm_version, input_digest
+                   FROM signal_review_runs
+                   WHERE signal_id = ? AND status = 'succeeded'
+                   ORDER BY effective_date DESC, revision DESC LIMIT 1""",
+                (str(row[1]),),
+            ).fetchone()
+            if latest is None:
+                return None
+            turns = self._load_chat_turns_locked(conversation_id)
+        return {
+            "conversation_id": str(row[0]), "context_kind": "signal_workspace",
+            "context_id": str(row[1]), "symbol": None, "timeframe": None,
+            "source_run_id": None, "title": str(row[2]),
+            "codex_thread_id": row[3], "codex_policy_version": row[4],
+            "status": str(row[5]), "created_at_ms": int(row[6]),
+            "updated_at_ms": int(row[7]),
+            "as_of_date": _date_from_key(int(latest[0])),
+            "algorithm_version": str(latest[1]), "config_version": "",
+            "completion_state": "complete", "preview": False,
+            "input_digest": str(latest[2] or ""), "source_observed_at_ms": None,
+            "turns": turns,
+        }
+
     def list_chat_conversations(
         self, *, symbol: str, timeframe: str, source_run_id: str | None = None,
         include_archived: bool = True,
@@ -291,6 +397,8 @@ class SQLiteChatStoreMixin:
             ).fetchone()
             if kind is not None and str(kind[0]) == "signal_run":
                 return self.get_signal_chat_conversation(conversation_id)
+            if kind is not None and str(kind[0]) == "signal_workspace":
+                return self.get_signal_workspace_chat_conversation(conversation_id)
             row = self._connection.execute(
                 """
                 SELECT conversation.conversation_id, instrument.symbol,
