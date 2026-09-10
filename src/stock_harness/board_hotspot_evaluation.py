@@ -61,6 +61,7 @@ def evaluate_hotspot_timelines(
     names: Mapping[str, str] | None = None,
     lead_window: int = 10,
     cooldown: int = 10,
+    visible_only: bool = False,
 ) -> dict[str, object]:
     """Compare radar episodes with independent two-session confirmations."""
     names = names or {}
@@ -70,7 +71,7 @@ def evaluate_hotspot_timelines(
     for symbol, source_rows in timelines.items():
         rows = sorted(source_rows, key=lambda row: str(row["effective_date"]))
         signal_indexes = _episode_indexes(
-            [_is_radar_signal(row) for row in rows], cooldown,
+            [_is_radar_signal(row, visible_only=visible_only) for row in rows], cooldown,
         )
         raw_confirm = [
             is_objective_confirmation(_mapping(row.get("feature"))) for row in rows
@@ -111,6 +112,7 @@ def evaluate_hotspot_timelines(
     leads = [int(item["lead_sessions"]) for item in true_signals]
     return {
         "evaluator_version": BOARD_HOTSPOT_EVALUATOR_VERSION,
+        "signal_scope": "visible-theme-seats" if visible_only else "raw-radar",
         "signal_events": len(signals),
         "confirmation_events": len(confirmations),
         "true_signal_events": len(true_signals),
@@ -122,7 +124,11 @@ def evaluate_hotspot_timelines(
     }
 
 
-def _is_radar_signal(row: Mapping[str, object]) -> bool:
+def _is_radar_signal(
+    row: Mapping[str, object], *, visible_only: bool = False,
+) -> bool:
+    if visible_only:
+        return bool(row.get("radar_visible"))
     stage = str(row.get("hotspot_stage") or "")
     score = row.get("total_score")
     streak = row.get("candidate_streak")

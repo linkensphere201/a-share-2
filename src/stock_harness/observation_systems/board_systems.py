@@ -8,6 +8,8 @@ from stock_harness.observation_systems.contracts import (
     ObservationSystemContext,
     ObservationSystemExecution,
 )
+from stock_harness.board_hotspot_evaluation import canonical_board_name
+from stock_harness.market_liquidity import stabilize_seat_budget
 from stock_harness.review_scoring import (
     ReviewScorerRegistry,
     TREND_BREAKOUT_SCORER,
@@ -18,7 +20,7 @@ from stock_harness.review_scoring import (
 
 
 BOARD_HOTSPOT_SYSTEM = "board-hotspot-emergence"
-BOARD_HOTSPOT_VERSION = "board-hotspot-emergence-v2-causal-features"
+BOARD_HOTSPOT_VERSION = "board-hotspot-emergence-v3-shape-liquidity"
 
 
 class TrendBreakoutSystem:
@@ -61,7 +63,7 @@ class BoardHotspotSystem:
     version = BOARD_HOTSPOT_VERSION
     entity_scope = "board"
     display_name = "近期热点"
-    dependencies = ("board_hotspot_features",)
+    dependencies = ("board_hotspot_features", "board_names", "market_liquidity_context")
 
     def definition(self) -> dict[str, object]:
         return {
@@ -102,6 +104,11 @@ class BoardHotspotSystem:
             scorer, entities, prior_by_symbol=prior,
             recent_by_symbol=context.recent_scores.get(self.system_id),
         )
+        _apply_visibility_budget(
+            results, _mapping(context.dependencies["board_names"]),
+            _mapping(context.dependencies["market_liquidity_context"]),
+            prior,
+        )
         return ObservationSystemExecution(
             self.system_id, self.version, self.entity_scope, results,
         )
@@ -119,6 +126,7 @@ class _BoardHotspotScorer:
         prior = _mapping(entity.get("prior_hotspot"))
         returns = _mapping(metrics.get("returns"))
         relative = _mapping(metrics.get("relative_strength"))
+        shape = _mapping(metrics.get("hotspot_shape"))
 
         return5 = _number(returns.get("5")) or 0.0
         return20 = _number(returns.get("20")) or 0.0
@@ -133,6 +141,8 @@ class _BoardHotspotScorer:
         limit_up_count = int(_number(snapshot.get("limit_up_count")) or 0)
         broken_up_count = int(_number(snapshot.get("broken_up_count")) or 0)
         max_streak = int(_number(snapshot.get("max_limit_up_streak")) or 0)
+        member_count = int(_number(snapshot.get("member_count")) or 0)
+        limit_up_ratio = limit_up_count / member_count if member_count else 0.0
 
         components = {
             "trend": _bounded_positive(return5, .08, 8)
@@ -142,8 +152,8 @@ class _BoardHotspotScorer:
                 + _bounded_positive(rs20, .12, 11),
             "breadth": _bounded_signed(breadth_value, 14)
                 + _bounded_positive(breadth5, .7, 6),
-            "leader_echelon": min(25.0, limit_up_count * 3.5
-                + max_streak * 5.0 + min(broken_up_count, 2)),
+            "leader_echelon": min(25.0, limit_up_ratio / .08 * 12
+                + max_streak * 3.0 + min(broken_up_count, 2)),
             "activity": _activity_points(volume, volume_persistence),
         }
         components = {key: round(value, 2) for key, value in components.items()}
@@ -171,8 +181,22 @@ class _BoardHotspotScorer:
         score = raw_score if prior_score is None else raw_score * .65 + prior_score * .35
         prior_stage = str(prior.get("hotspot_stage") or "")
         prior_streak = int(_number(prior.get("candidate_streak")) or 0)
-        candidate = raw_score >= 48 and components["trend"] >= 8 and (
-            components["leader_echelon"] >= 4 or components["breadth"] >= 10
+        prior_breadth5 = _number(prior.get("positive_return_5_ratio"))
+        breadth_persistent = (
+            breadth5 is not None and (
+                breadth5 >= .65
+                or (breadth5 >= .53 and prior_breadth5 is not None
+                    and prior_breadth5 >= .53)
+            )
+        )
+        activity_confirmed = (
+            volume_persistence is not None and volume_persistence >= 1.03
+        ) or max_streak >= 3
+        leader_confirmed = max_streak >= 2 or limit_up_ratio >= .02
+        setup_path = str(shape.get("path") or "none")
+        candidate = (
+            raw_score >= 48 and setup_path != "none"
+            and breadth_persistent and activity_confirmed and leader_confirmed
         )
         candidate_streak = prior_streak + 1 if candidate else 0
         delta = score - prior_score if prior_score is not None else 0.0
@@ -219,6 +243,9 @@ class _BoardHotspotScorer:
             "broken_up_count": broken_up_count,
             "max_limit_up_streak": max_streak,
             "member_coverage_ratio": coverage,
+            "positive_return_5_ratio": breadth5,
+            "limit_up_ratio": round(limit_up_ratio, 4),
+            "setup_path": setup_path,
         }
 
 
@@ -243,7 +270,7 @@ def _hotspot_stage(
         return "breadth-expanding"
     if score >= 52 and components["trend"] >= 10 and candidate_streak >= 2:
         return "trend-emerging"
-    if components["leader_echelon"] >= 8 and score >= 40:
+    if candidate_streak == 1 and components["leader_echelon"] >= 4 and score >= 40:
         return "leader-ignited"
     return "failed"
 
@@ -253,7 +280,62 @@ def _shape_points(metrics: Mapping[str, object]) -> float:
     for key in ("short_shape", "medium_shape"):
         state = str(_mapping(metrics.get(key)).get("state") or "")
         points += {"rising": 2.0, "sideways": 1.0}.get(state, 0.0)
+    path = str(_mapping(metrics.get("hotspot_shape")).get("path") or "none")
+    points += {
+        "trend-continuation": 2.0,
+        "platform-breakout": 3.0,
+        "downtrend-reversal": 4.0,
+    }.get(path, 0.0)
     return points
+
+
+def _apply_visibility_budget(
+    results: list[dict[str, object]], names: Mapping[str, object],
+    market: Mapping[str, object],
+    prior: Mapping[str, Mapping[str, object]],
+) -> None:
+    prior_market = next(iter(prior.values()), {})
+    seats, seat_streak = stabilize_seat_budget(market, prior_market)
+    regime = str(market.get("regime") or "unknown-neutral")
+    representatives: dict[str, dict[str, object]] = {}
+    for result in results:
+        symbol = str(result["symbol"])
+        name = str(names.get(symbol) or symbol)
+        cluster = canonical_board_name(name)
+        result.update({
+            "canonical_theme": cluster,
+            "radar_visible": False,
+            "radar_rank": None,
+            "radar_slot_limit": seats,
+            "market_liquidity_regime": regime,
+            "market_liquidity_capacity": market.get("capacity_tier"),
+            "market_liquidity_direction": market.get("direction"),
+            "market_liquidity_raw_seats": market.get("raw_visible_seats"),
+            "market_liquidity_seat_streak": seat_streak,
+            "market_liquidity_ratio": market.get("volume_ratio_5_20"),
+            "market_liquidity_source": market.get("source"),
+            "market_liquidity_version": market.get("version"),
+            "market_turnover_5_median": market.get("absolute_turnover_5_median"),
+            "market_turnover_20_median": market.get("baseline_turnover_20_median"),
+        })
+        if not bool(result.get("eligible")):
+            continue
+        current = representatives.get(cluster)
+        if current is None or _visibility_key(result) > _visibility_key(current):
+            representatives[cluster] = result
+    ranked = sorted(representatives.values(), key=_visibility_key, reverse=True)
+    for rank, result in enumerate(ranked[:seats], 1):
+        result["radar_visible"] = True
+        result["radar_rank"] = rank
+
+
+def _visibility_key(result: Mapping[str, object]) -> tuple[float, float, int, str]:
+    return (
+        _number(result.get("total_score")) or 0.0,
+        _number(result.get("score_delta")) or 0.0,
+        int(_number(result.get("candidate_streak")) or 0),
+        str(result.get("symbol") or ""),
+    )
 
 
 def _activity_points(volume: float | None, persistence: float | None) -> float:

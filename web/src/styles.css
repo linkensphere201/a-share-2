@@ -181,6 +181,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .signal-hard-event-strip > span { flex: 0 0 auto; color: #d8aa4f; font-size: 9px; }
 .signal-hard-event-strip small { overflow: hidden; padding: 2px 4px; color: var(--theme-muted); border: 1px solid color-mix(in srgb, #d8aa4f 28%, var(--theme-border)); border-radius: 2px; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
 .signal-hotspot-filters { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; padding: 4px 6px; border-bottom: 1px solid var(--theme-border); background: var(--theme-surface); }
+.signal-hotspot-market { grid-column: 1 / -1; padding: 2px 4px 4px; color: var(--theme-muted); font-size: 9px; }
 .signal-hotspot-filters button { display: flex; min-width: 0; height: 28px; align-items: center; justify-content: center; gap: 4px; color: var(--theme-muted); border: 1px solid transparent; background: transparent; font-size: 8px; }
 .signal-hotspot-filters button.active { color: var(--theme-text-strong); border-color: color-mix(in srgb, #d8aa4f 42%, var(--theme-border)); background: color-mix(in srgb, #d8aa4f 8%, var(--theme-base)); }
 .signal-hotspot-filters small { color: #d8aa4f; font-size: 8px; }

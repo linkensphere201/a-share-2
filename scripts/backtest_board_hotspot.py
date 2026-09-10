@@ -11,6 +11,9 @@ from statistics import median
 from stock_harness.config import load_runtime_settings
 from stock_harness.board_hotspot_evaluation import evaluate_hotspot_timelines
 from stock_harness.board_hotspot_features import extract_board_hotspot_features
+from stock_harness.market_liquidity import (
+    analyze_benchmark_volume_fallback, analyze_market_liquidity,
+)
 from stock_harness.observation_systems import (
     BOARD_HOTSPOT_SYSTEM,
     BoardHotspotSystem,
@@ -101,9 +104,16 @@ def replay(
     prior: dict[str, dict[str, object]] = {}
     timelines: dict[str, list[dict[str, object]]] = {symbol: [] for symbol in boards}
     stage_counts: dict[str, int] = {}
+    visible_counts: list[int] = []
+    market_regime_days: dict[str, int] = {}
     for effective in dates:
         snapshots = store.calculate_board_hotspot_snapshots(effective)
         breadth_snapshots = store.calculate_board_breadth_snapshots(effective)
+        turnover = store.get_market_turnover_proxy(effective)
+        market_liquidity = (
+            analyze_market_liquidity(turnover)
+            if len(turnover) >= 25 else None
+        )
         observations = []
         features = {}
         for symbol, bars in board_bars.items():
@@ -121,9 +131,25 @@ def replay(
         execution = system.execute(ObservationSystemContext(
             observations=observations,
             prior_scores={BOARD_HOTSPOT_SYSTEM: prior},
-            dependencies={"board_hotspot_features": features},
+            dependencies={
+                "board_hotspot_features": features,
+                "board_names": {
+                    symbol: str(item.get("name") or symbol)
+                    for symbol, item in boards.items()
+                },
+                "market_liquidity_context": market_liquidity or (
+                    analyze_benchmark_volume_fallback(
+                        all_benchmark[:benchmark_index + 1]
+                    )
+                ),
+            },
         ))
         prior = {str(item["symbol"]): item for item in execution.results}
+        visible_counts.append(sum(bool(item.get("radar_visible"))
+                                  for item in execution.results))
+        regime = str(execution.results[0].get("market_liquidity_regime") or "unknown") \
+            if execution.results else "unknown"
+        market_regime_days[regime] = market_regime_days.get(regime, 0) + 1
         for item in execution.results:
             stage = str(item["hotspot_stage"])
             stage_counts[stage] = stage_counts.get(stage, 0) + 1
@@ -131,6 +157,8 @@ def replay(
                 key: item.get(key) for key in (
                     "symbol", "hotspot_stage", "total_score", "raw_score",
                     "score_direction", "candidate_streak", "eligible",
+                    "radar_visible", "radar_rank", "market_liquidity_regime",
+                    "setup_path",
                     "limit_up_count", "max_limit_up_streak", "summary",
                 )
             } | {
@@ -165,6 +193,10 @@ def replay(
         timelines, names={symbol: str(item.get("name") or symbol)
                           for symbol, item in boards.items()},
     )
+    visible_evaluation = evaluate_hotspot_timelines(
+        timelines, names={symbol: str(item.get("name") or symbol)
+                          for symbol, item in boards.items()}, visible_only=True,
+    )
     result = {
         "summary": {
             "start_date": start.isoformat(), "end_date": end.isoformat(),
@@ -177,6 +209,16 @@ def replay(
             "online_features_are_causal": True,
             "evaluation": {key: value for key, value in evaluation.items()
                            if key != "events"},
+            "visible_evaluation": {
+                key: value for key, value in visible_evaluation.items()
+                if key != "events"
+            },
+            "visible_theme_days": sum(visible_counts),
+            "median_visible_themes_per_day": (
+                median(visible_counts) if visible_counts else None
+            ),
+            "max_visible_themes_per_day": max(visible_counts, default=0),
+            "market_regime_days": market_regime_days,
         },
         "queries": query_symbols,
         "first_detections": sorted(first_detections, key=lambda item: (

@@ -270,13 +270,19 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
         || left.symbol.localeCompare(right.symbol)
     }), [dailyView, hotspotFilter, observations, scoreBySymbol])
   const hotspotSummary = useMemo(() => {
-    const values = scores.filter(item => item.system_id === 'board-hotspot-emergence')
+    const values = scores.filter(item => (
+      item.system_id === 'board-hotspot-emergence' && item.radar_visible
+    ))
     return {
+      all: values.length,
       rising: values.filter(item => item.score_direction === 'strengthening').length,
       confirmed: values.filter(item => ['hotspot-confirmed', 'accelerating'].includes(item.hotspot_stage ?? '')).length,
       fading: values.filter(item => ['diverging', 'exhausted'].includes(item.hotspot_stage ?? '')).length,
     }
   }, [scores])
+  const hotspotMarket = useMemo(() => scores.find(item => (
+    item.system_id === 'board-hotspot-emergence' && item.market_liquidity_capacity
+  )), [scores])
   const displayedPoolItems = useMemo(() => {
     const query = poolQuery.trim().toLocaleLowerCase()
     return [...(observationPool?.items ?? [])].filter(item =>
@@ -496,7 +502,8 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
         </div>}
         {daily && boardScoreSystems.length > 0 && <label className="signal-score-system-select">评分体系<select aria-label="评分体系" value={selectedScoreSystem} onChange={event => setSelectedScoreSystem(event.target.value)}>{boardScoreSystems.map(system => <option key={system} value={system}>{scoreSystemLabel(system)}</option>)}</select></label>}
         {dailyView === 'hotspots' && <div className="signal-hotspot-filters" aria-label="热点阶段筛选">
-          {(['all', 'rising', 'confirmed', 'fading'] as HotspotFilter[]).map(value => <button key={value} className={hotspotFilter === value ? 'active' : ''} onClick={() => setHotspotFilter(value)}>{hotspotFilterLabel(value)}<small>{value === 'all' ? scores.filter(item => item.system_id === 'board-hotspot-emergence' && item.hotspot_stage !== 'failed').length : hotspotSummary[value]}</small></button>)}
+          {hotspotMarket && <span className="signal-hotspot-market">{marketCapacityLabel(hotspotMarket.market_liquidity_capacity)} · {marketDirectionLabel(hotspotMarket.market_liquidity_direction)} · {hotspotMarket.radar_slot_limit ?? 1}席</span>}
+          {(['all', 'rising', 'confirmed', 'fading'] as HotspotFilter[]).map(value => <button key={value} className={hotspotFilter === value ? 'active' : ''} onClick={() => setHotspotFilter(value)}>{hotspotFilterLabel(value)}<small>{hotspotSummary[value]}</small></button>)}
         </div>}
         {daily && hardEventSummary.total > 0 && <div className="signal-hard-event-strip" role="status">
           <span>硬异动 {hardEventSummary.total}</span>
@@ -713,8 +720,17 @@ function hotspotFilterLabel(value: HotspotFilter) {
   return { all: '全部有效', rising: '持续增强', confirmed: '已确认', fading: '分歧/退潮' }[value]
 }
 
+function marketCapacityLabel(value?: string) {
+  return ({ low: '低容量', medium: '中容量', high: '高容量' } as Record<string, string>)[value ?? ''] ?? '容量未知'
+}
+
+function marketDirectionLabel(value?: string) {
+  return ({ contracting: '缩量', neutral: '平量', expanding: '放量' } as Record<string, string>)[value ?? ''] ?? '方向未知'
+}
+
 function hotspotMatches(score: SignalScoreResult | undefined, filter: HotspotFilter) {
   if (!score || score.system_id !== 'board-hotspot-emergence' || score.hotspot_stage === 'failed') return false
+  if (!score.radar_visible) return false
   if (filter === 'all') return true
   if (filter === 'rising') return score.score_direction === 'strengthening'
     && ((score.candidate_streak ?? 0) >= 1 || (score.max_limit_up_streak ?? 0) >= 2)

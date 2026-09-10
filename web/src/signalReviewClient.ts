@@ -170,6 +170,20 @@ export type SignalScoreResult = {
   risk_summary: string
   change_summary: string
   hotspot_stage?: string
+  setup_path?: string
+  radar_visible?: boolean
+  radar_rank?: number | null
+  radar_slot_limit?: number
+  market_liquidity_regime?: string
+  market_liquidity_ratio?: number | null
+  market_liquidity_source?: string
+  market_liquidity_version?: string
+  market_turnover_5_median?: number | null
+  market_turnover_20_median?: number | null
+  market_liquidity_capacity?: string
+  market_liquidity_direction?: string
+  market_liquidity_raw_seats?: number
+  market_liquidity_seat_streak?: number
   score_direction?: 'new' | 'strengthening' | 'stable' | 'declining'
   score_delta?: number
   peak_score?: number

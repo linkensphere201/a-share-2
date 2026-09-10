@@ -22,6 +22,9 @@ from stock_harness.board_leader_scan import (
     rank_board_leaders,
 )
 from stock_harness.board_hotspot_features import extract_board_hotspot_features
+from stock_harness.market_liquidity import (
+    analyze_benchmark_volume_fallback, analyze_market_liquidity,
+)
 from stock_harness.analysis_projection import read_core_structural_item_ids
 from stock_harness.daily_signal_analysis import (
     CONFIG_VERSION as DAILY_CONFIG_VERSION,
@@ -320,6 +323,12 @@ class SignalReviewService:
             )
 
         scorers = default_scorer_registry()
+        board_names = {str(board["symbol"]): str(board["name"]) for board in boards}
+        turnover = self._store.get_market_turnover_proxy(cutoff)
+        market_liquidity = (
+            analyze_market_liquidity(turnover)
+            if len(turnover) >= 25 else analyze_benchmark_volume_fallback(benchmark)
+        )
         score_context_runs = ([correction_run] if correction_run else []) + session_runs
         trend_prior, trend_recent = _score_history(
             self._store, score_context_runs, TREND_BREAKOUT_SCORER,
@@ -344,6 +353,8 @@ class SignalReviewService:
             dependencies={
                 "review_scorer_registry": scorers,
                 "board_hotspot_features": hotspot_features,
+                "board_names": board_names,
+                "market_liquidity_context": market_liquidity,
             },
         ))
         system_execution_by_id = {
@@ -356,7 +367,6 @@ class SignalReviewService:
         trend_score_by_symbol = {
             str(value["symbol"]): value for value in trend_scores
         }
-        board_names = {str(board["symbol"]): str(board["name"]) for board in boards}
         previous_items = {
             str(item["item_key"]): item
             for item in self._store.get_prior_signal_review_items(run_id)

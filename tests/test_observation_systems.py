@@ -12,6 +12,10 @@ from stock_harness.board_hotspot_evaluation import (
     canonical_board_name, evaluate_hotspot_timelines, is_objective_confirmation,
 )
 from stock_harness.board_hotspot_features import extract_board_hotspot_features
+from stock_harness.market_liquidity import (
+    analyze_benchmark_volume_fallback, analyze_market_liquidity,
+    stabilize_seat_budget,
+)
 from stock_harness.observation_systems import (
     BOARD_HOTSPOT_SYSTEM,
     BoardHotspotSystem,
@@ -33,6 +37,7 @@ def _observation(**overrides: object) -> dict[str, object]:
         "recent_volume_ratio_5_5": 1.2,
         "short_shape": {"state": "rising"},
         "medium_shape": {"state": "rising"},
+        "hotspot_shape": {"path": "trend-continuation"},
         "board_breadth": {
             "breadth": .45, "impact_concentration_hhi": .12,
         },
@@ -54,15 +59,23 @@ def _execute(
         "coverage_ratio": .95, "positive_return_5_ratio": .72,
         "limit_up_count": 2, "broken_up_count": 1,
         "max_limit_up_streak": 2,
+        "member_count": 40,
     }
     result = system.execute(ObservationSystemContext(
         observations=[observation],
         prior_scores={BOARD_HOTSPOT_SYSTEM: {"BK001.DC": prior} if prior else {}},
-        dependencies={"board_hotspot_features": {"BK001.DC": {
-            "coverage_state": observation["coverage_state"],
-            "metrics": observation["metrics"],
-            "member_snapshot": member_snapshot,
-        }}},
+        dependencies={
+            "board_hotspot_features": {"BK001.DC": {
+                "coverage_state": observation["coverage_state"],
+                "metrics": observation["metrics"],
+                "member_snapshot": member_snapshot,
+            }},
+            "board_names": {"BK001.DC": "Board"},
+            "market_liquidity_context": {
+                "capacity_tier": "low", "direction": "contracting",
+                "regime": "low-contracting", "raw_visible_seats": 1,
+            },
+        },
     ))
     return result.results[0]
 
@@ -77,7 +90,10 @@ def test_registry_rejects_duplicates_and_isolates_missing_dependencies() -> None
         observations=[],
     ))[0]
     assert execution.results == []
-    assert execution.error == "missing dependencies: board_hotspot_features"
+    assert execution.error == (
+        "missing dependencies: board_hotspot_features, board_names, "
+        "market_liquidity_context"
+    )
 
 
 def test_trend_plugin_is_behavior_equivalent_to_existing_scorer() -> None:
@@ -168,6 +184,7 @@ def test_board_hotspot_snapshot_aggregates_breadth_and_limit_streak() -> None:
     assert snapshot["limit_up_count"] == 1
     assert snapshot["max_limit_up_streak"] == 5
     assert snapshot["positive_return_5_ratio"] == 1
+    assert len(store.get_market_turnover_proxy(days[-1], sessions=6)) == 6
     store.close()
 
 
@@ -200,6 +217,83 @@ def test_hotspot_feature_extraction_is_causal_and_reusable() -> None:
 
     earlier = extract_board_hotspot_features(bars[:-1], benchmark[:-1])
     assert earlier["metrics"]["returns"]["5"] != feature["metrics"]["returns"]["5"]
+
+
+def test_hotspot_shape_paths_do_not_require_a_fixed_twenty_day_gain() -> None:
+    closes = [100] * 45 + [94, 95, 96, 97, 99, 101]
+    bars = _stored_bars("BK001.DC", closes, [100] * 46 + [130] * 5)
+    benchmark = _stored_bars("000001.SH", [100] * len(closes), [100] * len(closes))
+    feature = extract_board_hotspot_features(bars, benchmark)
+    shape = feature["metrics"]["hotspot_shape"]
+    assert feature["metrics"]["returns"]["20"] < .03
+    assert shape["path"] in {"platform-breakout", "downtrend-reversal"}
+
+
+def test_market_liquidity_contraction_limits_visible_hotspots_to_one_theme() -> None:
+    market = _stored_bars("000001.SH", [100] * 25, [200] * 20 + [140, 130, 120, 110, 100])
+    context = analyze_benchmark_volume_fallback(market)
+    context.update({
+        "capacity_tier": "low", "direction": "contracting",
+        "regime": "low-contracting", "raw_visible_seats": 1,
+    })
+
+    observations = [_observation(), {**_observation(), "symbol": "BK002.DC"}]
+    feature = {
+        "coverage_state": "complete", "metrics": observations[0]["metrics"],
+        "member_snapshot": {
+            "member_count": 40, "coverage_ratio": .95,
+            "positive_return_5_ratio": .72, "limit_up_count": 2,
+            "broken_up_count": 1, "max_limit_up_streak": 3,
+        },
+    }
+    priors = {
+        symbol: {"candidate_streak": 1, "positive_return_5_ratio": .7,
+                 "total_score": 55, "hotspot_stage": "trend-emerging",
+                 "market_liquidity_regime": "contracting",
+                 "market_liquidity_raw_seats": 1,
+                 "market_liquidity_seat_streak": 1,
+                 "radar_slot_limit": 1}
+        for symbol in ("BK001.DC", "BK002.DC")
+    }
+    results = BoardHotspotSystem().execute(ObservationSystemContext(
+        observations=observations,
+        prior_scores={BOARD_HOTSPOT_SYSTEM: priors},
+        dependencies={
+            "board_hotspot_features": {
+                "BK001.DC": feature, "BK002.DC": feature,
+            },
+            "board_names": {"BK001.DC": "Theme A", "BK002.DC": "Theme B"},
+            "market_liquidity_context": context,
+        },
+    )).results
+    assert sum(bool(item["radar_visible"]) for item in results) == 1
+    assert {item["radar_slot_limit"] for item in results} == {1}
+
+
+def test_absolute_liquidity_capacity_caps_relative_expansion() -> None:
+    low = analyze_market_liquidity(
+        [1.8e12] * 20 + [1.9e12, 1.95e12, 2e12, 2.05e12, 2.1e12]
+    )
+    assert low["capacity_tier"] == "low"
+    assert low["direction"] == "expanding"
+    assert low["raw_visible_seats"] == 1
+
+    high = analyze_market_liquidity(
+        [3.2e12] * 20 + [3.3e12, 3.4e12, 3.5e12, 3.6e12, 3.7e12]
+    )
+    assert high["capacity_tier"] == "high"
+    assert high["raw_visible_seats"] == 5
+
+    seats, streak = stabilize_seat_budget(high, {
+        "market_liquidity_raw_seats": 1, "market_liquidity_seat_streak": 2,
+        "radar_slot_limit": 1,
+    })
+    assert (seats, streak) == (1, 1)
+    seats, streak = stabilize_seat_budget(high, {
+        "market_liquidity_raw_seats": 5, "market_liquidity_seat_streak": 1,
+        "radar_slot_limit": 1,
+    })
+    assert (seats, streak) == (5, 2)
 
 
 def test_hotspot_evaluator_clusters_aliases_and_measures_lead_without_future_inputs() -> None:
