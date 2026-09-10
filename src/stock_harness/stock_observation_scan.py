@@ -11,6 +11,8 @@ from stock_harness.models import StoredDailyBar
 from stock_harness.stock_relative_strength import (
     LOOKBACK_BARS,
     analyze_relative_strength,
+    build_reference_context,
+    combine_reference_contexts,
     score_relative_strength,
 )
 
@@ -189,7 +191,16 @@ def scan_full_market_independent_strength(
         for item in universe
     }
     references = _load_reference_bars(store, effective_date)
+    market_references = {
+        exchange: _references_for_exchange(references, exchange)
+        for exchange in ("SH", "SZ", "BJ", "")
+    }
+    market_contexts = {
+        exchange: build_reference_context(values, effective_date)
+        for exchange, values in market_references.items()
+    }
     board_cache: dict[str, list[StoredDailyBar]] = {}
+    board_context_cache = {}
     list_all_memberships = getattr(store, "list_all_stock_board_memberships", None)
     membership_cache = (
         list_all_memberships(board_limit=3) if callable(list_all_memberships) else None
@@ -210,20 +221,33 @@ def scan_full_market_independent_strength(
             if str(item["symbol"]) not in board_cache
         })
         board_cache.update(_load_many(store, missing_boards, effective_date))
+        for board_symbol in missing_boards:
+            bars = board_cache.get(board_symbol, [])
+            if bars:
+                board_context_cache[board_symbol] = build_reference_context(
+                    {board_symbol: bars}, effective_date,
+                )
         stock_bars, price_basis = store.get_recent_causally_adjusted_stock_bars_many(
             page, effective_date, LOOKBACK_BARS,
         )
         for symbol in page:
             associated = memberships.get(symbol, [])
+            exchange = exchange_by_symbol.get(symbol, "").upper()
+            exchange_key = exchange if exchange in market_references else ""
+            board_references = {
+                str(item["symbol"]): board_cache.get(str(item["symbol"]), [])
+                for item in associated
+            }
             record = analyze_relative_strength(
                 symbol, stock_bars.get(symbol, []), effective_date,
-                market_references=_references_for_exchange(
-                    references, exchange_by_symbol.get(symbol, ""),
-                ),
-                board_references={
-                    str(item["symbol"]): board_cache.get(str(item["symbol"]), [])
+                market_references=market_references[exchange_key],
+                board_references=board_references,
+                market_context=market_contexts[exchange_key],
+                board_context=combine_reference_contexts([
+                    board_context_cache[str(item["symbol"])]
                     for item in associated
-                },
+                    if str(item["symbol"]) in board_context_cache
+                ]),
             )
             record["associated_boards"] = associated
             record["price_basis"] = price_basis.get(symbol, "raw")

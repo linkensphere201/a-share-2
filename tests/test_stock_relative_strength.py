@@ -18,7 +18,9 @@ from stock_harness.stock_observation_scan import (
 )
 from stock_harness.stock_relative_strength import (
     analyze_relative_strength,
+    build_reference_context,
     classify_relative_strength,
+    combine_reference_contexts,
     score_relative_strength,
 )
 
@@ -40,6 +42,32 @@ def test_relative_strength_analysis_is_causal_and_detects_persistent_advance() -
     assert baseline == replay
     assert baseline["classification"] == "independent-advance"
     assert baseline["eligible"] is True
+
+
+def test_precomputed_reference_context_preserves_analysis_result() -> None:
+    stock = _bars("000001.SZ", [10 * 1.003**index for index in range(140)])
+    market = {"000001.SH": _bars(
+        "000001.SH", [100 * 1.001**index for index in range(140)],
+    )}
+    board = {"BK001.DC": _bars(
+        "BK001.DC", [1000 * 1.0015**index for index in range(140)],
+    )}
+    effective = stock[-1].trade_date
+
+    direct = analyze_relative_strength(
+        "000001.SZ", stock, effective,
+        market_references=market, board_references=board,
+    )
+    cached = analyze_relative_strength(
+        "000001.SZ", stock, effective,
+        market_references=market, board_references=board,
+        market_context=build_reference_context(market, effective),
+        board_context=combine_reference_contexts([
+            build_reference_context(board, effective),
+        ]),
+    )
+
+    assert cached == direct
 
 
 def test_relative_strength_classifies_resilience_decline_event_and_lifecycle() -> None:

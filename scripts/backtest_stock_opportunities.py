@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, timedelta
 import gc
+import gzip
 import json
 from pathlib import Path
 import subprocess
@@ -30,6 +32,9 @@ from stock_harness.stock_observation_scan import (
 from stock_harness.stock_relative_strength import ALGORITHM_VERSION as RELATIVE_STRENGTH_VERSION
 
 
+FEATURE_CACHE_VERSION = "stock-focus-replay-features-v1"
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--provider-config", type=Path, default=Path("config/providers.local.yaml"))
@@ -46,7 +51,17 @@ def main() -> None:
     parser.add_argument("--single-result", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--prior-snapshot", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--next-snapshot", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--scan-date", type=date.fromisoformat, help=argparse.SUPPRESS)
+    parser.add_argument("--scan-result", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--feature-cache-dir", type=Path,
+                        default=Path(".tmp/replay-features/stock-focus-v1"))
+    parser.add_argument("--scan-workers", type=int, default=2)
     args = parser.parse_args()
+    if args.scan_date:
+        if args.scan_result is None:
+            parser.error("--scan-result is required with --scan-date")
+        _run_scan_date(args)
+        return
     if args.single_date:
         if args.single_result is None:
             parser.error("--single-result is required with --single-date")
@@ -56,6 +71,8 @@ def main() -> None:
         parser.error("--output is required")
     if args.sample_count < 2:
         parser.error("--sample-count must be at least 2")
+    if not 1 <= args.scan_workers <= 4:
+        parser.error("--scan-workers must be between 1 and 4")
 
     settings = load_runtime_settings(args.provider_config, args.storage_config)
     store = _open_store(settings)
@@ -101,6 +118,7 @@ def main() -> None:
                 ),
                 "mode": args.mode,
                 "parameter_changes_between_dates": False,
+                "feature_cache_version": FEATURE_CACHE_VERSION,
                 "historical_membership_limit": (
                     "Price inputs are cutoff-causal; board membership uses the locally "
                     "available membership snapshot and can contain survivorship bias."
@@ -110,7 +128,13 @@ def main() -> None:
             "date_source": date_source,
             "results": [],
         }
+    else:
+        report["algorithm_contract"]["feature_cache_version"] = FEATURE_CACHE_VERSION
     completed_dates = {str(item["effective_date"]) for item in report["results"]}
+
+    if args.mode == "focus-core":
+        pending = [value for value in dates if value.isoformat() not in completed_dates]
+        _prepare_feature_cache(args, pending)
 
     started = time.perf_counter()
     for index, effective_date in enumerate(dates, 1):
@@ -119,28 +143,39 @@ def main() -> None:
             continue
         print(f"[{index}/{len(dates)}] run {effective_date}", flush=True)
         date_started = time.perf_counter()
-        single_result = args.output.with_name(f"{args.output.stem}-single.json")
-        command = [
-            sys.executable, str(Path(__file__).resolve()),
-            "--provider-config", str(args.provider_config),
-            "--storage-config", str(args.storage_config),
-            "--single-date", effective_date.isoformat(),
-            "--single-result", str(single_result),
-            "--mode", args.mode,
-        ]
         if args.mode == "focus-core":
-            command.extend(["--next-snapshot", str(state_path)])
-            if report["results"]:
-                command.extend(["--prior-snapshot", str(state_path)])
-        completed = subprocess.run(
-            command, check=False,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
-        if completed.returncode:
-            raise RuntimeError(
-                f"single-date replay failed for {effective_date}: {completed.returncode}"
+            prior_snapshot = _load_report(state_path) if report["results"] else None
+            records = _read_feature_cache(_feature_cache_path(args, effective_date))
+            snapshot = build_unified_stock_pool_snapshot(
+                f"historical-focus-core:{effective_date}", effective_date,
+                {"items": []}, records, prior_snapshot=prior_snapshot,
             )
-        result = json.loads(single_result.read_text(encoding="utf-8"))
+            assign_stock_presentation_layers(snapshot)
+            result = summarize_focus_snapshot(snapshot)
+            result["reused"] = False
+            result["child_wall_seconds"] = round(
+                time.perf_counter() - date_started, 3,
+            )
+            _write_report(state_path, snapshot)
+        else:
+            single_result = args.output.with_name(f"{args.output.stem}-single.json")
+            command = [
+                sys.executable, str(Path(__file__).resolve()),
+                "--provider-config", str(args.provider_config),
+                "--storage-config", str(args.storage_config),
+                "--single-date", effective_date.isoformat(),
+                "--single-result", str(single_result),
+                "--mode", args.mode,
+            ]
+            completed = subprocess.run(
+                command, check=False,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            if completed.returncode:
+                raise RuntimeError(
+                    f"single-date replay failed for {effective_date}: {completed.returncode}"
+                )
+            result = json.loads(single_result.read_text(encoding="utf-8"))
         result["wall_seconds"] = round(time.perf_counter() - date_started, 3)
         report["results"].append(result)
         report["results"].sort(key=lambda item: str(item["effective_date"]))
@@ -172,6 +207,104 @@ def main() -> None:
     print(json.dumps(report["summary"], ensure_ascii=False, indent=2))
     if args.require_opportunity and not report["summary"]["strict_opportunity_seen"]:
         raise SystemExit(2)
+
+
+def _prepare_feature_cache(
+    args: argparse.Namespace, dates: Sequence[date],
+) -> None:
+    missing = [value for value in dates if not _feature_cache_ready(args, value)]
+    if not missing:
+        print(f"feature cache ready for {len(dates)} dates", flush=True)
+        return
+    print(
+        f"prepare feature cache missing={len(missing)} workers={args.scan_workers}",
+        flush=True,
+    )
+
+    def run(value: date) -> date:
+        target = _feature_cache_path(args, value)
+        command = [
+            sys.executable, str(Path(__file__).resolve()),
+            "--provider-config", str(args.provider_config),
+            "--storage-config", str(args.storage_config),
+            "--scan-date", value.isoformat(),
+            "--scan-result", str(target),
+        ]
+        completed = subprocess.run(
+            command, check=False, capture_output=True, text=True,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        if completed.returncode:
+            detail = completed.stderr.strip() or completed.stdout.strip()
+            raise RuntimeError(
+                f"feature scan failed for {value}: {completed.returncode}: {detail}"
+            )
+        return value
+
+    with ThreadPoolExecutor(max_workers=args.scan_workers) as executor:
+        futures = {executor.submit(run, value): value for value in missing}
+        for completed_count, future in enumerate(as_completed(futures), 1):
+            value = future.result()
+            print(
+                f"feature cache {completed_count}/{len(missing)} {value}", flush=True,
+            )
+
+
+def _run_scan_date(args: argparse.Namespace) -> None:
+    settings = load_runtime_settings(args.provider_config, args.storage_config)
+    store = _open_store(settings)
+    try:
+        records = scan_full_market_independent_strength(store, args.scan_date)
+    finally:
+        store.close()
+    payload = {
+        "feature_cache_version": FEATURE_CACHE_VERSION,
+        "relative_strength_version": RELATIVE_STRENGTH_VERSION,
+        "independent_scan_version": INDEPENDENT_SCAN_VERSION,
+        "effective_date": args.scan_date.isoformat(),
+        "records": records,
+    }
+    args.scan_result.parent.mkdir(parents=True, exist_ok=True)
+    with gzip.open(args.scan_result, "wt", encoding="utf-8", compresslevel=1) as stream:
+        json.dump(payload, stream, ensure_ascii=False, separators=(",", ":"))
+    _feature_cache_marker(args.scan_result).write_text(
+        FEATURE_CACHE_VERSION + "\n", encoding="ascii",
+    )
+
+
+def _feature_cache_path(args: argparse.Namespace, effective_date: date) -> Path:
+    version = "-".join((
+        FEATURE_CACHE_VERSION, RELATIVE_STRENGTH_VERSION, INDEPENDENT_SCAN_VERSION,
+    )).replace("/", "-")
+    return args.feature_cache_dir / f"{effective_date.isoformat()}-{version}.json.gz"
+
+
+def _feature_cache_marker(path: Path) -> Path:
+    return path.with_suffix(path.suffix + ".complete")
+
+
+def _feature_cache_ready(args: argparse.Namespace, effective_date: date) -> bool:
+    path = _feature_cache_path(args, effective_date)
+    marker = _feature_cache_marker(path)
+    return bool(
+        path.is_file() and path.stat().st_size > 0 and marker.is_file()
+        and marker.read_text(encoding="ascii").strip() == FEATURE_CACHE_VERSION
+    )
+
+
+def _read_feature_cache(path: Path) -> list[dict[str, object]]:
+    with gzip.open(path, "rt", encoding="utf-8") as stream:
+        payload = json.load(stream)
+    if (
+        payload.get("feature_cache_version") != FEATURE_CACHE_VERSION
+        or payload.get("relative_strength_version") != RELATIVE_STRENGTH_VERSION
+        or payload.get("independent_scan_version") != INDEPENDENT_SCAN_VERSION
+    ):
+        raise ValueError(f"incompatible feature cache: {path}")
+    records = payload.get("records")
+    if not isinstance(records, list):
+        raise ValueError(f"invalid feature cache records: {path}")
+    return records
 
 
 def _run_single_date(args: argparse.Namespace, settings: Any | None) -> None:

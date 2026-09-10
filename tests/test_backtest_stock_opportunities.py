@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 from datetime import date
+import gzip
 import importlib.util
+import json
 from pathlib import Path
+from types import SimpleNamespace
 
 
 _SPEC = importlib.util.spec_from_file_location(
@@ -93,6 +96,28 @@ def test_replay_state_must_match_latest_result_and_algorithm_versions() -> None:
     assert not module._state_matches_report(
         {**state, "effective_date": "2026-09-07"}, report,
     )
+
+
+def test_feature_cache_requires_completion_marker_and_matching_versions(tmp_path) -> None:
+    args = SimpleNamespace(feature_cache_dir=tmp_path)
+    effective = date(2026, 9, 8)
+    path = module._feature_cache_path(args, effective)
+    payload = {
+        "feature_cache_version": module.FEATURE_CACHE_VERSION,
+        "relative_strength_version": module.RELATIVE_STRENGTH_VERSION,
+        "independent_scan_version": module.INDEPENDENT_SCAN_VERSION,
+        "effective_date": effective.isoformat(),
+        "records": [{"symbol": "A"}],
+    }
+    with gzip.open(path, "wt", encoding="utf-8") as stream:
+        json.dump(payload, stream)
+
+    assert not module._feature_cache_ready(args, effective)
+    module._feature_cache_marker(path).write_text(
+        module.FEATURE_CACHE_VERSION + "\n", encoding="ascii",
+    )
+    assert module._feature_cache_ready(args, effective)
+    assert module._read_feature_cache(path) == [{"symbol": "A"}]
 
 
 def _score(symbol: str, *disqualifiers: str) -> dict[str, object]:

@@ -14,6 +14,7 @@ ALGORITHM_VERSION = "stock-relative-strength-v2"
 SCORER_VERSION = "stock-independent-strength-v2"
 MINIMUM_BARS = 120
 LOOKBACK_BARS = 260
+ReferenceContext = tuple[dict[date, float], dict[int, float | None]]
 
 
 def analyze_relative_strength(
@@ -23,6 +24,8 @@ def analyze_relative_strength(
     *,
     market_references: Mapping[str, Sequence[StoredDailyBar]],
     board_references: Mapping[str, Sequence[StoredDailyBar]] | None = None,
+    market_context: ReferenceContext | None = None,
+    board_context: ReferenceContext | None = None,
 ) -> dict[str, object]:
     """Build one causal feature record; callers perform cross-sectional scoring."""
     visible = sorted(
@@ -43,14 +46,20 @@ def analyze_relative_strength(
         }
 
     stock_returns = _daily_returns(visible)
-    market_series = _reference_returns(market_references, effective_date)
+    market_series, market_periods = (
+        market_context
+        if market_context is not None
+        else build_reference_context(market_references, effective_date)
+    )
     board_references = board_references or {}
-    board_series = _reference_returns(board_references, effective_date)
+    board_series, board_periods = (
+        board_context
+        if board_context is not None
+        else build_reference_context(board_references, effective_date)
+    )
     closes = [bar.close for bar in visible]
     volumes = [max(0, bar.volume) for bar in visible]
     stock_periods = {period: _period_return(closes, period) for period in (1, 5, 10, 20, 60)}
-    market_periods = _composite_period_returns(market_references, effective_date)
-    board_periods = _composite_period_returns(board_references, effective_date)
     market_excess = {
         period: _subtract(stock_periods[period], market_periods[period])
         for period in stock_periods
@@ -134,6 +143,37 @@ def analyze_relative_strength(
         "eligible": eligible, "metrics": metrics, "disqualifiers": [],
         "algorithm_version": ALGORITHM_VERSION,
     }
+
+
+def build_reference_context(
+    references: Mapping[str, Sequence[StoredDailyBar]], effective_date: date,
+) -> ReferenceContext:
+    return (
+        _reference_returns(references, effective_date),
+        _composite_period_returns(references, effective_date),
+    )
+
+
+def combine_reference_contexts(
+    contexts: Sequence[ReferenceContext],
+) -> ReferenceContext:
+    returns_by_date: dict[date, list[float]] = {}
+    periods: dict[int, list[float]] = {
+        period: [] for period in (1, 5, 10, 20, 60)
+    }
+    for returns, period_returns in contexts:
+        for trade_date, value in returns.items():
+            returns_by_date.setdefault(trade_date, []).append(value)
+        for period, value in period_returns.items():
+            if value is not None:
+                periods[period].append(value)
+    return (
+        {trade_date: fmean(values) for trade_date, values in returns_by_date.items()},
+        {
+            period: fmean(values) if values else None
+            for period, values in periods.items()
+        },
+    )
 
 
 def _opportunity_readiness(
