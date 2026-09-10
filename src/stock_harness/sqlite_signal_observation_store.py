@@ -11,6 +11,91 @@ from stock_harness.sqlite_mapping import _date_from_key, _date_key
 
 
 class SQLiteSignalObservationStoreMixin:
+    def list_all_stock_board_memberships(
+        self, board_limit: int = 3,
+    ) -> dict[str, list[dict[str, object]]]:
+        if not 1 <= board_limit <= 10:
+            raise ValueError("board membership limit must be between 1 and 10")
+        with self._lock:
+            catalog = {
+                (int(row[0]), int(row[1])): (
+                    str(row[2]) if row[2] is not None else None,
+                    str(row[3]) if row[3] is not None else None,
+                )
+                for row in self._connection.execute(
+                    """
+                    SELECT instrument_id, catalog_source_id, family, category
+                    FROM instrument_catalog_entries
+                    """
+                )
+            }
+            rows = self._connection.execute(
+                """
+                SELECT membership.member_symbol,
+                       membership.board_instrument_id,
+                       board.symbol, board.name, source.code,
+                       membership.source_id
+                FROM board_memberships AS membership
+                JOIN instruments AS board
+                  ON board.instrument_id = membership.board_instrument_id
+                JOIN sources AS source USING (source_id)
+                WHERE membership.active = 1 AND board.active = 1
+                ORDER BY membership.member_symbol,
+                         membership.board_instrument_id
+                """
+            )
+        result: dict[str, list[dict[str, object]]] = {}
+        member_candidates: list[dict[str, object]] = []
+        current_member: str | None = None
+        current_board: int | None = None
+        current: dict[str, object] | None = None
+
+        def flush_board() -> None:
+            if current is not None:
+                member_candidates.append(current)
+
+        def flush_member() -> None:
+            if current_member is None:
+                return
+            member_candidates.sort(key=lambda item: (
+                0 if str(item.get("category") or "").lower() == "industry"
+                else 1 if str(item.get("category") or "").lower() == "concept"
+                else 2,
+                str(item["symbol"]),
+            ))
+            result[current_member] = member_candidates[:board_limit]
+
+        for row in rows:
+            member, board_id = str(row[0]), int(row[1])
+            if member != current_member:
+                flush_board()
+                flush_member()
+                current_member, current_board = member, None
+                member_candidates = []
+                current = None
+            if board_id != current_board:
+                flush_board()
+                current_board = board_id
+                current = {
+                    "symbol": str(row[2]), "name": str(row[3]),
+                    "source": str(row[4]), "family": None, "category": None,
+                }
+            elif current is not None and str(row[4]) < str(current["source"]):
+                current["source"] = str(row[4])
+            family, category = catalog.get((board_id, int(row[5])), (None, None))
+            if current is not None:
+                if family is not None and (
+                    current["family"] is None or family < str(current["family"])
+                ):
+                    current["family"] = family
+                if category is not None and (
+                    current["category"] is None or category < str(current["category"])
+                ):
+                    current["category"] = category
+        flush_board()
+        flush_member()
+        return result
+
     def list_stock_board_memberships_many(
         self, symbols: Sequence[str], board_limit: int = 3,
     ) -> dict[str, list[dict[str, object]]]:
@@ -358,40 +443,36 @@ class SQLiteSignalObservationStoreMixin:
             raise ValueError("bulk daily bar query exceeds 200 symbols")
         if not ordered:
             return {}
-        placeholders = ",".join("?" for _ in ordered)
         with self._lock:
-            rows = self._connection.execute(
-                f"""
-                WITH ranked AS (
-                    SELECT instrument.symbol, bar.trade_date, bar.open, bar.high,
-                           bar.low, bar.close, bar.volume, source.code,
-                           bar.updated_at_ms,
-                           row_number() OVER (
-                               PARTITION BY bar.instrument_id
-                               ORDER BY bar.trade_date DESC
-                           ) AS position
-                    FROM daily_bars AS bar
-                    JOIN instruments AS instrument USING (instrument_id)
-                    JOIN sources AS source USING (source_id)
-                    WHERE instrument.symbol IN ({placeholders})
-                      AND bar.trade_date <= ?
-                )
-                SELECT symbol, trade_date, open, high, low, close, volume,
-                       code, updated_at_ms
-                FROM ranked WHERE position <= ?
-                ORDER BY symbol, trade_date
-                """,
-                (*ordered, _date_key(end_date), limit),
-            ).fetchall()
+            instrument_ids = self._instrument_ids(ordered)
+            source_codes = {
+                int(row[0]): str(row[1])
+                for row in self._connection.execute(
+                    "SELECT source_id, code FROM sources"
+                ).fetchall()
+            }
+            rows_by_symbol = {
+                symbol: self._connection.execute(
+                    """
+                    SELECT trade_date, open, high, low, close, volume,
+                           source_id, updated_at_ms
+                    FROM daily_bars
+                    WHERE instrument_id = ? AND trade_date <= ?
+                    ORDER BY trade_date DESC
+                    LIMIT ?
+                    """,
+                    (instrument_ids[symbol], _date_key(end_date), limit),
+                ).fetchall()
+                for symbol in ordered if symbol in instrument_ids
+            }
         result: dict[str, list[StoredDailyBar]] = {symbol: [] for symbol in ordered}
-        for row in rows:
-            symbol = str(row[0])
-            result.setdefault(symbol, []).append(StoredDailyBar(
-                symbol=symbol, trade_date=_date_from_key(int(row[1])),
-                open=float(row[2]), high=float(row[3]), low=float(row[4]),
-                close=float(row[5]), volume=int(row[6]), source=str(row[7]),
-                updated_at_ms=int(row[8]),
-            ))
+        for symbol, rows in rows_by_symbol.items():
+            result[symbol] = [StoredDailyBar(
+                symbol=symbol, trade_date=_date_from_key(int(row[0])),
+                open=float(row[1]), high=float(row[2]), low=float(row[3]),
+                close=float(row[4]), volume=int(row[5]),
+                source=source_codes[int(row[6])], updated_at_ms=int(row[7]),
+            ) for row in reversed(rows)]
         return result
 
     def get_recent_causally_adjusted_stock_bars_many(

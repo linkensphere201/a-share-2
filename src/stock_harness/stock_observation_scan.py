@@ -42,6 +42,10 @@ class StockScanStore(Protocol):
         self, symbols: Sequence[str], board_limit: int = 3,
     ) -> dict[str, list[dict[str, object]]]: ...
 
+    def list_all_stock_board_memberships(
+        self, board_limit: int = 3,
+    ) -> dict[str, list[dict[str, object]]]: ...
+
 
 def build_board_member_scan_snapshot(
     store: StockScanStore,
@@ -186,12 +190,20 @@ def scan_full_market_independent_strength(
     }
     references = _load_reference_bars(store, effective_date)
     board_cache: dict[str, list[StoredDailyBar]] = {}
+    list_all_memberships = getattr(store, "list_all_stock_board_memberships", None)
+    membership_cache = (
+        list_all_memberships(board_limit=3) if callable(list_all_memberships) else None
+    )
     records: list[dict[str, object]] = list(seeded.values())
     if progress is not None:
         progress(len(symbols), 0)
     for offset in range(0, len(symbols), BATCH_SIZE):
         page = symbols[offset:offset + BATCH_SIZE]
-        memberships = store.list_stock_board_memberships_many(page, board_limit=3)
+        memberships = (
+            {symbol: membership_cache.get(symbol, []) for symbol in page}
+            if membership_cache is not None
+            else store.list_stock_board_memberships_many(page, board_limit=3)
+        )
         missing_boards = sorted({
             str(item["symbol"])
             for values in memberships.values() for item in values

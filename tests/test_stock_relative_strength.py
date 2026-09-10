@@ -139,6 +139,16 @@ def test_board_member_scan_reads_every_member_and_preserves_sources() -> None:
         "board-membership", "recognition-assignment",
     }
     assert len(store.list_stock_board_memberships_many(["000001.SZ"])["000001.SZ"]) == 1
+    all_memberships = store.list_all_stock_board_memberships()
+    assert all_memberships["000001.SZ"] == store.list_stock_board_memberships_many(
+        ["000001.SZ"]
+    )["000001.SZ"]
+    recent = store.get_recent_daily_bars_many(["000001.SZ"], effective, 3)
+    assert len(recent["000001.SZ"]) == 3
+    assert [bar.trade_date for bar in recent["000001.SZ"]] == sorted(
+        bar.trade_date for bar in recent["000001.SZ"]
+    )
+    assert recent["000001.SZ"][-1].trade_date == effective
     market_scan = scan_full_market_independent_strength(store, effective)
     assert len(market_scan) == 4
     assert market_scan[0]["symbol"] == "000001.SZ"
