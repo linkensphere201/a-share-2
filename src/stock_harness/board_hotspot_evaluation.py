@@ -1,0 +1,164 @@
+"""Objective, future-isolated evaluation for board-hotspot radar output."""
+
+from __future__ import annotations
+
+from collections.abc import Mapping, Sequence
+from datetime import date
+import re
+
+from stock_harness.board_hotspot_features import hotspot_feature_value
+
+
+BOARD_HOTSPOT_EVALUATOR_VERSION = "board-hotspot-evaluator-v1"
+_ROMAN_SUFFIX = re.compile(r"[ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩ]+(?:\(A股\))?$")
+_GENERIC_SUFFIX = re.compile(r"(?:指数|板块)$")
+
+
+def canonical_board_name(name: str) -> str:
+    """Cluster obvious cross-provider aliases without merging adjacent themes."""
+    normalized = re.sub(r"\s+", "", name).replace("（", "(").replace("）", ")")
+    normalized = _ROMAN_SUFFIX.sub("", normalized)
+    normalized = _GENERIC_SUFFIX.sub("", normalized)
+    return normalized.casefold()
+
+
+def named_theme(name: str) -> str | None:
+    """Map acceptance examples to broad themes; this never affects online score."""
+    value = canonical_board_name(name)
+    rules = (
+        ("electricity", ("电力", "绿色电力", "电网")),
+        ("medicine", ("医药", "创新药", "医疗")),
+        ("agriculture-seed", ("种业", "种子", "农业种植", "农作物")),
+        ("hardware-technology", ("算力", "半导体", "光模块", "cpo", "pcb", "消费电子")),
+    )
+    for theme, aliases in rules:
+        if any(alias in value for alias in aliases):
+            return theme
+    return None
+
+
+def is_objective_confirmation(feature: Mapping[str, object]) -> bool:
+    """Causal confirmation label based only on facts available that session."""
+    r5 = hotspot_feature_value(feature, ("metrics", "returns", "5"))
+    r20 = hotspot_feature_value(feature, ("metrics", "returns", "20"))
+    rs20 = hotspot_feature_value(feature, ("metrics", "relative_strength", "20"))
+    breadth5 = hotspot_feature_value(feature, ("member_snapshot", "positive_return_5_ratio"))
+    volume5 = hotspot_feature_value(feature, ("metrics", "recent_volume_ratio_5_5"))
+    limits = hotspot_feature_value(feature, ("member_snapshot", "limit_up_count")) or 0
+    streak = hotspot_feature_value(feature, ("member_snapshot", "max_limit_up_streak")) or 0
+    return (
+        r5 is not None and r5 >= .04
+        and r20 is not None and r20 >= .08
+        and rs20 is not None and rs20 >= .025
+        and breadth5 is not None and breadth5 >= .56
+        and ((volume5 is not None and volume5 >= 1.03) or limits >= 1 or streak >= 2)
+    )
+
+
+def evaluate_hotspot_timelines(
+    timelines: Mapping[str, Sequence[Mapping[str, object]]],
+    *,
+    names: Mapping[str, str] | None = None,
+    lead_window: int = 10,
+    cooldown: int = 10,
+) -> dict[str, object]:
+    """Compare radar episodes with independent two-session confirmations."""
+    names = names or {}
+    signals: list[dict[str, object]] = []
+    confirmations: list[dict[str, object]] = []
+    theme_hits: dict[str, list[str]] = {}
+    for symbol, source_rows in timelines.items():
+        rows = sorted(source_rows, key=lambda row: str(row["effective_date"]))
+        signal_indexes = _episode_indexes(
+            [_is_radar_signal(row) for row in rows], cooldown,
+        )
+        raw_confirm = [
+            is_objective_confirmation(_mapping(row.get("feature"))) for row in rows
+        ]
+        confirmed = [
+            current and index > 0 and raw_confirm[index - 1]
+            for index, current in enumerate(raw_confirm)
+        ]
+        confirmation_indexes = _episode_indexes(confirmed, cooldown)
+        for index in signal_indexes:
+            future = next((candidate for candidate in confirmation_indexes
+                           if index <= candidate <= index + lead_window), None)
+            item = {
+                "symbol": symbol,
+                "name": names.get(symbol, symbol),
+                "cluster_key": canonical_board_name(names.get(symbol, symbol)),
+                "signal_date": str(rows[index]["effective_date"]),
+                "confirmation_date": (
+                    str(rows[future]["effective_date"]) if future is not None else None
+                ),
+                "lead_sessions": future - index if future is not None else None,
+            }
+            signals.append(item)
+            theme = named_theme(str(item["name"]))
+            if theme and future is not None:
+                theme_hits.setdefault(theme, []).append(symbol)
+        for index in confirmation_indexes:
+            prior = next((candidate for candidate in reversed(signal_indexes)
+                          if index - lead_window <= candidate <= index), None)
+            confirmations.append({
+                "symbol": symbol,
+                "confirmation_date": str(rows[index]["effective_date"]),
+                "preceded_by_signal": prior is not None,
+                "lead_sessions": index - prior if prior is not None else None,
+            })
+    true_signals = [item for item in signals if item["confirmation_date"]]
+    recalled = [item for item in confirmations if item["preceded_by_signal"]]
+    leads = [int(item["lead_sessions"]) for item in true_signals]
+    return {
+        "evaluator_version": BOARD_HOTSPOT_EVALUATOR_VERSION,
+        "signal_events": len(signals),
+        "confirmation_events": len(confirmations),
+        "true_signal_events": len(true_signals),
+        "precision": round(len(true_signals) / len(signals), 4) if signals else None,
+        "recall": round(len(recalled) / len(confirmations), 4) if confirmations else None,
+        "median_lead_sessions": _median(leads),
+        "named_theme_hits": {key: sorted(set(value)) for key, value in theme_hits.items()},
+        "events": signals,
+    }
+
+
+def _is_radar_signal(row: Mapping[str, object]) -> bool:
+    stage = str(row.get("hotspot_stage") or "")
+    score = row.get("total_score")
+    streak = row.get("candidate_streak")
+    return (
+        stage in {
+            "leader-ignited", "trend-emerging", "breadth-expanding",
+            "hotspot-confirmed", "accelerating",
+        }
+        and isinstance(score, (int, float)) and float(score) >= 40
+        and isinstance(streak, (int, float)) and int(streak) >= 1
+    )
+
+
+def _episode_indexes(
+    states: Sequence[bool], cooldown: int,
+) -> list[int]:
+    indexes: list[int] = []
+    last = -cooldown - 1
+    active = False
+    for index, state in enumerate(states):
+        if state and not active and index - last > cooldown:
+            indexes.append(index)
+            last = index
+        active = state
+    return indexes
+
+
+def _mapping(value: object) -> Mapping[str, object]:
+    return value if isinstance(value, Mapping) else {}
+
+
+def _median(values: Sequence[int]) -> float | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    middle = len(ordered) // 2
+    if len(ordered) % 2:
+        return float(ordered[middle])
+    return (ordered[middle - 1] + ordered[middle]) / 2

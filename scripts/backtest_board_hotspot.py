@@ -3,19 +3,19 @@
 from __future__ import annotations
 
 import argparse
-from datetime import date
+from datetime import date, timedelta
 import json
 from pathlib import Path
 from statistics import median
 
 from stock_harness.config import load_runtime_settings
-from stock_harness.daily_signal_analysis import analyze_daily_series
+from stock_harness.board_hotspot_evaluation import evaluate_hotspot_timelines
+from stock_harness.board_hotspot_features import extract_board_hotspot_features
 from stock_harness.observation_systems import (
     BOARD_HOTSPOT_SYSTEM,
     BoardHotspotSystem,
     ObservationSystemContext,
 )
-from stock_harness.review_scoring import default_scorer_registry
 from stock_harness.sqlite_store import SQLiteMarketDataStore
 
 
@@ -27,6 +27,7 @@ def main() -> None:
     parser.add_argument("--end-date", type=date.fromisoformat, required=True)
     parser.add_argument("--queries", default="电力,医药,农业,种业,硬件")
     parser.add_argument("--max-boards-per-query", type=int, default=12)
+    parser.add_argument("--all-boards", action="store_true")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     settings = load_runtime_settings(args.provider_config, args.storage_config)
@@ -41,7 +42,7 @@ def main() -> None:
         result = replay(
             store, args.start_date, args.end_date,
             [value.strip() for value in args.queries.split(",") if value.strip()],
-            args.max_boards_per_query,
+            args.max_boards_per_query, all_boards=args.all_boards,
         )
     finally:
         store.close()
@@ -52,26 +53,42 @@ def main() -> None:
 
 def replay(
     store: SQLiteMarketDataStore, start: date, end: date,
-    queries: list[str], max_boards_per_query: int,
+    queries: list[str], max_boards_per_query: int, *, all_boards: bool = False,
 ) -> dict[str, object]:
     boards: dict[str, dict[str, object]] = {}
     query_symbols: dict[str, list[str]] = {}
-    for query in queries:
-        matches: dict[str, dict[str, object]] = {}
+    if all_boards:
         for classification in ("concept", "industry"):
-            for item in store.search_instruments(
-                query=query, classification=classification, active=True,
-                limit=max_boards_per_query, offset=0,
-            ):
-                matches[str(item["symbol"])] = item
-        selected = sorted(matches)[:max_boards_per_query]
-        query_symbols[query] = selected
-        boards.update((symbol, matches[symbol]) for symbol in selected)
+            offset = 0
+            while True:
+                page = store.search_instruments(
+                    classification=classification, active=True, limit=500,
+                    offset=offset,
+                )
+                boards.update((str(item["symbol"]), {
+                    **item, "signal_classification": classification,
+                }) for item in page)
+                if len(page) < 500:
+                    break
+                offset += len(page)
+    else:
+        for query in queries:
+            matches: dict[str, dict[str, object]] = {}
+            for classification in ("concept", "industry"):
+                for item in store.search_instruments(
+                    query=query, classification=classification, active=True,
+                    limit=max_boards_per_query, offset=0,
+                ):
+                    matches[str(item["symbol"])] = item
+            selected = sorted(matches)[:max_boards_per_query]
+            query_symbols[query] = selected
+            boards.update((symbol, matches[symbol]) for symbol in selected)
     benchmark = store.get_daily_bars("000001.SH", start, end)
     dates = [bar.trade_date for bar in benchmark]
     all_benchmark = store.get_daily_bars("000001.SH", None, end)
+    history_start = start - timedelta(days=60)
     board_bars = {
-        symbol: store.get_daily_bars(symbol, None, end) for symbol in boards
+        symbol: store.get_daily_bars(symbol, history_start, end) for symbol in boards
     }
     by_symbol_date = {
         symbol: {bar.trade_date: index for index, bar in enumerate(bars)}
@@ -81,64 +98,61 @@ def replay(
         bar.trade_date: index for index, bar in enumerate(all_benchmark)
     }
     system = BoardHotspotSystem()
-    scorer_registry = default_scorer_registry()
     prior: dict[str, dict[str, object]] = {}
     timelines: dict[str, list[dict[str, object]]] = {symbol: [] for symbol in boards}
     stage_counts: dict[str, int] = {}
     for effective in dates:
         snapshots = store.calculate_board_hotspot_snapshots(effective)
+        breadth_snapshots = store.calculate_board_breadth_snapshots(effective)
         observations = []
+        features = {}
         for symbol, bars in board_bars.items():
             index = by_symbol_date[symbol].get(effective)
             benchmark_index = benchmark_by_date.get(effective)
             if index is None or benchmark_index is None:
                 continue
-            observation = analyze_daily_series(
-                symbol, bars[:index + 1], effective,
-                benchmark_bars=all_benchmark[:benchmark_index + 1],
+            feature = extract_board_hotspot_features(
+                bars[:index + 1], all_benchmark[:benchmark_index + 1],
+                breadth_snapshot=breadth_snapshots.get(symbol),
+                member_snapshot=snapshots.get(symbol),
             )
-            breadth = observation.get("metrics", {}).get("board_breadth")
-            if breadth is None and isinstance(observation.get("metrics"), dict):
-                member = snapshots.get(symbol, {})
-                ratio = member.get("positive_return_5_ratio")
-                observation["metrics"]["board_breadth"] = {
-                    "breadth": (float(ratio) * 2 - 1) if ratio is not None else None,
-                    "impact_concentration_hhi": None,
-                }
-            observations.append(observation)
+            features[symbol] = feature
+            observations.append({"symbol": symbol})
         execution = system.execute(ObservationSystemContext(
-            observations=observations, scorer_registry=scorer_registry,
+            observations=observations,
             prior_scores={BOARD_HOTSPOT_SYSTEM: prior},
-            dependencies={"board_hotspot_snapshots": snapshots},
+            dependencies={"board_hotspot_features": features},
         ))
         prior = {str(item["symbol"]): item for item in execution.results}
         for item in execution.results:
             stage = str(item["hotspot_stage"])
             stage_counts[stage] = stage_counts.get(stage, 0) + 1
-            if stage == "failed":
-                continue
             timelines[str(item["symbol"])].append({
                 key: item.get(key) for key in (
                     "symbol", "hotspot_stage", "total_score", "raw_score",
                     "score_direction", "candidate_streak", "eligible",
                     "limit_up_count", "max_limit_up_streak", "summary",
                 )
-            } | {"effective_date": effective.isoformat()})
+            } | {
+                "effective_date": effective.isoformat(),
+                "feature": features.get(str(item["symbol"]), {}),
+            })
     first_detections = []
     eligible_board_count = 0
     for symbol, events in timelines.items():
-        if not events:
+        visible_events = [item for item in events if item["hotspot_stage"] != "failed"]
+        if not visible_events:
             continue
-        first = events[0]
-        first_eligible = next((item for item in events if item["eligible"]), None)
+        first = visible_events[0]
+        first_eligible = next((item for item in visible_events if item["eligible"]), None)
         eligible_board_count += int(first_eligible is not None)
         first_detections.append({
             "symbol": symbol, "name": boards[symbol].get("name"),
             "first_date": first["effective_date"],
             "first_stage": first["hotspot_stage"],
             "first_score": first["total_score"],
-            "peak_score": max(float(item["total_score"]) for item in events),
-            "event_days": len(events),
+            "peak_score": max(float(item["total_score"]) for item in visible_events),
+            "event_days": len(visible_events),
             "first_eligible_date": (
                 first_eligible["effective_date"] if first_eligible else None
             ),
@@ -147,7 +161,11 @@ def replay(
             ),
         })
     scores = [float(item["first_score"]) for item in first_detections]
-    return {
+    evaluation = evaluate_hotspot_timelines(
+        timelines, names={symbol: str(item.get("name") or symbol)
+                          for symbol, item in boards.items()},
+    )
+    result = {
         "summary": {
             "start_date": start.isoformat(), "end_date": end.isoformat(),
             "trading_dates": len(dates), "board_count": len(boards),
@@ -157,13 +175,18 @@ def replay(
             "stage_counts": stage_counts,
             "algorithm_version": system.version,
             "online_features_are_causal": True,
+            "evaluation": {key: value for key, value in evaluation.items()
+                           if key != "events"},
         },
         "queries": query_symbols,
         "first_detections": sorted(first_detections, key=lambda item: (
             str(item["first_date"]), -float(item["peak_score"]), str(item["symbol"]),
         )),
-        "timelines": timelines,
+        "evaluation_events": evaluation["events"],
     }
+    if not all_boards:
+        result["timelines"] = timelines
+    return result
 
 
 if __name__ == "__main__":

@@ -6,13 +6,9 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from stock_harness.review_scoring import ReviewScorerRegistry
-
-
 @dataclass(frozen=True)
 class ObservationSystemContext:
     observations: Sequence[Mapping[str, object]]
-    scorer_registry: ReviewScorerRegistry
     prior_scores: Mapping[str, Mapping[str, Mapping[str, object]]] = field(
         default_factory=dict
     )

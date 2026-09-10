@@ -9,6 +9,7 @@ from stock_harness.observation_systems.contracts import (
     ObservationSystemExecution,
 )
 from stock_harness.review_scoring import (
+    ReviewScorerRegistry,
     TREND_BREAKOUT_SCORER,
     execute_scorer,
     score_entities,
@@ -17,14 +18,14 @@ from stock_harness.review_scoring import (
 
 
 BOARD_HOTSPOT_SYSTEM = "board-hotspot-emergence"
-BOARD_HOTSPOT_VERSION = "board-hotspot-emergence-v1"
+BOARD_HOTSPOT_VERSION = "board-hotspot-emergence-v2-causal-features"
 
 
 class TrendBreakoutSystem:
     system_id = TREND_BREAKOUT_SCORER
     entity_scope = "board"
     display_name = "趋势突破"
-    dependencies: tuple[str, ...] = ()
+    dependencies = ("review_scorer_registry",)
 
     def __init__(self, version: str) -> None:
         self.version = version
@@ -35,12 +36,15 @@ class TrendBreakoutSystem:
             "version": self.version,
             "entity_scope": self.entity_scope,
             "display_name": self.display_name,
-            "dependencies": [],
+            "dependencies": list(self.dependencies),
             "score_combination": "independent",
         }
 
     def execute(self, context: ObservationSystemContext) -> ObservationSystemExecution:
-        scorer = context.scorer_registry.get(self.system_id)
+        scorer_registry = context.dependencies["review_scorer_registry"]
+        if not isinstance(scorer_registry, ReviewScorerRegistry):
+            raise ValueError("review_scorer_registry must be a ReviewScorerRegistry")
+        scorer = scorer_registry.get(self.system_id)
         execution = execute_scorer(
             scorer, context.observations,
             prior_by_symbol=context.prior_scores.get(self.system_id),
@@ -57,7 +61,7 @@ class BoardHotspotSystem:
     version = BOARD_HOTSPOT_VERSION
     entity_scope = "board"
     display_name = "近期热点"
-    dependencies = ("board_hotspot_snapshots",)
+    dependencies = ("board_hotspot_features",)
 
     def definition(self) -> dict[str, object]:
         return {
@@ -75,16 +79,22 @@ class BoardHotspotSystem:
         }
 
     def execute(self, context: ObservationSystemContext) -> ObservationSystemExecution:
-        snapshots = context.dependencies["board_hotspot_snapshots"]
-        if not isinstance(snapshots, Mapping):
-            raise ValueError("board_hotspot_snapshots must be a mapping")
+        features = context.dependencies["board_hotspot_features"]
+        if not isinstance(features, Mapping):
+            raise ValueError("board_hotspot_features must be a mapping")
         prior = context.prior_scores.get(self.system_id, {})
         entities = []
         for observation in context.observations:
             symbol = str(observation["symbol"])
+            feature = _mapping(features.get(symbol))
+            feature_metrics = _mapping(feature.get("metrics"))
             entities.append({
                 **observation,
-                "hotspot_snapshot": snapshots.get(symbol, {}),
+                "coverage_state": feature.get(
+                    "coverage_state", observation.get("coverage_state")
+                ),
+                "metrics": {**_mapping(observation.get("metrics")), **feature_metrics},
+                "hotspot_snapshot": _mapping(feature.get("member_snapshot")),
                 "prior_hotspot": prior.get(symbol, {}),
             })
         scorer = _BoardHotspotScorer()

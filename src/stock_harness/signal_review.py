@@ -21,6 +21,7 @@ from stock_harness.board_leader_scan import (
     is_risk_name,
     rank_board_leaders,
 )
+from stock_harness.board_hotspot_features import extract_board_hotspot_features
 from stock_harness.analysis_projection import read_core_structural_item_ids
 from stock_harness.daily_signal_analysis import (
     CONFIG_VERSION as DAILY_CONFIG_VERSION,
@@ -68,7 +69,7 @@ WEEKLY_RECOGNITION_SIGNAL = "weekly-board-recognition"
 DEFINITION_VERSION = "weekly-board-recognition-v1"
 DAILY_MARKET_BOARD_SIGNAL = "daily-market-board-review"
 DAILY_DEFINITION_VERSION = "daily-market-board-review-v1"
-DAILY_REVIEW_ALGORITHM_VERSION = "daily-market-board-review-v4-systems-v1"
+DAILY_REVIEW_ALGORITHM_VERSION = "daily-market-board-review-v4-systems-v2"
 BOARD_POOL_VERSION = "board-observation-pool-v2"
 STOCK_OBSERVATION_SIGNAL = "stock-observation-pool"
 HISTORICAL_LIMIT = 5
@@ -184,6 +185,7 @@ class SignalReviewService:
         started = time.perf_counter()
         boards = self._boards()
         board_breadth = self._store.calculate_board_breadth_snapshots(cutoff)
+        hotspot_snapshots = self._store.calculate_board_hotspot_snapshots(cutoff)
         benchmark = self._store.get_recent_daily_bars(
             "000001.SH", cutoff, DAILY_LOOKBACK_BARS,
         )
@@ -209,6 +211,7 @@ class SignalReviewService:
             if history
         }
         observations: list[dict[str, object]] = []
+        hotspot_features: dict[str, dict[str, object]] = {}
         self._progress(run_id, "board-observations", len(boards), 0)
         for offset in range(0, len(boards), 100):
             page = boards[offset:offset + 100]
@@ -222,6 +225,13 @@ class SignalReviewService:
                 )
                 for board in page
             ]
+            for board in page:
+                symbol = str(board["symbol"])
+                hotspot_features[symbol] = extract_board_hotspot_features(
+                    series.get(symbol, []), benchmark,
+                    breadth_snapshot=board_breadth.get(symbol),
+                    member_snapshot=hotspot_snapshots.get(symbol),
+                )
             for observation in batch:
                 metrics = observation.get("metrics")
                 if isinstance(metrics, dict):
@@ -323,7 +333,6 @@ class SignalReviewService:
         observation_systems = _board_observation_system_registry()
         system_executions = observation_systems.execute_all(ObservationSystemContext(
             observations=observations,
-            scorer_registry=scorers,
             prior_scores={
                 TREND_BREAKOUT_SCORER: trend_prior,
                 BOARD_HOTSPOT_SYSTEM: hotspot_prior,
@@ -333,9 +342,8 @@ class SignalReviewService:
                 BOARD_HOTSPOT_SYSTEM: hotspot_recent,
             },
             dependencies={
-                "board_hotspot_snapshots": (
-                    self._store.calculate_board_hotspot_snapshots(cutoff)
-                ),
+                "review_scorer_registry": scorers,
+                "board_hotspot_features": hotspot_features,
             },
         ))
         system_execution_by_id = {

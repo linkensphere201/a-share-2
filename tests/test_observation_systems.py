@@ -6,7 +6,12 @@ import pytest
 
 from stock_harness.models import (
     BoardMembership, DailyBar, Instrument, InstrumentKind, StockDailyLimit,
+    StoredDailyBar,
 )
+from stock_harness.board_hotspot_evaluation import (
+    canonical_board_name, evaluate_hotspot_timelines, is_objective_confirmation,
+)
+from stock_harness.board_hotspot_features import extract_board_hotspot_features
 from stock_harness.observation_systems import (
     BOARD_HOTSPOT_SYSTEM,
     BoardHotspotSystem,
@@ -45,13 +50,18 @@ def _execute(
     snapshot: dict[str, object] | None = None,
 ) -> dict[str, object]:
     system = BoardHotspotSystem()
+    member_snapshot = snapshot or {
+        "coverage_ratio": .95, "positive_return_5_ratio": .72,
+        "limit_up_count": 2, "broken_up_count": 1,
+        "max_limit_up_streak": 2,
+    }
     result = system.execute(ObservationSystemContext(
-        observations=[observation], scorer_registry=default_scorer_registry(),
+        observations=[observation],
         prior_scores={BOARD_HOTSPOT_SYSTEM: {"BK001.DC": prior} if prior else {}},
-        dependencies={"board_hotspot_snapshots": {"BK001.DC": snapshot or {
-            "coverage_ratio": .95, "positive_return_5_ratio": .72,
-            "limit_up_count": 2, "broken_up_count": 1,
-            "max_limit_up_streak": 2,
+        dependencies={"board_hotspot_features": {"BK001.DC": {
+            "coverage_state": observation["coverage_state"],
+            "metrics": observation["metrics"],
+            "member_snapshot": member_snapshot,
         }}},
     ))
     return result.results[0]
@@ -64,10 +74,10 @@ def test_registry_rejects_duplicates_and_isolates_missing_dependencies() -> None
         registry.register(BoardHotspotSystem())
 
     execution = registry.execute_all(ObservationSystemContext(
-        observations=[], scorer_registry=default_scorer_registry(),
+        observations=[],
     ))[0]
     assert execution.results == []
-    assert execution.error == "missing dependencies: board_hotspot_snapshots"
+    assert execution.error == "missing dependencies: board_hotspot_features"
 
 
 def test_trend_plugin_is_behavior_equivalent_to_existing_scorer() -> None:
@@ -78,7 +88,8 @@ def test_trend_plugin_is_behavior_equivalent_to_existing_scorer() -> None:
     })
     plugin = TrendBreakoutSystem(scorers.get(TREND_BREAKOUT_SCORER).version)
     actual = plugin.execute(ObservationSystemContext(
-        observations=[observation], scorer_registry=scorers,
+        observations=[observation],
+        dependencies={"review_scorer_registry": scorers},
     )).results
     expected = execute_scorer(
         scorers.get(TREND_BREAKOUT_SCORER), [observation],
@@ -158,3 +169,61 @@ def test_board_hotspot_snapshot_aggregates_breadth_and_limit_streak() -> None:
     assert snapshot["max_limit_up_streak"] == 5
     assert snapshot["positive_return_5_ratio"] == 1
     store.close()
+
+
+def _stored_bars(symbol: str, closes: list[float], volumes: list[int]) -> list[StoredDailyBar]:
+    start = date(2026, 1, 1)
+    return [
+        StoredDailyBar(
+            symbol, start + timedelta(days=index), value, value, value, value,
+            volumes[index], "test", 0,
+        )
+        for index, value in enumerate(closes)
+    ]
+
+
+def test_hotspot_feature_extraction_is_causal_and_reusable() -> None:
+    closes = [100 + index * .6 for index in range(31)]
+    bars = _stored_bars("BK001.DC", closes, [100] * 26 + [150] * 5)
+    benchmark = _stored_bars("000001.SH", [100 + index * .1 for index in range(31)], [100] * 31)
+    feature = extract_board_hotspot_features(
+        bars, benchmark,
+        breadth_snapshot={"breadth": .5, "impact_concentration_hhi": .1},
+        member_snapshot={
+            "positive_return_5_ratio": .7, "limit_up_count": 1,
+            "max_limit_up_streak": 2,
+        },
+    )
+    assert feature["coverage_state"] == "complete"
+    assert feature["metrics"]["relative_strength"]["20"] > 0
+    assert feature["metrics"]["recent_volume_ratio_5_5"] == 1.5
+
+    earlier = extract_board_hotspot_features(bars[:-1], benchmark[:-1])
+    assert earlier["metrics"]["returns"]["5"] != feature["metrics"]["returns"]["5"]
+
+
+def test_hotspot_evaluator_clusters_aliases_and_measures_lead_without_future_inputs() -> None:
+    assert canonical_board_name("农业综合Ⅲ(A股)") == "农业综合"
+    feature = {
+        "metrics": {
+            "returns": {"5": .06, "20": .12},
+            "relative_strength": {"20": .05},
+            "recent_volume_ratio_5_5": 1.1,
+        },
+        "member_snapshot": {"positive_return_5_ratio": .7, "limit_up_count": 1},
+    }
+    assert is_objective_confirmation(feature)
+    timeline = [
+        {"effective_date": f"2026-01-0{index + 1}", "eligible": index == 0,
+         "hotspot_stage": "trend-emerging" if index == 0 else "failed",
+         "total_score": 55 if index == 0 else 20, "candidate_streak": 1,
+         "feature": feature if index >= 2 else {}}
+        for index in range(4)
+    ]
+    result = evaluate_hotspot_timelines(
+        {"BK001.DC": timeline}, names={"BK001.DC": "绿色电力"},
+    )
+    assert result["precision"] == 1
+    assert result["recall"] == 1
+    assert result["median_lead_sessions"] == 3
+    assert result["named_theme_hits"]["electricity"] == ["BK001.DC"]
