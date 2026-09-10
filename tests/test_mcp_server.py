@@ -59,6 +59,7 @@ def test_mcp_protocol_exposes_one_bounded_local_write_tool_and_calls_health():
                 "list_signal_runs",
                 "get_signal_run",
                 "get_signal_item",
+                "list_signal_scores",
             }
             by_name = {tool.name: tool for tool in listed.tools}
             assert by_name["save_ai_analysis"].annotations.read_only_hint is False

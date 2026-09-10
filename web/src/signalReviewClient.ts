@@ -11,6 +11,14 @@ export type SignalDefinition = {
   algorithm_version: string
   manual_only: boolean
   profiles: SignalProfile[]
+  observation_systems?: Array<{
+    system_id: string
+    version: string
+    entity_scope: string
+    display_name: string
+    dependencies: string[]
+    score_combination: 'independent'
+  }>
 }
 
 export type SignalRun = {
@@ -161,6 +169,16 @@ export type SignalScoreResult = {
   summary: string
   risk_summary: string
   change_summary: string
+  hotspot_stage?: string
+  score_direction?: 'new' | 'strengthening' | 'stable' | 'declining'
+  score_delta?: number
+  peak_score?: number
+  drawdown_from_peak?: number
+  candidate_streak?: number
+  raw_score?: number
+  limit_up_count?: number
+  broken_up_count?: number
+  max_limit_up_streak?: number
   stressed_risk_reward?: number | null
   components: Record<string, number>
   penalties: Array<{ code: string; points: number }>
@@ -196,6 +214,12 @@ export type ObservationPoolItem = {
     trend_score?: number | null
     trend_grade?: string | null
     trend_eligible?: boolean
+    hotspot_score?: number | null
+    hotspot_grade?: string | null
+    hotspot_eligible?: boolean
+    hotspot_stage?: string | null
+    hotspot_direction?: string | null
+    hotspot_peak_score?: number | null
     recognition_assignment_count?: number
     recognized?: boolean
     independent_score?: number
@@ -273,9 +297,22 @@ export async function listSignalItems(runId: string, signal?: AbortSignal): Prom
 export async function listSignalScores(
   runId: string, signal?: AbortSignal,
 ): Promise<SignalScoreResult[]> {
-  return (await json<{ items: SignalScoreResult[] }>(
-    await fetch(`/api/signals/runs/${encodeURIComponent(runId)}/scores`, { signal }),
-  )).items
+  const pageSize = 5000
+  const base = `/api/signals/runs/${encodeURIComponent(runId)}/scores`
+  const first = await json<{ items: SignalScoreResult[]; total: number }>(
+    await fetch(base, { signal }),
+  )
+  if (!Number.isFinite(first.total) || first.items.length >= first.total) return first.items
+  const offsets = []
+  for (let offset = first.items.length; offset < first.total; offset += pageSize) {
+    offsets.push(offset)
+  }
+  const pages = await Promise.all(offsets.map(async offset =>
+    json<{ items: SignalScoreResult[] }>(
+      await fetch(`${base}?limit=${pageSize}&offset=${offset}`, { signal }),
+    ),
+  ))
+  return first.items.concat(...pages.map(page => page.items))
 }
 
 export async function loadObservationPool(

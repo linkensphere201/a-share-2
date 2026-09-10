@@ -217,6 +217,22 @@ class StockHarnessMcpTools:
 
         return self._execute("get_signal_item", load)
 
+    def list_signal_scores(
+        self, run_id: str, system_id: str | None = None,
+        limit: int = MAX_SIGNAL_ITEMS,
+    ) -> dict[str, object]:
+        normalized = run_id.strip()
+        if not normalized:
+            raise ValueError("run_id is required")
+        limit = _bounded(limit, 1, MAX_SIGNAL_ITEMS, "limit")
+        params: list[tuple[str, object]] = [("limit", limit)]
+        if system_id:
+            params.append(("system_id", system_id.strip()))
+        return self._execute(
+            "list_signal_scores",
+            lambda: self.api.get(f"/api/signals/runs/{normalized}/scores", params),
+        )
+
     def search_instruments(
         self,
         query: str = "",

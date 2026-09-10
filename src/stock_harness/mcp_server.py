@@ -113,6 +113,15 @@ def build_server(
         """Read one exact immutable signal item and all of its stored evidence references."""
         return await invoke(service.get_signal_item, run_id, item_id)
 
+    @server.tool(title="List signal-system scores", annotations=READ_ONLY)
+    async def list_signal_scores(
+        run_id: Annotated[str, Field(min_length=1, max_length=64)],
+        system_id: Annotated[str | None, Field(max_length=100)] = None,
+        limit: Annotated[int, Field(ge=1, le=200)] = 200,
+    ) -> dict[str, object]:
+        """Read independent trend, hotspot, or future plugin scores for one run."""
+        return await invoke(service.list_signal_scores, run_id, system_id, limit)
+
     @server.tool(title="Search StockHarness instruments", annotations=READ_ONLY)
     async def search_instruments(
         query: Annotated[str, Field(max_length=100)] = "",

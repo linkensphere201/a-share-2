@@ -21,7 +21,8 @@ import { TradeScenarioPanel } from './TradeScenarioPanel'
 type Props = { theme: ThemeDefinition; onClose: () => void }
 type ProfileFilter = 'all' | SignalProfile
 type ChangeFilter = 'all' | SignalChangeType
-type DailyView = 'results' | 'opportunities' | 'observations' | 'board-pool' | 'stock-pool'
+type DailyView = 'results' | 'opportunities' | 'hotspots' | 'observations' | 'board-pool' | 'stock-pool'
+type HotspotFilter = 'all' | 'rising' | 'confirmed' | 'fading'
 type PoolLifecycleFilter = 'all' | ObservationPoolItem['lifecycle_state']
 type PoolPresentationView = 'focus' | 'opportunity' | 'risk' | 'all'
 
@@ -75,6 +76,7 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
   const [attention, setAttention] = useState<SignalAttention[]>([])
   const [scores, setScores] = useState<SignalScoreResult[]>([])
   const [selectedScoreSystem, setSelectedScoreSystem] = useState('trend-breakout')
+  const [hotspotFilter, setHotspotFilter] = useState<HotspotFilter>('rising')
   const [historySelection, setHistorySelection] = useState<{ symbol: string; entityKey?: string }>()
   const [exactAnalysis, setExactAnalysis] = useState<TrendAnalysisRun | null>(null)
   const [evidenceHeight, setEvidenceHeight] = useState(() => {
@@ -161,7 +163,7 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
   }, [selectedDefinition, selectedRun?.status])
 
   useEffect(() => {
-    if (!['opportunities', 'observations'].includes(dailyView) || !selectedRun || selectedRun.status !== 'succeeded') {
+    if (!['opportunities', 'hotspots', 'observations'].includes(dailyView) || !selectedRun || selectedRun.status !== 'succeeded') {
       setObservations([])
       setObservationTotal(0)
       setSelectedObservation(undefined)
@@ -257,13 +259,24 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
   }, [scores])
   const displayedObservations = useMemo(() => [...observations]
     .filter(item => dailyView !== 'opportunities' || scoreBySymbol.get(item.symbol)?.eligible)
+    .filter(item => dailyView !== 'hotspots' || hotspotMatches(
+      scoreBySymbol.get(item.symbol), hotspotFilter,
+    ))
     .sort((left, right) => {
       const leftScore = scoreBySymbol.get(left.symbol)
       const rightScore = scoreBySymbol.get(right.symbol)
       return Number(Boolean(rightScore?.eligible)) - Number(Boolean(leftScore?.eligible))
         || (rightScore?.total_score ?? -1) - (leftScore?.total_score ?? -1)
         || left.symbol.localeCompare(right.symbol)
-    }), [dailyView, observations, scoreBySymbol])
+    }), [dailyView, hotspotFilter, observations, scoreBySymbol])
+  const hotspotSummary = useMemo(() => {
+    const values = scores.filter(item => item.system_id === 'board-hotspot-emergence')
+    return {
+      rising: values.filter(item => item.score_direction === 'strengthening').length,
+      confirmed: values.filter(item => ['hotspot-confirmed', 'accelerating'].includes(item.hotspot_stage ?? '')).length,
+      fading: values.filter(item => ['diverging', 'exhausted'].includes(item.hotspot_stage ?? '')).length,
+    }
+  }, [scores])
   const displayedPoolItems = useMemo(() => {
     const query = poolQuery.trim().toLocaleLowerCase()
     return [...(observationPool?.items ?? [])].filter(item =>
@@ -465,6 +478,7 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
       <div className="signal-column-resizer" role="separator" aria-orientation="vertical" aria-label="调整历史轮次栏宽度" title="左右拖动调整历史轮次栏宽度" onPointerDown={event => startColumnResize('runs', event)}/>
       <section className="signal-results">
         <header><span>{dailyView === 'observations' ? '全部板块观察'
+          : dailyView === 'hotspots' ? '近期热点雷达'
           : dailyView === 'opportunities' ? '板块机会评分'
             : dailyView === 'board-pool' ? '板块观察池'
               : dailyView === 'stock-pool' ? '个股观察池' : '复盘结果'}</span><small>{['board-pool', 'stock-pool'].includes(dailyView)
@@ -475,11 +489,15 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
         {daily && <div className="signal-view-switch">
           <button className={dailyView === 'results' ? 'active' : ''} onClick={() => { setDailyView('results'); setSelectedObservation(undefined); setSelectedPoolItem(undefined) }}><ListFilter size={12}/>今日关注</button>
           <button className={dailyView === 'opportunities' ? 'active' : ''} onClick={() => { setDailyView('opportunities'); setSelectedItem(undefined); setSelectedPoolItem(undefined); setChatOpen(false) }}><Radar size={12}/>机会评分</button>
+          <button className={dailyView === 'hotspots' ? 'active' : ''} onClick={() => { setDailyView('hotspots'); setSelectedScoreSystem('board-hotspot-emergence'); setSelectedItem(undefined); setSelectedPoolItem(undefined); setChatOpen(false) }}><Radar size={12}/>近期热点</button>
           <button className={dailyView === 'observations' ? 'active' : ''} onClick={() => { setDailyView('observations'); setSelectedItem(undefined); setSelectedPoolItem(undefined); setChatOpen(false) }}><Eye size={12}/>全部观察</button>
           <button className={dailyView === 'board-pool' ? 'active' : ''} onClick={() => { setDailyView('board-pool'); setSelectedItem(undefined); setSelectedObservation(undefined) }}><Layers3 size={12}/>板块池</button>
           <button className={dailyView === 'stock-pool' ? 'active' : ''} onClick={() => { setDailyView('stock-pool'); setSelectedItem(undefined); setSelectedObservation(undefined) }}><Boxes size={12}/>个股池</button>
         </div>}
-        {daily && boardScoreSystems.length > 0 && <label className="signal-score-system-select">评分体系<select aria-label="评分体系" value={selectedScoreSystem} onChange={event => setSelectedScoreSystem(event.target.value)}>{boardScoreSystems.map(system => <option key={system} value={system}>{system === 'trend-breakout' ? '趋势突破' : system}</option>)}</select></label>}
+        {daily && boardScoreSystems.length > 0 && <label className="signal-score-system-select">评分体系<select aria-label="评分体系" value={selectedScoreSystem} onChange={event => setSelectedScoreSystem(event.target.value)}>{boardScoreSystems.map(system => <option key={system} value={system}>{scoreSystemLabel(system)}</option>)}</select></label>}
+        {dailyView === 'hotspots' && <div className="signal-hotspot-filters" aria-label="热点阶段筛选">
+          {(['all', 'rising', 'confirmed', 'fading'] as HotspotFilter[]).map(value => <button key={value} className={hotspotFilter === value ? 'active' : ''} onClick={() => setHotspotFilter(value)}>{hotspotFilterLabel(value)}<small>{value === 'all' ? scores.filter(item => item.system_id === 'board-hotspot-emergence' && item.hotspot_stage !== 'failed').length : hotspotSummary[value]}</small></button>)}
+        </div>}
         {daily && hardEventSummary.total > 0 && <div className="signal-hard-event-strip" role="status">
           <span>硬异动 {hardEventSummary.total}</span>
           {hardEventSummary.counts.slice(0, 4).map(([eventType, count]) => <small key={eventType}>{hardEventLabel(eventType)} {count}</small>)}
@@ -591,6 +609,9 @@ function poolPresentationCount(
 }
 
 function poolClassification(item: ObservationPoolItem) {
+  if (item.payload.hotspot_eligible && !item.payload.trend_eligible) {
+    return `热点 · ${hotspotStageLabel(item.payload.hotspot_stage ?? undefined)}`
+  }
   const classification = item.payload.opportunity_classification?.classification
   const labels: Record<string, string> = {
     'recognition-opportunity': '辨识度机会',
@@ -606,7 +627,7 @@ function poolClassification(item: ObservationPoolItem) {
 function PoolScoreBadge({ item }: { item: ObservationPoolItem }) {
   const score = item.payload.opportunity_score
   const fallback = item.kind === 'sector'
-    ? item.payload.trend_score ?? undefined
+    ? item.payload.trend_score ?? item.payload.hotspot_score ?? undefined
     : item.payload.independent_score
   return <ScoreBadge score={score} fallback={fallback} rank={item.rank}/>
 }
@@ -657,6 +678,11 @@ function ScoreSummary({ score, onHistorySelect }: {
     <div><span>{score.verdict}</span><p>{score.summary}</p><small>{score.risk_summary}</small></div>
     <ScoreSparkline score={score} onHistorySelect={onHistorySelect}/>
     <em>{score.change_summary}</em>
+    {score.system_id === 'board-hotspot-emergence' && <div className="signal-hotspot-state">
+      <span className={score.score_direction ?? 'stable'}>{hotspotStageLabel(score.hotspot_stage)}<small>{score.score_direction === 'strengthening' ? '持续增强' : score.score_direction === 'declining' ? '正在衰退' : score.score_direction === 'new' ? '首次识别' : '强度稳定'}</small></span>
+      <span>连续 {score.candidate_streak ?? 0} 日<small>峰值 {(score.peak_score ?? score.total_score).toFixed(0)} · 回撤 {(score.drawdown_from_peak ?? 0).toFixed(0)}</small></span>
+      <span>{score.limit_up_count ?? 0} 家涨停<small>最高 {score.max_limit_up_streak ?? 0} 连板 · 破板 {score.broken_up_count ?? 0}</small></span>
+    </div>}
     {score.hard_events.length > 0 && <div className="signal-hard-events">{score.hard_events.slice(0, 3).map(event => <span key={event.event_type} className={`${event.direction} ${event.severity}`}>{hardEventLabel(event.event_type)}</span>)}</div>}
     <details className="signal-score-diagnostics"><summary>评分明细</summary>
       <div>{Object.entries(score.components).map(([name, value]) => <span key={name}>{name}<small>{value.toFixed(1)}</small></span>)}</div>
@@ -664,6 +690,36 @@ function ScoreSummary({ score, onHistorySelect }: {
       {score.penalties.length > 0 && <p>扣分：{score.penalties.map(item => `${item.code} ${item.points}`).join(' · ')}</p>}
     </details>
   </section>
+}
+
+function scoreSystemLabel(system: string) {
+  return {
+    'trend-breakout': '趋势突破',
+    'board-hotspot-emergence': '近期热点',
+  }[system] ?? system
+}
+
+function hotspotStageLabel(stage?: string) {
+  return {
+    'leader-ignited': '龙头点火',
+    'trend-emerging': '趋势形成',
+    'breadth-expanding': '扩散增强',
+    'hotspot-confirmed': '热点确认',
+    accelerating: '加速', diverging: '分歧衰减', exhausted: '退潮', failed: '未形成',
+  }[stage ?? ''] ?? '数据不足'
+}
+
+function hotspotFilterLabel(value: HotspotFilter) {
+  return { all: '全部有效', rising: '持续增强', confirmed: '已确认', fading: '分歧/退潮' }[value]
+}
+
+function hotspotMatches(score: SignalScoreResult | undefined, filter: HotspotFilter) {
+  if (!score || score.system_id !== 'board-hotspot-emergence' || score.hotspot_stage === 'failed') return false
+  if (filter === 'all') return true
+  if (filter === 'rising') return score.score_direction === 'strengthening'
+    && ((score.candidate_streak ?? 0) >= 1 || (score.max_limit_up_streak ?? 0) >= 2)
+  if (filter === 'confirmed') return ['hotspot-confirmed', 'accelerating'].includes(score.hotspot_stage ?? '')
+  return ['diverging', 'exhausted'].includes(score.hotspot_stage ?? '')
 }
 
 function ScoreSparkline({ score, onHistorySelect }: {

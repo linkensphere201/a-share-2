@@ -528,9 +528,9 @@ def test_daily_signal_persists_every_board_but_displays_attention_only() -> None
     assert loud_observation["deep_analysis_run_id"]
     items = store.list_signal_review_items(str(run["run_id"]))
     scores = store.list_signal_review_scores(str(run["run_id"]))
-    assert len(scores) == 4
+    assert len(scores) == 6
     assert {score["system_id"] for score in scores} == {
-        "market-regime", "trend-breakout",
+        "board-hotspot-emergence", "market-regime", "trend-breakout",
     }
     assert all(score["participant_count"] == 2 for score in scores)
     assert {item["symbol"] for item in items if item["profile"] == "attention"} == {"BK002.DC"}
@@ -696,6 +696,7 @@ def test_board_observation_pool_unions_scores_anomalies_and_recognition() -> Non
     store.upsert_instruments([
         Instrument("BK001.DC", "Score Board", InstrumentKind.SECTOR, "DC"),
         Instrument("BK002.DC", "Anomaly Board", InstrumentKind.SECTOR, "DC"),
+        Instrument("BK003.DC", "Hotspot Board", InstrumentKind.SECTOR, "DC"),
         Instrument("000001.SZ", "Leader", InstrumentKind.STOCK, "SZ"),
     ])
     recognition = store.create_signal_review_run(
@@ -728,6 +729,12 @@ def test_board_observation_pool_unions_scores_anomalies_and_recognition() -> Non
     }]
     snapshot = _build_board_pool_snapshot(
         store, str(daily["run_id"]), effective, scores, [], None,
+        hotspot_scores=[{
+            "symbol": "BK003.DC", "entity_key": "BK003.DC", "eligible": True,
+            "rank": 1, "total_score": 78, "grade": "A",
+            "hotspot_stage": "accelerating", "score_direction": "strengthening",
+            "candidate_streak": 3, "peak_score": 78,
+        }],
     )
     store.complete_signal_review_run(
         str(daily["run_id"]), items=[], summary={}, input_digest="daily",
@@ -736,8 +743,10 @@ def test_board_observation_pool_unions_scores_anomalies_and_recognition() -> Non
 
     stored = store.get_observation_pool_snapshot(str(daily["run_id"]), "board")
     assert stored is not None
-    assert [item["symbol"] for item in stored["items"]] == ["BK001.DC", "BK002.DC"]
-    scored = stored["items"][0]
+    assert {item["symbol"] for item in stored["items"]} == {
+        "BK001.DC", "BK002.DC", "BK003.DC",
+    }
+    scored = next(item for item in stored["items"] if item["symbol"] == "BK001.DC")
     assert scored["lifecycle_state"] == "new"
     assert {source["source_type"] for source in scored["sources"]} == {
         "trend-score", "recognition-assignment",
@@ -749,9 +758,12 @@ def test_board_observation_pool_unions_scores_anomalies_and_recognition() -> Non
     assert recognition_source["source_reference"] == recognition["run_id"]
     assert recognition_source["payload"]["member_symbol"] == "000001.SZ"
     assert recognition_source["payload"]["recognition_role"] == "recent-rank-1"
-    anomaly = stored["items"][1]
+    anomaly = next(item for item in stored["items"] if item["symbol"] == "BK002.DC")
     assert anomaly["payload"]["trend_eligible"] is False
     assert anomaly["sources"][0]["reason"] == "sudden-volume-expansion"
+    hotspot = next(item for item in stored["items"] if item["symbol"] == "BK003.DC")
+    assert hotspot["payload"]["hotspot_stage"] == "accelerating"
+    assert hotspot["sources"][0]["source_type"] == "hotspot-emergence"
 
     context = build_signal_chat_context(
         store, run_id=str(daily["run_id"]),
@@ -769,7 +781,7 @@ def test_board_observation_pool_unions_scores_anomalies_and_recognition() -> Non
             f"/api/observation-pools/runs/{daily['run_id']}/board"
         )
     assert response.status_code == 200
-    assert response.json()["summary"]["item_count"] == 2
+    assert response.json()["summary"]["item_count"] == 3
     store.close()
 
 

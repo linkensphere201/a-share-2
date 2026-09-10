@@ -180,6 +180,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .signal-hard-event-strip { min-height: 27px; display: flex; align-items: center; gap: 6px; overflow: hidden; padding: 3px 8px; color: var(--theme-muted); border-bottom: 1px solid var(--theme-border); background: color-mix(in srgb, #d8aa4f 5%, var(--theme-surface)); font-size: 8px; }
 .signal-hard-event-strip > span { flex: 0 0 auto; color: #d8aa4f; font-size: 9px; }
 .signal-hard-event-strip small { overflow: hidden; padding: 2px 4px; color: var(--theme-muted); border: 1px solid color-mix(in srgb, #d8aa4f 28%, var(--theme-border)); border-radius: 2px; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.signal-hotspot-filters { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; padding: 4px 6px; border-bottom: 1px solid var(--theme-border); background: var(--theme-surface); }
+.signal-hotspot-filters button { display: flex; min-width: 0; height: 28px; align-items: center; justify-content: center; gap: 4px; color: var(--theme-muted); border: 1px solid transparent; background: transparent; font-size: 8px; }
+.signal-hotspot-filters button.active { color: var(--theme-text-strong); border-color: color-mix(in srgb, #d8aa4f 42%, var(--theme-border)); background: color-mix(in srgb, #d8aa4f 8%, var(--theme-base)); }
+.signal-hotspot-filters small { color: #d8aa4f; font-size: 8px; }
 .signal-observation-search { height: 31px; display: grid; grid-template-columns: 15px minmax(0, 1fr); align-items: center; gap: 4px; padding: 3px 8px; color: var(--theme-muted); border-bottom: 1px solid var(--theme-border); }
 .signal-observation-search input { min-width: 0; height: 23px; padding: 0 6px; color: var(--theme-text); border: 1px solid var(--theme-border); border-radius: 2px; outline: 0; background: var(--theme-base); font-size: 9px; }
 .signal-observation-search input:focus { border-color: var(--theme-accent); }
@@ -228,6 +232,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .signal-score-summary p { margin: 2px 0; color: var(--theme-text); font-size: 9px; line-height: 1.4; }
 .signal-score-summary small { color: var(--theme-muted); font-size: 8px; line-height: 1.35; }
 .signal-score-summary > em { grid-column: 2 / -1; color: var(--theme-muted); font-size: 8px; font-style: normal; }
+.signal-hotspot-state { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; padding-top: 5px; border-top: 1px solid var(--theme-border); }
+.signal-hotspot-state > span { min-width: 0; padding: 4px 5px; color: var(--theme-text); border-left: 2px solid #6d91a8; background: color-mix(in srgb, #6d91a8 6%, var(--theme-base)); font-size: 9px; }
+.signal-hotspot-state > span.strengthening { border-left-color: #d85a57; }
+.signal-hotspot-state > span.declining { border-left-color: #4b9b67; }
+.signal-hotspot-state small { display: block; overflow: hidden; margin-top: 2px; text-overflow: ellipsis; white-space: nowrap; }
 .signal-score-sparkline { justify-self: end; overflow: visible; }
 .signal-score-sparkline polyline { fill: none; stroke: currentColor; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
 .signal-score-sparkline circle { fill: var(--theme-surface); stroke: currentColor; stroke-width: 1.2; cursor: pointer; }

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 import json
 
 from stock_harness.models import StockDailyLimit, StoredDailyBar
@@ -224,6 +224,152 @@ class SQLiteSignalObservationStoreMixin:
             "concentration_method": "abs-return-close-volume-hhi-v1",
             "membership_semantics": "current-active-membership",
         } for row in rows}
+
+    def calculate_board_hotspot_snapshots(
+        self, effective_date: date,
+    ) -> dict[str, dict[str, object]]:
+        """Aggregate causal member participation and limit-up facts per board."""
+        trade_key = _date_key(effective_date)
+        lower_key = _date_key(effective_date - timedelta(days=30))
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                WITH recent AS MATERIALIZED (
+                    SELECT bar.instrument_id, bar.trade_date, bar.high, bar.close,
+                           limits.up_limit,
+                           lead(bar.close) OVER (
+                               PARTITION BY bar.instrument_id
+                               ORDER BY bar.trade_date DESC
+                           ) AS previous_close,
+                           row_number() OVER (
+                               PARTITION BY bar.instrument_id
+                               ORDER BY bar.trade_date DESC
+                           ) AS rn
+                    FROM daily_bars AS bar
+                    JOIN instruments AS stock USING (instrument_id)
+                    LEFT JOIN stock_daily_limits AS limits
+                      ON limits.instrument_id = bar.instrument_id
+                     AND limits.trade_date = bar.trade_date
+                    WHERE stock.kind = 'stock' AND stock.active = 1
+                      AND bar.trade_date BETWEEN ? AND ?
+                ), pivoted AS MATERIALIZED (
+                    SELECT instrument_id,
+                           max(CASE WHEN rn = 1 THEN close END) AS close_0,
+                           max(CASE WHEN rn = 2 THEN close END) AS close_1,
+                           max(CASE WHEN rn = 6 THEN close END) AS close_5,
+                           max(CASE WHEN rn = 1 THEN
+                               CASE WHEN (up_limit IS NOT NULL
+                                          AND close >= up_limit - 0.005)
+                                          OR (up_limit IS NULL AND previous_close > 0
+                                              AND close / previous_close >= 1.095)
+                                    THEN 1 ELSE 0 END END) AS sealed_1,
+                           max(CASE WHEN rn = 2 THEN
+                               CASE WHEN (up_limit IS NOT NULL
+                                          AND close >= up_limit - 0.005)
+                                          OR (up_limit IS NULL AND previous_close > 0
+                                              AND close / previous_close >= 1.095)
+                                    THEN 1 ELSE 0 END END) AS sealed_2,
+                           max(CASE WHEN rn = 3 THEN
+                               CASE WHEN (up_limit IS NOT NULL
+                                          AND close >= up_limit - 0.005)
+                                          OR (up_limit IS NULL AND previous_close > 0
+                                              AND close / previous_close >= 1.095)
+                                    THEN 1 ELSE 0 END END) AS sealed_3,
+                           max(CASE WHEN rn = 4 THEN
+                               CASE WHEN (up_limit IS NOT NULL
+                                          AND close >= up_limit - 0.005)
+                                          OR (up_limit IS NULL AND previous_close > 0
+                                              AND close / previous_close >= 1.095)
+                                    THEN 1 ELSE 0 END END) AS sealed_4,
+                           max(CASE WHEN rn = 5 THEN
+                               CASE WHEN (up_limit IS NOT NULL
+                                          AND close >= up_limit - 0.005)
+                                          OR (up_limit IS NULL AND previous_close > 0
+                                              AND close / previous_close >= 1.095)
+                                    THEN 1 ELSE 0 END END) AS sealed_5,
+                           max(CASE WHEN rn = 1 THEN
+                               CASE WHEN up_limit IS NOT NULL
+                                          AND high >= up_limit - 0.005
+                                          AND close < up_limit - 0.005
+                                    THEN 1 ELSE 0 END END) AS broken_1,
+                           max(CASE WHEN rn = 1 THEN
+                               CASE WHEN up_limit IS NOT NULL THEN 1 ELSE 0 END END
+                           ) AS limit_covered
+                    FROM recent WHERE rn <= 6 GROUP BY instrument_id
+                ), features AS MATERIALIZED (
+                    SELECT instrument_id, close_0, close_1, close_5,
+                           sealed_1, broken_1, limit_covered,
+                           CASE
+                             WHEN coalesce(sealed_1, 0) = 0 THEN 0
+                             WHEN coalesce(sealed_2, 0) = 0 THEN 1
+                             WHEN coalesce(sealed_3, 0) = 0 THEN 2
+                             WHEN coalesce(sealed_4, 0) = 0 THEN 3
+                             WHEN coalesce(sealed_5, 0) = 0 THEN 4
+                             ELSE 5
+                           END AS limit_streak
+                    FROM pivoted
+                    WHERE close_0 IS NOT NULL
+                ), memberships AS MATERIALIZED (
+                    SELECT DISTINCT membership.board_instrument_id,
+                                    stock.instrument_id AS stock_instrument_id
+                    FROM board_memberships AS membership
+                    JOIN instruments AS board
+                      ON board.instrument_id = membership.board_instrument_id
+                    JOIN instruments AS stock
+                      ON stock.symbol = membership.member_symbol
+                    WHERE membership.active = 1 AND board.active = 1
+                      AND board.kind = 'sector' AND stock.kind = 'stock'
+                )
+                SELECT board.symbol, count(*), count(features.close_0),
+                       sum(coalesce(features.sealed_1, 0)),
+                       sum(coalesce(features.broken_1, 0)),
+                       max(coalesce(features.limit_streak, 0)),
+                       sum(CASE WHEN features.close_5 > 0
+                                     AND features.close_0 > features.close_5
+                                THEN 1 ELSE 0 END),
+                       sum(CASE WHEN features.close_5 > 0 THEN 1 ELSE 0 END),
+                       max(CASE WHEN features.close_5 > 0
+                                THEN features.close_0 / features.close_5 - 1 END),
+                       avg(CASE WHEN features.close_5 > 0
+                                THEN features.close_0 / features.close_5 - 1 END),
+                       sum(coalesce(features.limit_covered, 0))
+                FROM memberships
+                JOIN instruments AS board
+                  ON board.instrument_id = memberships.board_instrument_id
+                LEFT JOIN features
+                  ON features.instrument_id = memberships.stock_instrument_id
+                GROUP BY memberships.board_instrument_id, board.symbol
+                """, (lower_key, trade_key),
+            ).fetchall()
+        result = {}
+        for row in rows:
+            member_count = int(row[1])
+            covered = int(row[2])
+            return_covered = int(row[7])
+            result[str(row[0])] = {
+                "member_count": member_count,
+                "covered_member_count": covered,
+                "coverage_ratio": round(covered / member_count, 6) if member_count else 0.0,
+                "limit_up_count": int(row[3]),
+                "broken_up_count": int(row[4]),
+                "max_limit_up_streak": int(row[5]),
+                "positive_return_5_count": int(row[6]),
+                "return_5_covered_count": return_covered,
+                "positive_return_5_ratio": (
+                    round(int(row[6]) / return_covered, 6) if return_covered else None
+                ),
+                "max_member_return_5": round(float(row[8]), 6) if row[8] is not None else None,
+                "average_member_return_5": round(float(row[9]), 6) if row[9] is not None else None,
+                "limit_coverage_ratio": (
+                    round(int(row[10]) / covered, 6) if covered else 0.0
+                ),
+                "limit_metric_mode": (
+                    "official" if covered and int(row[10]) / covered >= .9
+                    else "official-plus-return-proxy"
+                ),
+                "membership_semantics": "current-active-membership",
+            }
+        return result
 
     def _ensure_signal_observation_columns(self) -> None:
         with self._lock, self._writer_lock:

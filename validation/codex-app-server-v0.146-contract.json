@@ -52,6 +52,7 @@
       "list_instrument_members",
       "list_signal_definitions",
       "list_signal_runs",
+      "list_signal_scores",
       "list_symbol_boards",
       "recalculate_trend_analysis",
       "search_instruments",
