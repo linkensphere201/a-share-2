@@ -9,7 +9,7 @@ import re
 from stock_harness.board_hotspot_features import hotspot_feature_value
 
 
-BOARD_HOTSPOT_EVALUATOR_VERSION = "board-hotspot-evaluator-v1"
+BOARD_HOTSPOT_EVALUATOR_VERSION = "board-hotspot-evaluator-v2-theme-visible"
 _ROMAN_SUFFIX = re.compile(r"[ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩ]+(?:\(A股\))?$")
 _GENERIC_SUFFIX = re.compile(r"(?:指数|板块)$")
 
@@ -62,20 +62,30 @@ def evaluate_hotspot_timelines(
     lead_window: int = 10,
     cooldown: int = 10,
     visible_only: bool = False,
+    theme_profiles: Mapping[str, Mapping[str, object]] | None = None,
 ) -> dict[str, object]:
     """Compare radar episodes with independent two-session confirmations."""
     names = names or {}
     signals: list[dict[str, object]] = []
     confirmations: list[dict[str, object]] = []
     theme_hits: dict[str, list[str]] = {}
-    for symbol, source_rows in timelines.items():
+    evaluation_series = (
+        _visible_theme_timelines(timelines, names, theme_profiles or {})
+        if visible_only else {
+            symbol: (names.get(symbol, symbol), list(rows))
+            for symbol, rows in timelines.items()
+        }
+    )
+    for cluster, (series_name, source_rows) in evaluation_series.items():
         rows = sorted(source_rows, key=lambda row: str(row["effective_date"]))
+        cluster_key = cluster if visible_only else canonical_board_name(series_name)
         signal_indexes = _episode_indexes(
             [_is_radar_signal(row, visible_only=visible_only) for row in rows], cooldown,
         )
-        raw_confirm = [
-            is_objective_confirmation(_mapping(row.get("feature"))) for row in rows
-        ]
+        raw_confirm = [bool(row.get("_objective_confirmation"))
+                       if "_objective_confirmation" in row
+                       else is_objective_confirmation(_mapping(row.get("feature")))
+                       for row in rows]
         confirmed = [
             current and index > 0 and raw_confirm[index - 1]
             for index, current in enumerate(raw_confirm)
@@ -85,9 +95,9 @@ def evaluate_hotspot_timelines(
             future = next((candidate for candidate in confirmation_indexes
                            if index <= candidate <= index + lead_window), None)
             item = {
-                "symbol": symbol,
-                "name": names.get(symbol, symbol),
-                "cluster_key": canonical_board_name(names.get(symbol, symbol)),
+                "symbol": str(rows[index].get("symbol") or cluster),
+                "name": str(rows[index].get("name") or series_name),
+                "cluster_key": cluster_key,
                 "signal_date": str(rows[index]["effective_date"]),
                 "confirmation_date": (
                     str(rows[future]["effective_date"]) if future is not None else None
@@ -97,12 +107,12 @@ def evaluate_hotspot_timelines(
             signals.append(item)
             theme = named_theme(str(item["name"]))
             if theme and future is not None:
-                theme_hits.setdefault(theme, []).append(symbol)
+                theme_hits.setdefault(theme, []).append(str(item["symbol"]))
         for index in confirmation_indexes:
             prior = next((candidate for candidate in reversed(signal_indexes)
                           if index - lead_window <= candidate <= index), None)
             confirmations.append({
-                "symbol": symbol,
+                "symbol": str(rows[index].get("symbol") or cluster),
                 "confirmation_date": str(rows[index]["effective_date"]),
                 "preceded_by_signal": prior is not None,
                 "lead_sessions": index - prior if prior is not None else None,
@@ -120,8 +130,59 @@ def evaluate_hotspot_timelines(
         "recall": round(len(recalled) / len(confirmations), 4) if confirmations else None,
         "median_lead_sessions": _median(leads),
         "named_theme_hits": {key: sorted(set(value)) for key, value in theme_hits.items()},
+        "theme_registry_version": next((
+            str(profile.get("registry_version"))
+            for profile in (theme_profiles or {}).values()
+            if profile.get("registry_version")
+        ), None),
         "events": signals,
     }
+
+
+def _visible_theme_timelines(
+    timelines: Mapping[str, Sequence[Mapping[str, object]]],
+    names: Mapping[str, str],
+    theme_profiles: Mapping[str, Mapping[str, object]],
+) -> dict[str, tuple[str, list[dict[str, object]]]]:
+    """Merge provider aliases by theme and date for user-visible evaluation."""
+    grouped: dict[str, dict[str, list[dict[str, object]]]] = {}
+    theme_names: dict[str, str] = {}
+    for symbol, rows in timelines.items():
+        name = names.get(symbol, symbol)
+        profile = theme_profiles.get(symbol, {})
+        cluster = str(profile.get("theme_id") or canonical_board_name(name))
+        theme_names.setdefault(cluster, str(profile.get("theme_name") or name))
+        for source in rows:
+            row = dict(source)
+            row.setdefault("symbol", symbol)
+            row.setdefault("name", name)
+            grouped.setdefault(cluster, {}).setdefault(
+                str(row["effective_date"]), []
+            ).append(row)
+    result: dict[str, tuple[str, list[dict[str, object]]]] = {}
+    for cluster, by_date in grouped.items():
+        merged = []
+        for effective_date, rows in sorted(by_date.items()):
+            visible = [row for row in rows if bool(row.get("radar_visible"))]
+            representative = max(
+                visible or rows,
+                key=lambda row: (
+                    float(row.get("visibility_score") or 0),
+                    float(row.get("total_score") or 0),
+                    str(row.get("symbol") or ""),
+                ),
+            )
+            merged.append({
+                **representative,
+                "effective_date": effective_date,
+                "radar_visible": bool(visible),
+                "_objective_confirmation": any(
+                    is_objective_confirmation(_mapping(row.get("feature")))
+                    for row in rows
+                ),
+            })
+        result[cluster] = (theme_names[cluster], merged)
+    return result
 
 
 def _is_radar_signal(

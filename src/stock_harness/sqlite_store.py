@@ -54,6 +54,8 @@ from stock_harness.sqlite_signal_review_store import SQLiteSignalReviewStoreMixi
 from stock_harness.sqlite_signal_observation_store import SQLiteSignalObservationStoreMixin
 from stock_harness.sqlite_observation_pool_store import SQLiteObservationPoolStoreMixin
 from stock_harness.sqlite_market_liquidity_store import SQLiteMarketLiquidityStoreMixin
+from stock_harness.sqlite_board_capacity_store import SQLiteBoardCapacityStoreMixin
+from stock_harness.sqlite_board_theme_store import SQLiteBoardThemeStoreMixin
 
 
 from stock_harness.sqlite_schema import (
@@ -67,6 +69,8 @@ LOGGER = logging.getLogger(__name__)
 
 
 class SQLiteMarketDataStore(
+    SQLiteBoardThemeStoreMixin,
+    SQLiteBoardCapacityStoreMixin,
     SQLiteMarketLiquidityStoreMixin,
     SQLiteObservationPoolStoreMixin,
     SQLiteSignalObservationStoreMixin,
@@ -144,6 +148,7 @@ class SQLiteMarketDataStore(
         self._ensure_generated_analysis_scenario_type()
         self._ensure_active_market_value_diagnostics()
         self._ensure_signal_observation_columns()
+        self.ensure_board_theme_registry()
         self._backfill_pinyin_aliases()
 
     def _ensure_generated_analysis_scenario_type(self) -> None:

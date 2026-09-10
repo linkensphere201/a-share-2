@@ -689,6 +689,7 @@ function ScoreSummary({ score, onHistorySelect }: {
       <span className={score.score_direction ?? 'stable'}>{hotspotStageLabel(score.hotspot_stage)}<small>{score.score_direction === 'strengthening' ? '持续增强' : score.score_direction === 'declining' ? '正在衰退' : score.score_direction === 'new' ? '首次识别' : '强度稳定'}</small></span>
       <span>连续 {score.candidate_streak ?? 0} 日<small>峰值 {(score.peak_score ?? score.total_score).toFixed(0)} · 回撤 {(score.drawdown_from_peak ?? 0).toFixed(0)}</small></span>
       <span>{score.limit_up_count ?? 0} 家涨停<small>最高 {score.max_limit_up_streak ?? 0} 连板 · 破板 {score.broken_up_count ?? 0}</small></span>
+      <span>{score.theme_name ?? boardCapacityLabel(score.board_capacity_tier)}<small>{score.theme_parent_name ? `${score.theme_parent_name} · ` : ''}{boardCapacityLabel(score.board_capacity_tier)} · 匹配 {score.capacity_fit_score?.toFixed(0) ?? '-'}</small></span>
     </div>}
     {score.hard_events.length > 0 && <div className="signal-hard-events">{score.hard_events.slice(0, 3).map(event => <span key={event.event_type} className={`${event.direction} ${event.severity}`}>{hardEventLabel(event.event_type)}</span>)}</div>}
     <details className="signal-score-diagnostics"><summary>评分明细</summary>
@@ -722,6 +723,10 @@ function hotspotFilterLabel(value: HotspotFilter) {
 
 function marketCapacityLabel(value?: string) {
   return ({ low: '低容量', medium: '中容量', high: '高容量' } as Record<string, string>)[value ?? ''] ?? '容量未知'
+}
+
+function boardCapacityLabel(value?: string) {
+  return ({ micro: '微容量板块', small: '小容量板块', medium: '中容量板块', large: '大容量板块', mega: '超大容量板块' } as Record<string, string>)[value ?? ''] ?? '板块容量未知'
 }
 
 function marketDirectionLabel(value?: string) {

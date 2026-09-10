@@ -184,6 +184,23 @@ export type SignalScoreResult = {
   market_liquidity_direction?: string
   market_liquidity_raw_seats?: number
   market_liquidity_seat_streak?: number
+  board_capacity_version?: string
+  board_capacity_tier?: 'micro' | 'small' | 'medium' | 'large' | 'mega' | 'unknown'
+  board_turnover_capacity_20?: number | null
+  board_turnover_intensity?: number | null
+  board_capacity_member_count?: number
+  board_capacity_coverage_ratio?: number | null
+  board_capacity_concentration_hhi?: number | null
+  capacity_compatible?: boolean
+  capacity_market_preferred?: boolean
+  capacity_fit_score?: number
+  visibility_score?: number
+  capacity_fit_reasons?: string[]
+  theme_registry_version?: string
+  theme_name?: string
+  theme_parent_id?: string | null
+  theme_parent_name?: string | null
+  theme_match_method?: 'explicit-alias' | 'canonical-name-fallback' | string
   score_direction?: 'new' | 'strengthening' | 'stable' | 'declining'
   score_delta?: number
   peak_score?: number

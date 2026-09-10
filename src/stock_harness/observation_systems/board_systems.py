@@ -9,6 +9,7 @@ from stock_harness.observation_systems.contracts import (
     ObservationSystemExecution,
 )
 from stock_harness.board_hotspot_evaluation import canonical_board_name
+from stock_harness.board_capacity import market_capacity_fit
 from stock_harness.market_liquidity import stabilize_seat_budget
 from stock_harness.review_scoring import (
     ReviewScorerRegistry,
@@ -20,7 +21,7 @@ from stock_harness.review_scoring import (
 
 
 BOARD_HOTSPOT_SYSTEM = "board-hotspot-emergence"
-BOARD_HOTSPOT_VERSION = "board-hotspot-emergence-v3-shape-liquidity"
+BOARD_HOTSPOT_VERSION = "board-hotspot-emergence-v4-board-capacity"
 
 
 class TrendBreakoutSystem:
@@ -63,7 +64,10 @@ class BoardHotspotSystem:
     version = BOARD_HOTSPOT_VERSION
     entity_scope = "board"
     display_name = "近期热点"
-    dependencies = ("board_hotspot_features", "board_names", "market_liquidity_context")
+    dependencies = (
+        "board_hotspot_features", "board_names", "market_liquidity_context",
+        "board_capacity_features", "board_theme_profiles",
+    )
 
     def definition(self) -> dict[str, object]:
         return {
@@ -108,6 +112,8 @@ class BoardHotspotSystem:
             results, _mapping(context.dependencies["board_names"]),
             _mapping(context.dependencies["market_liquidity_context"]),
             prior,
+            _mapping(context.dependencies["board_capacity_features"]),
+            _mapping(context.dependencies["board_theme_profiles"]),
         )
         return ObservationSystemExecution(
             self.system_id, self.version, self.entity_scope, results,
@@ -293,6 +299,8 @@ def _apply_visibility_budget(
     results: list[dict[str, object]], names: Mapping[str, object],
     market: Mapping[str, object],
     prior: Mapping[str, Mapping[str, object]],
+    board_capacities: Mapping[str, object],
+    theme_profiles: Mapping[str, object],
 ) -> None:
     prior_market = next(iter(prior.values()), {})
     seats, seat_streak = stabilize_seat_budget(market, prior_market)
@@ -301,9 +309,19 @@ def _apply_visibility_budget(
     for result in results:
         symbol = str(result["symbol"])
         name = str(names.get(symbol) or symbol)
-        cluster = canonical_board_name(name)
+        theme_profile = _mapping(theme_profiles.get(symbol))
+        cluster = str(
+            theme_profile.get("theme_id") or canonical_board_name(name)
+        )
+        board_capacity = _mapping(board_capacities.get(symbol))
+        capacity_fit = market_capacity_fit(board_capacity, market)
         result.update({
             "canonical_theme": cluster,
+            "theme_registry_version": theme_profile.get("registry_version"),
+            "theme_name": theme_profile.get("theme_name") or name,
+            "theme_parent_id": theme_profile.get("parent_theme_id"),
+            "theme_parent_name": theme_profile.get("parent_theme_name"),
+            "theme_match_method": theme_profile.get("match_method"),
             "radar_visible": False,
             "radar_rank": None,
             "radar_slot_limit": seats,
@@ -317,8 +335,28 @@ def _apply_visibility_budget(
             "market_liquidity_version": market.get("version"),
             "market_turnover_5_median": market.get("absolute_turnover_5_median"),
             "market_turnover_20_median": market.get("baseline_turnover_20_median"),
+            "board_capacity_version": board_capacity.get("version"),
+            "board_capacity_tier": board_capacity.get("capacity_tier"),
+            "board_turnover_capacity_20": board_capacity.get("turnover_capacity_20"),
+            "board_turnover_intensity": board_capacity.get("turnover_intensity"),
+            "board_capacity_member_count": board_capacity.get("member_count"),
+            "board_capacity_coverage_ratio": board_capacity.get("coverage_ratio"),
+            "board_capacity_concentration_hhi": board_capacity.get(
+                "turnover_concentration_hhi"
+            ),
+            "board_capacity_largest_member_share": board_capacity.get(
+                "largest_member_share"
+            ),
+            "capacity_compatible": capacity_fit["compatible"],
+            "capacity_market_preferred": capacity_fit["market_compatible"],
+            "capacity_fit_score": capacity_fit["fit_score"],
+            "visibility_score": round(
+                (_number(result.get("total_score")) or 0.0)
+                + float(capacity_fit["fit_score"]), 2,
+            ),
+            "capacity_fit_reasons": capacity_fit["reasons"],
         })
-        if not bool(result.get("eligible")):
+        if not bool(result.get("eligible")) or not bool(capacity_fit["compatible"]):
             continue
         current = representatives.get(cluster)
         if current is None or _visibility_key(result) > _visibility_key(current):
@@ -329,8 +367,11 @@ def _apply_visibility_budget(
         result["radar_rank"] = rank
 
 
-def _visibility_key(result: Mapping[str, object]) -> tuple[float, float, int, str]:
+def _visibility_key(
+    result: Mapping[str, object],
+) -> tuple[float, float, float, int, str]:
     return (
+        _number(result.get("visibility_score")) or 0.0,
         _number(result.get("total_score")) or 0.0,
         _number(result.get("score_delta")) or 0.0,
         int(_number(result.get("candidate_streak")) or 0),

@@ -145,6 +145,30 @@ ON board_memberships(member_symbol, active, board_instrument_id);
 CREATE INDEX IF NOT EXISTS board_memberships_board
 ON board_memberships(board_instrument_id, active, member_symbol);
 
+CREATE TABLE IF NOT EXISTS board_theme_nodes (
+    registry_version TEXT NOT NULL,
+    theme_id TEXT NOT NULL,
+    theme_name TEXT NOT NULL,
+    theme_level TEXT NOT NULL CHECK (theme_level IN ('broad', 'subtheme')),
+    parent_theme_id TEXT,
+    description TEXT NOT NULL,
+    PRIMARY KEY (registry_version, theme_id)
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS board_theme_aliases (
+    registry_version TEXT NOT NULL,
+    normalized_alias TEXT NOT NULL,
+    alias_name TEXT NOT NULL,
+    theme_id TEXT NOT NULL,
+    relation TEXT NOT NULL,
+    PRIMARY KEY (registry_version, normalized_alias),
+    FOREIGN KEY (registry_version, theme_id)
+        REFERENCES board_theme_nodes(registry_version, theme_id)
+) WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS board_theme_aliases_theme
+ON board_theme_aliases(registry_version, theme_id);
+
 CREATE TABLE IF NOT EXISTS market_snapshots (
     instrument_id INTEGER NOT NULL,
     trade_date INTEGER NOT NULL,

@@ -12,6 +12,12 @@ from stock_harness.board_hotspot_evaluation import (
     canonical_board_name, evaluate_hotspot_timelines, is_objective_confirmation,
 )
 from stock_harness.board_hotspot_features import extract_board_hotspot_features
+from stock_harness.board_capacity import (
+    classify_board_capacities, market_capacity_fit,
+)
+from stock_harness.board_theme_registry import (
+    BOARD_THEME_REGISTRY_VERSION, resolve_board_theme_profiles,
+)
 from stock_harness.market_liquidity import (
     analyze_benchmark_volume_fallback, analyze_market_liquidity,
     stabilize_seat_budget,
@@ -75,6 +81,17 @@ def _execute(
                 "capacity_tier": "low", "direction": "contracting",
                 "regime": "low-contracting", "raw_visible_seats": 1,
             },
+            "board_capacity_features": {"BK001.DC": {
+                "version": "test", "capacity_tier": "small",
+                "turnover_capacity_20": 1_000_000,
+                "turnover_intensity": 1.2, "member_count": 40,
+                "coverage_ratio": .95, "turnover_concentration_hhi": .1,
+                "largest_member_share": .2,
+            }},
+            "board_theme_profiles": {"BK001.DC": {
+                "theme_id": "board", "theme_name": "Board",
+                "registry_version": "test", "match_method": "test",
+            }},
         },
     ))
     return result.results[0]
@@ -92,7 +109,8 @@ def test_registry_rejects_duplicates_and_isolates_missing_dependencies() -> None
     assert execution.results == []
     assert execution.error == (
         "missing dependencies: board_hotspot_features, board_names, "
-        "market_liquidity_context"
+        "market_liquidity_context, board_capacity_features, "
+        "board_theme_profiles"
     )
 
 
@@ -185,6 +203,11 @@ def test_board_hotspot_snapshot_aggregates_breadth_and_limit_streak() -> None:
     assert snapshot["max_limit_up_streak"] == 5
     assert snapshot["positive_return_5_ratio"] == 1
     assert len(store.get_market_turnover_proxy(days[-1], sessions=6)) == 6
+    capacity = store.calculate_board_capacity_snapshots(days[-1])["BK001.DC"]
+    assert capacity["member_count"] == 2
+    assert capacity["coverage_ratio"] == 1
+    assert capacity["turnover_capacity_20"] > 0
+    assert .5 <= capacity["turnover_concentration_hhi"] <= 1
     store.close()
 
 
@@ -264,10 +287,74 @@ def test_market_liquidity_contraction_limits_visible_hotspots_to_one_theme() -> 
             },
             "board_names": {"BK001.DC": "Theme A", "BK002.DC": "Theme B"},
             "market_liquidity_context": context,
+            "board_capacity_features": {
+                symbol: {
+                    "capacity_tier": "small" if symbol == "BK001.DC" else "large",
+                    "turnover_intensity": 1.1,
+                    "member_count": 40, "coverage_ratio": .95,
+                    "turnover_concentration_hhi": .1,
+                }
+                for symbol in ("BK001.DC", "BK002.DC")
+            },
+            "board_theme_profiles": {
+                "BK001.DC": {"theme_id": "theme-a"},
+                "BK002.DC": {"theme_id": "theme-b"},
+            },
         },
     )).results
     assert sum(bool(item["radar_visible"]) for item in results) == 1
     assert {item["radar_slot_limit"] for item in results} == {1}
+    assert next(item for item in results if item["radar_visible"])["symbol"] == "BK001.DC"
+    assert next(item for item in results if item["symbol"] == "BK002.DC")[
+        "capacity_market_preferred"
+    ] is False
+
+
+def test_board_capacity_classification_and_market_fit_are_separate() -> None:
+    snapshots = {
+        "B1": {"turnover_capacity_20": 10, "turnover_recent_5": 12,
+               "turnover_intensity": 1.2, "member_count": 20,
+               "coverage_ratio": .9, "turnover_concentration_hhi": .12},
+        "B2": {"turnover_capacity_20": 40, "turnover_recent_5": 40,
+               "turnover_intensity": 1.0, "member_count": 30,
+               "coverage_ratio": .9, "turnover_concentration_hhi": .12},
+        "B3": {"turnover_capacity_20": 100, "turnover_recent_5": 110,
+               "turnover_intensity": 1.1, "member_count": 40,
+               "coverage_ratio": .9, "turnover_concentration_hhi": .12},
+        "B4": {"turnover_capacity_20": 400, "turnover_recent_5": 500,
+               "turnover_intensity": 1.25, "member_count": 60,
+               "coverage_ratio": .9, "turnover_concentration_hhi": .12},
+    }
+    profiles = classify_board_capacities(
+        snapshots, {symbol: symbol for symbol in snapshots},
+    )
+    assert profiles["B1"]["capacity_tier"] == "micro"
+    assert profiles["B4"]["capacity_tier"] == "mega"
+    assert market_capacity_fit(
+        profiles["B4"], {"capacity_tier": "low"},
+    )["market_compatible"] is False
+    assert market_capacity_fit(
+        profiles["B4"], {"capacity_tier": "low"},
+    )["compatible"] is True
+    assert market_capacity_fit(
+        profiles["B4"], {"capacity_tier": "high"},
+    )["compatible"] is True
+
+
+def test_versioned_board_theme_registry_keeps_leaf_and_parent_distinct() -> None:
+    store = SQLiteMarketDataStore(":memory:")
+    profiles = store.resolve_board_theme_profiles({
+        "CPO.DC": "CPO概念", "PCB.DC": "PCB", "OTHER.DC": "酒店餐饮",
+    })
+    assert profiles["CPO.DC"]["registry_version"] == BOARD_THEME_REGISTRY_VERSION
+    assert profiles["CPO.DC"]["theme_id"] == "cpo"
+    assert profiles["PCB.DC"]["theme_id"] == "pcb"
+    assert profiles["CPO.DC"]["parent_theme_id"] == "hardware-technology"
+    assert profiles["OTHER.DC"]["match_method"] == "canonical-name-fallback"
+    assert resolve_board_theme_profiles({"A": "医疗研发外包"})["A"][
+        "theme_id"
+    ] == "cro"
+    store.close()
 
 
 def test_absolute_liquidity_capacity_caps_relative_expansion() -> None:
@@ -321,3 +408,33 @@ def test_hotspot_evaluator_clusters_aliases_and_measures_lead_without_future_inp
     assert result["recall"] == 1
     assert result["median_lead_sessions"] == 3
     assert result["named_theme_hits"]["electricity"] == ["BK001.DC"]
+
+
+def test_visible_hotspot_evaluation_merges_provider_alias_rotation() -> None:
+    confirmation = {
+        "metrics": {
+            "returns": {"5": .06, "20": .12},
+            "relative_strength": {"20": .05},
+            "recent_volume_ratio_5_5": 1.1,
+        },
+        "member_snapshot": {
+            "positive_return_5_ratio": .7, "limit_up_count": 1,
+        },
+    }
+    dates = [f"2026-01-0{index + 1}" for index in range(4)]
+    timelines = {
+        "A": [{"effective_date": day, "symbol": "A",
+               "radar_visible": index == 0, "feature": {}}
+              for index, day in enumerate(dates)],
+        "B": [{"effective_date": day, "symbol": "B",
+               "radar_visible": index == 1,
+               "feature": confirmation if index >= 2 else {}}
+              for index, day in enumerate(dates)],
+    }
+    result = evaluate_hotspot_timelines(
+        timelines, names={"A": "Same Theme", "B": "Same Theme"},
+        visible_only=True,
+    )
+    assert result["signal_events"] == 1
+    assert result["true_signal_events"] == 1
+    assert result["precision"] == 1

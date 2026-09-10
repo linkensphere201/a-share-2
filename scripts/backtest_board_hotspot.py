@@ -11,6 +11,7 @@ from statistics import median
 from stock_harness.config import load_runtime_settings
 from stock_harness.board_hotspot_evaluation import evaluate_hotspot_timelines
 from stock_harness.board_hotspot_features import extract_board_hotspot_features
+from stock_harness.board_capacity import classify_board_capacities
 from stock_harness.market_liquidity import (
     analyze_benchmark_volume_fallback, analyze_market_liquidity,
 )
@@ -106,10 +107,18 @@ def replay(
     stage_counts: dict[str, int] = {}
     visible_counts: list[int] = []
     market_regime_days: dict[str, int] = {}
+    board_names = {
+        symbol: str(item.get("name") or symbol) for symbol, item in boards.items()
+    }
+    board_themes = store.resolve_board_theme_profiles(board_names)
     for effective in dates:
         snapshots = store.calculate_board_hotspot_snapshots(effective)
         breadth_snapshots = store.calculate_board_breadth_snapshots(effective)
         turnover = store.get_market_turnover_proxy(effective)
+        board_capacities = classify_board_capacities(
+            store.calculate_board_capacity_snapshots(effective), board_names,
+            board_themes,
+        )
         market_liquidity = (
             analyze_market_liquidity(turnover)
             if len(turnover) >= 25 else None
@@ -133,15 +142,14 @@ def replay(
             prior_scores={BOARD_HOTSPOT_SYSTEM: prior},
             dependencies={
                 "board_hotspot_features": features,
-                "board_names": {
-                    symbol: str(item.get("name") or symbol)
-                    for symbol, item in boards.items()
-                },
+                "board_names": board_names,
                 "market_liquidity_context": market_liquidity or (
                     analyze_benchmark_volume_fallback(
                         all_benchmark[:benchmark_index + 1]
                     )
                 ),
+                "board_capacity_features": board_capacities,
+                "board_theme_profiles": board_themes,
             },
         ))
         prior = {str(item["symbol"]): item for item in execution.results}
@@ -158,6 +166,9 @@ def replay(
                     "symbol", "hotspot_stage", "total_score", "raw_score",
                     "score_direction", "candidate_streak", "eligible",
                     "radar_visible", "radar_rank", "market_liquidity_regime",
+                    "board_capacity_tier", "board_turnover_intensity",
+                    "capacity_compatible", "capacity_market_preferred",
+                    "capacity_fit_score", "visibility_score",
                     "setup_path",
                     "limit_up_count", "max_limit_up_streak", "summary",
                 )
@@ -196,6 +207,7 @@ def replay(
     visible_evaluation = evaluate_hotspot_timelines(
         timelines, names={symbol: str(item.get("name") or symbol)
                           for symbol, item in boards.items()}, visible_only=True,
+        theme_profiles=board_themes,
     )
     result = {
         "summary": {
@@ -225,6 +237,7 @@ def replay(
             str(item["first_date"]), -float(item["peak_score"]), str(item["symbol"]),
         )),
         "evaluation_events": evaluation["events"],
+        "visible_evaluation_events": visible_evaluation["events"],
     }
     if not all_boards:
         result["timelines"] = timelines

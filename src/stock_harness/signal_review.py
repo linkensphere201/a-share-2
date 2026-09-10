@@ -22,6 +22,7 @@ from stock_harness.board_leader_scan import (
     rank_board_leaders,
 )
 from stock_harness.board_hotspot_features import extract_board_hotspot_features
+from stock_harness.board_capacity import classify_board_capacities
 from stock_harness.market_liquidity import (
     analyze_benchmark_volume_fallback, analyze_market_liquidity,
 )
@@ -324,6 +325,11 @@ class SignalReviewService:
 
         scorers = default_scorer_registry()
         board_names = {str(board["symbol"]): str(board["name"]) for board in boards}
+        board_themes = self._store.resolve_board_theme_profiles(board_names)
+        board_capacities = classify_board_capacities(
+            self._store.calculate_board_capacity_snapshots(cutoff), board_names,
+            board_themes,
+        )
         turnover = self._store.get_market_turnover_proxy(cutoff)
         market_liquidity = (
             analyze_market_liquidity(turnover)
@@ -355,6 +361,8 @@ class SignalReviewService:
                 "board_hotspot_features": hotspot_features,
                 "board_names": board_names,
                 "market_liquidity_context": market_liquidity,
+                "board_capacity_features": board_capacities,
+                "board_theme_profiles": board_themes,
             },
         ))
         system_execution_by_id = {
