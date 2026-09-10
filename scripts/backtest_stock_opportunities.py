@@ -33,6 +33,7 @@ from stock_harness.stock_relative_strength import ALGORITHM_VERSION as RELATIVE_
 
 
 FEATURE_CACHE_VERSION = "stock-focus-replay-features-v1"
+DEFAULT_SCAN_WORKERS = 3
 
 
 def main() -> None:
@@ -55,7 +56,7 @@ def main() -> None:
     parser.add_argument("--scan-result", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--feature-cache-dir", type=Path,
                         default=Path(".tmp/replay-features/stock-focus-v1"))
-    parser.add_argument("--scan-workers", type=int, default=2)
+    parser.add_argument("--scan-workers", type=int, default=DEFAULT_SCAN_WORKERS)
     args = parser.parse_args()
     if args.scan_date:
         if args.scan_result is None:
