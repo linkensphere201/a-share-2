@@ -31,6 +31,7 @@ body {
   -webkit-font-smoothing: auto;
   -moz-osx-font-smoothing: grayscale;
 }
+.workspace-module-loading { display: grid; min-height: 100vh; place-items: center; color: var(--theme-muted); background: var(--theme-base); font-size: 12px; }
 strong, b { font-weight: 500; }
 button, input, select, textarea { font: inherit; font-weight: 400; letter-spacing: 0; }
 button { cursor: pointer; }
@@ -181,6 +182,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .signal-hard-event-strip > span { flex: 0 0 auto; color: #d8aa4f; font-size: 9px; }
 .signal-hard-event-strip small { overflow: hidden; padding: 2px 4px; color: var(--theme-muted); border: 1px solid color-mix(in srgb, #d8aa4f 28%, var(--theme-border)); border-radius: 2px; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
 .signal-hotspot-filters { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; padding: 4px 6px; border-bottom: 1px solid var(--theme-border); background: var(--theme-surface); }
+.signal-hotspot-filters.leading { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .signal-hotspot-market { grid-column: 1 / -1; padding: 2px 4px 4px; color: var(--theme-muted); font-size: 9px; }
 .signal-hotspot-filters button { display: flex; min-width: 0; height: 28px; align-items: center; justify-content: center; gap: 4px; color: var(--theme-muted); border: 1px solid transparent; background: transparent; font-size: 8px; }
 .signal-hotspot-filters button.active { color: var(--theme-text-strong); border-color: color-mix(in srgb, #d8aa4f 42%, var(--theme-border)); background: color-mix(in srgb, #d8aa4f 8%, var(--theme-base)); }
@@ -238,6 +240,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .signal-hotspot-state > span.strengthening { border-left-color: #d85a57; }
 .signal-hotspot-state > span.declining { border-left-color: #4b9b67; }
 .signal-hotspot-state small { display: block; overflow: hidden; margin-top: 2px; text-overflow: ellipsis; white-space: nowrap; }
+.signal-hotspot-state.leading > span { border-left-color: #d5a253; background: color-mix(in srgb, #d5a253 6%, var(--theme-base)); }
 .signal-score-sparkline { justify-self: end; overflow: visible; }
 .signal-score-sparkline polyline { fill: none; stroke: currentColor; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
 .signal-score-sparkline circle { fill: var(--theme-surface); stroke: currentColor; stroke-width: 1.2; cursor: pointer; }

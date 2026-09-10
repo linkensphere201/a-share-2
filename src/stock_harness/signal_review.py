@@ -23,6 +23,12 @@ from stock_harness.board_leader_scan import (
 )
 from stock_harness.board_hotspot_features import extract_board_hotspot_features
 from stock_harness.board_capacity import classify_board_capacities
+from stock_harness.board_hotspot_replay import BoardAggregatePool
+from stock_harness.board_observation_pool import (
+    BOARD_POOL_VERSION,
+    _build_board_pool_snapshot,
+    _pool_source,
+)
 from stock_harness.market_liquidity import (
     analyze_benchmark_volume_fallback, analyze_market_liquidity,
 )
@@ -38,7 +44,9 @@ from stock_harness.daily_signal_analysis import (
 from stock_harness.models import InstrumentKind
 from stock_harness.hotspot_wave import project_hotspot_waves
 from stock_harness.observation_systems import (
+    BOARD_HOTSPOT_LEADING_SYSTEM,
     BOARD_HOTSPOT_SYSTEM,
+    BoardHotspotLeadingSystem,
     BoardHotspotSystem,
     ObservationSystemContext,
     ObservationSystemRegistry,
@@ -75,7 +83,6 @@ DEFINITION_VERSION = "weekly-board-recognition-v1"
 DAILY_MARKET_BOARD_SIGNAL = "daily-market-board-review"
 DAILY_DEFINITION_VERSION = "daily-market-board-review-v1"
 DAILY_REVIEW_ALGORITHM_VERSION = "daily-market-board-review-v4-systems-v2"
-BOARD_POOL_VERSION = "board-observation-pool-v2"
 STOCK_OBSERVATION_SIGNAL = "stock-observation-pool"
 HISTORICAL_LIMIT = 5
 
@@ -87,6 +94,7 @@ def _board_observation_system_registry() -> ObservationSystemRegistry:
         scorers.get(TREND_BREAKOUT_SCORER).version,
     ))
     registry.register(BoardHotspotSystem())
+    registry.register(BoardHotspotLeadingSystem())
     return registry
 
 
@@ -189,8 +197,10 @@ class SignalReviewService:
     def _execute_daily(self, run_id: str, cutoff: date) -> None:
         started = time.perf_counter()
         boards = self._boards()
-        board_breadth = self._store.calculate_board_breadth_snapshots(cutoff)
-        hotspot_snapshots = self._store.calculate_board_hotspot_snapshots(cutoff)
+        with BoardAggregatePool(self._store, 4) as aggregate_pool:
+            hotspot_snapshots, board_breadth, capacity_snapshots = (
+                aggregate_pool.calculate(cutoff)
+            )
         benchmark = self._store.get_recent_daily_bars(
             "000001.SH", cutoff, DAILY_LOOKBACK_BARS,
         )
@@ -328,8 +338,7 @@ class SignalReviewService:
         board_names = {str(board["symbol"]): str(board["name"]) for board in boards}
         board_themes = self._store.resolve_board_theme_profiles(board_names)
         board_capacities = classify_board_capacities(
-            self._store.calculate_board_capacity_snapshots(cutoff), board_names,
-            board_themes,
+            capacity_snapshots, board_names, board_themes,
         )
         turnover = self._store.get_market_turnover_proxy(cutoff)
         market_liquidity = (
@@ -346,16 +355,23 @@ class SignalReviewService:
             self._store, score_context_runs, hotspot_system.system_id,
             hotspot_system.version,
         )
+        leading_system = BoardHotspotLeadingSystem()
+        leading_prior, leading_recent = _score_history(
+            self._store, score_context_runs, leading_system.system_id,
+            leading_system.version,
+        )
         observation_systems = _board_observation_system_registry()
         system_executions = observation_systems.execute_all(ObservationSystemContext(
             observations=observations,
             prior_scores={
                 TREND_BREAKOUT_SCORER: trend_prior,
                 BOARD_HOTSPOT_SYSTEM: hotspot_prior,
+                BOARD_HOTSPOT_LEADING_SYSTEM: leading_prior,
             },
             recent_scores={
                 TREND_BREAKOUT_SCORER: trend_recent,
                 BOARD_HOTSPOT_SYSTEM: hotspot_recent,
+                BOARD_HOTSPOT_LEADING_SYSTEM: leading_recent,
             },
             dependencies={
                 "review_scorer_registry": scorers,
@@ -371,8 +387,10 @@ class SignalReviewService:
         }
         trend_execution = system_execution_by_id[TREND_BREAKOUT_SCORER]
         hotspot_execution = system_execution_by_id[BOARD_HOTSPOT_SYSTEM]
+        leading_execution = system_execution_by_id[BOARD_HOTSPOT_LEADING_SYSTEM]
         trend_scores = trend_execution.results
         hotspot_scores = hotspot_execution.results
+        leading_scores = leading_execution.results
         prior_wave_snapshots = self._store.list_hotspot_wave_snapshots(
             str(session_runs[0]["run_id"]), status="active",
         ) if session_runs else []
@@ -412,6 +430,7 @@ class SignalReviewService:
         for system_id, execution in (
             (TREND_BREAKOUT_SCORER, trend_execution),
             (BOARD_HOTSPOT_SYSTEM, hotspot_execution),
+            (BOARD_HOTSPOT_LEADING_SYSTEM, leading_execution),
             (MARKET_REGIME_SCORER, market_execution),
         ):
             if execution.error:
@@ -501,6 +520,12 @@ class SignalReviewService:
             "hotspot_candidate_count": sum(
                 bool(value["eligible"]) for value in hotspot_scores
             ),
+            "hotspot_leading_candidate_count": sum(
+                bool(value["eligible"]) for value in leading_scores
+            ),
+            "hotspot_leading_visible_count": sum(
+                bool(value.get("leading_visible")) for value in leading_scores
+            ),
             "hotspot_active_wave_count": sum(
                 value["status"] == "active" for value in hotspot_wave_snapshots
             ),
@@ -509,6 +534,7 @@ class SignalReviewService:
                 for system_id, execution in (
                     (TREND_BREAKOUT_SCORER, trend_execution),
                     (BOARD_HOTSPOT_SYSTEM, hotspot_execution),
+                    (BOARD_HOTSPOT_LEADING_SYSTEM, leading_execution),
                     (MARKET_REGIME_SCORER, market_execution),
                 ) if execution.error
             ],
@@ -523,6 +549,7 @@ class SignalReviewService:
             self._store, run_id, cutoff, trend_scores,
             self._store.list_signal_attention(DAILY_MARKET_BOARD_SIGNAL),
             prior_pool, hotspot_scores=hotspot_scores,
+            leading_scores=leading_scores,
         )
         summary["board_pool_count"] = len(board_pool["items"])
         prior_member_scan = self._store.get_observation_pool_snapshot(
@@ -602,7 +629,10 @@ class SignalReviewService:
         }])
         self._store.complete_signal_review_run(
             run_id, items=items, summary=summary, input_digest=digest,
-            scores=[*trend_scores, *hotspot_scores, *market_scores, *stock_scores],
+            scores=[
+                *trend_scores, *hotspot_scores, *leading_scores,
+                *market_scores, *stock_scores,
+            ],
             pool_snapshots=[board_pool, stock_pool],
             hotspot_wave_snapshots=hotspot_wave_snapshots,
         )
@@ -1038,196 +1068,6 @@ def _score_history(
                 recent[history_key].append(score)
     prior = {key: values[0] for key, values in recent.items() if values}
     return prior, recent
-
-
-def _build_board_pool_snapshot(
-    store: SQLiteMarketDataStore,
-    run_id: str,
-    effective_date: date,
-    trend_scores: list[dict[str, object]],
-    attention: list[dict[str, object]],
-    prior_pool: dict[str, object] | None,
-    hotspot_scores: list[dict[str, object]] | None = None,
-) -> dict[str, object]:
-    candidates: dict[str, dict[str, object]] = {}
-
-    def candidate(symbol: str) -> dict[str, object]:
-        return candidates.setdefault(symbol, {
-            "symbol": symbol, "sources": [], "score": None,
-            "hotspot_score": None,
-            "attention": None,
-        })
-
-    eligible = [score for score in trend_scores if bool(score.get("eligible"))][:20]
-    for score in trend_scores:
-        symbol = str(score["symbol"])
-        active_events = [
-            event for event in score.get("hard_events", [])
-            if isinstance(event, dict) and event.get("state") != "resolved"
-        ]
-        if score not in eligible and not active_events:
-            continue
-        value = candidate(symbol)
-        value["score"] = score
-        if score in eligible:
-            value["sources"].append(_pool_source(
-                "trend-score", run_id, str(score["entity_key"]),
-                "eligible-top-20", {"rank": score["rank"],
-                                    "total_score": score["total_score"]},
-            ))
-        for event in active_events:
-            value["sources"].append(_pool_source(
-                "hard-anomaly", run_id, str(score["entity_key"]),
-                str(event["event_type"]), event,
-            ))
-    for score in hotspot_scores or []:
-        if not bool(score.get("eligible")):
-            continue
-        symbol = str(score["symbol"])
-        value = candidate(symbol)
-        value["hotspot_score"] = score
-        value["sources"].append(_pool_source(
-            "hotspot-emergence", run_id, str(score["entity_key"]),
-            str(score.get("hotspot_stage") or "hotspot-candidate"), {
-                "rank": score["rank"],
-                "total_score": score["total_score"],
-                "stage": score.get("hotspot_stage"),
-                "direction": score.get("score_direction"),
-                "candidate_streak": score.get("candidate_streak"),
-                "window_state": score.get("hotspot_window_state"),
-                "window_qualified_sessions": score.get(
-                    "hotspot_window_qualified_sessions"
-                ),
-            },
-        ))
-    for entry in attention:
-        symbol = str(entry["symbol"])
-        value = candidate(symbol)
-        value["attention"] = entry
-        value["sources"].append(_pool_source(
-            "attention-registry", run_id, symbol, str(entry["status"]),
-            {"manual_pinned": entry["manual_pinned"],
-             "reasons": entry["reasons"]},
-        ))
-
-    for board_symbol, assignments in _recognition_by_board(
-        store, effective_date, set(candidates),
-    ).items():
-        value = candidate(board_symbol)
-        value["sources"].extend(assignments)
-
-    prior_items = {
-        str(item["symbol"]): item
-        for item in (prior_pool or {}).get("items", [])
-        if isinstance(item, dict)
-    }
-    ordered = sorted(candidates.values(), key=lambda value: (
-        not bool((value.get("attention") or {}).get("manual_pinned")),
-        -max(
-            float((value.get("score") or {}).get("total_score", -1)),
-            float((value.get("hotspot_score") or {}).get("total_score", -1)),
-        ),
-        str(value["symbol"]),
-    ))
-    items = []
-    for rank, value in enumerate(ordered, 1):
-        symbol = str(value["symbol"])
-        attention_entry = value.get("attention") or {}
-        score = value.get("score") or {}
-        hotspot_score = value.get("hotspot_score") or {}
-        if attention_entry.get("manual_pinned"):
-            lifecycle = "manual-pinned"
-        elif attention_entry.get("status") == "cooldown":
-            lifecycle = "cooldown"
-        elif symbol not in prior_items:
-            lifecycle = "new"
-        elif (score.get("comparison") or {}).get("state") in {"strengthened", "weakened"}:
-            lifecycle = str(score["comparison"]["state"])
-        elif hotspot_score.get("score_direction") == "strengthening":
-            lifecycle = "strengthened"
-        elif hotspot_score.get("score_direction") == "declining":
-            lifecycle = "weakened"
-        else:
-            lifecycle = "active"
-        items.append({
-            "symbol": symbol, "lifecycle_state": lifecycle, "rank": rank,
-            "payload": {
-                "trend_score": score.get("total_score"),
-                "trend_grade": score.get("grade"),
-                "trend_eligible": bool(score.get("eligible")),
-                "hotspot_score": hotspot_score.get("total_score"),
-                "hotspot_grade": hotspot_score.get("grade"),
-                "hotspot_eligible": bool(hotspot_score.get("eligible")),
-                "hotspot_stage": hotspot_score.get("hotspot_stage"),
-                "hotspot_direction": hotspot_score.get("score_direction"),
-                "hotspot_peak_score": hotspot_score.get("peak_score"),
-                "hotspot_window_state": hotspot_score.get(
-                    "hotspot_window_state"
-                ),
-                "recognition_assignment_count": sum(
-                    source["source_type"] == "recognition-assignment"
-                    for source in value["sources"]
-                ),
-            },
-            "sources": value["sources"],
-        })
-    return {
-        "pool_kind": "board", "effective_date": effective_date,
-        "algorithm_version": BOARD_POOL_VERSION,
-        "summary": {
-            "item_count": len(items), "eligible_score_limit": 20,
-            "hotspot_admission_count": sum(
-                bool((item["payload"]).get("hotspot_eligible")) for item in items
-            ),
-            "source_signal_run_id": run_id,
-        },
-        "items": items,
-    }
-
-
-def _recognition_by_board(
-    store: SQLiteMarketDataStore, effective_date: date, board_symbols: set[str],
-) -> dict[str, list[dict[str, object]]]:
-    recognition_run = store.get_latest_succeeded_signal_review_run(
-        WEEKLY_RECOGNITION_SIGNAL, effective_date,
-    )
-    if recognition_run is None:
-        return {}
-    result: dict[str, list[dict[str, object]]] = defaultdict(list)
-    for item in store.list_signal_review_items(str(recognition_run["run_id"])):
-        if not item["active"]:
-            continue
-        for evidence in item["evidence"]:
-            if evidence["evidence_type"] != "board-recognition-ranking":
-                continue
-            payload = evidence["payload"]
-            board_symbol = str(payload.get("board_symbol") or "")
-            if board_symbol not in board_symbols:
-                continue
-            recognition_rank = int(payload.get("rank") or 0)
-            result[board_symbol].append(_pool_source(
-                "recognition-assignment", str(recognition_run["run_id"]),
-                str(item["item_key"]), str(item["profile"]), {
-                    "member_symbol": item["symbol"], "member_name": item["name"],
-                    "rank": recognition_rank,
-                    "recognition_role": f"{item['profile']}-rank-{recognition_rank}",
-                    "score": payload.get("score"),
-                    "confidence": payload.get("confidence"),
-                    "board_name": payload.get("board_name"),
-                },
-            ))
-    return result
-
-
-def _pool_source(
-    source_type: str, source_reference: str, source_entity_key: str,
-    reason: str, payload: object,
-) -> dict[str, object]:
-    return {
-        "source_type": source_type, "source_reference": source_reference,
-        "source_entity_key": source_entity_key, "reason": reason,
-        "payload": payload,
-    }
 
 
 def _reusable_stock_analysis(

@@ -298,7 +298,8 @@ class SQLiteSignalObservationStoreMixin:
                     FROM recent WHERE rn <= 6 GROUP BY instrument_id
                 ), features AS MATERIALIZED (
                     SELECT instrument_id, close_0, close_1, close_5,
-                           sealed_1, broken_1, limit_covered,
+                           sealed_1, sealed_2, sealed_3, sealed_4, sealed_5,
+                           broken_1, limit_covered,
                            CASE
                              WHEN coalesce(sealed_1, 0) = 0 THEN 0
                              WHEN coalesce(sealed_2, 0) = 0 THEN 1
@@ -324,6 +325,15 @@ class SQLiteSignalObservationStoreMixin:
                        sum(coalesce(features.sealed_1, 0)),
                        sum(coalesce(features.broken_1, 0)),
                        max(coalesce(features.limit_streak, 0)),
+                       sum(CASE WHEN coalesce(features.sealed_1, 0) = 1
+                                      AND coalesce(features.sealed_2, 0) = 1
+                                THEN 1 ELSE 0 END),
+                       sum(CASE WHEN coalesce(features.sealed_1, 0) = 1
+                                      OR coalesce(features.sealed_2, 0) = 1
+                                      OR coalesce(features.sealed_3, 0) = 1
+                                      OR coalesce(features.sealed_4, 0) = 1
+                                      OR coalesce(features.sealed_5, 0) = 1
+                                THEN 1 ELSE 0 END),
                        sum(CASE WHEN features.close_5 > 0
                                      AND features.close_0 > features.close_5
                                 THEN 1 ELSE 0 END),
@@ -345,7 +355,7 @@ class SQLiteSignalObservationStoreMixin:
         for row in rows:
             member_count = int(row[1])
             covered = int(row[2])
-            return_covered = int(row[7])
+            return_covered = int(row[9])
             result[str(row[0])] = {
                 "member_count": member_count,
                 "covered_member_count": covered,
@@ -353,18 +363,20 @@ class SQLiteSignalObservationStoreMixin:
                 "limit_up_count": int(row[3]),
                 "broken_up_count": int(row[4]),
                 "max_limit_up_streak": int(row[5]),
-                "positive_return_5_count": int(row[6]),
+                "consecutive_limit_up_count": int(row[6]),
+                "active_limit_up_members_5": int(row[7]),
+                "positive_return_5_count": int(row[8]),
                 "return_5_covered_count": return_covered,
                 "positive_return_5_ratio": (
-                    round(int(row[6]) / return_covered, 6) if return_covered else None
+                    round(int(row[8]) / return_covered, 6) if return_covered else None
                 ),
-                "max_member_return_5": round(float(row[8]), 6) if row[8] is not None else None,
-                "average_member_return_5": round(float(row[9]), 6) if row[9] is not None else None,
+                "max_member_return_5": round(float(row[10]), 6) if row[10] is not None else None,
+                "average_member_return_5": round(float(row[11]), 6) if row[11] is not None else None,
                 "limit_coverage_ratio": (
-                    round(int(row[10]) / covered, 6) if covered else 0.0
+                    round(int(row[12]) / covered, 6) if covered else 0.0
                 ),
                 "limit_metric_mode": (
-                    "official" if covered and int(row[10]) / covered >= .9
+                    "official" if covered and int(row[12]) / covered >= .9
                     else "official-plus-return-proxy"
                 ),
                 "membership_semantics": "current-active-membership",
@@ -619,6 +631,57 @@ class SQLiteSignalObservationStoreMixin:
                 close=float(row[4]), volume=int(row[5]),
                 source=source_codes[int(row[6])], updated_at_ms=int(row[7]),
             ) for row in reversed(rows)]
+        return result
+
+    def get_daily_bars_range_many(
+        self, symbols: Sequence[str], start_date: date, end_date: date,
+    ) -> dict[str, list[StoredDailyBar]]:
+        """Read a bounded date range with batched SQL instead of per-symbol queries."""
+        if end_date < start_date:
+            raise ValueError("daily bar range end must not precede start")
+        ordered = list(dict.fromkeys(
+            symbol.strip().upper() for symbol in symbols if symbol.strip()
+        ))
+        result: dict[str, list[StoredDailyBar]] = {
+            symbol: [] for symbol in ordered
+        }
+        if not ordered:
+            return result
+        start_key = _date_key(start_date)
+        end_key = _date_key(end_date)
+        with self._lock:
+            instrument_ids = self._instrument_ids(ordered)
+            symbol_by_id = {
+                instrument_id: symbol
+                for symbol, instrument_id in instrument_ids.items()
+            }
+            ids = list(symbol_by_id)
+            for offset in range(0, len(ids), 500):
+                chunk = ids[offset:offset + 500]
+                placeholders = ",".join("?" for _ in chunk)
+                rows = self._connection.execute(
+                    f"""
+                    SELECT bar.instrument_id, bar.trade_date, bar.open,
+                           bar.high, bar.low, bar.close, bar.volume,
+                           source.code, bar.updated_at_ms
+                    FROM daily_bars AS bar
+                    JOIN sources AS source USING (source_id)
+                    WHERE bar.instrument_id IN ({placeholders})
+                      AND bar.trade_date BETWEEN ? AND ?
+                    ORDER BY bar.instrument_id, bar.trade_date
+                    """,
+                    (*chunk, start_key, end_key),
+                ).fetchall()
+                for row in rows:
+                    symbol = symbol_by_id[int(row[0])]
+                    result.setdefault(symbol, []).append(StoredDailyBar(
+                        symbol=symbol,
+                        trade_date=_date_from_key(int(row[1])),
+                        open=float(row[2]), high=float(row[3]),
+                        low=float(row[4]), close=float(row[5]),
+                        volume=int(row[6]), source=str(row[7]),
+                        updated_at_ms=int(row[8]),
+                    ))
         return result
 
     def get_recent_causally_adjusted_stock_bars_many(

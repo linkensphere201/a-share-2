@@ -194,6 +194,18 @@ export type SignalScoreResult = {
   hotspot_window_activity_climax?: boolean
   hotspot_window_fit_score?: number
   hotspot_window_failure_reasons?: string[]
+  leading_state?: 'watch' | 'strengthening' | 'launch-confirmed' | 'invalidated'
+  leading_streak?: number
+  leading_prior_candidate_sessions?: number
+  leading_acceleration_count?: number
+  leading_dimensions?: Record<string, boolean>
+  leading_deltas?: Record<string, number | null>
+  leading_objective_confirmed?: boolean
+  leading_carry_confirmation?: boolean
+  leading_visible?: boolean
+  leading_rank?: number | null
+  leading_slot_limit?: number
+  leading_visibility_score?: number
   radar_visible?: boolean
   radar_rank?: number | null
   radar_slot_limit?: number
@@ -234,6 +246,7 @@ export type SignalScoreResult = {
   limit_up_count?: number
   broken_up_count?: number
   max_limit_up_streak?: number
+  positive_return_5_ratio?: number | null
   stressed_risk_reward?: number | null
   components: Record<string, number>
   penalties: Array<{ code: string; points: number }>
@@ -275,6 +288,10 @@ export type ObservationPoolItem = {
     hotspot_stage?: string | null
     hotspot_direction?: string | null
     hotspot_peak_score?: number | null
+    leading_score?: number | null
+    leading_grade?: string | null
+    leading_eligible?: boolean
+    leading_state?: string | null
     recognition_assignment_count?: number
     recognized?: boolean
     independent_score?: number

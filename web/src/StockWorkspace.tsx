@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Activity, BarChart3, BookOpen, Filter, FolderKanban, Gauge, LayoutGrid, MessageSquare, Palette, PanelRightClose, Radar, RefreshCw, Settings2 } from 'lucide-react'
 import type { PriceMode, VisibleRange } from './chartTypes'
 import { InstrumentEditor } from './InstrumentEditor'
@@ -10,7 +10,6 @@ import { LayoutManager } from './LayoutManager'
 import { openDefaultLearningSystem } from './learningClient'
 import { MarketBoardBadge } from './MarketBoardBadge'
 import { ScreenerWorkspace, type ScreenerTargetList } from './ScreenerWorkspace'
-import { SignalReviewWorkspace } from './SignalReviewWorkspace'
 import type { ScreenerCandidate } from './screenerClient'
 import { RuntimeEventBar } from './RuntimeEventBar'
 import { subscribeDrawingStore } from './drawingStore'
@@ -52,6 +51,10 @@ import {
   resolveActiveChart,
   samePaneRatios,
 } from './workspaceMutations'
+
+const SignalReviewWorkspace = lazy(async () => ({
+  default: (await import('./SignalReviewWorkspace')).SignalReviewWorkspace,
+}))
 
 const nativeWindowKey = (groupId: string, windowId: string) => JSON.stringify([groupId, windowId])
 
@@ -656,7 +659,9 @@ export function StockWorkspace() {
     />
   }
   if (signalReviewOpen) {
-    return <SignalReviewWorkspace theme={theme} onClose={() => setSignalReviewOpen(false)}/>
+    return <Suspense fallback={<main className="workspace-module-loading">正在加载复盘模块</main>}>
+      <SignalReviewWorkspace theme={theme} onClose={() => setSignalReviewOpen(false)}/>
+    </Suspense>
   }
 
   return (

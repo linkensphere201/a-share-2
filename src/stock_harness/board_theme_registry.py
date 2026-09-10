@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from stock_harness.board_hotspot_evaluation import canonical_board_name
 
 
-BOARD_THEME_REGISTRY_VERSION = "board-theme-registry-v2-trading-leaves"
+BOARD_THEME_REGISTRY_VERSION = "board-theme-registry-v3-signal-universe"
 
 
 @dataclass(frozen=True)
@@ -76,6 +76,8 @@ THEMES = (
     BoardTheme("server", "服务器", "subtheme", "hardware-technology"),
     BoardTheme("data-center", "数据中心", "subtheme", "hardware-technology"),
     BoardTheme("consumer-electronics", "消费电子", "subtheme", "hardware-technology"),
+    BoardTheme("tourism-hospitality", "旅游酒店", "subtheme"),
+    BoardTheme("industrial-machinery", "工业机械", "subtheme"),
 )
 
 
@@ -131,6 +133,12 @@ THEME_ALIASES: Mapping[str, tuple[str, ...]] = {
     "server": ("服务器",),
     "data-center": ("数据中心", "数据中心(AIDC)"),
     "consumer-electronics": ("消费电子", "消费电子概念"),
+    "tourism-hospitality": (
+        "旅游酒店", "旅游及酒店", "酒店餐饮", "酒店及餐饮",
+    ),
+    "industrial-machinery": (
+        "工业机械", "工业机械和用品及零部件", "机械制造",
+    ),
 }
 
 
@@ -140,6 +148,23 @@ TAXONOMY_ALIASES: Mapping[str, tuple[str, ...]] = {
     "agriculture": ("农业",),
     "hardware-technology": ("大硬件科技", "硬件科技"),
 }
+
+
+_NON_TRADING_EXACT = {
+    "低价股", "高价股", "微盘股", "小盘股", "中盘股", "大盘股",
+    "基金重仓", "机构重仓", "社保重仓", "保险重仓", "证金持股",
+    "QFII重仓", "北向资金持股", "沪股通", "深股通", "融资融券",
+    "昨日涨停", "昨日连板", "昨日触板", "破净股", "ST股",
+}
+_NON_TRADING_MARKERS = (
+    "预增", "预盈", "预亏", "扭亏", "季报", "中报", "年报",
+    "增持", "减持", "解禁", "基金重仓", "机构重仓", "证金持股",
+    "破净", "茅指数", "红利指数",
+    "富时罗素", "MSCI", "标普概念", "昨日涨停", "昨日连板",
+)
+_NON_TRADING_NORMALIZED = frozenset(
+    canonical_board_name(value) for value in _NON_TRADING_EXACT
+)
 
 
 def theme_rows() -> list[dict[str, object]]:
@@ -201,19 +226,35 @@ def resolve_board_theme_profiles(
         alias = alias_index.get(normalized)
         theme_id = str(alias["theme_id"]) if alias else None
         node = nodes.get(theme_id or "")
+        non_trading = alias is None and _is_non_trading_name(name, normalized)
         parent_id = str(node.get("parent_theme_id") or "") if node else ""
         parent = nodes.get(parent_id)
         result[symbol] = {
             "registry_version": BOARD_THEME_REGISTRY_VERSION,
-            "theme_id": theme_id or f"board:{normalized}",
+            "theme_id": theme_id or (
+                f"non-trading:{normalized}" if non_trading
+                else f"board:{normalized}"
+            ),
             "theme_name": str(node["theme_name"]) if node else name,
             "theme_level": str(node["theme_level"]) if node else "board",
             "parent_theme_id": parent_id or None,
             "parent_theme_name": str(parent["theme_name"]) if parent else None,
             "match_method": (
-                str(alias["relation"]) if alias else "canonical-name-fallback"
+                str(alias["relation"]) if alias else
+                "non-trading" if non_trading else
+                "canonical-name-fallback"
             ),
-            "signal_eligible": not alias or alias["relation"] != "taxonomy-only",
+            "signal_eligible": (
+                not non_trading
+                and (not alias or alias["relation"] != "taxonomy-only")
+            ),
             "normalized_board_name": normalized,
         }
     return result
+
+
+def _is_non_trading_name(name: str, normalized: str) -> bool:
+    compact = "".join(str(name).split()).casefold()
+    return normalized in _NON_TRADING_NORMALIZED or any(
+        marker.casefold() in compact for marker in _NON_TRADING_MARKERS
+    )

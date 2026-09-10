@@ -184,6 +184,30 @@ def test_board_member_scan_reads_every_member_and_preserves_sources() -> None:
     store.close()
 
 
+def test_daily_bar_range_bulk_read_preserves_symbol_and_date_order() -> None:
+    store = SQLiteMarketDataStore(":memory:")
+    store.upsert_instruments([
+        Instrument("000001.SZ", "First", InstrumentKind.STOCK, "SZ"),
+        Instrument("000002.SZ", "Second", InstrumentKind.STOCK, "SZ"),
+    ])
+    dates = [date(2026, 1, 2) + timedelta(days=index) for index in range(4)]
+    store.upsert_daily_bars("test", [
+        DailyBar(symbol, day, value, value, value, value, 100)
+        for symbol, base in (("000001.SZ", 10), ("000002.SZ", 20))
+        for index, day in enumerate(dates)
+        for value in [base + index]
+    ])
+
+    result = store.get_daily_bars_range_many(
+        ["000002.SZ", "000001.SZ"], dates[1], dates[3],
+    )
+
+    assert list(result) == ["000002.SZ", "000001.SZ"]
+    assert [bar.trade_date for bar in result["000001.SZ"]] == dates[1:]
+    assert [bar.close for bar in result["000002.SZ"]] == [21, 22, 23]
+    store.close()
+
+
 def test_unified_stock_pool_deduplicates_symbols_without_losing_sources() -> None:
     effective = date(2026, 9, 9)
     member = {

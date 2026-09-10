@@ -21,8 +21,9 @@ import { TradeScenarioPanel } from './TradeScenarioPanel'
 type Props = { theme: ThemeDefinition; onClose: () => void }
 type ProfileFilter = 'all' | SignalProfile
 type ChangeFilter = 'all' | SignalChangeType
-type DailyView = 'results' | 'opportunities' | 'hotspots' | 'observations' | 'board-pool' | 'stock-pool'
+type DailyView = 'results' | 'opportunities' | 'leading' | 'hotspots' | 'observations' | 'board-pool' | 'stock-pool'
 type HotspotFilter = 'all' | 'rising' | 'confirmed' | 'fading'
+type LeadingFilter = 'all' | 'strengthening' | 'confirmed'
 type PoolLifecycleFilter = 'all' | ObservationPoolItem['lifecycle_state']
 type PoolPresentationView = 'focus' | 'opportunity' | 'risk' | 'all'
 
@@ -77,6 +78,7 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
   const [scores, setScores] = useState<SignalScoreResult[]>([])
   const [selectedScoreSystem, setSelectedScoreSystem] = useState('trend-breakout')
   const [hotspotFilter, setHotspotFilter] = useState<HotspotFilter>('rising')
+  const [leadingFilter, setLeadingFilter] = useState<LeadingFilter>('strengthening')
   const [historySelection, setHistorySelection] = useState<{ symbol: string; entityKey?: string }>()
   const [exactAnalysis, setExactAnalysis] = useState<TrendAnalysisRun | null>(null)
   const [evidenceHeight, setEvidenceHeight] = useState(() => {
@@ -163,7 +165,7 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
   }, [selectedDefinition, selectedRun?.status])
 
   useEffect(() => {
-    if (!['opportunities', 'hotspots', 'observations'].includes(dailyView) || !selectedRun || selectedRun.status !== 'succeeded') {
+    if (!['opportunities', 'leading', 'hotspots', 'observations'].includes(dailyView) || !selectedRun || selectedRun.status !== 'succeeded') {
       setObservations([])
       setObservationTotal(0)
       setSelectedObservation(undefined)
@@ -262,13 +264,16 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
     .filter(item => dailyView !== 'hotspots' || hotspotMatches(
       scoreBySymbol.get(item.symbol), hotspotFilter,
     ))
+    .filter(item => dailyView !== 'leading' || leadingMatches(
+      scoreBySymbol.get(item.symbol), leadingFilter,
+    ))
     .sort((left, right) => {
       const leftScore = scoreBySymbol.get(left.symbol)
       const rightScore = scoreBySymbol.get(right.symbol)
       return Number(Boolean(rightScore?.eligible)) - Number(Boolean(leftScore?.eligible))
         || (rightScore?.total_score ?? -1) - (leftScore?.total_score ?? -1)
         || left.symbol.localeCompare(right.symbol)
-    }), [dailyView, hotspotFilter, observations, scoreBySymbol])
+    }), [dailyView, hotspotFilter, leadingFilter, observations, scoreBySymbol])
   const hotspotSummary = useMemo(() => {
     const values = scores.filter(item => (
       item.system_id === 'board-hotspot-emergence' && item.radar_visible
@@ -282,6 +287,19 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
   }, [scores])
   const hotspotMarket = useMemo(() => scores.find(item => (
     item.system_id === 'board-hotspot-emergence' && item.market_liquidity_capacity
+  )), [scores])
+  const leadingSummary = useMemo(() => {
+    const values = scores.filter(item => (
+      item.system_id === 'board-hotspot-leading' && item.leading_visible
+    ))
+    return {
+      all: values.length,
+      strengthening: values.filter(item => item.leading_state === 'strengthening').length,
+      confirmed: values.filter(item => item.leading_state === 'launch-confirmed').length,
+    }
+  }, [scores])
+  const leadingMarket = useMemo(() => scores.find(item => (
+    item.system_id === 'board-hotspot-leading' && item.market_liquidity_capacity
   )), [scores])
   const displayedPoolItems = useMemo(() => {
     const query = poolQuery.trim().toLocaleLowerCase()
@@ -484,6 +502,7 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
       <div className="signal-column-resizer" role="separator" aria-orientation="vertical" aria-label="调整历史轮次栏宽度" title="左右拖动调整历史轮次栏宽度" onPointerDown={event => startColumnResize('runs', event)}/>
       <section className="signal-results">
         <header><span>{dailyView === 'observations' ? '全部板块观察'
+          : dailyView === 'leading' ? '热点启动前导雷达'
           : dailyView === 'hotspots' ? '近期热点雷达'
           : dailyView === 'opportunities' ? '板块机会评分'
             : dailyView === 'board-pool' ? '板块观察池'
@@ -495,6 +514,7 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
         {daily && <div className="signal-view-switch">
           <button className={dailyView === 'results' ? 'active' : ''} onClick={() => { setDailyView('results'); setSelectedObservation(undefined); setSelectedPoolItem(undefined) }}><ListFilter size={12}/>今日关注</button>
           <button className={dailyView === 'opportunities' ? 'active' : ''} onClick={() => { setDailyView('opportunities'); setSelectedItem(undefined); setSelectedPoolItem(undefined); setChatOpen(false) }}><Radar size={12}/>机会评分</button>
+          <button className={dailyView === 'leading' ? 'active' : ''} onClick={() => { setDailyView('leading'); setSelectedScoreSystem('board-hotspot-leading'); setSelectedItem(undefined); setSelectedPoolItem(undefined); setChatOpen(false) }}><Radar size={12}/>前导雷达</button>
           <button className={dailyView === 'hotspots' ? 'active' : ''} onClick={() => { setDailyView('hotspots'); setSelectedScoreSystem('board-hotspot-emergence'); setSelectedItem(undefined); setSelectedPoolItem(undefined); setChatOpen(false) }}><Radar size={12}/>近期热点</button>
           <button className={dailyView === 'observations' ? 'active' : ''} onClick={() => { setDailyView('observations'); setSelectedItem(undefined); setSelectedPoolItem(undefined); setChatOpen(false) }}><Eye size={12}/>全部观察</button>
           <button className={dailyView === 'board-pool' ? 'active' : ''} onClick={() => { setDailyView('board-pool'); setSelectedItem(undefined); setSelectedObservation(undefined) }}><Layers3 size={12}/>板块池</button>
@@ -504,6 +524,10 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
         {dailyView === 'hotspots' && <div className="signal-hotspot-filters" aria-label="热点阶段筛选">
           {hotspotMarket && <span className="signal-hotspot-market">{marketCapacityLabel(hotspotMarket.market_liquidity_capacity)} · {marketDirectionLabel(hotspotMarket.market_liquidity_direction)} · {hotspotMarket.radar_slot_limit ?? 1}席</span>}
           {(['all', 'rising', 'confirmed', 'fading'] as HotspotFilter[]).map(value => <button key={value} className={hotspotFilter === value ? 'active' : ''} onClick={() => setHotspotFilter(value)}>{hotspotFilterLabel(value)}<small>{hotspotSummary[value]}</small></button>)}
+        </div>}
+        {dailyView === 'leading' && <div className="signal-hotspot-filters leading" aria-label="前导阶段筛选">
+          {leadingMarket && <span className="signal-hotspot-market">{marketCapacityLabel(leadingMarket.market_liquidity_capacity)} · {marketDirectionLabel(leadingMarket.market_liquidity_direction)} · {leadingMarket.leading_slot_limit ?? 1}席</span>}
+          {(['all', 'strengthening', 'confirmed'] as LeadingFilter[]).map(value => <button key={value} className={leadingFilter === value ? 'active' : ''} onClick={() => setLeadingFilter(value)}>{leadingFilterLabel(value)}<small>{leadingSummary[value]}</small></button>)}
         </div>}
         {daily && hardEventSummary.total > 0 && <div className="signal-hard-event-strip" role="status">
           <span>硬异动 {hardEventSummary.total}</span>
@@ -616,6 +640,9 @@ function poolPresentationCount(
 }
 
 function poolClassification(item: ObservationPoolItem) {
+  if (item.payload.leading_eligible && !item.payload.hotspot_eligible && !item.payload.trend_eligible) {
+    return `前导 · ${leadingStateLabel(item.payload.leading_state ?? undefined)}`
+  }
   if (item.payload.hotspot_eligible && !item.payload.trend_eligible) {
     return `热点 · ${hotspotStageLabel(item.payload.hotspot_stage ?? undefined)}`
   }
@@ -634,7 +661,7 @@ function poolClassification(item: ObservationPoolItem) {
 function PoolScoreBadge({ item }: { item: ObservationPoolItem }) {
   const score = item.payload.opportunity_score
   const fallback = item.kind === 'sector'
-    ? item.payload.trend_score ?? item.payload.hotspot_score ?? undefined
+    ? item.payload.trend_score ?? item.payload.leading_score ?? item.payload.hotspot_score ?? undefined
     : item.payload.independent_score
   return <ScoreBadge score={score} fallback={fallback} rank={item.rank}/>
 }
@@ -693,6 +720,13 @@ function ScoreSummary({ score, onHistorySelect }: {
       <span>{score.limit_up_count ?? 0} 家涨停<small>最高 {score.max_limit_up_streak ?? 0} 连板 · 破板 {score.broken_up_count ?? 0}</small></span>
       <span>{score.theme_name ?? boardCapacityLabel(score.board_capacity_tier)}<small>{score.theme_parent_name ? `${score.theme_parent_name} · ` : ''}{boardCapacityLabel(score.board_capacity_tier)} · 匹配 {score.capacity_fit_score?.toFixed(0) ?? '-'}</small></span>
     </div>}
+    {score.system_id === 'board-hotspot-leading' && <div className="signal-hotspot-state leading">
+      <span className={score.score_direction ?? 'stable'}>{leadingStateLabel(score.leading_state)}<small>{score.score_direction === 'strengthening' ? '证据继续增强' : score.score_direction === 'declining' ? '证据正在减弱' : '保持当前状态'}</small></span>
+      <span>{score.leading_acceleration_count ?? 0} 项加速<small>连续观察 {score.leading_streak ?? 0} 日</small></span>
+      <span>{hotspotShapeLabel(score.setup_path)}<small>{score.leading_objective_confirmed ? '已达到热点确认条件' : '尚未达到热点确认条件'}</small></span>
+      <span>{score.limit_up_count ?? 0} 家涨停<small>最高 {score.max_limit_up_streak ?? 0} 连板 · 扩散 {((score.positive_return_5_ratio ?? 0) * 100).toFixed(0)}%</small></span>
+      <span>{score.theme_name ?? boardCapacityLabel(score.board_capacity_tier)}<small>{boardCapacityLabel(score.board_capacity_tier)} · 容量匹配 {score.capacity_fit_score?.toFixed(0) ?? '-'}</small></span>
+    </div>}
     {score.hard_events.length > 0 && <div className="signal-hard-events">{score.hard_events.slice(0, 3).map(event => <span key={event.event_type} className={`${event.direction} ${event.severity}`}>{hardEventLabel(event.event_type)}</span>)}</div>}
     <details className="signal-score-diagnostics"><summary>评分明细</summary>
       <div>{Object.entries(score.components).map(([name, value]) => <span key={name}>{name}<small>{value.toFixed(1)}</small></span>)}</div>
@@ -706,7 +740,26 @@ function scoreSystemLabel(system: string) {
   return {
     'trend-breakout': '趋势突破',
     'board-hotspot-emergence': '近期热点',
+    'board-hotspot-leading': '热点前导',
   }[system] ?? system
+}
+
+function leadingStateLabel(state?: string) {
+  return {
+    watch: '潜伏观察', strengthening: '临界增强',
+    'launch-confirmed': '启动确认', invalidated: '失效',
+  }[state ?? ''] ?? '数据不足'
+}
+
+function leadingFilterLabel(value: LeadingFilter) {
+  return { all: '全部前导', strengthening: '临界增强', confirmed: '启动确认' }[value]
+}
+
+function hotspotShapeLabel(path?: string) {
+  return {
+    'platform-breakout': '平台临界', 'downtrend-reversal': '下降转势',
+    'trend-continuation': '趋势延续', none: '结构未形成',
+  }[path ?? ''] ?? path ?? '结构未形成'
 }
 
 function hotspotStageLabel(stage?: string) {
@@ -762,6 +815,14 @@ function hotspotMatches(score: SignalScoreResult | undefined, filter: HotspotFil
     && ((score.candidate_streak ?? 0) >= 1 || (score.max_limit_up_streak ?? 0) >= 2)
   if (filter === 'confirmed') return ['hotspot-confirmed', 'accelerating'].includes(score.hotspot_stage ?? '')
   return fadingWave || ['diverging', 'exhausted'].includes(score.hotspot_stage ?? '')
+}
+
+function leadingMatches(score: SignalScoreResult | undefined, filter: LeadingFilter) {
+  if (!score || score.system_id !== 'board-hotspot-leading' || !score.leading_visible) return false
+  if (filter === 'all') return true
+  return filter === 'strengthening'
+    ? score.leading_state === 'strengthening'
+    : score.leading_state === 'launch-confirmed'
 }
 
 function ScoreSparkline({ score, onHistorySelect }: {

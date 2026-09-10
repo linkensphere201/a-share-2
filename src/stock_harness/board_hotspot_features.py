@@ -8,7 +8,7 @@ from typing import Any
 from stock_harness.models import StoredDailyBar
 
 
-BOARD_HOTSPOT_FEATURE_VERSION = "board-hotspot-features-v3-window-shape-context"
+BOARD_HOTSPOT_FEATURE_VERSION = "board-hotspot-features-v4-leading-context"
 
 
 def extract_board_hotspot_features(
@@ -131,6 +131,15 @@ def _shape_features(
         (close - ma20) / atr14
         if ma20 is not None and atr14 and atr14 > 0 else None
     )
+    recent_ranges = _true_ranges(bars[-6:])
+    baseline_ranges = _true_ranges(bars[-21:])
+    recent_range = _average(recent_ranges)
+    baseline_range = _average(baseline_ranges)
+    range_compression_5_20 = (
+        recent_range / baseline_range
+        if recent_range is not None and baseline_range and baseline_range > 0
+        else None
+    )
     position60 = _range_position(bars[-60:]) if len(bars) >= 60 else None
     higher_low = min(bar.low for bar in bars[-5:]) > min(
         bar.low for bar in bars[-10:-5]
@@ -180,6 +189,7 @@ def _shape_features(
         "breakout40": breakout40,
         "breakout20_atr": breakout20_atr,
         "breakout40_atr": breakout40_atr,
+        "range_compression_5_20": range_compression_5_20,
         "extension_from_ma20_atr": extension_from_ma20_atr,
         "position60": position60,
     }
@@ -221,6 +231,17 @@ def _atr(bars: Sequence[StoredDailyBar]) -> float | None:
             abs(current.low - previous.close),
         ))
     return sum(ranges) / len(ranges) if ranges else None
+
+
+def _true_ranges(bars: Sequence[StoredDailyBar]) -> list[float]:
+    return [
+        max(
+            current.high - current.low,
+            abs(current.high - previous.close),
+            abs(current.low - previous.close),
+        )
+        for previous, current in zip(bars, bars[1:])
+    ]
 
 
 def hotspot_feature_value(

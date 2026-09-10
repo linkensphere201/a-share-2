@@ -311,6 +311,47 @@ describe('SignalReviewWorkspace', () => {
     expect(fetchMock.mock.calls.some(call => String(call[0]) === '/api/signals/runs/run-0')).toBe(true)
   })
 
+  it('shows the leading radar as an independent filtered system', async () => {
+    const dailyDefinition = {
+      ...definition, signal_id: 'daily-market-board-review', name: '每日大盘与板块复盘',
+      cadence: 'daily', profiles: ['market', 'attention'],
+    }
+    const dailyRun = { ...run, signal_id: dailyDefinition.signal_id, cadence: 'daily' }
+    const observations = [dailyObservation('BK001.DC', '临界板块')]
+    const leading = {
+      ...signalScore('BK001.DC', 72, true, 1, []),
+      system_id: 'board-hotspot-leading',
+      scorer_version: 'board-hotspot-leading-v1-causal-acceleration',
+      leading_state: 'strengthening', leading_visible: true,
+      leading_slot_limit: 1, leading_acceleration_count: 3,
+      leading_streak: 2, setup_path: 'platform-breakout',
+      leading_objective_confirmed: false, limit_up_count: 1,
+      max_limit_up_streak: 2, positive_return_5_ratio: .64,
+      market_liquidity_capacity: 'low', market_liquidity_direction: 'contracting',
+      board_capacity_tier: 'small', capacity_fit_score: 4, theme_name: '临界板块',
+      verdict: '临界增强', summary: '相对强度与成分扩散连续增强。',
+    }
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === '/api/signals/definitions') return response({ items: [dailyDefinition] })
+      if (url.includes('/api/signals/runs?')) return response({ items: [dailyRun] })
+      if (url.endsWith('/items')) return response({ items: [] })
+      if (url.endsWith('/scores')) return response({ items: [leading] })
+      if (url.endsWith('/attention')) return response({ items: [] })
+      if (url.includes('/board-observations?')) return response({ items: observations, total: 1 })
+      throw new Error(`unexpected URL ${url}`)
+    }))
+    const user = userEvent.setup()
+    render(<SignalReviewWorkspace theme={themes[0]} onClose={() => undefined}/>)
+
+    await user.click(await screen.findByRole('button', { name: /前导雷达/ }))
+    expect(await screen.findByText('临界板块')).toBeTruthy()
+    expect(screen.getByText('低容量 · 缩量 · 1席')).toBeTruthy()
+    await user.click(screen.getByText('临界板块').closest('button')!)
+    expect(screen.getByText('3 项加速')).toBeTruthy()
+    expect(screen.getByText('平台临界')).toBeTruthy()
+  })
+
   it('loads the exact M4 run and highlights the cited analysis item', async () => {
     const dailyDefinition = {
       ...definition, signal_id: 'daily-market-board-review', cadence: 'daily',

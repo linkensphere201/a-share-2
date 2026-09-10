@@ -10,7 +10,7 @@ import re
 from stock_harness.board_hotspot_features import hotspot_feature_value
 
 
-BOARD_HOTSPOT_EVALUATOR_VERSION = "board-hotspot-evaluator-v5-active-confirmation"
+BOARD_HOTSPOT_EVALUATOR_VERSION = "board-hotspot-evaluator-v6-right-censoring"
 _ROMAN_SUFFIX = re.compile(r"[ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩ]+(?:\(A股\))?$")
 _A_SHARE_SUFFIX = re.compile(r"\(A股\)$", re.IGNORECASE)
 _GENERIC_SUFFIX = re.compile(r"(?:指数|板块)$")
@@ -39,9 +39,16 @@ def named_theme(name: str) -> str | None:
         ("hardware-technology", ("算力", "半导体", "光模块", "cpo", "pcb", "消费电子")),
     )
     for theme, aliases in rules:
-        if any(alias in value for alias in aliases):
+        if any(_theme_alias_matches(value, alias) for alias in aliases):
             return theme
     return None
+
+
+def _theme_alias_matches(value: str, alias: str) -> bool:
+    """Avoid treating short Latin acronyms as substrings of unrelated names."""
+    if alias.isascii():
+        return value == alias or value.startswith(f"{alias}概念")
+    return alias in value
 
 
 def is_objective_confirmation(feature: Mapping[str, object]) -> bool:
@@ -116,6 +123,12 @@ def evaluate_hotspot_timelines(
                     index, min(len(rows), index + lead_window + 1)
                 ) if confirmed[candidate]
             ), None)
+            lead_sessions = future - index if future is not None else None
+            timing_class = (
+                _timing_class(lead_sessions)
+                if future is not None or len(rows) - index - 1 >= lead_window
+                else "censored"
+            )
             item = {
                 "symbol": str(rows[index].get("symbol") or cluster),
                 "name": str(rows[index].get("name") or series_name),
@@ -124,10 +137,8 @@ def evaluate_hotspot_timelines(
                 "confirmation_date": (
                     str(rows[future]["effective_date"]) if future is not None else None
                 ),
-                "lead_sessions": future - index if future is not None else None,
-                "timing_class": _timing_class(
-                    future - index if future is not None else None
-                ),
+                "lead_sessions": lead_sessions,
+                "timing_class": timing_class,
                 "signal_confirmation_failures": list(
                     rows[index].get("_objective_failures") or []
                 ),
@@ -150,31 +161,37 @@ def evaluate_hotspot_timelines(
                 "lead_sessions": index - prior if prior is not None else None,
             })
     true_signals = [item for item in signals if item["confirmation_date"]]
+    evaluable_signals = [
+        item for item in signals if item["timing_class"] != "censored"
+    ]
     recalled = [item for item in confirmations if item["preceded_by_signal"]]
     leads = [int(item["lead_sessions"]) for item in true_signals]
     timing_counts = {
         timing: sum(item["timing_class"] == timing for item in signals)
-        for timing in ("synchronous", "early", "late", "missed")
+        for timing in ("synchronous", "early", "late", "missed", "censored")
     }
     return {
         "evaluator_version": BOARD_HOTSPOT_EVALUATOR_VERSION,
         "signal_scope": "visible-theme-seats" if visible_only else "raw-radar",
         "signal_events": len(signals),
+        "evaluable_signal_events": len(evaluable_signals),
         "confirmation_events": len(confirmations),
         "true_signal_events": len(true_signals),
-        "precision": round(len(true_signals) / len(signals), 4) if signals else None,
+        "precision": round(
+            len(true_signals) / len(evaluable_signals), 4,
+        ) if evaluable_signals else None,
         "recall": round(len(recalled) / len(confirmations), 4) if confirmations else None,
         "median_lead_sessions": _median(leads),
         "timing_counts": timing_counts,
         "early_precision": round(
-            timing_counts["early"] / len(signals), 4,
-        ) if signals else None,
+            timing_counts["early"] / len(evaluable_signals), 4,
+        ) if evaluable_signals else None,
         "synchronous_confirmation_rate": round(
-            timing_counts["synchronous"] / len(signals), 4,
-        ) if signals else None,
+            timing_counts["synchronous"] / len(evaluable_signals), 4,
+        ) if evaluable_signals else None,
         "late_confirmation_rate": round(
-            timing_counts["late"] / len(signals), 4,
-        ) if signals else None,
+            timing_counts["late"] / len(evaluable_signals), 4,
+        ) if evaluable_signals else None,
         "median_max_forward_return_5": _median_float([
             item["max_forward_return_5"] for item in signals
             if item["max_forward_return_5"] is not None

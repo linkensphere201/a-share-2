@@ -528,9 +528,10 @@ def test_daily_signal_persists_every_board_but_displays_attention_only() -> None
     assert loud_observation["deep_analysis_run_id"]
     items = store.list_signal_review_items(str(run["run_id"]))
     scores = store.list_signal_review_scores(str(run["run_id"]))
-    assert len(scores) == 6
+    assert len(scores) == 8
     assert {score["system_id"] for score in scores} == {
-        "board-hotspot-emergence", "market-regime", "trend-breakout",
+        "board-hotspot-emergence", "board-hotspot-leading",
+        "market-regime", "trend-breakout",
     }
     assert all(score["participant_count"] == 2 for score in scores)
     assert {item["symbol"] for item in items if item["profile"] == "attention"} == {"BK002.DC"}

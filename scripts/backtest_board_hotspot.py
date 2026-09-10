@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 import json
 from pathlib import Path
@@ -19,12 +18,15 @@ from stock_harness.board_hotspot_features import (
     extract_board_hotspot_features, hotspot_feature_value,
 )
 from stock_harness.board_capacity import classify_board_capacities
+from stock_harness.board_hotspot_replay import BoardAggregatePool
 from stock_harness.market_liquidity import (
     analyze_benchmark_volume_fallback, analyze_market_liquidity,
 )
 from stock_harness.hotspot_wave import project_hotspot_waves
 from stock_harness.observation_systems import (
+    BOARD_HOTSPOT_LEADING_SYSTEM,
     BOARD_HOTSPOT_SYSTEM,
+    BoardHotspotLeadingSystem,
     BoardHotspotSystem,
     ObservationSystemContext,
 )
@@ -70,6 +72,7 @@ def replay(
     queries: list[str], max_boards_per_query: int, *, all_boards: bool = False,
     parallel_workers: int = 1,
 ) -> dict[str, object]:
+    setup_started = time.perf_counter()
     boards: dict[str, dict[str, object]] = {}
     query_symbols: dict[str, list[str]] = {}
     if all_boards:
@@ -98,6 +101,10 @@ def replay(
             selected = sorted(matches)[:max_boards_per_query]
             query_symbols[query] = selected
             boards.update((symbol, matches[symbol]) for symbol in selected)
+    print(
+        f"hotspot_replay_setup boards={len(boards)} "
+        f"elapsed_s={time.perf_counter() - setup_started:.1f}", flush=True,
+    )
     benchmark = store.get_daily_bars("000001.SH", start, end)
     dates = [bar.trade_date for bar in benchmark]
     all_benchmark = store.get_daily_bars("000001.SH", None, end)
@@ -106,9 +113,14 @@ def replay(
         if bar.trade_date >= start
     )
     history_start = all_benchmark[max(0, first_benchmark_index - 65)].trade_date
-    board_bars = {
-        symbol: store.get_daily_bars(symbol, history_start, end) for symbol in boards
-    }
+    board_bars = store.get_daily_bars_range_many(
+        list(boards), history_start, end,
+    )
+    market_turnover_rows = store.get_market_turnover_range(history_start, end)
+    print(
+        f"hotspot_replay_setup bars={sum(len(value) for value in board_bars.values())} "
+        f"elapsed_s={time.perf_counter() - setup_started:.1f}", flush=True,
+    )
     by_symbol_date = {
         symbol: {bar.trade_date: index for index, bar in enumerate(bars)}
         for symbol, bars in board_bars.items()
@@ -116,12 +128,24 @@ def replay(
     benchmark_by_date = {
         bar.trade_date: index for index, bar in enumerate(all_benchmark)
     }
+    print(
+        f"hotspot_replay_setup indexes=ready "
+        f"elapsed_s={time.perf_counter() - setup_started:.1f}", flush=True,
+    )
     system = BoardHotspotSystem()
+    leading_system = BoardHotspotLeadingSystem()
     prior: dict[str, dict[str, object]] = {}
     recent: dict[str, list[dict[str, object]]] = {}
+    leading_prior: dict[str, dict[str, object]] = {}
+    leading_recent: dict[str, list[dict[str, object]]] = {}
     timelines: dict[str, list[dict[str, object]]] = {symbol: [] for symbol in boards}
+    leading_timelines: dict[str, list[dict[str, object]]] = {
+        symbol: [] for symbol in boards
+    }
     stage_counts: dict[str, int] = {}
     visible_counts: list[int] = []
+    leading_visible_counts: list[int] = []
+    leading_state_counts: dict[str, int] = {}
     raw_preheat_counts: list[int] = []
     visible_preheat_counts: list[int] = []
     active_wave_counts: list[int] = []
@@ -129,17 +153,26 @@ def replay(
     prior_waves: list[dict[str, object]] = []
     waves: dict[str, dict[str, object]] = {}
     visible_diagnostics: dict[tuple[str, str], dict[str, object]] = {}
+    leading_visible_diagnostics: dict[tuple[str, str], dict[str, object]] = {}
     market_regime_days: dict[str, int] = {}
     board_names = {
         symbol: str(item.get("name") or symbol) for symbol, item in boards.items()
     }
     board_themes = store.resolve_board_theme_profiles(board_names)
-    aggregate_pool = _ReplayAggregatePool(store, parallel_workers)
+    print(
+        f"hotspot_replay_setup themes={len(board_themes)} "
+        f"elapsed_s={time.perf_counter() - setup_started:.1f}", flush=True,
+    )
+    aggregate_pool = BoardAggregatePool(store, parallel_workers)
     replay_started = time.perf_counter()
     for date_index, effective in enumerate(dates, 1):
-        snapshots, breadth_snapshots, capacity_snapshots, turnover = (
+        snapshots, breadth_snapshots, capacity_snapshots = (
             aggregate_pool.calculate(effective)
         )
+        turnover = [
+            value for trade_date, value in market_turnover_rows
+            if trade_date <= effective
+        ][-25:]
         board_capacities = classify_board_capacities(
             capacity_snapshots, board_names,
             board_themes,
@@ -179,10 +212,34 @@ def replay(
                 "board_theme_profiles": board_themes,
             },
         ))
+        leading_execution = leading_system.execute(ObservationSystemContext(
+            observations=observations,
+            prior_scores={BOARD_HOTSPOT_LEADING_SYSTEM: leading_prior},
+            recent_scores={BOARD_HOTSPOT_LEADING_SYSTEM: leading_recent},
+            dependencies={
+                "board_hotspot_features": features,
+                "board_names": board_names,
+                "market_liquidity_context": market_liquidity or (
+                    analyze_benchmark_volume_fallback(
+                        all_benchmark[:benchmark_index + 1]
+                    )
+                ),
+                "board_capacity_features": board_capacities,
+                "board_theme_profiles": board_themes,
+            },
+        ))
         prior = {str(item["symbol"]): item for item in execution.results}
         recent = {
             symbol: [value, *recent.get(symbol, [])][:5]
             for symbol, value in prior.items()
+        }
+        leading_prior = {
+            str(item["symbol"]): _compact_leading_history(item, effective)
+            for item in leading_execution.results
+        }
+        leading_recent = {
+            symbol: [value, *leading_recent.get(symbol, [])][:5]
+            for symbol, value in leading_prior.items()
         }
         wave_snapshots = project_hotspot_waves(
             execution.results, prior_waves, effective, wave_sequences,
@@ -211,6 +268,10 @@ def replay(
                 stages.append(item["stage"])
         visible_counts.append(sum(bool(item.get("radar_visible"))
                                   for item in execution.results))
+        leading_visible_counts.append(sum(
+            bool(item.get("leading_visible"))
+            for item in leading_execution.results
+        ))
         preheat_stages = {"leader-ignited", "trend-emerging", "breadth-expanding"}
         raw_preheat_counts.append(sum(
             str(item.get("hotspot_stage")) in preheat_stages
@@ -329,8 +390,15 @@ def replay(
                         feature, ("member_snapshot", "positive_return_5_ratio"),
                     ),
                     "limit_up_count": item.get("limit_up_count"),
-                    "max_limit_up_streak": item.get("max_limit_up_streak"),
                     "broken_up_count": item.get("broken_up_count"),
+                    "max_limit_up_streak": item.get("max_limit_up_streak"),
+                    "consecutive_limit_up_count": item.get(
+                        "consecutive_limit_up_count"
+                    ),
+                    "active_limit_up_members_5": item.get(
+                        "active_limit_up_members_5"
+                    ),
+                    "failed_limit_ratio": item.get("failed_limit_ratio"),
                     "board_capacity_tier": item.get("board_capacity_tier"),
                     "board_turnover_intensity": item.get("board_turnover_intensity"),
                     "capacity_fit_score": item.get("capacity_fit_score"),
@@ -338,6 +406,121 @@ def replay(
                     "market_liquidity_regime": item.get("market_liquidity_regime"),
                     "objective_confirmation_on_signal_date": (
                         timeline_item["_objective_confirmation"]
+                    ),
+                }
+        for item in leading_execution.results:
+            result_symbol = str(item["symbol"])
+            result_bar_index = by_symbol_date[result_symbol].get(effective)
+            state = str(item.get("leading_state") or "invalidated")
+            leading_state_counts[state] = leading_state_counts.get(state, 0) + 1
+            leading_timelines[result_symbol].append({
+                "symbol": item.get("symbol"),
+                "total_score": item.get("total_score"),
+                "leading_state": item.get("leading_state"),
+                "leading_visible": item.get("leading_visible"),
+                "effective_date": effective.isoformat(),
+                "radar_visible": bool(item.get("leading_visible")),
+                "visibility_score": item.get("leading_visibility_score"),
+                "hotspot_stage": (
+                    "trend-emerging"
+                    if item.get("leading_state") == "strengthening" else
+                    "hotspot-confirmed"
+                    if item.get("leading_state") == "launch-confirmed" else
+                    "failed"
+                ),
+                "candidate_streak": item.get("leading_streak"),
+                "_close": (
+                    board_bars[result_symbol][result_bar_index].close
+                    if result_bar_index is not None else None
+                ),
+                "_daily_return": (
+                    board_bars[result_symbol][result_bar_index].close
+                    / board_bars[result_symbol][result_bar_index - 1].close - 1
+                    if result_bar_index is not None and result_bar_index > 0
+                    and board_bars[result_symbol][result_bar_index - 1].close > 0
+                    else None
+                ),
+                "_objective_confirmation": is_objective_confirmation(
+                    features.get(result_symbol, {})
+                ),
+                "_objective_failures": objective_confirmation_failures(
+                    features.get(result_symbol, {})
+                ),
+            })
+            if bool(item.get("leading_visible")):
+                feature = features.get(result_symbol, {})
+                leading_visible_diagnostics[(
+                    result_symbol, effective.isoformat(),
+                )] = {
+                    "symbol": result_symbol,
+                    "name": board_names.get(result_symbol, result_symbol),
+                    "effective_date": effective.isoformat(),
+                    "theme_name": item.get("theme_name"),
+                    "leading_state": item.get("leading_state"),
+                    "total_score": item.get("total_score"),
+                    "leading_acceleration_count": item.get(
+                        "leading_acceleration_count"
+                    ),
+                    "leading_dimensions": item.get("leading_dimensions"),
+                    "leading_deltas": item.get("leading_deltas"),
+                    "leading_trajectory": item.get("leading_trajectory"),
+                    "setup_path": item.get("setup_path"),
+                    "theme_match_method": item.get("theme_match_method"),
+                    "theme_signal_eligible": item.get("theme_signal_eligible"),
+                    "market_liquidity_regime": item.get(
+                        "market_liquidity_regime"
+                    ),
+                    "market_admission_eligible": item.get(
+                        "market_admission_eligible"
+                    ),
+                    "market_admission_reasons": item.get(
+                        "market_admission_reasons"
+                    ),
+                    "board_capacity_tier": item.get("board_capacity_tier"),
+                    "leading_visible_streak": item.get(
+                        "leading_visible_streak"
+                    ),
+                    "signal_classification": boards.get(
+                        result_symbol, {}
+                    ).get("signal_classification"),
+                    "return_5": hotspot_feature_value(
+                        feature, ("metrics", "returns", "5"),
+                    ),
+                    "return_20": hotspot_feature_value(
+                        feature, ("metrics", "returns", "20"),
+                    ),
+                    "relative_strength_5": hotspot_feature_value(
+                        feature, ("metrics", "relative_strength", "5"),
+                    ),
+                    "relative_strength_20": hotspot_feature_value(
+                        feature, ("metrics", "relative_strength", "20"),
+                    ),
+                    "volume_persistence_5": hotspot_feature_value(
+                        feature, ("metrics", "recent_volume_ratio_5_5"),
+                    ),
+                    "positive_return_5_ratio": hotspot_feature_value(
+                        feature, ("member_snapshot", "positive_return_5_ratio"),
+                    ),
+                    "limit_up_count": item.get("limit_up_count"),
+                    "broken_up_count": item.get("broken_up_count"),
+                    "max_limit_up_streak": item.get("max_limit_up_streak"),
+                    "consecutive_limit_up_count": item.get(
+                        "consecutive_limit_up_count"
+                    ),
+                    "active_limit_up_members_5": item.get(
+                        "active_limit_up_members_5"
+                    ),
+                    "failed_limit_ratio": item.get("failed_limit_ratio"),
+                    "breakout_20_atr": hotspot_feature_value(
+                        feature, ("metrics", "hotspot_shape", "breakout20_atr"),
+                    ),
+                    "range_compression_5_20": hotspot_feature_value(
+                        feature,
+                        ("metrics", "hotspot_shape", "range_compression_5_20"),
+                    ),
+                    "extension_from_ma20_atr": hotspot_feature_value(
+                        feature,
+                        ("metrics", "hotspot_shape", "extension_from_ma20_atr"),
                     ),
                 }
         if date_index % 10 == 0 or date_index == len(dates):
@@ -381,6 +564,12 @@ def replay(
                           for symbol, item in boards.items()}, visible_only=True,
         theme_profiles=board_themes,
     )
+    leading_evaluation = evaluate_hotspot_timelines(
+        leading_timelines,
+        names={symbol: str(item.get("name") or symbol)
+               for symbol, item in boards.items()},
+        visible_only=True, theme_profiles=board_themes,
+    )
     wave_rows = sorted(waves.values(), key=lambda item: (
         str(item["started_on"]), str(item["theme_id"]), int(item["wave_sequence"]),
     ))
@@ -412,6 +601,26 @@ def replay(
             "max_adverse_excursion_10": event["max_adverse_excursion_10"],
             "confirmed_within_window": bool(event["confirmation_date"]),
         })
+    leading_event_diagnostics = []
+    for event in leading_evaluation["events"]:
+        diagnostic = leading_visible_diagnostics.get((
+            str(event["symbol"]), str(event["signal_date"]),
+        ), {})
+        leading_event_diagnostics.append({
+            **diagnostic,
+            "cluster_key": event["cluster_key"],
+            "confirmation_date": event["confirmation_date"],
+            "lead_sessions": event["lead_sessions"],
+            "timing_class": event["timing_class"],
+            "signal_confirmation_failures": event[
+                "signal_confirmation_failures"
+            ],
+            "next_three_failure_counts": event["next_three_failure_counts"],
+            "max_forward_return_5": event["max_forward_return_5"],
+            "max_adverse_excursion_5": event["max_adverse_excursion_5"],
+            "max_forward_return_10": event["max_forward_return_10"],
+            "max_adverse_excursion_10": event["max_adverse_excursion_10"],
+        })
     result = {
         "summary": {
             "start_date": start.isoformat(), "end_date": end.isoformat(),
@@ -421,7 +630,9 @@ def replay(
             "median_first_score": round(median(scores), 2) if scores else None,
             "stage_counts": stage_counts,
             "algorithm_version": system.version,
+            "leading_algorithm_version": leading_system.version,
             "parallel_workers": parallel_workers,
+            "aggregate_workers": aggregate_pool.worker_count,
             "online_features_are_causal": True,
             "evaluation": {key: value for key, value in evaluation.items()
                            if key != "events"},
@@ -429,6 +640,18 @@ def replay(
                 key: value for key, value in visible_evaluation.items()
                 if key != "events"
             },
+            "leading_evaluation": {
+                key: value for key, value in leading_evaluation.items()
+                if key != "events"
+            },
+            "leading_state_counts": leading_state_counts,
+            "leading_visible_theme_days": sum(leading_visible_counts),
+            "median_leading_visible_themes_per_day": (
+                median(leading_visible_counts) if leading_visible_counts else None
+            ),
+            "max_leading_visible_themes_per_day": max(
+                leading_visible_counts, default=0,
+            ),
             "visible_theme_days": sum(visible_counts),
             "median_visible_themes_per_day": (
                 median(visible_counts) if visible_counts else None
@@ -461,70 +684,29 @@ def replay(
         )),
         "evaluation_events": evaluation["events"],
         "visible_evaluation_events": visible_evaluation["events"],
+        "leading_evaluation_events": leading_evaluation["events"],
+        "leading_event_diagnostics": leading_event_diagnostics,
         "visible_event_diagnostics": visible_event_diagnostics,
         "waves": wave_rows,
     }
     if not all_boards:
         result["timelines"] = timelines
+        result["leading_timelines"] = leading_timelines
     return result
 
 
-class _ReplayAggregatePool:
-    """Run independent per-session SQLite aggregates with bounded concurrency."""
-
-    def __init__(self, source: SQLiteMarketDataStore, workers: int) -> None:
-        if workers not in {1, 4}:
-            raise ValueError("replay workers must be 1 or 4")
-        self._source = source
-        self._executor: ThreadPoolExecutor | None = None
-        self._stores: list[SQLiteMarketDataStore] = []
-        if workers == 4:
-            self._stores = [
-                SQLiteMarketDataStore(
-                    source.path,
-                    cache_size_kib=8_192,
-                    mmap_size_mib=source.mmap_size_mib,
-                    temp_store="FILE",
-                    busy_timeout_ms=source.busy_timeout_ms,
-                )
-                for _ in range(4)
-            ]
-            self._executor = ThreadPoolExecutor(
-                max_workers=4, thread_name_prefix="hotspot-replay",
-            )
-
-    def calculate(self, effective: date) -> tuple[
-        dict[str, dict[str, object]], dict[str, dict[str, object]],
-        dict[str, dict[str, object]], list[dict[str, object]],
-    ]:
-        if self._executor is None:
-            return (
-                self._source.calculate_board_hotspot_snapshots(effective),
-                self._source.calculate_board_breadth_snapshots(effective),
-                self._source.calculate_board_capacity_snapshots(effective),
-                self._source.get_market_turnover_proxy(effective),
-            )
-        futures = (
-            self._executor.submit(
-                self._stores[0].calculate_board_hotspot_snapshots, effective,
-            ),
-            self._executor.submit(
-                self._stores[1].calculate_board_breadth_snapshots, effective,
-            ),
-            self._executor.submit(
-                self._stores[2].calculate_board_capacity_snapshots, effective,
-            ),
-            self._executor.submit(
-                self._stores[3].get_market_turnover_proxy, effective,
-            ),
-        )
-        return tuple(future.result() for future in futures)  # type: ignore[return-value]
-
-    def close(self) -> None:
-        if self._executor is not None:
-            self._executor.shutdown(wait=True, cancel_futures=True)
-        for store in self._stores:
-            store.close()
+def _compact_leading_history(
+    item: dict[str, object], effective: date,
+) -> dict[str, object]:
+    """Retain only fields needed by the next causal leading-radar session."""
+    return {key: item.get(key) for key in (
+        "symbol", "entity_key", "eligible", "total_score", "grade", "rank",
+        "ranking_universe_digest", "leading_state", "leading_streak",
+        "leading_visible", "leading_visible_streak", "leading_sample",
+        "leading_trajectory", "score_direction",
+        "market_liquidity_raw_seats", "market_liquidity_seat_streak",
+        "leading_slot_limit", "radar_slot_limit",
+    )} | {"effective_date": effective.isoformat()}
 
 
 if __name__ == "__main__":
