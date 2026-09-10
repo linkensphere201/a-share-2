@@ -3,18 +3,23 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
 import json
 from pathlib import Path
 from statistics import median
+import time
 
 from stock_harness.config import load_runtime_settings
-from stock_harness.board_hotspot_evaluation import evaluate_hotspot_timelines
+from stock_harness.board_hotspot_evaluation import (
+    evaluate_hotspot_timelines, is_objective_confirmation,
+)
 from stock_harness.board_hotspot_features import extract_board_hotspot_features
 from stock_harness.board_capacity import classify_board_capacities
 from stock_harness.market_liquidity import (
     analyze_benchmark_volume_fallback, analyze_market_liquidity,
 )
+from stock_harness.hotspot_wave import project_hotspot_waves
 from stock_harness.observation_systems import (
     BOARD_HOTSPOT_SYSTEM,
     BoardHotspotSystem,
@@ -32,6 +37,7 @@ def main() -> None:
     parser.add_argument("--queries", default="电力,医药,农业,种业,硬件")
     parser.add_argument("--max-boards-per-query", type=int, default=12)
     parser.add_argument("--all-boards", action="store_true")
+    parser.add_argument("--workers", type=int, choices=(1, 4), default=4)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     settings = load_runtime_settings(args.provider_config, args.storage_config)
@@ -47,6 +53,7 @@ def main() -> None:
             store, args.start_date, args.end_date,
             [value.strip() for value in args.queries.split(",") if value.strip()],
             args.max_boards_per_query, all_boards=args.all_boards,
+            parallel_workers=args.workers,
         )
     finally:
         store.close()
@@ -58,6 +65,7 @@ def main() -> None:
 def replay(
     store: SQLiteMarketDataStore, start: date, end: date,
     queries: list[str], max_boards_per_query: int, *, all_boards: bool = False,
+    parallel_workers: int = 1,
 ) -> dict[str, object]:
     boards: dict[str, dict[str, object]] = {}
     query_symbols: dict[str, list[str]] = {}
@@ -106,17 +114,25 @@ def replay(
     timelines: dict[str, list[dict[str, object]]] = {symbol: [] for symbol in boards}
     stage_counts: dict[str, int] = {}
     visible_counts: list[int] = []
+    raw_preheat_counts: list[int] = []
+    visible_preheat_counts: list[int] = []
+    active_wave_counts: list[int] = []
+    wave_sequences: dict[str, int] = {}
+    prior_waves: list[dict[str, object]] = []
+    waves: dict[str, dict[str, object]] = {}
     market_regime_days: dict[str, int] = {}
     board_names = {
         symbol: str(item.get("name") or symbol) for symbol, item in boards.items()
     }
     board_themes = store.resolve_board_theme_profiles(board_names)
-    for effective in dates:
-        snapshots = store.calculate_board_hotspot_snapshots(effective)
-        breadth_snapshots = store.calculate_board_breadth_snapshots(effective)
-        turnover = store.get_market_turnover_proxy(effective)
+    aggregate_pool = _ReplayAggregatePool(store, parallel_workers)
+    replay_started = time.perf_counter()
+    for date_index, effective in enumerate(dates, 1):
+        snapshots, breadth_snapshots, capacity_snapshots, turnover = (
+            aggregate_pool.calculate(effective)
+        )
         board_capacities = classify_board_capacities(
-            store.calculate_board_capacity_snapshots(effective), board_names,
+            capacity_snapshots, board_names,
             board_themes,
         )
         market_liquidity = (
@@ -153,15 +169,50 @@ def replay(
             },
         ))
         prior = {str(item["symbol"]): item for item in execution.results}
+        wave_snapshots = project_hotspot_waves(
+            execution.results, prior_waves, effective, wave_sequences,
+        )
+        prior_waves = [
+            item for item in wave_snapshots if item["status"] == "active"
+        ]
+        active_wave_counts.append(len(prior_waves))
+        for item in wave_snapshots:
+            theme_id = str(item["theme_id"])
+            wave_sequences[theme_id] = max(
+                wave_sequences.get(theme_id, 0), int(item["wave_sequence"]),
+            )
+            wave = waves.setdefault(str(item["wave_id"]), {
+                "wave_id": item["wave_id"], "theme_id": theme_id,
+                "theme_name": item["theme_name"],
+                "wave_sequence": item["wave_sequence"],
+                "started_on": item["started_on"], "ended_on": None,
+                "session_count": 0, "peak_score": 0.0, "stages": [],
+            })
+            wave["ended_on"] = item["ended_on"] or wave["ended_on"]
+            wave["session_count"] = item["session_count"]
+            wave["peak_score"] = item["peak_score"]
+            stages = wave["stages"]
+            if isinstance(stages, list) and item["stage"] not in stages:
+                stages.append(item["stage"])
         visible_counts.append(sum(bool(item.get("radar_visible"))
                                   for item in execution.results))
+        preheat_stages = {"leader-ignited", "trend-emerging", "breadth-expanding"}
+        raw_preheat_counts.append(sum(
+            str(item.get("hotspot_stage")) in preheat_stages
+            for item in execution.results
+        ))
+        visible_preheat_counts.append(sum(
+            bool(item.get("radar_visible"))
+            and str(item.get("hotspot_stage")) in preheat_stages
+            for item in execution.results
+        ))
         regime = str(execution.results[0].get("market_liquidity_regime") or "unknown") \
             if execution.results else "unknown"
         market_regime_days[regime] = market_regime_days.get(regime, 0) + 1
         for item in execution.results:
             stage = str(item["hotspot_stage"])
             stage_counts[stage] = stage_counts.get(stage, 0) + 1
-            timelines[str(item["symbol"])].append({
+            timeline_item = {
                 key: item.get(key) for key in (
                     "symbol", "hotspot_stage", "total_score", "raw_score",
                     "score_direction", "candidate_streak", "eligible",
@@ -174,8 +225,21 @@ def replay(
                 )
             } | {
                 "effective_date": effective.isoformat(),
-                "feature": features.get(str(item["symbol"]), {}),
-            })
+                "_objective_confirmation": is_objective_confirmation(
+                    features.get(str(item["symbol"]), {})
+                ),
+            }
+            if not all_boards:
+                timeline_item["feature"] = features.get(str(item["symbol"]), {})
+            timelines[str(item["symbol"])].append(timeline_item)
+        if date_index % 10 == 0 or date_index == len(dates):
+            print(
+                f"hotspot_replay_progress {date_index}/{len(dates)} "
+                f"date={effective.isoformat()} "
+                f"elapsed_s={time.perf_counter() - replay_started:.1f}",
+                flush=True,
+            )
+    aggregate_pool.close()
     first_detections = []
     eligible_board_count = 0
     for symbol, events in timelines.items():
@@ -209,6 +273,14 @@ def replay(
                           for symbol, item in boards.items()}, visible_only=True,
         theme_profiles=board_themes,
     )
+    wave_rows = sorted(waves.values(), key=lambda item: (
+        str(item["started_on"]), str(item["theme_id"]), int(item["wave_sequence"]),
+    ))
+    confirmed_waves = [
+        item for item in wave_rows
+        if any(stage in {"confirmed", "advancing", "reaccelerating"}
+               for stage in item["stages"])
+    ]
     result = {
         "summary": {
             "start_date": start.isoformat(), "end_date": end.isoformat(),
@@ -218,6 +290,7 @@ def replay(
             "median_first_score": round(median(scores), 2) if scores else None,
             "stage_counts": stage_counts,
             "algorithm_version": system.version,
+            "parallel_workers": parallel_workers,
             "online_features_are_causal": True,
             "evaluation": {key: value for key, value in evaluation.items()
                            if key != "events"},
@@ -230,6 +303,25 @@ def replay(
                 median(visible_counts) if visible_counts else None
             ),
             "max_visible_themes_per_day": max(visible_counts, default=0),
+            "median_raw_preheat_themes_per_day": (
+                median(raw_preheat_counts) if raw_preheat_counts else None
+            ),
+            "max_raw_preheat_themes_per_day": max(raw_preheat_counts, default=0),
+            "median_visible_preheat_themes_per_day": (
+                median(visible_preheat_counts) if visible_preheat_counts else None
+            ),
+            "max_visible_preheat_themes_per_day": max(
+                visible_preheat_counts, default=0,
+            ),
+            "wave_count": len(wave_rows),
+            "internally_confirmed_wave_count": len(confirmed_waves),
+            "internal_wave_confirmation_rate": round(
+                len(confirmed_waves) / len(wave_rows), 4,
+            ) if wave_rows else None,
+            "median_active_waves_per_day": (
+                median(active_wave_counts) if active_wave_counts else None
+            ),
+            "max_active_waves_per_day": max(active_wave_counts, default=0),
             "market_regime_days": market_regime_days,
         },
         "queries": query_symbols,
@@ -238,10 +330,69 @@ def replay(
         )),
         "evaluation_events": evaluation["events"],
         "visible_evaluation_events": visible_evaluation["events"],
+        "waves": wave_rows,
     }
     if not all_boards:
         result["timelines"] = timelines
     return result
+
+
+class _ReplayAggregatePool:
+    """Run independent per-session SQLite aggregates with bounded concurrency."""
+
+    def __init__(self, source: SQLiteMarketDataStore, workers: int) -> None:
+        if workers not in {1, 4}:
+            raise ValueError("replay workers must be 1 or 4")
+        self._source = source
+        self._executor: ThreadPoolExecutor | None = None
+        self._stores: list[SQLiteMarketDataStore] = []
+        if workers == 4:
+            self._stores = [
+                SQLiteMarketDataStore(
+                    source.path,
+                    cache_size_kib=8_192,
+                    mmap_size_mib=source.mmap_size_mib,
+                    temp_store="FILE",
+                    busy_timeout_ms=source.busy_timeout_ms,
+                )
+                for _ in range(4)
+            ]
+            self._executor = ThreadPoolExecutor(
+                max_workers=4, thread_name_prefix="hotspot-replay",
+            )
+
+    def calculate(self, effective: date) -> tuple[
+        dict[str, dict[str, object]], dict[str, dict[str, object]],
+        dict[str, dict[str, object]], list[dict[str, object]],
+    ]:
+        if self._executor is None:
+            return (
+                self._source.calculate_board_hotspot_snapshots(effective),
+                self._source.calculate_board_breadth_snapshots(effective),
+                self._source.calculate_board_capacity_snapshots(effective),
+                self._source.get_market_turnover_proxy(effective),
+            )
+        futures = (
+            self._executor.submit(
+                self._stores[0].calculate_board_hotspot_snapshots, effective,
+            ),
+            self._executor.submit(
+                self._stores[1].calculate_board_breadth_snapshots, effective,
+            ),
+            self._executor.submit(
+                self._stores[2].calculate_board_capacity_snapshots, effective,
+            ),
+            self._executor.submit(
+                self._stores[3].get_market_turnover_proxy, effective,
+            ),
+        )
+        return tuple(future.result() for future in futures)  # type: ignore[return-value]
+
+    def close(self) -> None:
+        if self._executor is not None:
+            self._executor.shutdown(wait=True, cancel_futures=True)
+        for store in self._stores:
+            store.close()
 
 
 if __name__ == "__main__":

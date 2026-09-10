@@ -53,6 +53,11 @@ def test_hotspot_wave_ends_after_two_exhausted_sessions_and_restarts() -> None:
     assert restarted[0]["wave_id"] != first[0]["wave_id"]
 
 
+def test_hotspot_wave_does_not_start_before_theme_wins_a_visible_seat() -> None:
+    hidden = _score("trend-emerging", 64, visible=False)
+    assert project_hotspot_waves([hidden], [], date(2026, 9, 1)) == []
+
+
 def test_hotspot_wave_collapses_provider_aliases_to_one_theme() -> None:
     scores = [
         _score("trend-emerging", 58, symbol="BK001.DC", visible=False),

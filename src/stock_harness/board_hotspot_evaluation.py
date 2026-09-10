@@ -179,7 +179,9 @@ def _visible_theme_timelines(
                 "effective_date": effective_date,
                 "radar_visible": bool(visible),
                 "_objective_confirmation": any(
-                    is_objective_confirmation(_mapping(row.get("feature")))
+                    bool(row.get("_objective_confirmation"))
+                    if "_objective_confirmation" in row
+                    else is_objective_confirmation(_mapping(row.get("feature")))
                     for row in rows
                 ),
             })

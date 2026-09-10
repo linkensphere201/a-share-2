@@ -471,3 +471,20 @@ def test_visible_hotspot_evaluation_merges_provider_alias_rotation() -> None:
     assert result["signal_events"] == 1
     assert result["true_signal_events"] == 1
     assert result["precision"] == 1
+
+    compact = {
+        symbol: [{
+            key: value for key, value in row.items() if key != "feature"
+        } | {
+            "_objective_confirmation": is_objective_confirmation(
+                row.get("feature", {})
+            ),
+        } for row in rows]
+        for symbol, rows in timelines.items()
+    }
+    compact_result = evaluate_hotspot_timelines(
+        compact, names={"A": "Same Theme", "B": "Same Theme"},
+        visible_only=True,
+    )
+    assert compact_result["precision"] == result["precision"]
+    assert compact_result["confirmation_events"] == result["confirmation_events"]

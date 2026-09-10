@@ -52,7 +52,10 @@ def _advance_wave(
 ) -> dict[str, object] | None:
     daily_stage = str((score or {}).get("hotspot_stage") or "failed")
     signal_stage = _signal_wave_stage(daily_stage)
-    if prior is None and signal_stage in {None, "diverging", "exhausted"}:
+    if prior is None and (
+        signal_stage in {None, "diverging", "exhausted"}
+        or not bool((score or {}).get("radar_visible"))
+    ):
         return None
 
     if prior is None:
