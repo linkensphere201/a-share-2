@@ -33,7 +33,7 @@ from stock_harness.stock_relative_strength import ALGORITHM_VERSION as RELATIVE_
 
 
 FEATURE_CACHE_VERSION = "stock-focus-replay-features-v1"
-DEFAULT_SCAN_WORKERS = 3
+DEFAULT_SCAN_WORKERS = 4
 
 
 def main() -> None:

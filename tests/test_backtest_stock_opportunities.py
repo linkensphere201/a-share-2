@@ -17,8 +17,8 @@ module = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(module)
 
 
-def test_replay_defaults_to_three_bounded_feature_workers() -> None:
-    assert module.DEFAULT_SCAN_WORKERS == 3
+def test_replay_defaults_to_four_bounded_feature_workers() -> None:
+    assert module.DEFAULT_SCAN_WORKERS == 4
 
 
 def test_select_replay_dates_is_deterministic_and_includes_boundaries() -> None:
