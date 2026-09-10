@@ -9,8 +9,9 @@ import re
 from stock_harness.board_hotspot_features import hotspot_feature_value
 
 
-BOARD_HOTSPOT_EVALUATOR_VERSION = "board-hotspot-evaluator-v2-theme-visible"
+BOARD_HOTSPOT_EVALUATOR_VERSION = "board-hotspot-evaluator-v3-trading-themes"
 _ROMAN_SUFFIX = re.compile(r"[ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩ]+(?:\(A股\))?$")
+_A_SHARE_SUFFIX = re.compile(r"\(A股\)$", re.IGNORECASE)
 _GENERIC_SUFFIX = re.compile(r"(?:指数|板块)$")
 
 
@@ -18,6 +19,7 @@ def canonical_board_name(name: str) -> str:
     """Cluster obvious cross-provider aliases without merging adjacent themes."""
     normalized = re.sub(r"\s+", "", name).replace("（", "(").replace("）", ")")
     normalized = _ROMAN_SUFFIX.sub("", normalized)
+    normalized = _A_SHARE_SUFFIX.sub("", normalized)
     normalized = _GENERIC_SUFFIX.sub("", normalized)
     return normalized.casefold()
 

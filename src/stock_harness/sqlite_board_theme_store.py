@@ -56,3 +56,24 @@ class SQLiteBoardThemeStoreMixin:
         if not themes:
             raise ValueError(f"unknown board theme registry: {registry_version}")
         return resolve_board_theme_profiles(names, themes=themes, aliases=aliases)
+
+    def list_board_theme_registry_versions(self) -> list[dict[str, object]]:
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT node.registry_version, count(DISTINCT node.theme_id),
+                       count(DISTINCT alias.normalized_alias)
+                FROM board_theme_nodes AS node
+                LEFT JOIN board_theme_aliases AS alias
+                  ON alias.registry_version = node.registry_version
+                 AND alias.theme_id = node.theme_id
+                GROUP BY node.registry_version
+                ORDER BY node.registry_version DESC
+                """
+            ).fetchall()
+        return [{
+            "registry_version": str(row[0]),
+            "theme_count": int(row[1]),
+            "alias_count": int(row[2]),
+            "current": str(row[0]) == BOARD_THEME_REGISTRY_VERSION,
+        } for row in rows]

@@ -21,7 +21,7 @@ from stock_harness.review_scoring import (
 
 
 BOARD_HOTSPOT_SYSTEM = "board-hotspot-emergence"
-BOARD_HOTSPOT_VERSION = "board-hotspot-emergence-v4-board-capacity"
+BOARD_HOTSPOT_VERSION = "board-hotspot-emergence-v5-trading-themes"
 
 
 class TrendBreakoutSystem:
@@ -322,6 +322,7 @@ def _apply_visibility_budget(
             "theme_parent_id": theme_profile.get("parent_theme_id"),
             "theme_parent_name": theme_profile.get("parent_theme_name"),
             "theme_match_method": theme_profile.get("match_method"),
+            "theme_signal_eligible": theme_profile.get("signal_eligible", True),
             "radar_visible": False,
             "radar_rank": None,
             "radar_slot_limit": seats,
@@ -356,7 +357,11 @@ def _apply_visibility_budget(
             ),
             "capacity_fit_reasons": capacity_fit["reasons"],
         })
-        if not bool(result.get("eligible")) or not bool(capacity_fit["compatible"]):
+        if (
+            not bool(result.get("eligible"))
+            or not bool(capacity_fit["compatible"])
+            or not bool(theme_profile.get("signal_eligible", True))
+        ):
             continue
         current = representatives.get(cluster)
         if current is None or _visibility_key(result) > _visibility_key(current):

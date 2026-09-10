@@ -201,6 +201,7 @@ export type SignalScoreResult = {
   theme_parent_id?: string | null
   theme_parent_name?: string | null
   theme_match_method?: 'explicit-alias' | 'canonical-name-fallback' | string
+  theme_signal_eligible?: boolean
   score_direction?: 'new' | 'strengthening' | 'stable' | 'declining'
   score_delta?: number
   peak_score?: number

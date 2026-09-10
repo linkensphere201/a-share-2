@@ -16,7 +16,8 @@ from stock_harness.board_capacity import (
     classify_board_capacities, market_capacity_fit,
 )
 from stock_harness.board_theme_registry import (
-    BOARD_THEME_REGISTRY_VERSION, resolve_board_theme_profiles,
+    BOARD_THEME_REGISTRY_VERSION, THEMES, alias_rows,
+    resolve_board_theme_profiles,
 )
 from stock_harness.market_liquidity import (
     analyze_benchmark_volume_fallback, analyze_market_liquidity,
@@ -59,6 +60,7 @@ def _observation(**overrides: object) -> dict[str, object]:
 def _execute(
     observation: dict[str, object], prior: dict[str, object] | None = None,
     snapshot: dict[str, object] | None = None,
+    theme_profile: dict[str, object] | None = None,
 ) -> dict[str, object]:
     system = BoardHotspotSystem()
     member_snapshot = snapshot or {
@@ -88,7 +90,7 @@ def _execute(
                 "coverage_ratio": .95, "turnover_concentration_hhi": .1,
                 "largest_member_share": .2,
             }},
-            "board_theme_profiles": {"BK001.DC": {
+            "board_theme_profiles": {"BK001.DC": theme_profile or {
                 "theme_id": "board", "theme_name": "Board",
                 "registry_version": "test", "match_method": "test",
             }},
@@ -153,6 +155,18 @@ def test_hotspot_requires_persistence_then_tracks_acceleration_and_decay() -> No
     })
     assert weak["hotspot_stage"] == "exhausted"
     assert weak["score_direction"] == "declining"
+
+
+def test_taxonomy_only_parent_never_occupies_a_visible_hotspot_seat() -> None:
+    first = _execute(_observation())
+    parent = _execute(_observation(), first, theme_profile={
+        "theme_id": "agriculture", "theme_name": "农业",
+        "theme_level": "broad", "match_method": "taxonomy-only",
+        "signal_eligible": False,
+    })
+    assert parent["eligible"] is True
+    assert parent["theme_signal_eligible"] is False
+    assert parent["radar_visible"] is False
 
 
 def test_hotspot_filters_single_member_and_one_session_volume_noise() -> None:
@@ -344,16 +358,35 @@ def test_board_capacity_classification_and_market_fit_are_separate() -> None:
 def test_versioned_board_theme_registry_keeps_leaf_and_parent_distinct() -> None:
     store = SQLiteMarketDataStore(":memory:")
     profiles = store.resolve_board_theme_profiles({
-        "CPO.DC": "CPO概念", "PCB.DC": "PCB", "OTHER.DC": "酒店餐饮",
+        "CPO.DC": "CPO概念", "OPTICAL.DC": "光模块",
+        "PCB.DC": "PCB", "PACK.DC": "封装测试",
+        "ADVANCED.DC": "先进封装", "POWER.DC": "电力", "SEED.DC": "种业",
+        "GMO.DC": "转基因", "OTHER.DC": "酒店餐饮",
     })
     assert profiles["CPO.DC"]["registry_version"] == BOARD_THEME_REGISTRY_VERSION
     assert profiles["CPO.DC"]["theme_id"] == "cpo"
     assert profiles["PCB.DC"]["theme_id"] == "pcb"
     assert profiles["CPO.DC"]["parent_theme_id"] == "hardware-technology"
+    assert profiles["OPTICAL.DC"]["theme_id"] == "optical-module"
+    assert profiles["OPTICAL.DC"]["theme_id"] != profiles["CPO.DC"]["theme_id"]
+    assert profiles["PACK.DC"]["theme_id"] == "semiconductor-packaging"
+    assert profiles["ADVANCED.DC"]["theme_id"] == "advanced-packaging"
+    assert profiles["SEED.DC"]["theme_id"] == "seed-industry"
+    assert profiles["GMO.DC"]["theme_id"] == "genetically-modified"
+    assert profiles["POWER.DC"]["theme_id"] == "power"
+    assert profiles["POWER.DC"]["match_method"] == "taxonomy-only"
+    assert profiles["POWER.DC"]["signal_eligible"] is False
+    assert profiles["SEED.DC"]["signal_eligible"] is True
     assert profiles["OTHER.DC"]["match_method"] == "canonical-name-fallback"
     assert resolve_board_theme_profiles({"A": "医疗研发外包"})["A"][
         "theme_id"
     ] == "cro"
+    versions = store.list_board_theme_registry_versions()
+    assert versions == [{
+        "registry_version": BOARD_THEME_REGISTRY_VERSION,
+        "theme_count": len({theme.theme_id for theme in THEMES}),
+        "alias_count": len(alias_rows()), "current": True,
+    }]
     store.close()
 
 
