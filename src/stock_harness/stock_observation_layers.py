@@ -5,11 +5,15 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 
-ALGORITHM_VERSION = "stock-observation-presentation-v4"
+ALGORITHM_VERSION = "stock-observation-presentation-v5"
 M4_ALLOCATOR_VERSION = "stock-m4-multilane-v1"
 FOCUS_LIMIT = 100
 RISK_LIMIT = 100
-FOCUS_RETENTION_LIMIT = 70
+FOCUS_NEW_INCUMBENCY_BONUS = 36.0
+FOCUS_MATURE_INCUMBENCY_BONUS = 28.0
+FOCUS_AGED_INCUMBENCY_BONUS = 18.0
+FOCUS_LONG_STAY_BONUS = 8.0
+FOCUS_ENTRY_MARGIN = 10.0
 ACTIONABLE_STATES = {"waiting-trigger", "triggered", "retest"}
 RISK_CLASSIFICATIONS = {
     "independent-decline", "one-session-event-anomaly",
@@ -153,7 +157,7 @@ def _risk(item: Mapping[str, object]) -> bool:
     return bool(
         _payload(item).get("risk_name")
         or
-        item.get("lifecycle_state") in {"invalidated", "weakened"}
+        item.get("lifecycle_state") == "invalidated"
         or _classifications(_payload(item)) & RISK_CLASSIFICATIONS
     )
 
@@ -237,46 +241,132 @@ def _symbol(item: Mapping[str, object]) -> str:
 def _bounded_focus(
     items: list[dict[str, object]], assigned: set[str], limit: int,
 ) -> list[dict[str, object]]:
-    quotas = (("screener", 20), ("retest", 20), ("breakout", 20),
-              ("critical", 20), ("recognized", 10), ("independent", 10))
-    selected: list[dict[str, object]] = []
+    lane_floors = {
+        "screener": 5, "retest": 10, "breakout": 10,
+        "critical": 10, "recognized": 5, "independent": 5,
+    }
     used = set(assigned)
     candidates = [
         item for item in items
         if _symbol(item) not in used and not _risk(item) and _focus(item)
     ]
-    retained = sorted(
-        (item for item in candidates if _was_focus(item)), key=_focus_key,
-    )[:min(limit, FOCUS_RETENTION_LIMIT)]
-    for item in retained:
-        selected.append(item)
-        used.add(_symbol(item))
-    retained_lanes: dict[str, int] = {}
-    for item in retained:
-        lane = _focus_lane(item)
-        retained_lanes[lane] = retained_lanes.get(lane, 0) + 1
-    for lane, quota in quotas:
-        remaining_quota = max(0, quota - retained_lanes.get(lane, 0))
-        matching = sorted(
-            (
-                item for item in candidates
-                if _symbol(item) not in used and _focus_lane(item) == lane
-            ),
-            key=_focus_key,
-        )[:remaining_quota]
-        for item in matching:
-            symbol = _symbol(item)
-            if symbol not in used:
-                selected.append(item)
-                used.add(symbol)
-    for item in sorted(candidates, key=_focus_key):
-        if len(selected) >= limit:
-            break
-        symbol = _symbol(item)
-        if symbol not in used:
-            selected.append(item)
-            used.add(symbol)
-    return selected[:limit]
+    ordered = sorted(candidates, key=_dynamic_focus_key)
+    incumbents = [
+        item for item in ordered if _was_focus(item) and _retention_qualified(item)
+    ]
+    entrants = [item for item in ordered if not _was_focus(item)]
+    selected = incumbents[:limit]
+    for entrant in entrants:
+        if len(selected) < limit:
+            selected.append(entrant)
+            continue
+        weakest = max(selected, key=_dynamic_focus_key)
+        if (
+            (_hard_focus_signal(entrant) and not _hard_focus_signal(weakest))
+            or _focus_quality(entrant) >= (
+                _focus_quality(weakest) + FOCUS_ENTRY_MARGIN
+            )
+        ):
+            selected.remove(weakest)
+            selected.append(entrant)
+    selected_symbols = {_symbol(item) for item in selected}
+
+    # Floors preserve discovery diversity without forcing every lane to refill a
+    # large quota each day. The weakest non-protected seat is replaced only when
+    # a lane would otherwise disappear from the bounded range.
+    for lane, floor in lane_floors.items():
+        available = [item for item in ordered if _focus_lane(item) == lane]
+        target = min(floor, len(available), limit)
+        while sum(_focus_lane(item) == lane for item in selected) < target:
+            entrant = next(
+                (item for item in available if _symbol(item) not in selected_symbols),
+                None,
+            )
+            if entrant is None:
+                break
+            replaceable = [
+                item for item in selected
+                if not _hard_focus_signal(item)
+                and sum(
+                    _focus_lane(value) == _focus_lane(item) for value in selected
+                ) > min(lane_floors.get(_focus_lane(item), 0), limit)
+            ]
+            if not replaceable:
+                break
+            incumbent = max(replaceable, key=_dynamic_focus_key)
+            selected.remove(incumbent)
+            selected_symbols.remove(_symbol(incumbent))
+            selected.append(entrant)
+            selected_symbols.add(_symbol(entrant))
+    return sorted(selected, key=_dynamic_focus_key)[:limit]
+
+
+def _dynamic_focus_key(item: Mapping[str, object]) -> tuple[object, ...]:
+    """Rank current quality with a small, bounded incumbent advantage."""
+    return (not _hard_focus_signal(item), -_focus_quality(item), *_focus_key(item))
+
+
+def _hard_focus_signal(item: Mapping[str, object]) -> bool:
+    payload = _payload(item)
+    scenario = _mapping(_mapping(payload.get("m4_analysis")).get("scenario"))
+    return bool(
+        payload.get("screener_results")
+        or _opportunity_eligible(item)
+        or str(scenario.get("state")) in {"triggered", "retest"}
+    )
+
+
+def _focus_quality(item: Mapping[str, object]) -> float:
+    payload = _payload(item)
+    analysis = _mapping(payload.get("m4_analysis"))
+    scenario = _mapping(analysis.get("scenario"))
+    phase = _focus_lane(item)
+    phase_bonus = {
+        "screener": 12.0, "breakout": 9.0, "critical": 7.0,
+        "retest": 6.0, "recognized": 4.0,
+    }.get(phase, 0.0)
+    score = (
+        _number(payload.get("independent_score")) * 0.45
+        + _readiness(payload) * 0.35
+        + _number(_mapping(payload.get("opportunity_score")).get("total_score")) * 0.10
+        + phase_bonus
+        + (8.0 if payload.get("recognized") else 0.0)
+        + (6.0 if _scan_eligible(payload) else 0.0)
+        + (8.0 if str(scenario.get("state")) in ACTIONABLE_STATES else 0.0)
+    )
+    if _was_focus(item) and _retention_qualified(item):
+        streak = int(payload.get("focus_streak_sessions") or 0)
+        score += _incumbency_bonus(streak)
+    return score
+
+
+def _incumbency_bonus(streak: int) -> float:
+    if streak <= 3:
+        return FOCUS_NEW_INCUMBENCY_BONUS
+    if streak <= 10:
+        return FOCUS_MATURE_INCUMBENCY_BONUS
+    if streak <= 20:
+        return FOCUS_AGED_INCUMBENCY_BONUS
+    return FOCUS_LONG_STAY_BONUS
+
+
+def _retention_qualified(item: Mapping[str, object]) -> bool:
+    """Require current evidence; prior membership alone cannot hold a seat."""
+    payload = _payload(item)
+    analysis = _mapping(payload.get("m4_analysis"))
+    scenario = _mapping(analysis.get("scenario"))
+    return bool(
+        _selection_qualified(payload)
+        and not _risk(item)
+        and (
+            payload.get("recognized")
+            or payload.get("screener_results")
+            or _scan_eligible(payload)
+            or _readiness(payload) > 0
+            or _number(payload.get("independent_score")) >= 50.0
+            or str(scenario.get("state")) in ACTIONABLE_STATES
+        )
+    )
 
 
 def _was_focus(item: Mapping[str, object]) -> bool:

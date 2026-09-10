@@ -102,6 +102,52 @@ def test_replay_state_must_match_latest_result_and_algorithm_versions() -> None:
     )
 
 
+def test_selection_quality_reports_precision_baseline_and_capacity_lift() -> None:
+    first, second = date(2026, 1, 2), date(2026, 1, 5)
+    result = module._selection_quality_metrics(
+        {first: {"A", "B"}, second: {"C"}},
+        {first: {"A", "B", "X", "Y"}, second: {"A", "C", "X", "Y"}},
+        {first: {"A", "X"}, second: {"A", "C"}},
+    )
+
+    assert result == {
+        "eligible_observation_count": 8,
+        "event_observation_count": 3,
+        "selected_observation_count": 4,
+        "recalled_observation_count": 2,
+        "observation_recall": 0.6667,
+        "selection_precision": 0.5,
+        "universe_event_rate": 0.375,
+        "precision_lift": 1.3333,
+        "selection_rate": 0.5,
+        "recall_lift_vs_capacity": 1.3333,
+    }
+
+
+def test_focus_transitions_report_turnover_and_residence_distribution() -> None:
+    result = module._focus_transitions([
+        {"effective_date": "2026-01-02", "focus_range": [
+            {"symbol": "A"}, {"symbol": "B"},
+        ]},
+        {"effective_date": "2026-01-05", "focus_range": [
+            {"symbol": "B"}, {"symbol": "C"},
+        ]},
+        {"effective_date": "2026-01-06", "focus_range": [
+            {"symbol": "B"}, {"symbol": "C"},
+        ]},
+    ])
+
+    assert result == {
+        "entered_total": 1, "exited_total": 1,
+        "average_daily_entered": 0.5,
+        "median_daily_entered": 0, "p90_daily_entered": 1,
+        "median_consecutive_stay_sessions": 2,
+        "p90_consecutive_stay_sessions": 3,
+        "maximum_consecutive_stay_sessions": 3,
+        "average_daily_jaccard": 0.6667,
+    }
+
+
 def test_feature_cache_requires_completion_marker_and_matching_versions(tmp_path) -> None:
     args = SimpleNamespace(feature_cache_dir=tmp_path)
     effective = date(2026, 9, 8)

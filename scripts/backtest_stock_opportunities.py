@@ -536,6 +536,9 @@ def _state_matches_report(
 
 def _focus_transitions(results: Sequence[Mapping[str, object]]) -> dict[str, object]:
     overlaps: list[float] = []
+    daily_entered: list[int] = []
+    completed_stays: list[int] = []
+    active_stays: dict[str, int] = {}
     entered = exited = 0
     previous: set[str] | None = None
     for result in sorted(results, key=lambda item: str(item.get("effective_date"))):
@@ -544,17 +547,45 @@ def _focus_transitions(results: Sequence[Mapping[str, object]]) -> dict[str, obj
             if isinstance(item, Mapping)
         }
         if previous is not None:
-            entered += len(current - previous)
+            entered_count = len(current - previous)
+            entered += entered_count
             exited += len(previous - current)
+            daily_entered.append(entered_count)
             union = current | previous
             overlaps.append(len(current & previous) / len(union) if union else 1.0)
+            for symbol in previous - current:
+                completed_stays.append(active_stays.pop(symbol, 1))
+        active_stays = {
+            symbol: active_stays.get(symbol, 0) + 1 for symbol in current
+        }
         previous = current
+    completed_stays.extend(active_stays.values())
+    daily_entered.sort()
+    completed_stays.sort()
     return {
         "entered_total": entered, "exited_total": exited,
+        "average_daily_entered": (
+            round(sum(daily_entered) / len(daily_entered), 2)
+            if daily_entered else None
+        ),
+        "median_daily_entered": _percentile(daily_entered, 0.5),
+        "p90_daily_entered": _percentile(daily_entered, 0.9),
+        "median_consecutive_stay_sessions": _percentile(completed_stays, 0.5),
+        "p90_consecutive_stay_sessions": _percentile(completed_stays, 0.9),
+        "maximum_consecutive_stay_sessions": (
+            completed_stays[-1] if completed_stays else None
+        ),
         "average_daily_jaccard": (
             round(sum(overlaps) / len(overlaps), 4) if overlaps else None
         ),
     }
+
+
+def _percentile(values: Sequence[int], percentile: float) -> int | None:
+    if not values:
+        return None
+    index = round((len(values) - 1) * percentile)
+    return sorted(values)[index]
 
 
 def evaluate_focus_recall(
@@ -576,6 +607,7 @@ def evaluate_focus_recall(
     }
     horizons = {20: 0.30, 60: 0.50, 120: 1.00}
     event_symbols: dict[tuple[int, date], set[str]] = {}
+    eligible_symbols: dict[tuple[int, date], set[str]] = {}
     symbols = store.list_stock_symbols_with_daily_bars(replay_dates[0], replay_dates[-1])
     qualified_symbols = skipped_discontinuous = 0
     for position, symbol in enumerate(symbols, 1):
@@ -606,8 +638,10 @@ def evaluate_focus_recall(
                 continue
             for horizon, threshold in horizons.items():
                 high = future_max[horizon][index]
-                if high is not None and high / closes[index] - 1.0 >= threshold:
-                    event_symbols.setdefault((horizon, replay_date), set()).add(symbol)
+                if high is not None:
+                    eligible_symbols.setdefault((horizon, replay_date), set()).add(symbol)
+                    if high / closes[index] - 1.0 >= threshold:
+                        event_symbols.setdefault((horizon, replay_date), set()).add(symbol)
         if position % 500 == 0:
             print(f"recall labels {position}/{len(symbols)}", flush=True)
 
@@ -617,17 +651,15 @@ def evaluate_focus_recall(
             replay_date: event_symbols.get((horizon, replay_date), set())
             for replay_date in replay_dates
         }
-        event_count = sum(len(values) for values in events.values())
-        hit_count = sum(
-            len(values & focus_by_date[replay_date])
-            for replay_date, values in events.items()
-        )
+        eligible = {
+            replay_date: eligible_symbols.get((horizon, replay_date), set())
+            for replay_date in replay_dates
+        }
+        quality = _selection_quality_metrics(events, eligible, focus_by_date)
         episodes = _event_episodes(events, replay_dates, focus_by_date)
         metrics[str(horizon)] = {
             "threshold_return": threshold,
-            "event_observation_count": event_count,
-            "recalled_observation_count": hit_count,
-            "observation_recall": round(hit_count / event_count, 4) if event_count else None,
+            **quality,
             **episodes,
         }
     return {
@@ -637,6 +669,49 @@ def evaluate_focus_recall(
         "qualified_symbol_count": qualified_symbols,
         "skipped_raw_discontinuous_count": skipped_discontinuous,
         "horizons": metrics,
+    }
+
+
+def _selection_quality_metrics(
+    events: Mapping[date, set[str]],
+    eligible: Mapping[date, set[str]],
+    focus_by_date: Mapping[date, set[str]],
+) -> dict[str, object]:
+    event_count = sum(len(values) for values in events.values())
+    eligible_count = sum(len(values) for values in eligible.values())
+    selected_count = sum(
+        len(focus_by_date.get(value, set()) & symbols)
+        for value, symbols in eligible.items()
+    )
+    hit_count = sum(
+        len(symbols & focus_by_date.get(value, set()))
+        for value, symbols in events.items()
+    )
+    precision = hit_count / selected_count if selected_count else None
+    baseline = event_count / eligible_count if eligible_count else None
+    lift = (
+        precision / baseline
+        if precision is not None and baseline not in {None, 0.0} else None
+    )
+    selection_rate = selected_count / eligible_count if eligible_count else None
+    recall = hit_count / event_count if event_count else None
+    recall_lift = (
+        recall / selection_rate
+        if recall is not None and selection_rate not in {None, 0.0} else None
+    )
+    return {
+        "eligible_observation_count": eligible_count,
+        "event_observation_count": event_count,
+        "selected_observation_count": selected_count,
+        "recalled_observation_count": hit_count,
+        "observation_recall": round(recall, 4) if recall is not None else None,
+        "selection_precision": round(precision, 4) if precision is not None else None,
+        "universe_event_rate": round(baseline, 4) if baseline is not None else None,
+        "precision_lift": round(lift, 4) if lift is not None else None,
+        "selection_rate": round(selection_rate, 4) if selection_rate is not None else None,
+        "recall_lift_vs_capacity": (
+            round(recall_lift, 4) if recall_lift is not None else None
+        ),
     }
 
 

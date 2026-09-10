@@ -84,7 +84,7 @@ def test_focus_and_m4_allocation_preserve_discovery_lanes_and_separate_risk_name
     assert len(selected) == 12
     assert all(item["payload"]["presentation_bucket"] == "focus" for item in selected)
     assert sum(item["payload"]["presentation_lane"] == "breakout" for item in selected) >= 6
-    assert sum(item["payload"]["presentation_lane"] == "critical" for item in selected) == 5
+    assert sum(item["payload"]["presentation_lane"] == "critical" for item in selected) >= 5
     assert all(item["symbol"] != "ST01" for item in selected)
 
 
@@ -105,7 +105,17 @@ def test_risk_overflow_is_archived_instead_of_spilling_into_focus() -> None:
     assert _payload(items, "CLEAN")["presentation_bucket"] == "focus"
 
 
-def test_focus_retains_at_most_seventy_prior_qualified_names() -> None:
+def test_weakened_lifecycle_competes_for_focus_instead_of_becoming_risk() -> None:
+    weakened = _item("WEAK", score=70, phase="retest")
+    weakened["lifecycle_state"] = "weakened"
+    snapshot = {"summary": {}, "items": [weakened]}
+
+    assign_stock_presentation_layers(snapshot, focus_limit=1, risk_limit=1)
+
+    assert _payload(snapshot["items"], "WEAK")["presentation_bucket"] == "focus"
+
+
+def test_focus_uses_quality_hysteresis_instead_of_fixed_retention_quota() -> None:
     retained = [
         _item(f"OLD{index:02}", score=50 - index / 10, phase="breakout")
         for index in range(80)
@@ -125,8 +135,34 @@ def test_focus_retains_at_most_seventy_prior_qualified_names() -> None:
         if item["payload"]["presentation_bucket"] == "focus"
     }
     assert len(focus_symbols) == 100
-    assert sum(symbol.startswith("OLD") for symbol in focus_symbols) == 70
-    assert sum(symbol.startswith("NEW") for symbol in focus_symbols) == 30
+    assert sum(symbol.startswith("OLD") for symbol in focus_symbols) == 80
+    assert sum(symbol.startswith("NEW") for symbol in focus_symbols) == 20
+
+
+def test_weak_incumbent_cannot_survive_on_prior_membership_alone() -> None:
+    incumbent = _item("OLD", score=10)
+    incumbent["payload"]["previous_presentation_bucket"] = "focus"
+    entrants = [
+        _item(f"NEW{index}", score=80 - index, phase="critical")
+        for index in range(3)
+    ]
+    snapshot = {"summary": {}, "items": [incumbent, *entrants]}
+
+    assign_stock_presentation_layers(snapshot, focus_limit=2, risk_limit=1)
+
+    assert _payload(snapshot["items"], "OLD")["presentation_bucket"] == "archive"
+
+
+def test_comparable_incumbent_gets_small_bounded_ranking_advantage() -> None:
+    incumbent = _item("OLD", score=70, phase="breakout")
+    incumbent["payload"]["previous_presentation_bucket"] = "focus"
+    incumbent["payload"]["focus_streak_sessions"] = 3
+    entrant = _item("NEW", score=72, phase="breakout")
+    snapshot = {"summary": {}, "items": [incumbent, entrant]}
+
+    assign_stock_presentation_layers(snapshot, focus_limit=1, risk_limit=1)
+
+    assert _payload(snapshot["items"], "OLD")["presentation_bucket"] == "focus"
 
 
 def _item(
