@@ -30,6 +30,9 @@ from stock_harness.observation_systems import (
     ObservationSystemRegistry,
     TrendBreakoutSystem,
 )
+from stock_harness.observation_systems.board_systems import (
+    _strict_preheat_candidate, _visibility_lifecycle_fit,
+)
 from stock_harness.review_scoring import (
     TREND_BREAKOUT_SCORER, default_scorer_registry, execute_scorer,
 )
@@ -324,6 +327,33 @@ def test_market_liquidity_contraction_limits_visible_hotspots_to_one_theme() -> 
     ] is False
 
 
+def test_hotspot_visibility_prefers_fresh_persistent_evidence() -> None:
+    fresh = _visibility_lifecycle_fit({
+        "hotspot_stage": "trend-emerging", "candidate_streak": 2,
+        "positive_return_5_ratio": .92, "score_delta": 9,
+        "drawdown_from_peak": 0,
+    })
+    stale = _visibility_lifecycle_fit({
+        "hotspot_stage": "accelerating", "candidate_streak": 5,
+        "positive_return_5_ratio": .78, "score_delta": -2,
+        "drawdown_from_peak": 6,
+    })
+    assert float(fresh["score"]) > float(stale["score"])
+    assert "stale-candidate" in stale["reasons"]
+
+
+def test_hotspot_preheat_requires_strict_first_session_quality() -> None:
+    candidate = {
+        "hotspot_stage": "leader-ignited", "total_score": 62,
+        "raw_score": 64, "positive_return_5_ratio": .9,
+        "max_limit_up_streak": 2, "setup_path": "trend-continuation",
+    }
+    assert _strict_preheat_candidate(candidate)
+    assert not _strict_preheat_candidate({
+        **candidate, "positive_return_5_ratio": .7,
+    })
+
+
 def test_board_capacity_classification_and_market_fit_are_separate() -> None:
     snapshots = {
         "B1": {"turnover_capacity_20": 10, "turnover_recent_5": 12,
@@ -440,6 +470,8 @@ def test_hotspot_evaluator_clusters_aliases_and_measures_lead_without_future_inp
     assert result["precision"] == 1
     assert result["recall"] == 1
     assert result["median_lead_sessions"] == 3
+    assert result["timing_counts"]["early"] == 1
+    assert result["early_precision"] == 1
     assert result["named_theme_hits"]["electricity"] == ["BK001.DC"]
 
 
@@ -488,3 +520,24 @@ def test_visible_hotspot_evaluation_merges_provider_alias_rotation() -> None:
     )
     assert compact_result["precision"] == result["precision"]
     assert compact_result["confirmation_events"] == result["confirmation_events"]
+
+
+def test_hotspot_evaluator_separates_synchronous_early_late_and_outcomes() -> None:
+    rows = [{
+        "effective_date": f"2026-02-{index + 1:02d}",
+        "radar_visible": index == 0,
+        "hotspot_stage": "trend-emerging" if index == 0 else "failed",
+        "total_score": 60 if index == 0 else 20,
+        "candidate_streak": 1,
+        "_objective_confirmation": index in {2, 3},
+        "_close": 100 + index,
+    } for index in range(8)]
+    result = evaluate_hotspot_timelines(
+        {"A": rows}, names={"A": "Theme A"}, visible_only=True,
+    )
+    event = result["events"][0]
+    assert event["timing_class"] == "early"
+    assert event["lead_sessions"] == 3
+    assert event["forward_return_5"] == .05
+    assert event["max_forward_return_5"] == .05
+    assert event["max_adverse_excursion_5"] == .01

@@ -21,7 +21,7 @@ from stock_harness.review_scoring import (
 
 
 BOARD_HOTSPOT_SYSTEM = "board-hotspot-emergence"
-BOARD_HOTSPOT_VERSION = "board-hotspot-emergence-v5-trading-themes"
+BOARD_HOTSPOT_VERSION = "board-hotspot-emergence-v6-persistence-ranked"
 
 
 class TrendBreakoutSystem:
@@ -315,6 +315,8 @@ def _apply_visibility_budget(
         )
         board_capacity = _mapping(board_capacities.get(symbol))
         capacity_fit = market_capacity_fit(board_capacity, market)
+        lifecycle_fit = _visibility_lifecycle_fit(result)
+        strict_preheat = _strict_preheat_candidate(result)
         result.update({
             "canonical_theme": cluster,
             "theme_registry_version": theme_profile.get("registry_version"),
@@ -351,14 +353,18 @@ def _apply_visibility_budget(
             "capacity_compatible": capacity_fit["compatible"],
             "capacity_market_preferred": capacity_fit["market_compatible"],
             "capacity_fit_score": capacity_fit["fit_score"],
+            "visibility_lifecycle_fit": lifecycle_fit["score"],
+            "visibility_lifecycle_reasons": lifecycle_fit["reasons"],
+            "radar_preheat": strict_preheat,
             "visibility_score": round(
                 (_number(result.get("total_score")) or 0.0)
-                + float(capacity_fit["fit_score"]), 2,
+                + float(capacity_fit["fit_score"])
+                + float(lifecycle_fit["score"]), 2,
             ),
             "capacity_fit_reasons": capacity_fit["reasons"],
         })
         if (
-            not bool(result.get("eligible"))
+            (not bool(result.get("eligible")) and not strict_preheat)
             or not bool(capacity_fit["compatible"])
             or not bool(theme_profile.get("signal_eligible", True))
         ):
@@ -382,6 +388,73 @@ def _visibility_key(
         int(_number(result.get("candidate_streak")) or 0),
         str(result.get("symbol") or ""),
     )
+
+
+def _strict_preheat_candidate(result: Mapping[str, object]) -> bool:
+    return (
+        str(result.get("hotspot_stage") or "") == "leader-ignited"
+        and (_number(result.get("total_score")) or 0.0) >= 58
+        and (_number(result.get("raw_score")) or 0.0) >= 58
+        and (_number(result.get("positive_return_5_ratio")) or 0.0) >= .85
+        and int(_number(result.get("max_limit_up_streak")) or 0) >= 2
+        and str(result.get("setup_path") or "none") != "none"
+    )
+
+
+def _visibility_lifecycle_fit(
+    result: Mapping[str, object],
+) -> dict[str, object]:
+    stage = str(result.get("hotspot_stage") or "failed")
+    streak = int(_number(result.get("candidate_streak")) or 0)
+    breadth = _number(result.get("positive_return_5_ratio"))
+    delta = _number(result.get("score_delta")) or 0.0
+    drawdown = _number(result.get("drawdown_from_peak")) or 0.0
+    score = {
+        "leader-ignited": 8.0,
+        "trend-emerging": 8.0,
+        "breadth-expanding": 10.0,
+        "hotspot-confirmed": 2.0,
+        "accelerating": -7.0,
+    }.get(stage, -12.0)
+    reasons = [f"stage:{stage}"]
+    if streak == 1:
+        score += 4
+        reasons.append("first-session-preheat")
+    elif streak == 2:
+        score += 6
+        reasons.append("fresh-two-session-confirmation")
+    elif streak == 3:
+        score += 3
+        reasons.append("three-session-persistence")
+    elif streak >= 4:
+        penalty = min(18.0, (streak - 3) * 4.0)
+        score -= penalty
+        reasons.append("stale-candidate")
+    if breadth is not None and breadth >= .90:
+        score += 8
+        reasons.append("broad-member-persistence")
+    elif breadth is not None and breadth >= .85:
+        score += 5
+        reasons.append("member-persistence")
+    elif breadth is None or breadth < .70:
+        score -= 6
+        reasons.append("weak-member-persistence")
+    if delta >= 8:
+        score += 5
+        reasons.append("score-accelerating")
+    elif delta >= 4:
+        score += 2
+        reasons.append("score-strengthening")
+    elif delta < 0:
+        score -= 8
+        reasons.append("score-declining")
+    if drawdown >= 8:
+        score -= 8
+        reasons.append("deep-score-drawdown")
+    elif drawdown >= 4:
+        score -= 4
+        reasons.append("score-drawdown")
+    return {"score": round(score, 2), "reasons": reasons}
 
 
 def _activity_points(volume: float | None, persistence: float | None) -> float:

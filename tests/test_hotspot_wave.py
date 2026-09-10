@@ -58,6 +58,26 @@ def test_hotspot_wave_does_not_start_before_theme_wins_a_visible_seat() -> None:
     assert project_hotspot_waves([hidden], [], date(2026, 9, 1)) == []
 
 
+def test_hotspot_wave_ends_after_three_sessions_outside_visible_seats() -> None:
+    first = project_hotspot_waves(
+        [_score("hotspot-confirmed", 72)], [], date(2026, 9, 1),
+    )
+    hidden_score = _score("hotspot-confirmed", 70, visible=False)
+    first_hidden = project_hotspot_waves(
+        [hidden_score], first, date(2026, 9, 2),
+    )
+    second_hidden = project_hotspot_waves(
+        [hidden_score], first_hidden, date(2026, 9, 3),
+    )
+    ended = project_hotspot_waves(
+        [hidden_score], second_hidden, date(2026, 9, 4),
+    )
+    assert first_hidden[0]["stage"] == "diverging"
+    assert second_hidden[0]["invisible_session_count"] == 2
+    assert ended[0]["status"] == "ended"
+    assert ended[0]["transition"] == "visibility-ended"
+
+
 def test_hotspot_wave_collapses_provider_aliases_to_one_theme() -> None:
     scores = [
         _score("trend-emerging", 58, symbol="BK001.DC", visible=False),

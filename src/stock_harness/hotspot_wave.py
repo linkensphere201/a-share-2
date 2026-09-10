@@ -65,6 +65,7 @@ def _advance_wave(
         stage = signal_stage or "ignition"
         transition = "started"
         weak_sessions = 0
+        invisible_sessions = 0
         confirmed_on = effective_date.isoformat() if stage in {
             "confirmed", "advancing", "reaccelerating",
         } else None
@@ -77,13 +78,23 @@ def _advance_wave(
         wave_id = str(prior["wave_id"])
         previous_stage = str(prior["stage"])
         weak_sessions = int(prior.get("weak_session_count") or 0)
+        invisible_sessions = int(prior.get("invisible_session_count") or 0)
         session_count = int(prior.get("session_count") or 0) + 1
         confirmed_on = prior.get("confirmed_on")
         peak_score = float(prior.get("peak_score") or 0.0)
         peak_on = str(prior.get("peak_on") or started_on)
-        stage, weak_sessions, transition = _transition(
-            previous_stage, signal_stage, weak_sessions,
-        )
+        currently_visible = bool((score or {}).get("radar_visible"))
+        if not currently_visible and signal_stage not in {None, "exhausted"}:
+            invisible_sessions += 1
+            if invisible_sessions >= 3:
+                stage, transition = "ended", "visibility-ended"
+            else:
+                stage, transition = "diverging", "left-visible-seat"
+        else:
+            stage, weak_sessions, transition = _transition(
+                previous_stage, signal_stage, weak_sessions,
+            )
+            invisible_sessions = 0 if currently_visible else invisible_sessions + 1
         if confirmed_on is None and stage in {
             "confirmed", "advancing", "reaccelerating",
         }:
@@ -114,6 +125,7 @@ def _advance_wave(
         "ended_on": effective_date.isoformat() if status == "ended" else None,
         "session_count": session_count,
         "weak_session_count": weak_sessions,
+        "invisible_session_count": invisible_sessions,
         "peak_score": round(peak_score, 2),
         "latest_score": round(latest_score, 2),
         "representative_symbol": (score or prior or {}).get("symbol"),
@@ -201,6 +213,7 @@ def _score_wave_projection(
         "hotspot_wave_peak_on": snapshot["peak_on"],
         "hotspot_wave_session_count": snapshot["session_count"],
         "hotspot_wave_weak_session_count": snapshot["weak_session_count"],
+        "hotspot_wave_invisible_session_count": snapshot["invisible_session_count"],
         "hotspot_wave_representative": representative,
     }
 

@@ -180,6 +180,7 @@ export type SignalScoreResult = {
   hotspot_wave_peak_on?: string
   hotspot_wave_session_count?: number
   hotspot_wave_weak_session_count?: number
+  hotspot_wave_invisible_session_count?: number
   hotspot_wave_representative?: boolean
   setup_path?: string
   radar_visible?: boolean

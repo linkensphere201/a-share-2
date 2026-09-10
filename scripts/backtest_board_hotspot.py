@@ -14,7 +14,9 @@ from stock_harness.config import load_runtime_settings
 from stock_harness.board_hotspot_evaluation import (
     evaluate_hotspot_timelines, is_objective_confirmation,
 )
-from stock_harness.board_hotspot_features import extract_board_hotspot_features
+from stock_harness.board_hotspot_features import (
+    extract_board_hotspot_features, hotspot_feature_value,
+)
 from stock_harness.board_capacity import classify_board_capacities
 from stock_harness.market_liquidity import (
     analyze_benchmark_volume_fallback, analyze_market_liquidity,
@@ -120,6 +122,7 @@ def replay(
     wave_sequences: dict[str, int] = {}
     prior_waves: list[dict[str, object]] = []
     waves: dict[str, dict[str, object]] = {}
+    visible_diagnostics: dict[tuple[str, str], dict[str, object]] = {}
     market_regime_days: dict[str, int] = {}
     board_names = {
         symbol: str(item.get("name") or symbol) for symbol, item in boards.items()
@@ -210,6 +213,8 @@ def replay(
             if execution.results else "unknown"
         market_regime_days[regime] = market_regime_days.get(regime, 0) + 1
         for item in execution.results:
+            result_symbol = str(item["symbol"])
+            result_bar_index = by_symbol_date[result_symbol].get(effective)
             stage = str(item["hotspot_stage"])
             stage_counts[stage] = stage_counts.get(stage, 0) + 1
             timeline_item = {
@@ -225,6 +230,10 @@ def replay(
                 )
             } | {
                 "effective_date": effective.isoformat(),
+                "_close": (
+                    board_bars[result_symbol][result_bar_index].close
+                    if result_bar_index is not None else None
+                ),
                 "_objective_confirmation": is_objective_confirmation(
                     features.get(str(item["symbol"]), {})
                 ),
@@ -232,6 +241,58 @@ def replay(
             if not all_boards:
                 timeline_item["feature"] = features.get(str(item["symbol"]), {})
             timelines[str(item["symbol"])].append(timeline_item)
+            if bool(item.get("radar_visible")):
+                symbol = str(item["symbol"])
+                feature = features.get(symbol, {})
+                visible_diagnostics[(symbol, effective.isoformat())] = {
+                    "symbol": symbol,
+                    "name": board_names.get(symbol, symbol),
+                    "effective_date": effective.isoformat(),
+                    "theme_id": item.get("canonical_theme"),
+                    "theme_name": item.get("theme_name"),
+                    "hotspot_stage": item.get("hotspot_stage"),
+                    "setup_path": item.get("setup_path"),
+                    "total_score": item.get("total_score"),
+                    "raw_score": item.get("raw_score"),
+                    "score_delta": item.get("score_delta"),
+                    "candidate_streak": item.get("candidate_streak"),
+                    "components": item.get("components"),
+                    "return_5": hotspot_feature_value(
+                        feature, ("metrics", "returns", "5"),
+                    ),
+                    "return_20": hotspot_feature_value(
+                        feature, ("metrics", "returns", "20"),
+                    ),
+                    "relative_strength_5": hotspot_feature_value(
+                        feature, ("metrics", "relative_strength", "5"),
+                    ),
+                    "relative_strength_20": hotspot_feature_value(
+                        feature, ("metrics", "relative_strength", "20"),
+                    ),
+                    "volume_ratio_20": hotspot_feature_value(
+                        feature, ("metrics", "volume_ratio20"),
+                    ),
+                    "volume_persistence_5": hotspot_feature_value(
+                        feature, ("metrics", "recent_volume_ratio_5_5"),
+                    ),
+                    "breadth": hotspot_feature_value(
+                        feature, ("metrics", "board_breadth", "breadth"),
+                    ),
+                    "positive_return_5_ratio": hotspot_feature_value(
+                        feature, ("member_snapshot", "positive_return_5_ratio"),
+                    ),
+                    "limit_up_count": item.get("limit_up_count"),
+                    "max_limit_up_streak": item.get("max_limit_up_streak"),
+                    "broken_up_count": item.get("broken_up_count"),
+                    "board_capacity_tier": item.get("board_capacity_tier"),
+                    "board_turnover_intensity": item.get("board_turnover_intensity"),
+                    "capacity_fit_score": item.get("capacity_fit_score"),
+                    "visibility_score": item.get("visibility_score"),
+                    "market_liquidity_regime": item.get("market_liquidity_regime"),
+                    "objective_confirmation_on_signal_date": (
+                        timeline_item["_objective_confirmation"]
+                    ),
+                }
         if date_index % 10 == 0 or date_index == len(dates):
             print(
                 f"hotspot_replay_progress {date_index}/{len(dates)} "
@@ -281,6 +342,25 @@ def replay(
         if any(stage in {"confirmed", "advancing", "reaccelerating"}
                for stage in item["stages"])
     ]
+    visible_event_diagnostics = []
+    for event in visible_evaluation["events"]:
+        diagnostic = visible_diagnostics.get((
+            str(event["symbol"]), str(event["signal_date"]),
+        ), {})
+        visible_event_diagnostics.append({
+            **diagnostic,
+            "cluster_key": event["cluster_key"],
+            "confirmation_date": event["confirmation_date"],
+            "lead_sessions": event["lead_sessions"],
+            "timing_class": event["timing_class"],
+            "forward_return_5": event["forward_return_5"],
+            "max_forward_return_5": event["max_forward_return_5"],
+            "max_adverse_excursion_5": event["max_adverse_excursion_5"],
+            "forward_return_10": event["forward_return_10"],
+            "max_forward_return_10": event["max_forward_return_10"],
+            "max_adverse_excursion_10": event["max_adverse_excursion_10"],
+            "confirmed_within_window": bool(event["confirmation_date"]),
+        })
     result = {
         "summary": {
             "start_date": start.isoformat(), "end_date": end.isoformat(),
@@ -330,6 +410,7 @@ def replay(
         )),
         "evaluation_events": evaluation["events"],
         "visible_evaluation_events": visible_evaluation["events"],
+        "visible_event_diagnostics": visible_event_diagnostics,
         "waves": wave_rows,
     }
     if not all_boards:

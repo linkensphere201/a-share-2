@@ -9,7 +9,7 @@ import re
 from stock_harness.board_hotspot_features import hotspot_feature_value
 
 
-BOARD_HOTSPOT_EVALUATOR_VERSION = "board-hotspot-evaluator-v3-trading-themes"
+BOARD_HOTSPOT_EVALUATOR_VERSION = "board-hotspot-evaluator-v4-timing-outcomes"
 _ROMAN_SUFFIX = re.compile(r"[ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩ]+(?:\(A股\))?$")
 _A_SHARE_SUFFIX = re.compile(r"\(A股\)$", re.IGNORECASE)
 _GENERIC_SUFFIX = re.compile(r"(?:指数|板块)$")
@@ -29,8 +29,12 @@ def named_theme(name: str) -> str | None:
     value = canonical_board_name(name)
     rules = (
         ("electricity", ("电力", "绿色电力", "电网")),
-        ("medicine", ("医药", "创新药", "医疗")),
-        ("agriculture-seed", ("种业", "种子", "农业种植", "农作物")),
+        ("medicine", (
+            "医药", "创新药", "医疗", "cro", "cdmo", "减肥药", "原料药",
+        )),
+        ("agriculture-seed", (
+            "种业", "种子", "农业种植", "农作物", "转基因", "玉米", "粮食",
+        )),
         ("hardware-technology", ("算力", "半导体", "光模块", "cpo", "pcb", "消费电子")),
     )
     for theme, aliases in rules:
@@ -105,6 +109,10 @@ def evaluate_hotspot_timelines(
                     str(rows[future]["effective_date"]) if future is not None else None
                 ),
                 "lead_sessions": future - index if future is not None else None,
+                "timing_class": _timing_class(
+                    future - index if future is not None else None
+                ),
+                **_forward_outcomes(rows, index),
             }
             signals.append(item)
             theme = named_theme(str(item["name"]))
@@ -122,6 +130,10 @@ def evaluate_hotspot_timelines(
     true_signals = [item for item in signals if item["confirmation_date"]]
     recalled = [item for item in confirmations if item["preceded_by_signal"]]
     leads = [int(item["lead_sessions"]) for item in true_signals]
+    timing_counts = {
+        timing: sum(item["timing_class"] == timing for item in signals)
+        for timing in ("synchronous", "early", "late", "missed")
+    }
     return {
         "evaluator_version": BOARD_HOTSPOT_EVALUATOR_VERSION,
         "signal_scope": "visible-theme-seats" if visible_only else "raw-radar",
@@ -131,6 +143,24 @@ def evaluate_hotspot_timelines(
         "precision": round(len(true_signals) / len(signals), 4) if signals else None,
         "recall": round(len(recalled) / len(confirmations), 4) if confirmations else None,
         "median_lead_sessions": _median(leads),
+        "timing_counts": timing_counts,
+        "early_precision": round(
+            timing_counts["early"] / len(signals), 4,
+        ) if signals else None,
+        "synchronous_confirmation_rate": round(
+            timing_counts["synchronous"] / len(signals), 4,
+        ) if signals else None,
+        "late_confirmation_rate": round(
+            timing_counts["late"] / len(signals), 4,
+        ) if signals else None,
+        "median_max_forward_return_5": _median_float([
+            item["max_forward_return_5"] for item in signals
+            if item["max_forward_return_5"] is not None
+        ]),
+        "median_max_adverse_excursion_5": _median_float([
+            item["max_adverse_excursion_5"] for item in signals
+            if item["max_adverse_excursion_5"] is not None
+        ]),
         "named_theme_hits": {key: sorted(set(value)) for key, value in theme_hits.items()},
         "theme_registry_version": next((
             str(profile.get("registry_version"))
@@ -207,6 +237,37 @@ def _is_radar_signal(
     )
 
 
+def _timing_class(lead_sessions: int | None) -> str:
+    if lead_sessions is None:
+        return "missed"
+    if lead_sessions == 0:
+        return "synchronous"
+    if lead_sessions <= 3:
+        return "early"
+    return "late"
+
+
+def _forward_outcomes(
+    rows: Sequence[Mapping[str, object]], signal_index: int,
+) -> dict[str, float | None]:
+    base = _number(rows[signal_index].get("_close"))
+    result: dict[str, float | None] = {}
+    for horizon in (5, 10):
+        future = [
+            value for row in rows[signal_index + 1:signal_index + horizon + 1]
+            if (value := _number(row.get("_close"))) is not None
+        ]
+        if base is None or base <= 0 or not future:
+            result[f"forward_return_{horizon}"] = None
+            result[f"max_forward_return_{horizon}"] = None
+            result[f"max_adverse_excursion_{horizon}"] = None
+            continue
+        result[f"forward_return_{horizon}"] = round(future[-1] / base - 1, 6)
+        result[f"max_forward_return_{horizon}"] = round(max(future) / base - 1, 6)
+        result[f"max_adverse_excursion_{horizon}"] = round(min(future) / base - 1, 6)
+    return result
+
+
 def _episode_indexes(
     states: Sequence[bool], cooldown: int,
 ) -> list[int]:
@@ -233,3 +294,20 @@ def _median(values: Sequence[int]) -> float | None:
     if len(ordered) % 2:
         return float(ordered[middle])
     return (ordered[middle - 1] + ordered[middle]) / 2
+
+
+def _median_float(values: Sequence[object]) -> float | None:
+    numbers = sorted(float(value) for value in values if isinstance(value, (int, float)))
+    if not numbers:
+        return None
+    middle = len(numbers) // 2
+    value = numbers[middle] if len(numbers) % 2 else (
+        numbers[middle - 1] + numbers[middle]
+    ) / 2
+    return round(value, 6)
+
+
+def _number(value: object) -> float | None:
+    if isinstance(value, bool):
+        return None
+    return float(value) if isinstance(value, (int, float)) else None
