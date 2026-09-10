@@ -109,6 +109,7 @@ class SQLiteSignalReviewStoreMixin:
         summary: dict[str, object], input_digest: str,
         scores: Sequence[dict[str, object]] = (),
         pool_snapshots: Sequence[dict[str, object]] = (),
+        hotspot_wave_snapshots: Sequence[dict[str, object]] = (),
     ) -> dict[str, object]:
         now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
         counts = {name: sum(item["change_type"] == name for item in items)
@@ -126,6 +127,7 @@ class SQLiteSignalReviewStoreMixin:
             if status is None or str(status[0]) != "running":
                 raise ValueError("signal review run is not running")
             self._insert_observation_pool_snapshots(run_id, pool_snapshots)
+            self._insert_hotspot_wave_snapshots(run_id, hotspot_wave_snapshots, now_ms)
             score_symbols = {str(value["symbol"]).upper() for value in scores}
             score_instrument_ids = self._instrument_ids(score_symbols)
             missing_score_symbols = score_symbols - score_instrument_ids.keys()
@@ -204,6 +206,71 @@ class SQLiteSignalReviewStoreMixin:
                  now_ms, run_id),
             )
         return self.get_signal_review_run(run_id)  # type: ignore[return-value]
+
+    def _insert_hotspot_wave_snapshots(
+        self, run_id: str, snapshots: Sequence[dict[str, object]], now_ms: int,
+    ) -> None:
+        symbols = {
+            str(item["representative_symbol"]).upper() for item in snapshots
+            if item.get("representative_symbol")
+        }
+        instrument_ids = self._instrument_ids(symbols)
+        for item in snapshots:
+            symbol = str(item.get("representative_symbol") or "").upper()
+            stored_item = {**item, "run_id": run_id}
+            self._connection.execute(
+                """
+                INSERT INTO hotspot_wave_snapshots(
+                    run_id, wave_id, theme_id, wave_sequence, status, stage,
+                    effective_date, representative_instrument_id, payload_json,
+                    created_at_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_id, item["wave_id"], item["theme_id"], item["wave_sequence"],
+                    item["status"], item["stage"], _date_key(date.fromisoformat(
+                        str(item["effective_date"])
+                    )), instrument_ids.get(symbol),
+                    json.dumps(stored_item, ensure_ascii=False, sort_keys=True), now_ms,
+                ),
+            )
+
+    def list_hotspot_wave_snapshots(
+        self, run_id: str, *, status: str | None = None,
+    ) -> list[dict[str, object]]:
+        if status not in {None, "active", "ended"}:
+            raise ValueError("unknown hotspot wave status")
+        clause = " AND status = ?" if status else ""
+        parameters: tuple[object, ...] = (run_id, status) if status else (run_id,)
+        with self._lock:
+            rows = self._connection.execute(
+                f"""SELECT payload_json FROM hotspot_wave_snapshots
+                WHERE run_id = ?{clause}
+                ORDER BY status, stage, theme_id""", parameters,
+            ).fetchall()
+        return [json.loads(str(row[0])) for row in rows]
+
+    def list_hotspot_wave_history(
+        self, wave_id: str, limit: int = 250,
+    ) -> list[dict[str, object]]:
+        if not 1 <= limit <= 1000:
+            raise ValueError("wave history limit must be between 1 and 1000")
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT payload_json FROM hotspot_wave_snapshots
+                WHERE wave_id = ? ORDER BY effective_date, run_id LIMIT ?""",
+                (wave_id, limit),
+            ).fetchall()
+        return [json.loads(str(row[0])) for row in rows]
+
+    def hotspot_wave_sequences_before(self, effective_date: date) -> dict[str, int]:
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT theme_id, max(wave_sequence)
+                FROM hotspot_wave_snapshots WHERE effective_date < ? GROUP BY theme_id""",
+                (_date_key(effective_date),),
+            ).fetchall()
+        return {str(row[0]): int(row[1]) for row in rows}
 
     def list_signal_review_scores(
         self, run_id: str, system_id: str | None = None,

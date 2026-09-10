@@ -18,6 +18,8 @@ EXPECTED_API_OPERATIONS = {
     ("GET", "/api/signals/runs/{run_id}/items", "200"),
     ("GET", "/api/signals/runs/{run_id}/items/{item_id}", "200"),
     ("GET", "/api/signals/runs/{run_id}/scores", "200"),
+    ("GET", "/api/signals/runs/{run_id}/hotspot-waves", "200"),
+    ("GET", "/api/hotspot-waves/{wave_id}", "200"),
     ("GET", "/api/signals/runs/{run_id}/board-observations", "200"),
     ("GET", "/api/observation-pools/runs/{run_id}/{pool_kind}", "200"),
     ("GET", "/api/signals/{signal_id}/attention", "200"),

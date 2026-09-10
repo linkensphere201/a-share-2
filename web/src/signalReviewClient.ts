@@ -170,6 +170,17 @@ export type SignalScoreResult = {
   risk_summary: string
   change_summary: string
   hotspot_stage?: string
+  hotspot_wave_id?: string
+  hotspot_wave_sequence?: number
+  hotspot_wave_status?: 'active' | 'ended'
+  hotspot_wave_stage?: string
+  hotspot_wave_transition?: string
+  hotspot_wave_started_on?: string
+  hotspot_wave_confirmed_on?: string | null
+  hotspot_wave_peak_on?: string
+  hotspot_wave_session_count?: number
+  hotspot_wave_weak_session_count?: number
+  hotspot_wave_representative?: boolean
   setup_path?: string
   radar_visible?: boolean
   radar_rank?: number | null

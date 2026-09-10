@@ -921,6 +921,31 @@ CREATE TABLE IF NOT EXISTS signal_review_scores (
 CREATE INDEX IF NOT EXISTS signal_review_scores_rank
 ON signal_review_scores(run_id, system_id, eligible DESC, rank);
 
+CREATE TABLE IF NOT EXISTS hotspot_wave_snapshots (
+    run_id TEXT NOT NULL,
+    wave_id TEXT NOT NULL,
+    theme_id TEXT NOT NULL,
+    wave_sequence INTEGER NOT NULL CHECK (wave_sequence > 0),
+    status TEXT NOT NULL CHECK (status IN ('active', 'ended')),
+    stage TEXT NOT NULL CHECK (stage IN (
+        'ignition', 'emerging', 'confirmed', 'advancing', 'diverging',
+        'reaccelerating', 'exhausted', 'ended'
+    )),
+    effective_date INTEGER NOT NULL,
+    representative_instrument_id INTEGER,
+    payload_json TEXT NOT NULL,
+    created_at_ms INTEGER NOT NULL,
+    PRIMARY KEY (run_id, theme_id),
+    FOREIGN KEY (run_id) REFERENCES signal_review_runs(run_id) ON DELETE CASCADE,
+    FOREIGN KEY (representative_instrument_id) REFERENCES instruments(instrument_id)
+) WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS hotspot_wave_snapshots_history
+ON hotspot_wave_snapshots(theme_id, effective_date DESC, wave_sequence DESC);
+
+CREATE INDEX IF NOT EXISTS hotspot_wave_snapshots_wave
+ON hotspot_wave_snapshots(wave_id, effective_date, run_id);
+
 CREATE TABLE IF NOT EXISTS board_daily_observations (
     run_id TEXT NOT NULL,
     instrument_id INTEGER NOT NULL,

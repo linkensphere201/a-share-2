@@ -120,6 +120,31 @@ def create_analysis_router() -> APIRouter:
             "total": selected_store.count_signal_review_scores(run_id, system_id),
         }
 
+    @router.get("/api/signals/runs/{run_id}/hotspot-waves")
+    def list_hotspot_waves(
+        run_id: str, request: Request,
+        status_filter: Literal["active", "ended"] | None = Query(
+            default=None, alias="status",
+        ),
+    ) -> dict[str, object]:
+        selected_store = store(request)
+        if selected_store.get_signal_review_run(run_id) is None:
+            raise HTTPException(status_code=404, detail="signal review run not found")
+        items = selected_store.list_hotspot_wave_snapshots(
+            run_id, status=status_filter,
+        )
+        return {"items": items, "total": len(items)}
+
+    @router.get("/api/hotspot-waves/{wave_id}")
+    def get_hotspot_wave_history(
+        wave_id: str, request: Request,
+        limit: int = Query(default=250, ge=1, le=1000),
+    ) -> dict[str, object]:
+        items = store(request).list_hotspot_wave_history(wave_id, limit=limit)
+        if not items:
+            raise HTTPException(status_code=404, detail="hotspot wave not found")
+        return {"items": items, "total": len(items)}
+
     @router.get("/api/signals/runs/{run_id}/board-observations")
     def list_board_observations(
         run_id: str, request: Request, symbol: str | None = None,

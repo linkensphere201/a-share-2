@@ -687,6 +687,7 @@ function ScoreSummary({ score, onHistorySelect }: {
     <em>{score.change_summary}</em>
     {score.system_id === 'board-hotspot-emergence' && <div className="signal-hotspot-state">
       <span className={score.score_direction ?? 'stable'}>{hotspotStageLabel(score.hotspot_stage)}<small>{score.score_direction === 'strengthening' ? '持续增强' : score.score_direction === 'declining' ? '正在衰退' : score.score_direction === 'new' ? '首次识别' : '强度稳定'}</small></span>
+      {score.hotspot_wave_id && <span>{hotspotWaveStageLabel(score.hotspot_wave_stage)}<small>第 {score.hotspot_wave_sequence ?? 1} 轮 · 已运行 {score.hotspot_wave_session_count ?? 1} 日</small></span>}
       <span>连续 {score.candidate_streak ?? 0} 日<small>峰值 {(score.peak_score ?? score.total_score).toFixed(0)} · 回撤 {(score.drawdown_from_peak ?? 0).toFixed(0)}</small></span>
       <span>{score.limit_up_count ?? 0} 家涨停<small>最高 {score.max_limit_up_streak ?? 0} 连板 · 破板 {score.broken_up_count ?? 0}</small></span>
       <span>{score.theme_name ?? boardCapacityLabel(score.board_capacity_tier)}<small>{score.theme_parent_name ? `${score.theme_parent_name} · ` : ''}{boardCapacityLabel(score.board_capacity_tier)} · 匹配 {score.capacity_fit_score?.toFixed(0) ?? '-'}</small></span>
@@ -717,6 +718,14 @@ function hotspotStageLabel(stage?: string) {
   }[stage ?? ''] ?? '数据不足'
 }
 
+function hotspotWaveStageLabel(stage?: string) {
+  return {
+    ignition: '波段点火', emerging: '波段成形', confirmed: '波段确认',
+    advancing: '主升推进', diverging: '波段分歧', reaccelerating: '二次增强',
+    exhausted: '波段退潮', ended: '波段结束',
+  }[stage ?? ''] ?? '波段未建立'
+}
+
 function hotspotFilterLabel(value: HotspotFilter) {
   return { all: '全部有效', rising: '持续增强', confirmed: '已确认', fading: '分歧/退潮' }[value]
 }
@@ -734,13 +743,16 @@ function marketDirectionLabel(value?: string) {
 }
 
 function hotspotMatches(score: SignalScoreResult | undefined, filter: HotspotFilter) {
-  if (!score || score.system_id !== 'board-hotspot-emergence' || score.hotspot_stage === 'failed') return false
-  if (!score.radar_visible) return false
+  if (!score || score.system_id !== 'board-hotspot-emergence') return false
+  const fadingWave = score.hotspot_wave_representative
+    && ['diverging', 'exhausted', 'ended'].includes(score.hotspot_wave_stage ?? '')
+  if (score.hotspot_stage === 'failed' && !fadingWave) return false
+  if (!score.radar_visible && !fadingWave) return false
   if (filter === 'all') return true
   if (filter === 'rising') return score.score_direction === 'strengthening'
     && ((score.candidate_streak ?? 0) >= 1 || (score.max_limit_up_streak ?? 0) >= 2)
   if (filter === 'confirmed') return ['hotspot-confirmed', 'accelerating'].includes(score.hotspot_stage ?? '')
-  return ['diverging', 'exhausted'].includes(score.hotspot_stage ?? '')
+  return fadingWave || ['diverging', 'exhausted'].includes(score.hotspot_stage ?? '')
 }
 
 function ScoreSparkline({ score, onHistorySelect }: {

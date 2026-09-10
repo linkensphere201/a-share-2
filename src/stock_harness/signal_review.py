@@ -36,6 +36,7 @@ from stock_harness.daily_signal_analysis import (
     render_board_summary,
 )
 from stock_harness.models import InstrumentKind
+from stock_harness.hotspot_wave import project_hotspot_waves
 from stock_harness.observation_systems import (
     BOARD_HOTSPOT_SYSTEM,
     BoardHotspotSystem,
@@ -372,6 +373,13 @@ class SignalReviewService:
         hotspot_execution = system_execution_by_id[BOARD_HOTSPOT_SYSTEM]
         trend_scores = trend_execution.results
         hotspot_scores = hotspot_execution.results
+        prior_wave_snapshots = self._store.list_hotspot_wave_snapshots(
+            str(session_runs[0]["run_id"]), status="active",
+        ) if session_runs else []
+        hotspot_wave_snapshots = project_hotspot_waves(
+            hotspot_scores, prior_wave_snapshots, cutoff,
+            self._store.hotspot_wave_sequences_before(cutoff),
+        )
         trend_score_by_symbol = {
             str(value["symbol"]): value for value in trend_scores
         }
@@ -493,6 +501,9 @@ class SignalReviewService:
             "hotspot_candidate_count": sum(
                 bool(value["eligible"]) for value in hotspot_scores
             ),
+            "hotspot_active_wave_count": sum(
+                value["status"] == "active" for value in hotspot_wave_snapshots
+            ),
             "scoring_errors": [
                 {"system_id": system_id, "error": execution.error}
                 for system_id, execution in (
@@ -593,6 +604,7 @@ class SignalReviewService:
             run_id, items=items, summary=summary, input_digest=digest,
             scores=[*trend_scores, *hotspot_scores, *market_scores, *stock_scores],
             pool_snapshots=[board_pool, stock_pool],
+            hotspot_wave_snapshots=hotspot_wave_snapshots,
         )
         LOGGER.info(
             "daily_signal_review_completed run_id=%s date=%s observations=%s promoted=%s elapsed_ms=%.1f",
