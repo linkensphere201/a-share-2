@@ -183,6 +183,17 @@ export type SignalScoreResult = {
   hotspot_wave_invisible_session_count?: number
   hotspot_wave_representative?: boolean
   setup_path?: string
+  hotspot_window_version?: string
+  hotspot_window_state?: 'insufficient' | 'pulse' | 'building' | 'persistent' | 'reaccelerating' | 'fading' | 'overextended' | 'fragmented'
+  hotspot_window_eligible?: boolean
+  hotspot_window_observed_sessions?: number
+  hotspot_window_qualified_sessions?: number
+  hotspot_window_evidence_score?: number
+  hotspot_window_evidence_delta?: number
+  hotspot_window_shape_support_sessions?: number
+  hotspot_window_activity_climax?: boolean
+  hotspot_window_fit_score?: number
+  hotspot_window_failure_reasons?: string[]
   radar_visible?: boolean
   radar_rank?: number | null
   radar_slot_limit?: number

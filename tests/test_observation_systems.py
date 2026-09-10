@@ -12,6 +12,7 @@ from stock_harness.board_hotspot_evaluation import (
     canonical_board_name, evaluate_hotspot_timelines, is_objective_confirmation,
 )
 from stock_harness.board_hotspot_features import extract_board_hotspot_features
+from stock_harness.board_hotspot_window import analyze_hotspot_window
 from stock_harness.board_capacity import (
     classify_board_capacities, market_capacity_fit,
 )
@@ -75,6 +76,9 @@ def _execute(
     result = system.execute(ObservationSystemContext(
         observations=[observation],
         prior_scores={BOARD_HOTSPOT_SYSTEM: {"BK001.DC": prior} if prior else {}},
+        recent_scores={
+            BOARD_HOTSPOT_SYSTEM: {"BK001.DC": [prior]} if prior else {}
+        },
         dependencies={
             "board_hotspot_features": {"BK001.DC": {
                 "coverage_state": observation["coverage_state"],
@@ -289,6 +293,11 @@ def test_market_liquidity_contraction_limits_visible_hotspots_to_one_theme() -> 
     priors = {
         symbol: {"candidate_streak": 1, "positive_return_5_ratio": .7,
                  "total_score": 55, "hotspot_stage": "trend-emerging",
+                 "hotspot_window_state": "building",
+                 "hotspot_window_sample": {
+                     "evidence_score": 6, "shape_path": "trend-continuation",
+                     "dimensions": {"shape": True},
+                 },
                  "market_liquidity_regime": "contracting",
                  "market_liquidity_raw_seats": 1,
                  "market_liquidity_seat_streak": 1,
@@ -298,6 +307,11 @@ def test_market_liquidity_contraction_limits_visible_hotspots_to_one_theme() -> 
     results = BoardHotspotSystem().execute(ObservationSystemContext(
         observations=observations,
         prior_scores={BOARD_HOTSPOT_SYSTEM: priors},
+        recent_scores={
+            BOARD_HOTSPOT_SYSTEM: {
+                symbol: [value] for symbol, value in priors.items()
+            },
+        },
         dependencies={
             "board_hotspot_features": {
                 "BK001.DC": feature, "BK002.DC": feature,
@@ -347,11 +361,50 @@ def test_hotspot_preheat_requires_strict_first_session_quality() -> None:
         "hotspot_stage": "leader-ignited", "total_score": 62,
         "raw_score": 64, "positive_return_5_ratio": .9,
         "max_limit_up_streak": 2, "setup_path": "trend-continuation",
+        "hotspot_window_eligible": True,
     }
     assert _strict_preheat_candidate(candidate)
     assert not _strict_preheat_candidate({
         **candidate, "positive_return_5_ratio": .7,
     })
+
+
+def test_hotspot_window_rejects_one_day_pulse_then_admits_persistence() -> None:
+    current = {
+        "return_5": .08, "return_20": .12, "relative_strength_5": .05,
+        "volume_ratio_20": 1.4, "volume_persistence_5": 1.2,
+        "positive_return_5_ratio": .75, "limit_up_ratio": .03,
+        "max_limit_up_streak": 2, "shape_path": "platform-breakout",
+        "extension_from_ma20_atr": 1.2,
+    }
+    first = analyze_hotspot_window(current, [])
+    assert first["state"] == "insufficient"
+    assert first["eligible"] is False
+
+    prior = {
+        "hotspot_window_state": first["state"],
+        "hotspot_window_sample": first["sample"],
+    }
+    second = analyze_hotspot_window(current, [prior])
+    assert second["state"] == "building"
+    assert second["eligible"] is True
+
+
+def test_hotspot_window_rejects_overextended_shape() -> None:
+    current = {
+        "return_5": .12, "return_20": .31, "relative_strength_5": .08,
+        "volume_ratio_20": 1.6, "volume_persistence_5": 1.3,
+        "positive_return_5_ratio": .8, "limit_up_ratio": .04,
+        "max_limit_up_streak": 3, "shape_path": "trend-continuation",
+        "extension_from_ma20_atr": 4.5,
+    }
+    prior = analyze_hotspot_window({**current, "return_20": .18}, [])
+    result = analyze_hotspot_window(current, [{
+        "hotspot_window_state": prior["state"],
+        "hotspot_window_sample": prior["sample"],
+    }])
+    assert result["state"] == "overextended"
+    assert result["eligible"] is False
 
 
 def test_board_capacity_classification_and_market_fit_are_separate() -> None:
@@ -489,11 +542,13 @@ def test_visible_hotspot_evaluation_merges_provider_alias_rotation() -> None:
     dates = [f"2026-01-0{index + 1}" for index in range(4)]
     timelines = {
         "A": [{"effective_date": day, "symbol": "A",
-               "radar_visible": index == 0, "feature": {}}
+               "radar_visible": index == 0, "feature": {},
+               "_close": 1_000 + index * 10, "_daily_return": .01}
               for index, day in enumerate(dates)],
         "B": [{"effective_date": day, "symbol": "B",
                "radar_visible": index == 1,
-               "feature": confirmation if index >= 2 else {}}
+               "feature": confirmation if index >= 2 else {},
+               "_close": 10 + index, "_daily_return": .01}
               for index, day in enumerate(dates)],
     }
     result = evaluate_hotspot_timelines(
@@ -503,6 +558,7 @@ def test_visible_hotspot_evaluation_merges_provider_alias_rotation() -> None:
     assert result["signal_events"] == 1
     assert result["true_signal_events"] == 1
     assert result["precision"] == 1
+    assert result["events"][0]["forward_return_5"] == pytest.approx(.030301)
 
     compact = {
         symbol: [{
@@ -541,3 +597,23 @@ def test_hotspot_evaluator_separates_synchronous_early_late_and_outcomes() -> No
     assert event["forward_return_5"] == .05
     assert event["max_forward_return_5"] == .05
     assert event["max_adverse_excursion_5"] == .01
+
+
+def test_hotspot_evaluator_treats_visible_entry_during_confirmation_as_synchronous() -> None:
+    rows = [{
+        "effective_date": f"2026-03-{index + 1:02d}",
+        "radar_visible": index == 3,
+        "hotspot_stage": "hotspot-confirmed" if index == 3 else "failed",
+        "total_score": 70 if index == 3 else 20,
+        "candidate_streak": 2,
+        "_objective_confirmation": index >= 1,
+        "_objective_failures": [] if index >= 1 else ["return-5"],
+        "_close": 100 + index,
+        "_daily_return": .01,
+    } for index in range(7)]
+    result = evaluate_hotspot_timelines(
+        {"A": rows}, names={"A": "Theme A"}, visible_only=True,
+    )
+    assert result["true_signal_events"] == 1
+    assert result["events"][0]["timing_class"] == "synchronous"
+    assert result["events"][0]["lead_sessions"] == 0

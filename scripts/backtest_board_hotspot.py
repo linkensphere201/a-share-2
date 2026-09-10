@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date, timedelta
+from datetime import date
 import json
 from pathlib import Path
 from statistics import median
@@ -13,6 +13,7 @@ import time
 from stock_harness.config import load_runtime_settings
 from stock_harness.board_hotspot_evaluation import (
     evaluate_hotspot_timelines, is_objective_confirmation,
+    objective_confirmation_failures,
 )
 from stock_harness.board_hotspot_features import (
     extract_board_hotspot_features, hotspot_feature_value,
@@ -100,7 +101,11 @@ def replay(
     benchmark = store.get_daily_bars("000001.SH", start, end)
     dates = [bar.trade_date for bar in benchmark]
     all_benchmark = store.get_daily_bars("000001.SH", None, end)
-    history_start = start - timedelta(days=60)
+    first_benchmark_index = next(
+        index for index, bar in enumerate(all_benchmark)
+        if bar.trade_date >= start
+    )
+    history_start = all_benchmark[max(0, first_benchmark_index - 65)].trade_date
     board_bars = {
         symbol: store.get_daily_bars(symbol, history_start, end) for symbol in boards
     }
@@ -113,6 +118,7 @@ def replay(
     }
     system = BoardHotspotSystem()
     prior: dict[str, dict[str, object]] = {}
+    recent: dict[str, list[dict[str, object]]] = {}
     timelines: dict[str, list[dict[str, object]]] = {symbol: [] for symbol in boards}
     stage_counts: dict[str, int] = {}
     visible_counts: list[int] = []
@@ -150,7 +156,8 @@ def replay(
             if index is None or benchmark_index is None:
                 continue
             feature = extract_board_hotspot_features(
-                bars[:index + 1], all_benchmark[:benchmark_index + 1],
+                bars[max(0, index - 65):index + 1],
+                all_benchmark[max(0, benchmark_index - 65):benchmark_index + 1],
                 breadth_snapshot=breadth_snapshots.get(symbol),
                 member_snapshot=snapshots.get(symbol),
             )
@@ -159,6 +166,7 @@ def replay(
         execution = system.execute(ObservationSystemContext(
             observations=observations,
             prior_scores={BOARD_HOTSPOT_SYSTEM: prior},
+            recent_scores={BOARD_HOTSPOT_SYSTEM: recent},
             dependencies={
                 "board_hotspot_features": features,
                 "board_names": board_names,
@@ -172,6 +180,10 @@ def replay(
             },
         ))
         prior = {str(item["symbol"]): item for item in execution.results}
+        recent = {
+            symbol: [value, *recent.get(symbol, [])][:5]
+            for symbol, value in prior.items()
+        }
         wave_snapshots = project_hotspot_waves(
             execution.results, prior_waves, effective, wave_sequences,
         )
@@ -226,6 +238,12 @@ def replay(
                     "capacity_compatible", "capacity_market_preferred",
                     "capacity_fit_score", "visibility_score",
                     "setup_path",
+                    "hotspot_window_state", "hotspot_window_eligible",
+                    "hotspot_window_observed_sessions",
+                    "hotspot_window_qualified_sessions",
+                    "hotspot_window_evidence_score",
+                    "hotspot_window_evidence_delta",
+                    "hotspot_window_fit_score",
                     "limit_up_count", "max_limit_up_streak", "summary",
                 )
             } | {
@@ -234,7 +252,17 @@ def replay(
                     board_bars[result_symbol][result_bar_index].close
                     if result_bar_index is not None else None
                 ),
+                "_daily_return": (
+                    board_bars[result_symbol][result_bar_index].close
+                    / board_bars[result_symbol][result_bar_index - 1].close - 1
+                    if result_bar_index is not None and result_bar_index > 0
+                    and board_bars[result_symbol][result_bar_index - 1].close > 0
+                    else None
+                ),
                 "_objective_confirmation": is_objective_confirmation(
+                    features.get(str(item["symbol"]), {})
+                ),
+                "_objective_failures": objective_confirmation_failures(
                     features.get(str(item["symbol"]), {})
                 ),
             }
@@ -252,6 +280,25 @@ def replay(
                     "theme_name": item.get("theme_name"),
                     "hotspot_stage": item.get("hotspot_stage"),
                     "setup_path": item.get("setup_path"),
+                    "hotspot_window_state": item.get("hotspot_window_state"),
+                    "hotspot_window_observed_sessions": item.get(
+                        "hotspot_window_observed_sessions"
+                    ),
+                    "hotspot_window_qualified_sessions": item.get(
+                        "hotspot_window_qualified_sessions"
+                    ),
+                    "hotspot_window_evidence_score": item.get(
+                        "hotspot_window_evidence_score"
+                    ),
+                    "hotspot_window_evidence_delta": item.get(
+                        "hotspot_window_evidence_delta"
+                    ),
+                    "hotspot_window_fit_score": item.get(
+                        "hotspot_window_fit_score"
+                    ),
+                    "hotspot_window_failure_reasons": item.get(
+                        "hotspot_window_failure_reasons"
+                    ),
                     "total_score": item.get("total_score"),
                     "raw_score": item.get("raw_score"),
                     "score_delta": item.get("score_delta"),
@@ -353,6 +400,10 @@ def replay(
             "confirmation_date": event["confirmation_date"],
             "lead_sessions": event["lead_sessions"],
             "timing_class": event["timing_class"],
+            "signal_confirmation_failures": event[
+                "signal_confirmation_failures"
+            ],
+            "next_three_failure_counts": event["next_three_failure_counts"],
             "forward_return_5": event["forward_return_5"],
             "max_forward_return_5": event["max_forward_return_5"],
             "max_adverse_excursion_5": event["max_adverse_excursion_5"],

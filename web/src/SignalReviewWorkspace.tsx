@@ -688,6 +688,7 @@ function ScoreSummary({ score, onHistorySelect }: {
     {score.system_id === 'board-hotspot-emergence' && <div className="signal-hotspot-state">
       <span className={score.score_direction ?? 'stable'}>{hotspotStageLabel(score.hotspot_stage)}<small>{score.score_direction === 'strengthening' ? '持续增强' : score.score_direction === 'declining' ? '正在衰退' : score.score_direction === 'new' ? '首次识别' : '强度稳定'}</small></span>
       {score.hotspot_wave_id && <span>{hotspotWaveStageLabel(score.hotspot_wave_stage)}<small>第 {score.hotspot_wave_sequence ?? 1} 轮 · 已运行 {score.hotspot_wave_session_count ?? 1} 日</small></span>}
+      <span>{hotspotWindowStateLabel(score.hotspot_window_state)}<small>{score.hotspot_window_qualified_sessions ?? 0}/{score.hotspot_window_observed_sessions ?? 0} 日有效 · 形态支持 {score.hotspot_window_shape_support_sessions ?? 0} 日</small></span>
       <span>连续 {score.candidate_streak ?? 0} 日<small>峰值 {(score.peak_score ?? score.total_score).toFixed(0)} · 回撤 {(score.drawdown_from_peak ?? 0).toFixed(0)}</small></span>
       <span>{score.limit_up_count ?? 0} 家涨停<small>最高 {score.max_limit_up_streak ?? 0} 连板 · 破板 {score.broken_up_count ?? 0}</small></span>
       <span>{score.theme_name ?? boardCapacityLabel(score.board_capacity_tier)}<small>{score.theme_parent_name ? `${score.theme_parent_name} · ` : ''}{boardCapacityLabel(score.board_capacity_tier)} · 匹配 {score.capacity_fit_score?.toFixed(0) ?? '-'}</small></span>
@@ -724,6 +725,14 @@ function hotspotWaveStageLabel(stage?: string) {
     advancing: '主升推进', diverging: '波段分歧', reaccelerating: '二次增强',
     exhausted: '波段退潮', ended: '波段结束',
   }[stage ?? ''] ?? '波段未建立'
+}
+
+function hotspotWindowStateLabel(state?: string) {
+  return {
+    insufficient: '窗口积累中', pulse: '单日脉冲', building: '窗口形成',
+    persistent: '窗口持续', reaccelerating: '窗口再增强', fading: '窗口衰减',
+    overextended: '形态过热', fragmented: '证据离散',
+  }[state ?? ''] ?? '窗口未计算'
 }
 
 function hotspotFilterLabel(value: HotspotFilter) {

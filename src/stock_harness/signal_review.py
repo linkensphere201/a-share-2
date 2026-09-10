@@ -1094,6 +1094,10 @@ def _build_board_pool_snapshot(
                 "stage": score.get("hotspot_stage"),
                 "direction": score.get("score_direction"),
                 "candidate_streak": score.get("candidate_streak"),
+                "window_state": score.get("hotspot_window_state"),
+                "window_qualified_sessions": score.get(
+                    "hotspot_window_qualified_sessions"
+                ),
             },
         ))
     for entry in attention:
@@ -1157,6 +1161,9 @@ def _build_board_pool_snapshot(
                 "hotspot_stage": hotspot_score.get("hotspot_stage"),
                 "hotspot_direction": hotspot_score.get("score_direction"),
                 "hotspot_peak_score": hotspot_score.get("peak_score"),
+                "hotspot_window_state": hotspot_score.get(
+                    "hotspot_window_state"
+                ),
                 "recognition_assignment_count": sum(
                     source["source_type"] == "recognition-assignment"
                     for source in value["sources"]

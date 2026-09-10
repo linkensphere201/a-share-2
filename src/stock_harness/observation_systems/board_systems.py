@@ -9,6 +9,7 @@ from stock_harness.observation_systems.contracts import (
     ObservationSystemExecution,
 )
 from stock_harness.board_hotspot_evaluation import canonical_board_name
+from stock_harness.board_hotspot_window import analyze_hotspot_window
 from stock_harness.board_capacity import market_capacity_fit
 from stock_harness.market_liquidity import stabilize_seat_budget
 from stock_harness.review_scoring import (
@@ -21,7 +22,7 @@ from stock_harness.review_scoring import (
 
 
 BOARD_HOTSPOT_SYSTEM = "board-hotspot-emergence"
-BOARD_HOTSPOT_VERSION = "board-hotspot-emergence-v6-persistence-ranked"
+BOARD_HOTSPOT_VERSION = "board-hotspot-emergence-v7-window-shape"
 
 
 class TrendBreakoutSystem:
@@ -89,6 +90,7 @@ class BoardHotspotSystem:
         if not isinstance(features, Mapping):
             raise ValueError("board_hotspot_features must be a mapping")
         prior = context.prior_scores.get(self.system_id, {})
+        recent = context.recent_scores.get(self.system_id, {})
         entities = []
         for observation in context.observations:
             symbol = str(observation["symbol"])
@@ -102,6 +104,7 @@ class BoardHotspotSystem:
                 "metrics": {**_mapping(observation.get("metrics")), **feature_metrics},
                 "hotspot_snapshot": _mapping(feature.get("member_snapshot")),
                 "prior_hotspot": prior.get(symbol, {}),
+                "recent_hotspot": _records(recent.get(symbol)),
             })
         scorer = _BoardHotspotScorer()
         results = score_entities(
@@ -133,6 +136,7 @@ class _BoardHotspotScorer:
         returns = _mapping(metrics.get("returns"))
         relative = _mapping(metrics.get("relative_strength"))
         shape = _mapping(metrics.get("hotspot_shape"))
+        long_shape = _mapping(metrics.get("long_shape"))
 
         return5 = _number(returns.get("5")) or 0.0
         return20 = _number(returns.get("20")) or 0.0
@@ -210,8 +214,25 @@ class _BoardHotspotScorer:
             score, raw_score, delta, components, prior_stage, candidate_streak,
             breadth_value,
         )
+        window = analyze_hotspot_window({
+            "return_5": return5,
+            "return_20": return20,
+            "relative_strength_5": rs5,
+            "volume_ratio_20": volume,
+            "volume_persistence_5": volume_persistence,
+            "positive_return_5_ratio": breadth5,
+            "limit_up_ratio": limit_up_ratio,
+            "max_limit_up_streak": max_streak,
+            "shape_path": setup_path,
+            "long_shape_state": long_shape.get("state"),
+            "position_60": _number(shape.get("position60")),
+            "extension_from_ma20_atr": _number(
+                shape.get("extension_from_ma20_atr")
+            ),
+        }, _records(entity.get("recent_hotspot")))
         eligible = (
             not disqualifiers
+            and bool(window["eligible"])
             and stage in {"trend-emerging", "breadth-expanding", "hotspot-confirmed", "accelerating"}
             and score >= 55
             and (candidate_streak >= 2 or max_streak >= 2)
@@ -252,6 +273,24 @@ class _BoardHotspotScorer:
             "positive_return_5_ratio": breadth5,
             "limit_up_ratio": round(limit_up_ratio, 4),
             "setup_path": setup_path,
+            "shape_extension_from_ma20_atr": shape.get(
+                "extension_from_ma20_atr"
+            ),
+            "shape_position_60": shape.get("position60"),
+            "hotspot_window_version": window["version"],
+            "hotspot_window_state": window["state"],
+            "hotspot_window_eligible": window["eligible"],
+            "hotspot_window_observed_sessions": window["observed_sessions"],
+            "hotspot_window_qualified_sessions": window["qualified_sessions"],
+            "hotspot_window_evidence_score": window["latest_evidence_score"],
+            "hotspot_window_evidence_delta": window["evidence_delta"],
+            "hotspot_window_shape_support_sessions": window[
+                "shape_support_sessions"
+            ],
+            "hotspot_window_activity_climax": window["activity_climax"],
+            "hotspot_window_fit_score": window["fit_score"],
+            "hotspot_window_failure_reasons": window["failure_reasons"],
+            "hotspot_window_sample": window["sample"],
         }
 
 
@@ -393,6 +432,7 @@ def _visibility_key(
 def _strict_preheat_candidate(result: Mapping[str, object]) -> bool:
     return (
         str(result.get("hotspot_stage") or "") == "leader-ignited"
+        and bool(result.get("hotspot_window_eligible"))
         and (_number(result.get("total_score")) or 0.0) >= 58
         and (_number(result.get("raw_score")) or 0.0) >= 58
         and (_number(result.get("positive_return_5_ratio")) or 0.0) >= .85
@@ -409,6 +449,7 @@ def _visibility_lifecycle_fit(
     breadth = _number(result.get("positive_return_5_ratio"))
     delta = _number(result.get("score_delta")) or 0.0
     drawdown = _number(result.get("drawdown_from_peak")) or 0.0
+    window_fit = _number(result.get("hotspot_window_fit_score")) or 0.0
     score = {
         "leader-ignited": 8.0,
         "trend-emerging": 8.0,
@@ -417,6 +458,10 @@ def _visibility_lifecycle_fit(
         "accelerating": -7.0,
     }.get(stage, -12.0)
     reasons = [f"stage:{stage}"]
+    score += window_fit
+    reasons.append(
+        f"window:{str(result.get('hotspot_window_state') or 'unavailable')}"
+    )
     if streak == 1:
         score += 4
         reasons.append("first-session-preheat")
@@ -501,6 +546,12 @@ def _stage_label(stage: str) -> str:
 
 def _mapping(value: object) -> Mapping[str, object]:
     return value if isinstance(value, Mapping) else {}
+
+
+def _records(value: object) -> list[Mapping[str, object]]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        return []
+    return [item for item in value if isinstance(item, Mapping)]
 
 
 def _number(value: object) -> float | None:

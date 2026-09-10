@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from collections import Counter
 from datetime import date
 import re
 
 from stock_harness.board_hotspot_features import hotspot_feature_value
 
 
-BOARD_HOTSPOT_EVALUATOR_VERSION = "board-hotspot-evaluator-v4-timing-outcomes"
+BOARD_HOTSPOT_EVALUATOR_VERSION = "board-hotspot-evaluator-v5-active-confirmation"
 _ROMAN_SUFFIX = re.compile(r"[ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩ]+(?:\(A股\))?$")
 _A_SHARE_SUFFIX = re.compile(r"\(A股\)$", re.IGNORECASE)
 _GENERIC_SUFFIX = re.compile(r"(?:指数|板块)$")
@@ -45,6 +46,13 @@ def named_theme(name: str) -> str | None:
 
 def is_objective_confirmation(feature: Mapping[str, object]) -> bool:
     """Causal confirmation label based only on facts available that session."""
+    return not objective_confirmation_failures(feature)
+
+
+def objective_confirmation_failures(
+    feature: Mapping[str, object],
+) -> list[str]:
+    """Return the exact causal dimensions preventing structural confirmation."""
     r5 = hotspot_feature_value(feature, ("metrics", "returns", "5"))
     r20 = hotspot_feature_value(feature, ("metrics", "returns", "20"))
     rs20 = hotspot_feature_value(feature, ("metrics", "relative_strength", "20"))
@@ -52,13 +60,18 @@ def is_objective_confirmation(feature: Mapping[str, object]) -> bool:
     volume5 = hotspot_feature_value(feature, ("metrics", "recent_volume_ratio_5_5"))
     limits = hotspot_feature_value(feature, ("member_snapshot", "limit_up_count")) or 0
     streak = hotspot_feature_value(feature, ("member_snapshot", "max_limit_up_streak")) or 0
-    return (
-        r5 is not None and r5 >= .04
-        and r20 is not None and r20 >= .08
-        and rs20 is not None and rs20 >= .025
-        and breadth5 is not None and breadth5 >= .56
-        and ((volume5 is not None and volume5 >= 1.03) or limits >= 1 or streak >= 2)
-    )
+    failures = []
+    if r5 is None or r5 < .04:
+        failures.append("return-5")
+    if r20 is None or r20 < .08:
+        failures.append("return-20")
+    if rs20 is None or rs20 < .025:
+        failures.append("relative-strength-20")
+    if breadth5 is None or breadth5 < .56:
+        failures.append("member-breadth-5")
+    if not ((volume5 is not None and volume5 >= 1.03) or limits >= 1 or streak >= 2):
+        failures.append("activity-or-leader")
+    return failures
 
 
 def evaluate_hotspot_timelines(
@@ -98,8 +111,11 @@ def evaluate_hotspot_timelines(
         ]
         confirmation_indexes = _episode_indexes(confirmed, cooldown)
         for index in signal_indexes:
-            future = next((candidate for candidate in confirmation_indexes
-                           if index <= candidate <= index + lead_window), None)
+            future = next((
+                candidate for candidate in range(
+                    index, min(len(rows), index + lead_window + 1)
+                ) if confirmed[candidate]
+            ), None)
             item = {
                 "symbol": str(rows[index].get("symbol") or cluster),
                 "name": str(rows[index].get("name") or series_name),
@@ -111,6 +127,12 @@ def evaluate_hotspot_timelines(
                 "lead_sessions": future - index if future is not None else None,
                 "timing_class": _timing_class(
                     future - index if future is not None else None
+                ),
+                "signal_confirmation_failures": list(
+                    rows[index].get("_objective_failures") or []
+                ),
+                "next_three_failure_counts": _future_failure_counts(
+                    rows, index, 3
                 ),
                 **_forward_outcomes(rows, index),
             }
@@ -194,6 +216,8 @@ def _visible_theme_timelines(
     result: dict[str, tuple[str, list[dict[str, object]]]] = {}
     for cluster, by_date in grouped.items():
         merged = []
+        rebased_close: float | None = None
+        prior_representative: str | None = None
         for effective_date, rows in sorted(by_date.items()):
             visible = [row for row in rows if bool(row.get("radar_visible"))]
             representative = max(
@@ -204,19 +228,58 @@ def _visible_theme_timelines(
                     str(row.get("symbol") or ""),
                 ),
             )
+            representative_symbol = str(representative.get("symbol") or "")
+            daily_return = _number(representative.get("_daily_return"))
+            raw_close = _number(representative.get("_close"))
+            if rebased_close is None:
+                rebased_close = raw_close if raw_close is not None else 100.0
+            elif daily_return is not None and daily_return > -1:
+                rebased_close *= 1 + daily_return
+            elif representative_symbol == prior_representative and raw_close is not None:
+                rebased_close = raw_close
             merged.append({
                 **representative,
                 "effective_date": effective_date,
                 "radar_visible": bool(visible),
+                "_close": round(rebased_close, 8),
+                "_outcome_basis": "rebased-theme-daily-return",
                 "_objective_confirmation": any(
                     bool(row.get("_objective_confirmation"))
                     if "_objective_confirmation" in row
                     else is_objective_confirmation(_mapping(row.get("feature")))
                     for row in rows
                 ),
+                "_objective_failures": _merged_failure_codes(rows),
             })
+            prior_representative = representative_symbol
         result[cluster] = (theme_names[cluster], merged)
     return result
+
+
+def _merged_failure_codes(rows: Sequence[Mapping[str, object]]) -> list[str]:
+    if any(
+        bool(row.get("_objective_confirmation"))
+        if "_objective_confirmation" in row
+        else is_objective_confirmation(_mapping(row.get("feature")))
+        for row in rows
+    ):
+        return []
+    candidates = [
+        list(row.get("_objective_failures") or [])
+        if "_objective_failures" in row
+        else objective_confirmation_failures(_mapping(row.get("feature")))
+        for row in rows
+    ]
+    return min(candidates, key=len) if candidates else []
+
+
+def _future_failure_counts(
+    rows: Sequence[Mapping[str, object]], index: int, horizon: int,
+) -> dict[str, int]:
+    counts: Counter[str] = Counter()
+    for row in rows[index + 1:index + horizon + 1]:
+        counts.update(str(value) for value in row.get("_objective_failures") or [])
+    return dict(sorted(counts.items()))
 
 
 def _is_radar_signal(

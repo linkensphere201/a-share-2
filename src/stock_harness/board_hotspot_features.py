@@ -8,7 +8,7 @@ from typing import Any
 from stock_harness.models import StoredDailyBar
 
 
-BOARD_HOTSPOT_FEATURE_VERSION = "board-hotspot-features-v2-shape-paths"
+BOARD_HOTSPOT_FEATURE_VERSION = "board-hotspot-features-v3-window-shape-context"
 
 
 def extract_board_hotspot_features(
@@ -19,13 +19,17 @@ def extract_board_hotspot_features(
     member_snapshot: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """Build online-safe features using only bars at or before the cutoff."""
-    ordered = sorted(bars, key=lambda bar: bar.trade_date)
-    benchmark = sorted(benchmark_bars, key=lambda bar: bar.trade_date)
+    ordered = sorted(bars, key=lambda bar: bar.trade_date)[-61:]
+    benchmark = sorted(benchmark_bars, key=lambda bar: bar.trade_date)[-61:]
     breadth = dict(breadth_snapshot or {})
     members = dict(member_snapshot or {})
-    returns = {str(period): _return(ordered, period) for period in (3, 5, 10, 20, 40)}
+    returns = {
+        str(period): _return(ordered, period)
+        for period in (1, 3, 5, 10, 20, 40, 60)
+    }
     benchmark_returns = {
-        str(period): _return(benchmark, period) for period in (3, 5, 10, 20, 40)
+        str(period): _return(benchmark, period)
+        for period in (1, 3, 5, 10, 20, 40, 60)
     }
     relative = {
         period: _difference(returns[period], benchmark_returns[period])
@@ -42,6 +46,7 @@ def extract_board_hotspot_features(
             "recent_volume_ratio_5_5": _window_volume_ratio(ordered, 5),
             "short_shape": {"state": _trend_state(ordered, 10, .02)},
             "medium_shape": {"state": _trend_state(ordered, 20, .04)},
+            "long_shape": {"state": _trend_state(ordered, 60, .08)},
             "hotspot_shape": shape,
             "board_breadth": breadth,
         },
@@ -122,6 +127,11 @@ def _shape_features(
     breakout40_atr = (
         (close - prior_high40) / atr14 if atr14 and atr14 > 0 else None
     )
+    extension_from_ma20_atr = (
+        (close - ma20) / atr14
+        if ma20 is not None and atr14 and atr14 > 0 else None
+    )
+    position60 = _range_position(bars[-60:]) if len(bars) >= 60 else None
     higher_low = min(bar.low for bar in bars[-5:]) > min(
         bar.low for bar in bars[-10:-5]
     )
@@ -136,18 +146,12 @@ def _shape_features(
 
     path = "none"
     if (
-        return20 is not None and return20 >= .03
-        and rs20 is not None and rs20 >= .025
-        and slope20 is not None and slope20 > 0
-        and above_ma20
-    ):
-        path = "trend-continuation"
-    elif (
         breakout20 and higher_low and ma_alignment
         and return20 is not None and return20 >= -.06
         and rs5 is not None and rs5 >= .03
         and slope10 is not None and slope10 >= .003
         and prior_slope20 is not None and slope20 is not None
+        and prior_slope20 <= 0
         and slope20 > prior_slope20
     ):
         path = "downtrend-reversal"
@@ -156,6 +160,13 @@ def _shape_features(
         and rs5 is not None and rs5 >= .02 and slope5 is not None and slope5 > 0
     ):
         path = "platform-breakout"
+    elif (
+        return20 is not None and return20 >= .03
+        and rs20 is not None and rs20 >= .025
+        and slope20 is not None and slope20 > 0
+        and above_ma20
+    ):
+        path = "trend-continuation"
     return {
         "path": path,
         "slope10": slope10,
@@ -169,7 +180,19 @@ def _shape_features(
         "breakout40": breakout40,
         "breakout20_atr": breakout20_atr,
         "breakout40_atr": breakout40_atr,
+        "extension_from_ma20_atr": extension_from_ma20_atr,
+        "position60": position60,
     }
+
+
+def _range_position(bars: Sequence[StoredDailyBar]) -> float | None:
+    if not bars:
+        return None
+    low = min(bar.low for bar in bars)
+    high = max(bar.high for bar in bars)
+    if high <= low:
+        return None
+    return (bars[-1].close - low) / (high - low)
 
 
 def _normalized_slope(values: Sequence[float]) -> float | None:
