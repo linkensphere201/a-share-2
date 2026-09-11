@@ -53,7 +53,10 @@ export function buildTrendExplanation(run: TrendAnalysisRun | null | undefined):
       { id: 'key-levels', title: '关键位', items: zoneItems },
       { id: 'patterns', title: '形态', items: patternItems },
     ],
-    warnings: [...run.stale_reasons, ...run.warnings.map(warningText)].filter(Boolean).slice(0, 3),
+    warnings: [
+      ...(run.stale_reasons ?? []),
+      ...(run.warnings ?? []).map(warningText),
+    ].filter(Boolean).slice(0, 3),
   }
 }
 

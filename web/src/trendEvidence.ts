@@ -41,8 +41,8 @@ export function readTrendEvidence(
   const context = contextItem?.payload
   const components = record(primary?.payload.score_components)
   const warnings = [
-    ...run.stale_reasons,
-    ...run.warnings.map(item => warningText(item)),
+    ...(run.stale_reasons ?? []),
+    ...(run.warnings ?? []).map(item => warningText(item)),
   ].filter((item, index, values) => item && values.indexOf(item) === index)
   return {
     source: run.source_observed_at_ms ? 'preview' : 'official',

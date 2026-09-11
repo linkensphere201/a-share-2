@@ -3,17 +3,19 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import type { ReactNode } from 'react'
 import { SignalReviewWorkspace, stateDetailLabels } from './SignalReviewWorkspace'
 import { buildSignalReferenceMap } from './SignalChatPanel'
 import type { ObservationPoolItem, SignalItem } from './signalReviewClient'
 import { themes } from './themeStore'
 
 vi.mock('./ChartCanvas', () => ({
-  ChartCanvas: ({ symbol, highlightedAnalysisItemId, trendAnalysisOverride }: {
+  ChartCanvas: ({ symbol, highlightedAnalysisItemId, trendAnalysisOverride, toolbarContent }: {
     symbol: string
     highlightedAnalysisItemId?: string
     trendAnalysisOverride?: { run_id?: string } | null
-  }) => <div data-testid="signal-chart" data-highlight={highlightedAnalysisItemId} data-analysis-run={trendAnalysisOverride?.run_id}>{symbol}</div>,
+    toolbarContent?: ReactNode
+  }) => <div data-testid="signal-chart" data-symbol={symbol} data-highlight={highlightedAnalysisItemId} data-analysis-run={trendAnalysisOverride?.run_id}>{symbol}{toolbarContent}</div>,
 }))
 
 afterEach(() => {
@@ -74,7 +76,7 @@ describe('SignalReviewWorkspace', () => {
     const resultButton = result.closest('button')!
     await user.click(resultButton)
     expect(resultButton.classList.contains('active')).toBe(true)
-    expect(screen.getByTestId('signal-chart').textContent).toBe('000001.SZ')
+    expect(screen.getByTestId('signal-chart').getAttribute('data-symbol')).toBe('000001.SZ')
     expect(screen.getByText('[S1]')).toBeTruthy()
     const resultWidthSeparator = screen.getByRole('separator', { name: '调整复盘结果栏宽度' })
     fireEvent.pointerDown(resultWidthSeparator, { clientX: 500 })
@@ -256,7 +258,7 @@ describe('SignalReviewWorkspace', () => {
 
     await user.click(await screen.findByRole('button', { name: /全部观察/ }))
     await user.click((await screen.findByText('BK001.DC')).closest('button')!)
-    expect(screen.getByTestId('signal-chart').textContent).toBe('BK001.DC')
+    expect(screen.getByTestId('signal-chart').getAttribute('data-symbol')).toBe('BK001.DC')
     expect(screen.getAllByText(/多头临界/).length).toBeGreaterThan(0)
     expect(screen.getByText(/接近下降边界/)).toBeTruthy()
     expect(screen.getByText(/确认：放量收于边界上方/)).toBeTruthy()
@@ -301,16 +303,53 @@ describe('SignalReviewWorkspace', () => {
     render(<SignalReviewWorkspace theme={themes[0]} onClose={() => undefined}/>)
 
     await user.click(await screen.findByRole('button', { name: /机会评分/ }))
-    expect(await screen.findByText('硬异动 1')).toBeTruthy()
+    expect(await screen.findByText('独立硬异动 1')).toBeTruthy()
     expect(await screen.findByText('高分板块')).toBeTruthy()
     expect(screen.queryByText('低分板块')).toBeNull()
     expect(screen.getByText('82')).toBeTruthy()
     await user.click(screen.getByText('高分板块').closest('button')!)
+    expect(screen.getByRole('button', { name: '更新测算' })).toBeTruthy()
     expect(screen.getByText('趋势机会')).toBeTruthy()
     expect(screen.getByText('固定算法摘要')).toBeTruthy()
     expect(screen.getByText('较上一轮增强')).toBeTruthy()
     await user.click(screen.getByRole('button', { name: /打开 2026-09-03 冻结评分/ }))
     expect(fetchMock.mock.calls.some(call => String(call[0]) === '/api/signals/runs/run-0')).toBe(true)
+  })
+
+  it('restores the trend score system after visiting a radar tab', async () => {
+    const dailyDefinition = {
+      ...definition, signal_id: 'daily-market-board-review', name: '每日复盘',
+      cadence: 'daily', profiles: ['market', 'attention'],
+    }
+    const dailyRun = { ...run, signal_id: dailyDefinition.signal_id, cadence: 'daily' }
+    const trend = signalScore('BK002.DC', 82, true, 1, [])
+    const leading = {
+      ...signalScore('BK001.DC', 72, true, 1, []),
+      system_id: 'board-hotspot-leading', leading_state: 'strengthening',
+      leading_visible: true, leading_slot_limit: 1,
+    }
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === '/api/signals/definitions') return response({ items: [dailyDefinition] })
+      if (url.includes('/api/signals/runs?')) return response({ items: [dailyRun] })
+      if (url.endsWith('/items')) return response({ items: [] })
+      if (url.endsWith('/scores')) return response({ items: [trend, leading] })
+      if (url.endsWith('/attention')) return response({ items: [] })
+      if (url.includes('/board-observations?')) return response({
+        items: [dailyObservation('BK001.DC', '前导板块'), dailyObservation('BK002.DC', '机会板块')],
+        total: 2,
+      })
+      throw new Error(`unexpected URL ${url}`)
+    }))
+    const user = userEvent.setup()
+    render(<SignalReviewWorkspace theme={themes[0]} onClose={() => undefined}/>)
+
+    await user.click(await screen.findByRole('button', { name: /前导雷达/ }))
+    expect(await screen.findByText('前导板块')).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: /机会评分/ }))
+    expect(await screen.findByText('机会板块')).toBeTruthy()
+    expect(screen.queryByText('前导板块')).toBeNull()
+    expect(screen.getByText('趋势突破')).toBeTruthy()
   })
 
   it('shows the leading radar as an independent filtered system', async () => {
@@ -352,6 +391,39 @@ describe('SignalReviewWorkspace', () => {
     await user.click(screen.getByText('临界板块').closest('button')!)
     expect(screen.getByText('3 项加速')).toBeTruthy()
     expect(screen.getByText('平台临界')).toBeTruthy()
+  })
+
+  it('explains why hotspot candidates did not enter a visible seat', async () => {
+    const dailyDefinition = {
+      ...definition, signal_id: 'daily-market-board-review', name: '每日复盘',
+      cadence: 'daily', profiles: ['market', 'attention'],
+    }
+    const dailyRun = { ...run, signal_id: dailyDefinition.signal_id, cadence: 'daily' }
+    const hotspot = {
+      ...signalScore('BK001.DC', 72, false, 1, []),
+      system_id: 'board-hotspot-emergence', hotspot_stage: 'leader-ignited',
+      radar_visible: false, hotspot_window_state: 'insufficient',
+      hotspot_window_failure_reasons: ['insufficient-window-history', 'weak-shape'],
+    }
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === '/api/signals/definitions') return response({ items: [dailyDefinition] })
+      if (url.includes('/api/signals/runs?')) return response({ items: [dailyRun] })
+      if (url.endsWith('/items')) return response({ items: [] })
+      if (url.endsWith('/scores')) return response({ items: [hotspot] })
+      if (url.endsWith('/attention')) return response({ items: [] })
+      if (url.includes('/board-observations?')) return response({
+        items: [dailyObservation('BK001.DC', '点火候选')], total: 1,
+      })
+      throw new Error(`unexpected URL ${url}`)
+    }))
+    const user = userEvent.setup()
+    render(<SignalReviewWorkspace theme={themes[0]} onClose={() => undefined}/>)
+
+    await user.click(await screen.findByRole('button', { name: /近期热点/ }))
+    expect(await screen.findByText('该轮没有热点进入可见席位')).toBeTruthy()
+    expect(screen.getByText(/发现 1 个初始热点候选，0 个通过/)).toBeTruthy()
+    expect(screen.getByText('持续观察窗口不足：1 个')).toBeTruthy()
   })
 
   it('loads the exact M4 run and highlights the cited analysis item', async () => {
@@ -403,6 +475,9 @@ describe('SignalReviewWorkspace', () => {
     expect(await screen.findByText('固定结论')).toBeTruthy()
     expect(screen.getByRole('region', { name: '盈亏比场景' })).toBeTruthy()
     expect(screen.getByTestId('signal-chart').dataset.analysisRun).toBe('deep-1')
+    expect(screen.getByRole('button', { name: '更新测算' })).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: '打开形态分析结果' }))
+    expect(screen.getByRole('dialog', { name: '趋势分析结果说明' })).toBeTruthy()
     await user.click(screen.getByText('[S1]').closest('button')!)
     expect(screen.getByTestId('signal-chart').dataset.highlight).toBe('line-1')
   })

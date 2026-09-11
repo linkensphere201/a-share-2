@@ -15,8 +15,19 @@ import {
   type SignalRun, type SignalScoreResult,
 } from './signalReviewClient'
 import { SignalChatPanel } from './SignalChatPanel'
-import { loadExactTrendAnalysis, type TrendAnalysisRun } from './trendAnalysisClient'
+import {
+  loadExactTrendAnalysis, loadTrendAnalysis, recalculateTrendAnalysis,
+  type TrendAnalysisRun,
+} from './trendAnalysisClient'
 import { TradeScenarioPanel } from './TradeScenarioPanel'
+import { TradingSystemControls } from './TradingSystemControls'
+import { TrendExplanationPanel } from './TrendExplanationPanel'
+import {
+  createTradingSystemWindowState, normalizeTrendTradingSystemSettings,
+  tradingSystemRegistry, type TradingSystemWindowState,
+} from './tradingSystems'
+import type { GeneratedBreakoutState } from './generatedAnalysisProjection'
+import { logInfo, logWarning } from './eventLogger'
 
 type Props = { theme: ThemeDefinition; onClose: () => void }
 type ProfileFilter = 'all' | SignalProfile
@@ -81,6 +92,10 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
   const [leadingFilter, setLeadingFilter] = useState<LeadingFilter>('strengthening')
   const [historySelection, setHistorySelection] = useState<{ symbol: string; entityKey?: string }>()
   const [exactAnalysis, setExactAnalysis] = useState<TrendAnalysisRun | null>(null)
+  const [reviewTrendState, setReviewTrendState] = useState<TradingSystemWindowState>(createReviewTrendState)
+  const [trendRecalculationState, setTrendRecalculationState] = useState<'idle' | 'running' | 'failed'>('idle')
+  const [trendExplanationOpen, setTrendExplanationOpen] = useState(false)
+  const [chartBreakoutState, setChartBreakoutState] = useState<GeneratedBreakoutState>()
   const [evidenceHeight, setEvidenceHeight] = useState(() => {
     const stored = Number(window.localStorage.getItem(EVIDENCE_HEIGHT_KEY))
     return Number.isFinite(stored) && stored >= 135 ? Math.min(stored, 520) : 210
@@ -135,7 +150,13 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
       return
     }
     const controller = new AbortController()
-    listSignalScores(selectedRun.run_id, controller.signal).then(setScores)
+    const startedAt = performance.now()
+    listSignalScores(selectedRun.run_id, controller.signal).then(value => {
+      setScores(value)
+      reportSignalTiming('评分数据加载', startedAt, {
+        run_id: selectedRun.run_id, count: value.length,
+      })
+    })
       .catch(reason => { if (reason.name !== 'AbortError') setError(String(reason)) })
     return () => controller.abort()
   }, [selectedRun?.run_id, selectedRun?.status])
@@ -173,17 +194,38 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
     }
     const controller = new AbortController()
     const timer = window.setTimeout(() => {
+      const startedAt = performance.now()
       listBoardObservations(selectedRun.run_id, observationQuery, controller.signal)
         .then(value => {
           setObservations(value.items)
           setObservationTotal(value.total)
           setSelectedObservation(current => value.items.find(item =>
             item.symbol === (historySelection?.symbol ?? current?.symbol)))
+          reportSignalTiming('板块观察加载', startedAt, {
+            run_id: selectedRun.run_id, returned: value.items.length, total: value.total,
+            query: observationQuery || undefined,
+          })
         })
         .catch(reason => { if (reason.name !== 'AbortError') setError(String(reason)) })
     }, 180)
     return () => { window.clearTimeout(timer); controller.abort() }
   }, [dailyView, observationQuery, selectedRun?.run_id, selectedRun?.status, historySelection])
+
+  useEffect(() => {
+    if (!selectedRun || !['opportunities', 'leading', 'hotspots', 'observations'].includes(dailyView)) return
+    const startedAt = performance.now()
+    let secondFrame = 0
+    const firstFrame = window.requestAnimationFrame(() => {
+      secondFrame = window.requestAnimationFrame(() => reportSignalTiming('复盘页签绘制', startedAt, {
+        run_id: selectedRun.run_id, view: dailyView,
+        observations: observations.length, scores: scores.length,
+      }, 250))
+    })
+    return () => {
+      window.cancelAnimationFrame(firstFrame)
+      if (secondFrame) window.cancelAnimationFrame(secondFrame)
+    }
+  }, [dailyView, observations.length, scores.length, selectedRun?.run_id])
 
   useEffect(() => {
     if (!['board-pool', 'stock-pool'].includes(dailyView)
@@ -218,15 +260,28 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
     ?? selectedItem?.payload.deep_analysis_run_id
   useEffect(() => {
     setExactAnalysis(null)
+    setTrendExplanationOpen(false)
+    setChartBreakoutState(undefined)
+    setTrendRecalculationState('idle')
+    setReviewTrendState(current => ({ ...current, analysisStatus: 'not-run' }))
     if (!deepAnalysisRunId) return
     const controller = new AbortController()
+    const startedAt = performance.now()
     loadExactTrendAnalysis(deepAnalysisRunId, controller.signal)
-      .then(setExactAnalysis)
+      .then(value => {
+        setExactAnalysis(value)
+        setReviewTrendState(current => ({ ...current, analysisStatus: 'current' }))
+        reportSignalTiming('趋势分析图层加载', startedAt, {
+          run_id: selectedRun?.run_id, analysis_run_id: deepAnalysisRunId,
+          symbol: selectedPoolItem?.symbol ?? selectedObservation?.symbol ?? selectedItem?.symbol,
+          item_count: value.items.length,
+        })
+      })
       .catch(reason => {
         if (reason.name !== 'AbortError') setError(`深度分析图层读取失败：${String(reason)}`)
       })
     return () => controller.abort()
-  }, [deepAnalysisRunId])
+  }, [deepAnalysisRunId, selectedItem?.symbol, selectedObservation?.symbol, selectedPoolItem?.symbol, selectedRun?.run_id])
 
   const filtered = useMemo(() => items.filter(item =>
     (profile === 'all' || item.profile === profile)
@@ -239,26 +294,34 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
         - (left.payload.score_result?.total_score ?? left.score * 100)
       || left.symbol.localeCompare(right.symbol)
   }), [items, profile, change])
-  const boardScoreSystems = useMemo(() => [...new Set(
-    scores.filter(item => item.entity_scope === 'board').map(item => item.system_id),
-  )], [scores])
+  const scoresBySystem = useMemo(() => {
+    const grouped = new Map<string, SignalScoreResult[]>()
+    scores.forEach(item => {
+      const values = grouped.get(item.system_id)
+      if (values) values.push(item)
+      else grouped.set(item.system_id, [item])
+    })
+    return grouped
+  }, [scores])
+  const boardScoreSystems = useMemo(() => [...scoresBySystem.entries()]
+    .filter(([, values]) => values.some(item => item.entity_scope === 'board'))
+    .map(([system]) => system), [scoresBySystem])
   useEffect(() => {
     if (boardScoreSystems.length && !boardScoreSystems.includes(selectedScoreSystem)) {
       setSelectedScoreSystem(boardScoreSystems[0])
     }
   }, [boardScoreSystems, selectedScoreSystem])
   const scoreBySymbol = useMemo(() => new Map(
-    scores.filter(item => item.system_id === selectedScoreSystem)
+    (scoresBySystem.get(selectedScoreSystem) ?? [])
       .map(item => [item.symbol, item]),
-  ), [scores, selectedScoreSystem])
+  ), [scoresBySystem, selectedScoreSystem])
   const hardEventSummary = useMemo(() => {
-    const active = scores
-      .filter(score => score.entity_scope === 'board')
+    const active = (scoresBySystem.get('trend-breakout') ?? [])
       .flatMap(score => score.hard_events.filter(event => event.state !== 'resolved'))
     const counts = new Map<string, number>()
     active.forEach(event => counts.set(event.event_type, (counts.get(event.event_type) ?? 0) + 1))
     return { total: active.length, counts: [...counts.entries()].sort((a, b) => b[1] - a[1]) }
-  }, [scores])
+  }, [scoresBySystem])
   const displayedObservations = useMemo(() => [...observations]
     .filter(item => dailyView !== 'opportunities' || scoreBySymbol.get(item.symbol)?.eligible)
     .filter(item => dailyView !== 'hotspots' || hotspotMatches(
@@ -275,32 +338,33 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
         || left.symbol.localeCompare(right.symbol)
     }), [dailyView, hotspotFilter, leadingFilter, observations, scoreBySymbol])
   const hotspotSummary = useMemo(() => {
-    const values = scores.filter(item => (
-      item.system_id === 'board-hotspot-emergence' && item.radar_visible
-    ))
+    const values = (scoresBySystem.get('board-hotspot-emergence') ?? [])
+      .filter(item => item.radar_visible)
     return {
       all: values.length,
       rising: values.filter(item => item.score_direction === 'strengthening').length,
       confirmed: values.filter(item => ['hotspot-confirmed', 'accelerating'].includes(item.hotspot_stage ?? '')).length,
       fading: values.filter(item => ['diverging', 'exhausted'].includes(item.hotspot_stage ?? '')).length,
     }
-  }, [scores])
-  const hotspotMarket = useMemo(() => scores.find(item => (
-    item.system_id === 'board-hotspot-emergence' && item.market_liquidity_capacity
-  )), [scores])
+  }, [scoresBySystem])
+  const hotspotMarket = useMemo(() => (
+    scoresBySystem.get('board-hotspot-emergence') ?? []
+  ).find(item => item.market_liquidity_capacity), [scoresBySystem])
   const leadingSummary = useMemo(() => {
-    const values = scores.filter(item => (
-      item.system_id === 'board-hotspot-leading' && item.leading_visible
-    ))
+    const values = (scoresBySystem.get('board-hotspot-leading') ?? [])
+      .filter(item => item.leading_visible)
     return {
       all: values.length,
       strengthening: values.filter(item => item.leading_state === 'strengthening').length,
       confirmed: values.filter(item => item.leading_state === 'launch-confirmed').length,
     }
-  }, [scores])
-  const leadingMarket = useMemo(() => scores.find(item => (
-    item.system_id === 'board-hotspot-leading' && item.market_liquidity_capacity
-  )), [scores])
+  }, [scoresBySystem])
+  const leadingMarket = useMemo(() => (
+    scoresBySystem.get('board-hotspot-leading') ?? []
+  ).find(item => item.market_liquidity_capacity), [scoresBySystem])
+  const viewEmptyExplanation = useMemo(() => buildViewEmptyExplanation(
+    dailyView, scoresBySystem, observationQuery, displayedObservations.length,
+  ), [dailyView, scoresBySystem, observationQuery, displayedObservations.length])
   const displayedPoolItems = useMemo(() => {
     const query = poolQuery.trim().toLocaleLowerCase()
     return [...(observationPool?.items ?? [])].filter(item =>
@@ -381,6 +445,46 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
       setError(reason instanceof Error ? reason.message : String(reason))
     } finally {
       setStartingRun(false)
+    }
+  }
+  const latestSucceededDate = runs.reduce((latest, item) => (
+    item.status === 'succeeded' && item.effective_date > latest ? item.effective_date : latest
+  ), '')
+  const recalculationAvailable = Boolean(
+    inspected && selectedRun?.effective_date === latestSucceededDate,
+  )
+  const recalculateInspectedTrend = async (nextState: TradingSystemWindowState) => {
+    if (!inspected || !recalculationAvailable) return
+    const startedAt = performance.now()
+    setTrendRecalculationState('running')
+    setError('')
+    try {
+      const settings = {
+        ...normalizeTrendTradingSystemSettings(nextState.settings),
+        provisionalPreview: false,
+      }
+      await recalculateTrendAnalysis(inspected.symbol, settings, nextState.settingsRevision)
+      const snapshot = await loadTrendAnalysis(inspected.symbol)
+      const result = snapshot.official ?? snapshot.effective
+      if (!result || result.as_of_date !== selectedRun?.effective_date) {
+        throw new Error('重新测算结果与当前复盘日期不一致，已拒绝覆盖本轮图层')
+      }
+      setExactAnalysis(result)
+      setReviewTrendState({
+        ...nextState, enabled: true, analysisStatus: 'current', settings,
+      })
+      setTrendRecalculationState('idle')
+      reportSignalTiming('趋势分析重新测算', startedAt, {
+        run_id: selectedRun?.run_id, symbol: inspected.symbol,
+        analysis_run_id: result.run_id, item_count: result.items.length,
+      }, 1500)
+    } catch (reason) {
+      setTrendRecalculationState('failed')
+      setError(reason instanceof Error ? reason.message : String(reason))
+      logWarning('signal-review', '趋势分析重新测算失败', {
+        run_id: selectedRun?.run_id, symbol: inspected.symbol,
+        error: reason instanceof Error ? reason.message : String(reason),
+      })
     }
   }
   const openHistoricalScore = async (runId: string, symbol: string, entityKey?: string) => {
@@ -515,14 +619,14 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
         {selectedRun?.status === 'running' && <div className="signal-progress"><i style={{ width: `${progress}%` }}/></div>}
         {daily && <div className="signal-view-switch">
           <button className={dailyView === 'results' ? 'active' : ''} onClick={() => { setDailyView('results'); setSelectedObservation(undefined); setSelectedPoolItem(undefined) }}><ListFilter size={12}/>今日关注</button>
-          <button className={dailyView === 'opportunities' ? 'active' : ''} onClick={() => { setDailyView('opportunities'); setSelectedItem(undefined); setSelectedPoolItem(undefined) }}><Radar size={12}/>机会评分</button>
+          <button className={dailyView === 'opportunities' ? 'active' : ''} onClick={() => { setDailyView('opportunities'); setSelectedScoreSystem('trend-breakout'); setSelectedItem(undefined); setSelectedPoolItem(undefined) }}><Radar size={12}/>机会评分</button>
           <button className={dailyView === 'leading' ? 'active' : ''} onClick={() => { setDailyView('leading'); setSelectedScoreSystem('board-hotspot-leading'); setSelectedItem(undefined); setSelectedPoolItem(undefined) }}><Radar size={12}/>前导雷达</button>
           <button className={dailyView === 'hotspots' ? 'active' : ''} onClick={() => { setDailyView('hotspots'); setSelectedScoreSystem('board-hotspot-emergence'); setSelectedItem(undefined); setSelectedPoolItem(undefined) }}><Radar size={12}/>近期热点</button>
           <button className={dailyView === 'observations' ? 'active' : ''} onClick={() => { setDailyView('observations'); setSelectedItem(undefined); setSelectedPoolItem(undefined) }}><Eye size={12}/>全部观察</button>
           <button className={dailyView === 'board-pool' ? 'active' : ''} onClick={() => { setDailyView('board-pool'); setSelectedItem(undefined); setSelectedObservation(undefined) }}><Layers3 size={12}/>板块池</button>
           <button className={dailyView === 'stock-pool' ? 'active' : ''} onClick={() => { setDailyView('stock-pool'); setSelectedItem(undefined); setSelectedObservation(undefined) }}><Boxes size={12}/>个股池</button>
         </div>}
-        {daily && boardScoreSystems.length > 0 && <label className="signal-score-system-select">评分体系<select aria-label="评分体系" value={selectedScoreSystem} onChange={event => setSelectedScoreSystem(event.target.value)}>{boardScoreSystems.map(system => <option key={system} value={system}>{scoreSystemLabel(system)}</option>)}</select></label>}
+        {daily && boardScoreSystems.length > 0 && <div className="signal-score-system-select">当前体系<span>{scoreSystemLabel(selectedScoreSystem)}</span></div>}
         {dailyView === 'hotspots' && <div className="signal-hotspot-filters" aria-label="热点阶段筛选">
           {hotspotMarket && <span className="signal-hotspot-market">{marketCapacityLabel(hotspotMarket.market_liquidity_capacity)} · {marketDirectionLabel(hotspotMarket.market_liquidity_direction)} · {hotspotMarket.radar_slot_limit ?? 1}席</span>}
           {(['all', 'rising', 'confirmed', 'fading'] as HotspotFilter[]).map(value => <button key={value} className={hotspotFilter === value ? 'active' : ''} onClick={() => setHotspotFilter(value)}>{hotspotFilterLabel(value)}<small>{hotspotSummary[value]}</small></button>)}
@@ -531,8 +635,8 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
           {leadingMarket && <span className="signal-hotspot-market">{marketCapacityLabel(leadingMarket.market_liquidity_capacity)} · {marketDirectionLabel(leadingMarket.market_liquidity_direction)} · {leadingMarket.leading_slot_limit ?? 1}席</span>}
           {(['all', 'strengthening', 'confirmed'] as LeadingFilter[]).map(value => <button key={value} className={leadingFilter === value ? 'active' : ''} onClick={() => setLeadingFilter(value)}>{leadingFilterLabel(value)}<small>{leadingSummary[value]}</small></button>)}
         </div>}
-        {daily && hardEventSummary.total > 0 && <div className="signal-hard-event-strip" role="status">
-          <span>硬异动 {hardEventSummary.total}</span>
+        {daily && hardEventSummary.total > 0 && <div className="signal-hard-event-strip" role="status" title="独立硬异动是趋势体系捕获的量价或结构异常，不等于热点雷达席位">
+          <span>独立硬异动 {hardEventSummary.total}</span><small>不等于热点席位</small>
           {hardEventSummary.counts.slice(0, 4).map(([eventType, count]) => <small key={eventType}>{hardEventLabel(eventType)} {count}</small>)}
         </div>}
         {['board-pool', 'stock-pool'].includes(dailyView) ? <>
@@ -559,7 +663,7 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
         </> : dailyView !== 'results' ? <>
           <label className="signal-observation-search"><Search size={12}/><input aria-label="搜索板块观察" value={observationQuery} onChange={event => setObservationQuery(event.target.value)} placeholder="板块名称或代码"/></label>
           <div className="signal-result-head observation"><span>评分</span><span>板块</span><span>状态</span><span>关注</span></div>
-          <div className="signal-scroll">{displayedObservations.map(item => {
+          <div className="signal-scroll">{viewEmptyExplanation && <SignalViewEmpty explanation={viewEmptyExplanation}/>} {displayedObservations.map(item => {
             const entry = attention.find(value => value.symbol === item.symbol)
             const score = scoreBySymbol.get(item.symbol)
             return <button key={item.symbol} className={selectedObservation?.symbol === item.symbol ? 'active' : ''} onClick={() => { setSelectedObservation(item); setSelectedItem(undefined); setSelectedPoolItem(undefined) }}>
@@ -600,8 +704,24 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
           <span>{criticalAlert.reason}<small>{criticalAlert.condition}</small></span>
         </div>}
         <div className="signal-chart">{inspected
-          ? <ChartCanvas key={`${selectedRun?.run_id}:${inspected.symbol}`} symbol={inspected.symbol} instrumentName={inspected.name} instrumentKind={selectedPoolItem?.kind ?? selectedItem?.kind ?? 'sector'} focused theme={theme} range="1Y" priceMode="normal" volumeVisible indicator="none" settlementVisible={false} openInterestVisible={false} asOfDate={selectedRun?.effective_date} trendAnalysisEnabled={Boolean(exactAnalysis)} trendAnalysisOverride={exactAnalysis} highlightedAnalysisItemId={highlightedAnalysisItemId} selectedScenarioTarget={selectedScenarioTarget} riskRewardVisible={scenarioVisible}/>
-          : <div className="signal-empty">选择一项结果查看 K 线</div>}</div>
+          ? <ChartCanvas key={`${selectedRun?.run_id}:${inspected.symbol}`} symbol={inspected.symbol} instrumentName={inspected.name} instrumentKind={selectedPoolItem?.kind ?? selectedItem?.kind ?? 'sector'} focused theme={theme} range="1Y" priceMode="normal" volumeVisible indicator="none" settlementVisible={false} openInterestVisible={false} asOfDate={selectedRun?.effective_date}
+              toolbarContent={<TradingSystemControls embedded instrumentKind={selectedPoolItem?.kind ?? selectedItem?.kind ?? 'sector'} state={reviewTrendState} breakoutState={chartBreakoutState} analysisRun={exactAnalysis} recalculationState={trendRecalculationState} recalculationAvailable={recalculationAvailable} recalculationDisabledReason="历史轮次保持冻结，只能重新测算最新复盘日期" onChange={setReviewTrendState} onRecalculate={recalculateInspectedTrend} explanationOpen={trendExplanationOpen} onExplanationOpenChange={setTrendExplanationOpen}/>}
+              trendAnalysisEnabled={reviewTrendState.enabled && Boolean(exactAnalysis)} trendAnalysisOverride={exactAnalysis} highlightedAnalysisItemId={highlightedAnalysisItemId} selectedScenarioTarget={selectedScenarioTarget} riskRewardVisible={scenarioVisible}
+              showTentativePivots={Boolean(reviewTrendState.settings.showTentativePivots)} shortTrendLinesVisible={reviewTrendState.layers['short-trend-lines'] !== false} mediumTrendLinesVisible={reviewTrendState.layers['medium-trend-lines'] !== false} longTrendLinesVisible={reviewTrendState.layers['long-trend-lines'] !== false} keyLevelsVisible={reviewTrendState.layers['key-levels'] !== false} volumeZonesVisible={reviewTrendState.layers['volume-zones'] !== false} patternsVisible={reviewTrendState.layers.patterns !== false} breakoutStateVisible={reviewTrendState.layers['breakout-state'] !== false} trendIsolation={reviewTrendState.isolate} onBreakoutStateChange={setChartBreakoutState}/>
+          : <div className="signal-empty">选择一项结果查看 K 线</div>}
+          {trendExplanationOpen && exactAnalysis && <TrendExplanationPanel
+            run={exactAnalysis}
+            selectedScenarioTarget={selectedScenarioTarget}
+            scenarioVisible={scenarioVisible}
+            onScenarioTargetChange={setSelectedScenarioTarget}
+            onScenarioVisibleChange={setScenarioVisible}
+            onHighlightItemChange={setScenarioHighlightedItemId}
+            onClose={() => {
+              setTrendExplanationOpen(false)
+              setScenarioHighlightedItemId(undefined)
+            }}
+          />}
+        </div>
         <div className="signal-evidence"><div className="signal-evidence-resizer" role="separator" aria-orientation="horizontal" aria-label="调整固定算法结论高度" title="上下拖动调整结论区域高度" onPointerDown={startEvidenceResize}/><header><span>{selectedPoolItem ? '观察池依据' : selectedObservation ? '一级分析' : selectedItem?.payload.rendered_summary ? '固定算法结论' : '引用证据'}</span><small>{selectedPoolItem ? selectedPoolItem.sources.length : selectedObservation ? selectedObservation.state_codes.length : selectedItem?.evidence.length ?? 0}</small></header>
           <div className="signal-evidence-content">
             {inspectedScore && <ScoreSummary score={inspectedScore} onHistorySelect={openHistoricalScore}/>}
@@ -617,6 +737,132 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
       {chatOpen && selectedDefinition && <SignalChatPanel key={selectedDefinition.signal_id} signalId={selectedDefinition.signal_id} runs={runs} run={selectedRun} items={items} selectedItem={selectedItem} selectedPoolItem={selectedPoolItem} onReferencePreview={previewReference} onReferenceActivate={activateReference} onClose={() => setChatOpen(false)}/>}
     </section>
   </main>
+}
+
+type SignalViewEmptyExplanation = {
+  title: string
+  detail: string
+  reasons: string[]
+}
+
+function SignalViewEmpty({ explanation }: { explanation: SignalViewEmptyExplanation }) {
+  return <div className="signal-view-empty" role="status">
+    <span>{explanation.title}</span>
+    <p>{explanation.detail}</p>
+    {explanation.reasons.map(reason => <small key={reason}>{reason}</small>)}
+  </div>
+}
+
+function buildViewEmptyExplanation(
+  view: DailyView,
+  scoresBySystem: Map<string, SignalScoreResult[]>,
+  query: string,
+  displayedCount: number,
+): SignalViewEmptyExplanation | undefined {
+  if (!['opportunities', 'leading', 'hotspots', 'observations'].includes(view) || displayedCount > 0) return undefined
+  if (scoresBySystem.size === 0 && view !== 'observations') return undefined
+  if (query.trim()) return {
+    title: '当前搜索没有匹配结果',
+    detail: `关键词“${query.trim()}”未命中当前视图，可清空搜索后查看本轮完整结果。`,
+    reasons: [],
+  }
+  if (view === 'opportunities') {
+    const values = scoresBySystem.get('trend-breakout') ?? []
+    const eligible = values.filter(item => item.eligible).length
+    return {
+      title: eligible ? `该轮存在 ${eligible} 个机会，但列表未能匹配` : '该轮没有板块通过机会门槛',
+      detail: eligible
+        ? `趋势突破体系实际筛出 ${eligible}/${values.length} 个结果；若仍为空，属于界面数据匹配异常。`
+        : `已评分 ${values.length} 个板块，必须同时满足完整数据、有效多头价格顺序和压力盈亏比不低于 3。`,
+      reasons: topFilterReasons(values),
+    }
+  }
+  if (view === 'hotspots') {
+    const values = scoresBySystem.get('board-hotspot-emergence') ?? []
+    const candidates = values.filter(item => item.hotspot_stage && item.hotspot_stage !== 'failed').length
+    const visible = values.filter(item => item.radar_visible).length
+    return {
+      title: '该轮没有热点进入可见席位',
+      detail: `固定算法发现 ${candidates} 个初始热点候选，${visible} 个通过持续窗口与市场容量约束。初始候选不会直接作为热点展示。`,
+      reasons: topFilterReasons(values, true),
+    }
+  }
+  if (view === 'leading') {
+    const values = scoresBySystem.get('board-hotspot-leading') ?? []
+    const candidates = values.filter(item => item.leading_state && item.leading_state !== 'invalidated').length
+    const visible = values.filter(item => item.leading_visible).length
+    return {
+      title: '该轮没有前导信号进入可见席位',
+      detail: `固定算法保留 ${candidates} 个观察候选，${visible} 个满足结构临界、证据增强和席位约束。`,
+      reasons: topFilterReasons(values),
+    }
+  }
+  return {
+    title: '当前没有板块观察结果',
+    detail: '本轮可能尚未完成，或板块日线覆盖不足。',
+    reasons: [],
+  }
+}
+
+function topFilterReasons(values: SignalScoreResult[], includeWindow = false): string[] {
+  const counts = new Map<string, number>()
+  values.forEach(item => {
+    const reasons = [
+      ...item.disqualifiers,
+      ...(includeWindow ? item.hotspot_window_failure_reasons ?? [] : []),
+    ]
+    new Set(reasons).forEach(reason => counts.set(reason, (counts.get(reason) ?? 0) + 1))
+  })
+  return [...counts.entries()].sort((left, right) => right[1] - left[1]).slice(0, 4)
+    .map(([reason, count]) => `${filterReasonLabel(reason)}：${count} 个`)
+}
+
+function filterReasonLabel(value: string): string {
+  return ({
+    'invalid-long-price-ordering': '入场、止损与目标位顺序无效',
+    'no-credible-target-at-3r': '没有达到 1:3 的可信目标位',
+    'scenario-no-entry': '当前结构尚无入场场景',
+    'incomplete-current-date-data': '当日数据不完整',
+    'insufficient-history': '历史长度不足',
+    'stale-through-effective-date': '数据未覆盖复盘日期',
+    'weak-structure-proximity': '距离结构触发位不够近',
+    'first-seen-after-confirmation': '首次发现时行情已经确认启动',
+    'overextended-before-admission': '进入观察前已经过度延伸',
+    'insufficient-window-history': '持续观察窗口不足',
+    'weak-price': '短期价格强度不足',
+    'weak-relative-strength': '相对强度不足',
+    'weak-shape': '形态支持不足',
+    'weak-leader': '板块龙头强度不足',
+    'weak-breadth': '板块内部扩散不足',
+    'weak-activity': '量能活跃度不足',
+  } as Record<string, string>)[value] ?? value
+}
+
+function createReviewTrendState(): TradingSystemWindowState {
+  const state = createTradingSystemWindowState(tradingSystemRegistry.get('trend')!)
+  return {
+    ...state,
+    enabled: true,
+    settings: { ...state.settings, provisionalPreview: false },
+  }
+}
+
+const reportedSlowSignalOperations = new Set<string>()
+
+function reportSignalTiming(
+  operation: string,
+  startedAt: number,
+  context: Record<string, unknown>,
+  warningThresholdMs = 1200,
+) {
+  const durationMs = Math.round(performance.now() - startedAt)
+  const detail = { ...context, duration_ms: durationMs }
+  logInfo('signal-review-performance', operation, detail)
+  const warningKey = `${operation}:${String(context.run_id ?? '')}:${String(context.view ?? '')}`
+  if (durationMs < warningThresholdMs || reportedSlowSignalOperations.has(warningKey)) return
+  if (reportedSlowSignalOperations.size >= 50) reportedSlowSignalOperations.clear()
+  reportedSlowSignalOperations.add(warningKey)
+  logWarning('signal-review-performance', `${operation}耗时偏高`, detail)
 }
 
 function poolLifecycleLabel(value: PoolLifecycleFilter) {

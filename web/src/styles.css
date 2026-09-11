@@ -177,7 +177,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .signal-view-switch { height: 31px; display: flex; gap: 3px; padding: 3px 6px; overflow-x: auto; border-bottom: 1px solid var(--theme-border); }
 .signal-view-switch button { display: inline-flex; align-items: center; gap: 4px; padding: 0 8px; color: var(--theme-muted); border: 0; border-radius: 2px; background: transparent; font-size: 9px; }
 .signal-view-switch button.active { color: var(--theme-text-strong); background: var(--theme-accent-soft); }
-.signal-score-system-select { min-height: 27px; display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 3px 8px; color: var(--theme-muted); border-bottom: 1px solid var(--theme-border); font-size: 8px; }
+.signal-score-system-select { min-height: 27px; display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 3px 8px; color: var(--theme-muted); border-bottom: 1px solid var(--theme-border); font-size: 10px; }
+.signal-score-system-select > span { color: var(--theme-text-strong); font-size: 11px; }
 .signal-score-system-select select { height: 21px; color: var(--theme-text); border: 1px solid var(--theme-border); border-radius: 2px; background: var(--theme-base); font-size: 8px; }
 .signal-hard-event-strip { min-height: 27px; display: flex; align-items: center; gap: 6px; overflow: hidden; padding: 3px 8px; color: var(--theme-muted); border-bottom: 1px solid var(--theme-border); background: color-mix(in srgb, #d8aa4f 5%, var(--theme-surface)); font-size: 8px; }
 .signal-hard-event-strip > span { flex: 0 0 auto; color: #d8aa4f; font-size: 9px; }
@@ -268,12 +269,16 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .signal-evidence button { min-width: 0; display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 5px; padding: 7px 8px; color: var(--theme-text); text-align: left; border: 0; background: var(--theme-surface); }
 .signal-evidence button:hover { background: var(--theme-hover); }
 .signal-evidence button.active { background: var(--theme-accent-soft); }
-.signal-evidence code { color: var(--theme-accent); font-family: Consolas, monospace; font-size: 10px; }
-.signal-evidence button span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
-.signal-evidence button small { display: block; margin-top: 2px; overflow: hidden; color: var(--theme-muted); text-overflow: ellipsis; white-space: nowrap; font-size: 8px; }
-.signal-fixed-summary { min-height: 0; margin: 0; padding: 9px 11px; overflow: auto; color: var(--theme-text); white-space: pre-wrap; font: 11px/1.62 "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", sans-serif; }
+.signal-evidence code { color: var(--theme-accent); font-family: Consolas, monospace; font-size: 11px; }
+.signal-evidence button span { min-width: 0; overflow: hidden; color: var(--theme-text-strong); text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+.signal-evidence button small { display: block; margin-top: 3px; overflow: hidden; color: var(--theme-text); text-overflow: ellipsis; white-space: nowrap; font-size: 10px; line-height: 1.45; }
+.signal-fixed-summary { min-height: 0; margin: 0; padding: 10px 12px; overflow: auto; color: var(--theme-text-strong); white-space: pre-wrap; font: 12px/1.65 "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", sans-serif; font-synthesis: none; }
 .signal-analysis-details { min-height: 0; overflow: auto; }
 .signal-analysis-details .signal-fixed-summary { overflow: visible; border-bottom: 1px solid var(--theme-border); }
+.signal-view-empty { display: grid; align-content: start; gap: 7px; margin: 10px; padding: 12px; border: 1px solid var(--theme-border); border-left: 3px solid #d8aa4f; border-radius: 4px; background: color-mix(in srgb, #d8aa4f 5%, var(--theme-surface)); color: var(--theme-text); }
+.signal-view-empty > span { color: var(--theme-text-strong); font-size: 12px; }
+.signal-view-empty p { margin: 0; font-size: 11px; line-height: 1.55; }
+.signal-view-empty small { color: var(--theme-muted); font-size: 10px; line-height: 1.45; }
 .signal-evidence-list { display: grid; align-content: start; grid-template-columns: repeat(auto-fill, minmax(185px, 1fr)); gap: 1px; background: var(--theme-border); }
 .signal-pool-evidence { min-height: 0; }
 .signal-pool-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(135px, 1fr)); gap: 1px; background: var(--theme-border); border-bottom: 1px solid var(--theme-border); }
