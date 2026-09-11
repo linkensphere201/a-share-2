@@ -56,7 +56,7 @@ export function readTrendEvidence(
     patternName: stringValue(primary?.payload.display_name),
     score: numberValue(primary?.payload.score),
     scoreComponents: Object.entries(components).flatMap(([label, value]) => (
-      typeof value === 'number' ? [{ label, value }] : []
+      typeof value === 'number' ? [{ label: scoreComponentLabel(label), value }] : []
     )),
     boundaryPrice: breakoutState?.boundaryPrice,
     invalidationPrice: breakoutState?.invalidationPrice,
@@ -79,6 +79,18 @@ export function readTrendEvidence(
       } : undefined,
     warnings,
   }
+}
+
+function scoreComponentLabel(value: string): string {
+  return ({
+    symmetry: '对称性', duration: '持续时间', recovery: '修复程度',
+    volume: '量能', move: '价格位移', boundary_fit: '边界拟合',
+    contraction: '收敛程度', prominence: '显著性', pivot_count: '枢轴数量',
+    endpoint_similarity: '端点相似度', prior_impulse: '前段推动',
+    breakout_volume: '突破量能', expansion: '扩张程度',
+    head_prominence: '头部显著性', neckline: '颈线质量',
+    shoulder_similarity: '肩部相似度', volume_confirmation: '量能确认',
+  } as Record<string, string>)[value] ?? '综合证据'
 }
 
 function observationRow(

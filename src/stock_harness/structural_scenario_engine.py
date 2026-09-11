@@ -16,7 +16,7 @@ from stock_harness.structural_map import (
 from stock_harness.trade_scenarios import TradeDirection, calculate_risk_reward
 
 
-STRUCTURAL_SCENARIO_VERSION = "structural-trade-scenario-v2"
+STRUCTURAL_SCENARIO_VERSION = "structural-trade-scenario-v3-current-entry"
 
 
 @dataclass(frozen=True, slots=True)
@@ -207,23 +207,31 @@ def _build_scenario(
     direction = TradeDirection(setup.direction)
     policy = _setup_policy(setup)
     buffer = max(atr * policy["buffer_atr"], setup.boundary_price * 0.003)
-    entry = (
+    trigger_entry = (
         setup.boundary_price + buffer
         if direction is TradeDirection.LONG
         else setup.boundary_price - buffer
     )
     invalidation, invalidation_sources = _invalidation(
-        boundaries, setup, entry, direction, buffer
+        boundaries, setup, trigger_entry, direction, buffer
     )
     if invalidation is None:
         return None
+    trigger_risk = (
+        trigger_entry - invalidation
+        if direction is TradeDirection.LONG
+        else invalidation - trigger_entry
+    )
+    if trigger_risk <= 0:
+        return None
+    state = _scenario_state(
+        setup.state, bars[-1].close, trigger_entry, atr, trigger_risk, direction
+    )
+    entry = bars[-1].close if state in {"triggered", "retest", "extended"} else trigger_entry
     risk = entry - invalidation if direction is TradeDirection.LONG else invalidation - entry
     if risk <= 0:
         return None
     targets = _targets(boundaries, setup, entry, direction, atr)
-    state = _scenario_state(
-        setup.state, bars[-1].close, entry, atr, risk, direction
-    )
     target_payloads = []
     for index, target in enumerate(targets[:3], start=1):
         raw_rr = calculate_risk_reward(direction, entry, invalidation, target.price)
@@ -270,6 +278,7 @@ def _build_scenario(
             "start_date": setup.start_date or bars[max(0, len(bars) - 20)].period_end.isoformat(),
             "reference_price": round(bars[-1].close, 6),
             "entry_price": round(entry, 6),
+            "trigger_entry_price": round(trigger_entry, 6),
             "entry_range": {
                 "lower": round(setup.boundary_price - buffer, 6),
                 "upper": round(setup.boundary_price + buffer, 6),
@@ -287,6 +296,10 @@ def _build_scenario(
             "setup_basis": f"{setup.horizon} {setup.family} structural boundary",
             "confirmation_rule": policy["confirmation_rule"],
             "entry_policy": policy["name"],
+            "entry_price_basis": (
+                "current-close-after-trigger"
+                if entry != trigger_entry else "planned-trigger-price"
+            ),
             "invalidation_basis": "nearest independent structural support/resistance",
             "assumptions": [
                 f"trigger buffer is max({policy['buffer_atr']} ATR, 0.3% of boundary price)",

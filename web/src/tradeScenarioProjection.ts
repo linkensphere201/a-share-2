@@ -16,7 +16,9 @@ export type StructuralTradeScenario = {
   state: 'waiting-trigger' | 'triggered' | 'retest' | 'invalidated' | 'extended' | 'no-entry'
   setupFamily: string
   horizon: string
+  referencePrice?: number
   entryPrice: number
+  triggerEntryPrice?: number
   invalidationPrice: number
   riskPercent: number
   targets: StructuralScenarioTarget[]
@@ -72,21 +74,33 @@ export function readPrimaryStructuralScenario(
   if ((direction !== 'long' && direction !== 'short')
     || !isScenarioState(state)
     || entryPrice === undefined || invalidationPrice === undefined) return undefined
-  const targets = Array.isArray(item.payload.targets)
+  const referencePrice = numberValue(item.payload.reference_price)
+  const triggerEntryPrice = numberValue(item.payload.trigger_entry_price)
+  const parsedTargets = Array.isArray(item.payload.targets)
     ? item.payload.targets.flatMap(value => parseTarget(value))
     : []
+  const actionablePrice = state === 'waiting-trigger'
+    ? entryPrice
+    : referencePrice ?? entryPrice
+  const targets = parsedTargets.filter(target => direction === 'long'
+    ? target.price > actionablePrice
+    : target.price < actionablePrice)
   return {
     id: item.item_id,
     direction,
     state,
     setupFamily: stringValue(item.payload.setup_family) ?? 'structural',
     horizon: stringValue(item.payload.horizon) ?? 'unspecified',
+    referencePrice,
     entryPrice,
+    triggerEntryPrice,
     invalidationPrice,
     riskPercent: numberValue(item.payload.risk_percent) ?? 0,
     targets,
     selectedTargetLabel: stringValue(item.payload.selected_target_label),
-    hasTradeSpace: item.payload.has_trade_space === true,
+    hasTradeSpace: item.payload.has_trade_space === true && targets.some(
+      target => target.stressedRiskRewardRatio !== undefined,
+    ),
     evidenceItemIds: stringArray(item.payload.evidence_item_ids),
     invalidationEvidenceItemIds: stringArray(item.payload.invalidation_evidence_item_ids),
   }
@@ -146,14 +160,36 @@ export function targetBasisLabel(value: string): string {
   const labels = value.split('+').map(item => {
     if (item === 'estimated-volume-at-price') return '成交密集区'
     if (item === 'key-level') return '关键位'
-    if (item.startsWith('range-high')) return '区间高点'
-    if (item.startsWith('range-low')) return '区间低点'
+    if (item.includes('range-high')) return '历史区间高点'
+    if (item.includes('range-low')) return '历史区间低点'
     if (item.includes('trend-line') || item.includes('-projection-')) return '趋势线投影'
     if (item.includes('pattern')) return '形态边界'
     if (item.includes('gap')) return '缺口边界'
-    return item
+    return '结构边界'
   })
   return [...new Set(labels)].join(' + ')
+}
+
+export function setupFamilyLabel(value: string): string {
+  return ({
+    'v-top': '倒V形顶',
+    'v-bottom': 'V形底',
+    'double-top': '双顶',
+    'double-bottom': '双底',
+    'head-and-shoulders-top': '头肩顶',
+    'head-and-shoulders-bottom': '头肩底',
+    'ascending-triangle': '上升三角形',
+    'descending-triangle': '下降三角形',
+    'symmetrical-triangle': '对称三角形',
+    'bull-flag': '多头旗形',
+    'bear-flag': '空头旗形',
+    diamond: '菱形',
+    triangle: '三角形',
+    reversal: '反转形态',
+    'trend-line-break': '趋势线突破/破位',
+    'support-break': '支撑破位',
+    structural: '结构形态',
+  } as Record<string, string>)[value] ?? '结构形态'
 }
 
 export function isVolumeZoneTarget(target: StructuralScenarioTarget): boolean {

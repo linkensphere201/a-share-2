@@ -5,6 +5,7 @@ import {
   projectRiskReward,
   readPrimaryStructuralScenario,
   targetBasisLabel,
+  setupFamilyLabel,
 } from './tradeScenarioProjection'
 import type { TrendAnalysisRun } from './trendAnalysisClient'
 
@@ -56,6 +57,8 @@ describe('structural trade scenario projection', () => {
     expect(scenario?.targets).toHaveLength(3)
     expect(scenario?.targets[1].evidenceItemIds).toEqual(['target-2'])
     expect(targetBasisLabel(scenario!.targets[2].basis)).toBe('成交密集区')
+    expect(targetBasisLabel('historical-range-high+key-level')).toBe('历史区间高点 + 关键位')
+    expect(setupFamilyLabel('symmetrical-triangle')).toBe('对称三角形')
     expect(isVolumeZoneTarget(scenario!.targets[2])).toBe(true)
   })
 
@@ -77,5 +80,15 @@ describe('structural trade scenario projection', () => {
     expect(geometry!.targets[1].width).toBeLessThan(geometry!.targets[0].width)
     expect(geometry!.targets[2]).toEqual(expect.objectContaining({ targetY: 40, selected: false }))
     expect(geometry?.width).toBeGreaterThanOrEqual(80)
+  })
+
+  it('hides targets already passed by the analysis reference price', () => {
+    const staleTargets = structuredClone(run)
+    const payload = staleTargets.items[1].payload
+    payload.reference_price = 13
+
+    const scenario = readPrimaryStructuralScenario(staleTargets)
+
+    expect(scenario?.targets.map(target => target.label)).toEqual(['T2', 'T3'])
   })
 })

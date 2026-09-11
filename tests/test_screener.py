@@ -66,7 +66,7 @@ def test_screener_persists_candidate_and_exact_linked_analysis():
             if item["item_id"] == candidates[0]["evidence"]["scenario_item_id"]
         )
         assert scenario["item_type"] == "scenario"
-        assert scenario["payload"]["contract_version"] == "structural-trade-scenario-v2"
+        assert scenario["payload"]["contract_version"] == "structural-trade-scenario-v3-current-entry"
         assert candidates[0]["evidence"]["trade_scenario"] == scenario["payload"]
         assert candidates[0]["evidence"]["invalidation_price"] == scenario["payload"]["invalidation_price"]
     finally:

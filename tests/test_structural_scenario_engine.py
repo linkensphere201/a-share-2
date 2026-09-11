@@ -88,7 +88,7 @@ def test_builds_traceable_structural_scenario_and_clusters_targets() -> None:
     scenario = next(item for item in generated if item.item_type is GeneratedItemType.SCENARIO)
     payload = scenario.payload
 
-    assert payload["contract_version"] == "structural-trade-scenario-v2"
+    assert payload["contract_version"] == "structural-trade-scenario-v3-current-entry"
     assert payload["direction"] == "long"
     assert payload["state"] == "waiting-trigger"
     assert payload["entry_price"] > 10.2
@@ -210,3 +210,48 @@ def test_projection_can_select_long_scenario_when_primary_scenario_is_short() ->
 
     assert projected["scenario_item_id"] == "long-secondary"
     assert projected["direction"] == "long"
+
+
+def test_triggered_scenario_uses_current_close_and_drops_passed_targets() -> None:
+    bars = _bars()
+    latest = bars[-1]
+    bars[-1] = AnalysisBar(
+        period_start=latest.period_start, period_end=latest.period_end,
+        open=11.8, high=12.2, low=11.7, close=12.0,
+        volume=latest.volume, sources=latest.sources,
+        contains_provisional=False, period_complete=True,
+        observed_at_ms=latest.observed_at_ms,
+    )
+    items = [
+        GeneratedAnalysisItem("breakout", GeneratedItemType.PATTERN, {
+            "pattern_type": "ascending-triangle", "direction": "bullish",
+            "horizon": "medium", "neckline_price": 10.0,
+            "invalidation_price": 9.0, "score": 0.9, "primary": True,
+        }),
+        GeneratedAnalysisItem(
+            "breakout-event", GeneratedItemType.EVIDENCE,
+            {"kind": "breakout-state-summary", "current_state": "triggered",
+             "direction": "up", "boundary_price": 10.0,
+             "invalidation_level": 9.0}, parent_item_id="breakout",
+        ),
+        GeneratedAnalysisItem("passed-target", GeneratedItemType.ZONE, {
+            "kind": "key-level", "lower": 11.0, "upper": 11.2, "score": 0.8,
+        }),
+        GeneratedAnalysisItem("future-target", GeneratedItemType.ZONE, {
+            "kind": "key-level", "lower": 14.0, "upper": 14.2, "score": 0.8,
+        }),
+        GeneratedAnalysisItem("core-analysis-projection", GeneratedItemType.EVIDENCE, {
+            "kind": "core-analysis-projection",
+            "structural_item_ids": ["breakout", "passed-target", "future-target"],
+        }),
+    ]
+
+    payload = next(
+        item.payload for item in build_structural_scenario_items(bars, items)
+        if item.item_type is GeneratedItemType.SCENARIO
+    )
+
+    assert payload["entry_price"] == 12.0
+    assert payload["trigger_entry_price"] < payload["entry_price"]
+    assert all(target["price"] > 12.0 for target in payload["targets"])
+    assert all(target["risk_reward_ratio"] > 0 for target in payload["targets"])

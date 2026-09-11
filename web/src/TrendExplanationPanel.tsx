@@ -53,7 +53,7 @@ export function TrendExplanationPanel({
           <h3>分析证据</h3>
           <dl>
             {evidence.observedAt && <><dt>观测时间</dt><dd>{evidence.observedAt}</dd></>}
-            <dt>结果</dt><dd>{evidence.source === 'preview' ? '盘中预览' : '正式'} · {evidence.asOfDate} · {evidence.timeframe}</dd>
+            <dt>结果</dt><dd>{evidence.source === 'preview' ? '盘中预览' : '正式'} · {evidence.asOfDate} · {timeframeLabel(evidence.timeframe)}</dd>
             <dt>状态</dt><dd>{breakoutState ? evidenceStateLabel(breakoutState.eventKind, breakoutState.state) : '暂无结构事件'}{evidence.stale ? ' · 已过期' : ''}</dd>
             {evidence.patternName && <><dt>主形态</dt><dd>{evidence.patternName}{evidence.score !== undefined ? ` · ${Math.round(evidence.score * 100)}分` : ''}</dd></>}
             {evidence.boundaryPrice !== undefined && <><dt>边界</dt><dd>{evidence.boundaryPrice.toFixed(2)}</dd></>}
@@ -112,4 +112,9 @@ function contextLabel(value: string): string {
   if (value === 'supportive') return '顺风'
   if (value === 'adverse') return '逆风'
   return '混合'
+}
+
+function timeframeLabel(value: string): string {
+  return ({ daily: '日线', weekly: '周线', monthly: '月线' } as Record<string, string>)[value]
+    ?? '自定义周期'
 }

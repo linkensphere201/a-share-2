@@ -323,7 +323,7 @@ export function GeneratedAnalysisOverlay({
           >
             <line className="target-line" x1={x} y1={targetY} x2={x + width} y2={targetY}/>
             <text className="target-label" x={x + 4} y={targetY - 3}>
-              {target.label} {target.price.toFixed(2)} · {targetBasisLabel(target.basis)} · RR {target.stressedRiskRewardRatio?.toFixed(2) ?? '-'}
+              目标 {target.label} {target.price.toFixed(2)} · {targetBasisLabel(target.basis)} · 盈亏比 {target.stressedRiskRewardRatio?.toFixed(2) ?? '-'}
             </text>
           </g>)}
           <text className="entry-label" x={riskReward.x + 4} y={riskReward.entryY - 3}>入 {riskReward.entryPrice.toFixed(2)}</text>

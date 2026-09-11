@@ -3,6 +3,7 @@ import { useState } from 'react'
 import {
   isVolumeZoneTarget,
   readPrimaryStructuralScenario,
+  setupFamilyLabel,
   targetBasisLabel,
   type StructuralTradeScenario,
 } from './tradeScenarioProjection'
@@ -50,7 +51,7 @@ export function TradeScenarioPanel({
         onPointerLeave={() => onHighlightItemChange(undefined)}
       >
         <span>{directionLabel(scenario.direction)} · {horizonLabel(scenario.horizon)}</span>
-        <small>{stateLabel(scenario.state)} · {scenario.setupFamily}</small>
+        <small>{stateLabel(scenario.state)} · {setupFamilyLabel(scenario.setupFamily)}</small>
       </button>
       <dl>
         <dt>入场</dt><dd>{scenario.entryPrice.toFixed(2)}</dd>
@@ -84,12 +85,12 @@ export function TradeScenarioPanel({
             onPointerLeave={() => onHighlightItemChange(undefined)}
           >
             <span>{target.label}<small>{targetBasisLabel(target.basis)}</small></span>
-            <span className="trade-scenario-target-value">{target.price.toFixed(2)}<small>RR {target.stressedRiskRewardRatio?.toFixed(2) ?? '-'}</small></span>
+            <span className="trade-scenario-target-value">{target.price.toFixed(2)}<small>盈亏比 {target.stressedRiskRewardRatio?.toFixed(2) ?? '-'}</small></span>
           </button>)}
         </div>
         {activeTarget && <div className="trade-scenario-ratios">
-          <Ratio label="原始 RR" value={activeTarget.riskRewardRatio}/>
-          <Ratio label="压力 RR" value={activeTarget.stressedRiskRewardRatio}/>
+          <Ratio label="原始盈亏比" value={activeTarget.riskRewardRatio}/>
+          <Ratio label="压力盈亏比" value={activeTarget.stressedRiskRewardRatio}/>
           <small>{targetBasisLabel(activeTarget.basis)}</small>
         </div>}
       </> : <p className="trade-scenario-unavailable">当前结构没有可复现的目标位，不给出盈亏比。</p>}
