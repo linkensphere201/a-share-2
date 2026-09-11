@@ -27,6 +27,7 @@ import { buildWorkspaceContext, publishWorkspaceContext } from './workspaceConte
 import type { TradingSystemWindowStates } from './tradingSystems'
 import { middleMovingAveragePeriod } from './chartData'
 import { useWorkspaceTrendRecalculation } from './useWorkspaceTrendRecalculation'
+import { useTemporaryChartCasting } from './useTemporaryChartCasting'
 import {
   chartRanges,
   appendInstrumentToManualList,
@@ -45,6 +46,7 @@ import {
 import {
   applyListSelection,
   removeMissingCustomGroupReferences,
+  removeInstrumentFromManualList,
   removeWorkspaceWindow,
   replaceDetachedWindowInstruments,
   resolveActiveChart,
@@ -89,11 +91,12 @@ export function StockWorkspace() {
   const [drawingRevision, setDrawingRevision] = useState(0)
   const hostGroupId = popoutTarget?.groupId ?? workspace.activeGroupId
   const activeGroup = workspace.groups.find(group => group.id === hostGroupId) ?? workspace.groups[0]
-  const focusedWindow = activeGroup.windows.find(item => item.id === activeGroup.focusedWindowId) ?? activeGroup.windows[0]
-  const activeChart = resolveActiveChart(activeGroup, focusedWindow)
+  const { displayedGroup: displayedActiveGroup, setTemporaryInstrument } = useTemporaryChartCasting(activeGroup)
+  const focusedWindow = displayedActiveGroup.windows.find(item => item.id === displayedActiveGroup.focusedWindowId) ?? displayedActiveGroup.windows[0]
+  const activeChart = resolveActiveChart(displayedActiveGroup, focusedWindow)
   const referencedSymbols = useMemo(
-    () => deriveReferencedSymbols(activeGroup, resolvedWindowSymbols),
-    [activeGroup, resolvedWindowSymbols],
+    () => deriveReferencedSymbols(displayedActiveGroup, resolvedWindowSymbols),
+    [displayedActiveGroup, resolvedWindowSymbols],
   )
   const referencedSymbolsKey = referencedSymbols.join('|')
   const subscriptionCoordinatorRef = useRef<IntradaySubscriptionCoordinator | undefined>(undefined)
@@ -110,8 +113,8 @@ export function StockWorkspace() {
   const workspaceRef = useRef(workspace)
   workspaceRef.current = workspace
   const workspaceContext = useMemo(
-    () => buildWorkspaceContext(activeGroup, resolvedWindowSymbols),
-    [activeGroup, resolvedWindowSymbols, drawingRevision],
+    () => buildWorkspaceContext(displayedActiveGroup, resolvedWindowSymbols),
+    [displayedActiveGroup, resolvedWindowSymbols, drawingRevision],
   )
 
   useEffect(() => {
@@ -438,13 +441,46 @@ export function StockWorkspace() {
     updateActiveGroup(group => removeWorkspaceWindow(group, id))
   }
 
+  const clearTemporaryTargetsForList = useCallback((sourceId: string) => {
+    const group = workspaceRef.current.groups.find(item => item.id === hostGroupId)
+    if (!group) return
+    group.attachments
+      .filter(edge => edge.sourceWindowId === sourceId && edge.type === 'show-symbol')
+      .forEach(edge => setTemporaryInstrument(edge.targetWindowId))
+  }, [hostGroupId, setTemporaryInstrument])
+
   const selectListInstrument = useCallback((id: string, instrument: Instrument) => {
+    clearTemporaryTargetsForList(id)
     updateActiveGroup(group => applyListSelection(group, id, instrument))
-  }, [updateActiveGroup])
+  }, [clearTemporaryTargetsForList, updateActiveGroup])
+
+  const deleteListInstrument = useCallback((id: string, instrument: Instrument) => {
+    clearTemporaryTargetsForList(id)
+    const group = workspaceRef.current.groups.find(item => item.id === hostGroupId)
+    const target = group?.windows.find(item => item.id === id)
+    const removable = target?.type === 'instrument-list'
+      && target.mode === 'detached'
+      && target.content.instruments.some(item => item.symbol === instrument.symbol)
+    updateActiveGroup(current => removeInstrumentFromManualList(current, id, instrument.symbol).group)
+    if (removable) logInfo('workspace-list', '已从固定列表删除标的', {
+      window_id: id, symbol: instrument.symbol,
+    })
+  }, [clearTemporaryTargetsForList, hostGroupId, updateActiveGroup])
+
+  const temporaryCastInstrument = useCallback((chartId: string, instrument: Instrument) => {
+    const chart = activeGroup.windows.find(item => item.id === chartId && item.type === 'chart')
+    if (!chart) return
+    setTemporaryInstrument(chartId, instrument)
+    updateActiveGroup(group => ({ ...group, focusedWindowId: chartId }))
+    logInfo('workspace-chart', '标的已临时投屏到图表', {
+      chart_id: chartId, symbol: instrument.symbol,
+    })
+  }, [activeGroup.windows, setTemporaryInstrument, updateActiveGroup])
 
   const saveWindowInstruments = useCallback((id: string, instruments: Instrument[]) => {
+    setTemporaryInstrument(id)
     updateActiveGroup(group => replaceDetachedWindowInstruments(group, id, instruments))
-  }, [updateActiveGroup])
+  }, [setTemporaryInstrument, updateActiveGroup])
 
   const screenerTargetLists = useMemo<ScreenerTargetList[]>(() => activeGroup.windows
     .filter((item): item is InstrumentListWindowState => (
@@ -580,7 +616,7 @@ export function StockWorkspace() {
   }
 
   const renderActiveWindowGroup = (renderOnlyWindowId?: string) => <WindowGroup
-    group={activeGroup}
+    group={displayedActiveGroup}
     theme={theme}
     renderOnlyWindowId={renderOnlyWindowId}
     poppedOutHost={isPopoutHost}
@@ -596,6 +632,8 @@ export function StockWorkspace() {
       layout: updateSplitRatio(group.layout, id, ratio),
     }))}
     onSelectListInstrument={selectListInstrument}
+    onDeleteListInstrument={deleteListInstrument}
+    onTemporaryCast={temporaryCastInstrument}
     onEditWindow={id => setInstrumentEditor({ windowId: id, tab: 'instruments' })}
     onSortList={sortList}
     onListColumnsChange={updateListColumns}

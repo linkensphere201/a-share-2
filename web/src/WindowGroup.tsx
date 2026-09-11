@@ -16,6 +16,8 @@ type WindowGroupProps = {
   onRemoveWindow: (id: string) => void
   onResizeSplit: (id: string, ratio: number) => void
   onSelectListInstrument: (id: string, instrument: Instrument) => void
+  onDeleteListInstrument: (id: string, instrument: Instrument) => void
+  onTemporaryCast: (chartId: string, instrument: Instrument) => void
   onEditWindow: (id: string) => void
   onSortList: (id: string, sort: NonNullable<Extract<WindowGroupState['windows'][number], { type: 'instrument-list' }>['sort']>) => void
   onListColumnsChange: (id: string, columns: ListColumnKey[]) => void
@@ -52,6 +54,8 @@ export function WindowGroup({
   onRemoveWindow,
   onResizeSplit,
   onSelectListInstrument,
+  onDeleteListInstrument,
+  onTemporaryCast,
   onEditWindow,
   onSortList,
   onListColumnsChange,
@@ -109,6 +113,15 @@ export function WindowGroup({
           onToggleMaximize={() => onToggleMaximize(item.id)}
           onRemoveWindow={() => onRemoveWindow(item.id)}
           onSelect={instrument => onSelectListInstrument(item.id, instrument)}
+          onDeleteInstrument={instrument => onDeleteListInstrument(item.id, instrument)}
+          onTemporaryCast={onTemporaryCast}
+          chartTargets={group.windows
+            .filter(window => window.type === 'chart')
+            .map(window => ({
+              id: window.id,
+              title: window.title,
+              instrumentName: window.instrument.name,
+            }))}
           onEdit={() => onEditWindow(item.id)}
           onPopOut={() => onPopOutWindow(item.id)}
           onDock={() => onDockWindow(item.id)}

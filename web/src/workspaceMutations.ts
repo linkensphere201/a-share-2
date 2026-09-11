@@ -96,6 +96,39 @@ export function applyListSelection(
   }
 }
 
+export function removeInstrumentFromManualList(
+  group: WindowGroupState,
+  windowId: string,
+  symbol: string,
+): { group: WindowGroupState; removed: boolean } {
+  const target = group.windows.find(item => item.id === windowId)
+  if (target?.type !== 'instrument-list' || target.mode !== 'detached') {
+    return { group, removed: false }
+  }
+  const removedIndex = target.content.instruments.findIndex(item => item.symbol === symbol)
+  if (removedIndex < 0) return { group, removed: false }
+  const instruments = target.content.instruments.filter(item => item.symbol !== symbol)
+  const selectionChanged = target.selectedSymbol === symbol
+  const selectedSymbol = selectionChanged
+    ? instruments[Math.min(removedIndex, instruments.length - 1)]?.symbol
+    : target.selectedSymbol
+  const updated: WindowGroupState = {
+    ...group,
+    windows: group.windows.map(item => item.id === windowId ? {
+      ...target,
+      content: { ...target.content, instruments },
+      selectedSymbol,
+    } : item),
+  }
+  const nextSelection = instruments.find(item => item.symbol === selectedSymbol)
+  return {
+    group: selectionChanged && nextSelection
+      ? applyListSelection(updated, windowId, nextSelection)
+      : updated,
+    removed: true,
+  }
+}
+
 export function replaceDetachedWindowInstruments(
   group: WindowGroupState,
   windowId: string,

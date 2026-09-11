@@ -294,6 +294,40 @@ describe('StockWorkspace', () => {
     expect(screen.getByTestId('chart-canvas').textContent).toBe('BK1128.DC')
   })
 
+  it('temporarily casts a list instrument without persisting it and clears it on linked selection', async () => {
+    const state = createDefaultWorkspace()
+    const list = state.groups[0].windows[0]
+    if (list.type !== 'instrument-list') throw new Error('expected list')
+    const temporary = {
+      symbol: '002708.SZ', name: '光洋股份', kind: 'stock' as const,
+      exchange: 'SZ', rows: 1000,
+    }
+    list.content.instruments.push(temporary)
+    window.localStorage.setItem(workspaceStorageKey, JSON.stringify(state))
+    vi.stubGlobal('fetch', emptyFetch())
+    const user = userEvent.setup()
+
+    render(<App />)
+
+    const temporaryRow = screen.getByRole('button', { name: '选择 光洋股份' }).closest('.list-window-row')!
+    fireEvent.contextMenu(temporaryRow, { clientX: 120, clientY: 120 })
+    await user.click(screen.getByRole('menuitem', { name: /临时投屏至/ }))
+    await user.click(screen.getByRole('menuitem', { name: /表2/ }))
+    expect(screen.getByTestId('chart-canvas').textContent).toBe(temporary.symbol)
+    expect(JSON.parse(window.localStorage.getItem(workspaceStorageKey) ?? '{}')
+      .groups[0].windows[1].instrument.symbol).toBe('BK1128.DC')
+
+    await user.click(screen.getByRole('button', { name: '选择 CPO概念' }))
+    expect(screen.getByTestId('chart-canvas').textContent).toBe('BK1128.DC')
+
+    fireEvent.contextMenu(temporaryRow, { clientX: 120, clientY: 120 })
+    await user.click(screen.getByRole('menuitem', { name: '从当前列表删除' }))
+    expect(screen.queryByRole('button', { name: '选择 光洋股份' })).toBeNull()
+    await waitFor(() => expect(JSON.parse(window.localStorage.getItem(workspaceStorageKey) ?? '{}')
+      .groups[0].windows[0].content.instruments.map((item: { symbol: string }) => item.symbol))
+      .not.toContain(temporary.symbol))
+  })
+
   it('resizes and remembers the list member pane in the instrument editor', async () => {
     vi.stubGlobal('fetch', emptyFetch())
     const user = userEvent.setup()

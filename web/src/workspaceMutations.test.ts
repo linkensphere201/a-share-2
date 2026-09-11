@@ -3,6 +3,7 @@ import { createWindowGroup, type Instrument, type WorkspaceState } from './works
 import {
   applyListSelection,
   removeMissingCustomGroupReferences,
+  removeInstrumentFromManualList,
   removeWorkspaceWindow,
   replaceDetachedWindowInstruments,
   resolveActiveChart,
@@ -45,6 +46,26 @@ describe('workspace mutations', () => {
       selectedSymbol: replacement.symbol,
       content: { instruments: [replacement] },
     })
+  })
+
+  it('removes a fixed-list instrument and routes the adjacent selection', () => {
+    const group = fixture()
+    const list = group.windows.find(item => item.type === 'instrument-list')!
+    if (list.type !== 'instrument-list') throw new Error('list fixture expected')
+    const adjacent = { ...replacement, symbol: '000002.SZ', name: '万科A' }
+    list.content.instruments = [replacement, adjacent]
+    list.selectedSymbol = replacement.symbol
+
+    const result = removeInstrumentFromManualList(group, list.id, replacement.symbol)
+    const updatedList = result.group.windows.find(item => item.id === list.id)
+    const chart = result.group.windows.find(item => item.type === 'chart')
+
+    expect(result.removed).toBe(true)
+    expect(updatedList).toMatchObject({
+      selectedSymbol: adjacent.symbol,
+      content: { instruments: [adjacent] },
+    })
+    expect(chart).toMatchObject({ instrument: adjacent })
   })
 
   it('removes layout and attachment references with a window', () => {

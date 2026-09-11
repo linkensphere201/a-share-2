@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react'
-import { ArrowDown, ArrowUp, ArrowUpDown, Columns3, Maximize2, Minimize2, PanelTopClose, PanelTopOpen, Pencil, X } from 'lucide-react'
-import { allListColumns, type Instrument, type InstrumentListWindowState, type ListColumnKey } from './workspace'
+import { ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight, Columns3, Maximize2, Minimize2, MonitorUp, PanelTopClose, PanelTopOpen, Pencil, Trash2, X } from 'lucide-react'
+import { allListColumns, isChartableInstrument, type Instrument, type InstrumentListWindowState, type ListColumnKey } from './workspace'
 import { logWarning } from './eventLogger'
 import { instrumentSecondaryLabel } from './InstrumentBrowser'
 import { CustomGroupMindMap, type MindMapAnchor } from './CustomGroupMindMap'
@@ -26,6 +26,7 @@ type MarketSnapshot = {
 
 type ListInstrument = Instrument & { available?: boolean }
 type InstrumentTagRecord = { symbol: string; tags: string[] }
+export type ListChartTarget = { id: string; title: string; instrumentName: string }
 
 type InstrumentListWindowProps = {
   windowState: InstrumentListWindowState
@@ -37,6 +38,9 @@ type InstrumentListWindowProps = {
   onToggleMaximize: () => void
   onRemoveWindow: () => void
   onSelect: (instrument: Instrument) => void
+  onDeleteInstrument: (instrument: Instrument) => void
+  onTemporaryCast: (chartId: string, instrument: Instrument) => void
+  chartTargets: ListChartTarget[]
   onEdit: () => void
   onPopOut: () => void
   onDock: () => void
@@ -57,6 +61,9 @@ export function InstrumentListWindow({
   onToggleMaximize,
   onRemoveWindow,
   onSelect,
+  onDeleteInstrument,
+  onTemporaryCast,
+  chartTargets,
   onEdit,
   onPopOut,
   onDock,
@@ -76,6 +83,21 @@ export function InstrumentListWindow({
   const [instrumentTags, setInstrumentTags] = useState<Record<string, string[]>>({})
   const [boardTags, setBoardTags] = useState<Record<string, InstrumentBoardTag[]>>({})
   const [tagRefresh, setTagRefresh] = useState(0)
+  const [contextMenu, setContextMenu] = useState<{
+    instrument: Instrument
+    x: number
+    y: number
+    selectingTarget: boolean
+  }>()
+
+  useEffect(() => {
+    if (!contextMenu) return
+    const close = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setContextMenu(undefined)
+    }
+    window.addEventListener('keydown', close)
+    return () => window.removeEventListener('keydown', close)
+  }, [contextMenu])
 
   useEffect(() => {
     const closeOtherMap = (event: Event) => {
@@ -285,7 +307,20 @@ export function InstrumentListWindow({
           </div>}
           {displayedItems.map(item => {
             const snapshot = snapshots[item.symbol]
-            return <div className={windowState.selectedSymbol === item.symbol ? 'list-window-row selected' : 'list-window-row'} key={item.symbol} style={gridStyle}>
+            return <div
+              className={windowState.selectedSymbol === item.symbol ? 'list-window-row selected' : 'list-window-row'}
+              key={item.symbol}
+              style={gridStyle}
+              onContextMenu={event => {
+                event.preventDefault()
+                onFocus()
+                setContextMenu({
+                  instrument: item,
+                  ...listContextMenuPosition(event.clientX, event.clientY),
+                  selectingTarget: false,
+                })
+              }}
+            >
               {visibleColumns.includes('name') && <button
                 className="list-window-select"
                 aria-label={`选择 ${item.name}`}
@@ -338,8 +373,41 @@ export function InstrumentListWindow({
         onSelect={onSelect}
         onClose={() => setMindMap(undefined)}
       />}
+      {contextMenu && <div className="instrument-context-layer" onPointerDown={event => {
+        if (event.target === event.currentTarget) setContextMenu(undefined)
+      }} onContextMenu={event => event.preventDefault()}>
+        <div className="instrument-context-menu" role="menu" style={{ left: contextMenu.x, top: contextMenu.y }}>
+          {!contextMenu.selectingTarget ? <>
+            <header>{contextMenu.instrument.name}<small>{contextMenu.instrument.symbol}</small></header>
+            {!derived && <button role="menuitem" className="danger" onClick={() => {
+              onDeleteInstrument(contextMenu.instrument)
+              setContextMenu(undefined)
+            }}><Trash2 size={14}/>从当前列表删除</button>}
+            <button
+              role="menuitem"
+              disabled={!isChartableInstrument(contextMenu.instrument) || chartTargets.length === 0}
+              onClick={() => setContextMenu(current => current ? { ...current, selectingTarget: true } : current)}
+            ><MonitorUp size={14}/>临时投屏至…<ChevronRight size={13}/></button>
+          </> : <>
+            <button role="menuitem" className="context-back" onClick={() => setContextMenu(current => current ? { ...current, selectingTarget: false } : current)}>
+              <ChevronLeft size={13}/>选择目标图表
+            </button>
+            {chartTargets.map(target => <button role="menuitem" key={target.id} onClick={() => {
+              onTemporaryCast(target.id, contextMenu.instrument)
+              setContextMenu(undefined)
+            }}><span>{target.title}</span><small>{target.instrumentName}</small></button>)}
+          </>}
+        </div>
+      </div>}
     </section>
   )
+}
+
+function listContextMenuPosition(x: number, y: number) {
+  return {
+    x: Math.max(6, Math.min(x, window.innerWidth - 238)),
+    y: Math.max(6, Math.min(y, window.innerHeight - 220)),
+  }
 }
 
 const listColumnOptions: Array<{ key: ListColumnKey; label: string }> = [

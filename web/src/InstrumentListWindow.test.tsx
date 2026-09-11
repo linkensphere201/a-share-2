@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { InstrumentListWindow } from './InstrumentListWindow'
 import type { InstrumentListWindowState } from './workspace'
 
@@ -52,6 +52,9 @@ describe('InstrumentListWindow instrument tags', () => {
       onToggleMaximize={() => undefined}
       onRemoveWindow={() => undefined}
       onSelect={() => undefined}
+      onDeleteInstrument={() => undefined}
+      onTemporaryCast={() => undefined}
+      chartTargets={[]}
       onEdit={() => undefined}
       onPopOut={() => undefined}
       onDock={() => undefined}
@@ -95,6 +98,9 @@ describe('InstrumentListWindow instrument tags', () => {
       onToggleMaximize={() => undefined}
       onRemoveWindow={() => undefined}
       onSelect={() => undefined}
+      onDeleteInstrument={() => undefined}
+      onTemporaryCast={() => undefined}
+      chartTargets={[]}
       onEdit={() => undefined}
       onPopOut={() => undefined}
       onDock={() => undefined}
@@ -105,6 +111,60 @@ describe('InstrumentListWindow instrument tags', () => {
     />)
 
     expect(await screen.findByLabelText('科创板')).toBeTruthy()
+  })
+
+  it('offers fixed-list deletion and temporary chart casting from the row menu', () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
+      const url = String(input)
+      if (url.startsWith('/api/market-snapshots?')) return response({ items: [] })
+      if (url.startsWith('/api/instrument-tags?')) return response({ items: [] })
+      if (url.startsWith('/api/instrument-board-tags?')) return response({ items: [] })
+      throw new Error(`unexpected request ${url}`)
+    }))
+    const instrument = {
+      symbol: '002708.SZ', name: '光洋股份', kind: 'stock' as const,
+      exchange: 'SZ', rows: 1000,
+    }
+    const windowState: InstrumentListWindowState = {
+      id: 'list-1', type: 'instrument-list', title: '观察列表', mode: 'detached',
+      presentation: { mode: 'docked' },
+      content: { mode: 'manual', instruments: [instrument] },
+      visibleColumns: ['name'],
+    }
+    const onDeleteInstrument = vi.fn()
+    const onTemporaryCast = vi.fn()
+
+    render(<InstrumentListWindow
+      windowState={windowState}
+      focused
+      maximized={false}
+      removable
+      onFocus={() => undefined}
+      onToggleMaximize={() => undefined}
+      onRemoveWindow={() => undefined}
+      onSelect={() => undefined}
+      onDeleteInstrument={onDeleteInstrument}
+      onTemporaryCast={onTemporaryCast}
+      chartTargets={[{ id: 'chart-1', title: '主图', instrumentName: '上证指数' }]}
+      onEdit={() => undefined}
+      onPopOut={() => undefined}
+      onDock={() => undefined}
+      derived={false}
+      onSortChange={() => undefined}
+      onVisibleColumnsChange={() => undefined}
+      onReferencedSymbolsChange={() => undefined}
+    />)
+
+    const row = screen.getByRole('button', { name: '选择 光洋股份' }).closest('.list-window-row')!
+    fireEvent.contextMenu(row, { clientX: 100, clientY: 100 })
+    expect(screen.getByRole('menuitem', { name: '从当前列表删除' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('menuitem', { name: /临时投屏至/ }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /主图/ }))
+    expect(onTemporaryCast).toHaveBeenCalledWith('chart-1', instrument)
+
+    fireEvent.contextMenu(row, { clientX: 100, clientY: 100 })
+    fireEvent.click(screen.getByRole('menuitem', { name: '从当前列表删除' }))
+    expect(onDeleteInstrument).toHaveBeenCalledWith(instrument)
   })
 })
 
