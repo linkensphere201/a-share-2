@@ -106,6 +106,7 @@ def create_app(
     owned_store = store is None
     workspace_context = WorkspaceContextService(intraday_service)
     resolved_now_provider = now_provider or (lambda: datetime.now(CHINA_TIME))
+    learning_library = LearningLibrary(learning_root)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -134,7 +135,7 @@ def create_app(
             else Path(store_path).resolve().parent / "runtime" / "codex-chat"
         )
         app.state.chat_service = CodexChatService(
-            app.state.store, bridge, chat_workdir
+            app.state.store, bridge, chat_workdir, learning_library
         )
         yield
         app.state.chat_service.close()
@@ -153,7 +154,7 @@ def create_app(
         custom_index_factor_loader=custom_index_factor_loader,
         custom_index_status_loader=custom_index_status_loader,
     )
-    app.state.learning_library = LearningLibrary(learning_root)
+    app.state.learning_library = learning_library
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],

@@ -12,10 +12,12 @@ from typing import Callable, Iterator
 from stock_harness.chat_context import (
     build_chat_context, build_signal_chat_context,
     build_signal_workspace_chat_context, render_chat_prompt,
-    render_signal_chat_prompt, render_signal_workspace_chat_prompt,
+    render_learning_chat_prompt, render_signal_chat_prompt,
+    render_signal_workspace_chat_prompt,
 )
 from stock_harness.ai_provider import AiConversationProvider, PROVIDER_EVENT_TYPES
 from stock_harness.sqlite_store import SQLiteMarketDataStore
+from stock_harness.learning_library import LearningLibrary
 
 
 LOGGER = logging.getLogger(__name__)
@@ -39,6 +41,13 @@ SIGNAL_CHAT_TEMPLATES: tuple[dict[str, str], ...] = (
     {"id": "signal-market-divergence", "version": "1.0", "label": "市场背离", "instruction": "比较市场指数与活跃市值等已存信号证据，明确同向、背离、数据缺口和不能下结论的部分。"},
     {"id": "signal-board-drilldown", "version": "1.0", "label": "板块下钻", "instruction": "沿所选板块及标的证据下钻，区分板块整体变化、核心标的贡献与扩散噪声。"},
     {"id": "signal-next-check", "version": "1.0", "label": "下期条件", "instruction": "给出下一期应观察的可验证条件，不生成交易指令。"},
+)
+
+LEARNING_CHAT_TEMPLATES: tuple[dict[str, str], ...] = (
+    {"id": "learning-explain", "version": "1.0", "label": "章节精讲", "instruction": "按概念、规则、示例和限制分点解释当前页面。"},
+    {"id": "learning-rules", "version": "1.0", "label": "规则提炼", "instruction": "把当前页面提炼成可执行的条件、确认、失效和风险规则。"},
+    {"id": "learning-practice", "version": "1.0", "label": "实操推演", "instruction": "基于当前页面给出不引入未来信息的观察与推演流程。"},
+    {"id": "learning-challenge", "version": "1.0", "label": "质疑纠错", "instruction": "审查当前页面的模糊点、矛盾、适用边界和可能误用。"},
 )
 
 
@@ -98,11 +107,13 @@ class TurnEventStream:
 
 class CodexChatService:
     def __init__(
-        self, store: SQLiteMarketDataStore, bridge: AiConversationProvider, workdir: Path
+        self, store: SQLiteMarketDataStore, bridge: AiConversationProvider, workdir: Path,
+        learning_library: LearningLibrary | None = None,
     ) -> None:
         self._store = store
         self._bridge = bridge
         self._workdir = workdir
+        self._learning_library = learning_library
         self._streams: dict[str, TurnEventStream] = {}
         self._active: dict[str, tuple[str, str | None]] = {}
         self._workers: set[threading.Thread] = set()
@@ -113,7 +124,8 @@ class CodexChatService:
 
     def capabilities(self) -> dict[str, object]:
         return {"codex": self._bridge.status(), "templates": list(CHAT_TEMPLATES),
-                "signal_templates": list(SIGNAL_CHAT_TEMPLATES)}
+                "signal_templates": list(SIGNAL_CHAT_TEMPLATES),
+                "learning_templates": list(LEARNING_CHAT_TEMPLATES)}
 
     def conversation(
         self, *, symbol: str | None = None, timeframe: str = "daily",
@@ -127,6 +139,16 @@ class CodexChatService:
         if context_kind == "signal_workspace":
             return self._store.get_or_create_signal_workspace_chat_conversation(
                 signal_id=str(context_id or ""), force_new=force_new,
+            )
+        if context_kind == "learning_system":
+            if self._learning_library is None:
+                raise ValueError("learning library is unavailable")
+            system_id = str(context_id or "")
+            system = self._learning_library.get_system(system_id)
+            if system is None:
+                raise ValueError("learning system does not exist or is not published")
+            return self._store.get_or_create_learning_chat_conversation(
+                system_id=system_id, title=str(system["title"]), force_new=force_new,
             )
         return self._store.get_or_create_chat_conversation(
             symbol=str(symbol or ""), timeframe=timeframe,
@@ -147,6 +169,13 @@ class CodexChatService:
                 raise ValueError("signal workspace chat requires context_id")
             return self._store.list_signal_workspace_chat_conversations(
                 signal_id=str(filters.get("context_id") or ""),
+                include_archived=bool(filters.get("include_archived", True)),
+            )
+        if filters.get("context_kind") == "learning_system":
+            if not filters.get("context_id"):
+                raise ValueError("learning chat requires context_id")
+            return self._store.list_learning_chat_conversations(
+                system_id=str(filters.get("context_id") or ""),
                 include_archived=bool(filters.get("include_archived", True)),
             )
         if filters.get("context_kind") != "trend_analysis":
@@ -179,13 +208,19 @@ class CodexChatService:
         user_inputs: dict[str, object] | None = None,
         selected_signal_item_ids: list[str] | None = None,
         selected_signal_run_id: str | None = None,
+        learning_asset_path: str | None = None,
+        learning_page_title: str | None = None,
     ) -> dict[str, object]:
         self._ensure_stream_capacity()
         conversation = self._store.get_chat_conversation(conversation_id)
         if conversation is None:
             raise ValueError("chat conversation not found")
-        signal_context = conversation.get("context_kind") in {"signal_run", "signal_workspace"}
-        templates = SIGNAL_CHAT_TEMPLATES if signal_context else CHAT_TEMPLATES
+        context_kind = str(conversation.get("context_kind") or "trend_analysis")
+        templates = (
+            LEARNING_CHAT_TEMPLATES if context_kind == "learning_system"
+            else SIGNAL_CHAT_TEMPLATES if context_kind in {"signal_run", "signal_workspace"}
+            else CHAT_TEMPLATES
+        )
         template = next((item for item in templates if item["id"] == template_id), None)
         if template_id is not None and template is None:
             raise ValueError("unknown chat template")
@@ -203,6 +238,13 @@ class CodexChatService:
                 self._store, signal_id=str(conversation["context_id"]),
                 selected_run_id=selected_signal_run_id,
                 selected_item_ids=selected_signal_item_ids,
+            )
+        elif conversation.get("context_kind") == "learning_system":
+            if self._learning_library is None:
+                raise ValueError("learning library is unavailable")
+            context = self._learning_library.build_chat_context(
+                str(conversation["context_id"]), asset_path=learning_asset_path,
+                page_title=learning_page_title,
             )
         else:
             context = build_chat_context(
@@ -255,9 +297,12 @@ class CodexChatService:
         if context is None:
             raise ValueError("chat turn context not found")
         template_id = str(previous["template_id"]) if previous["template_id"] else None
-        templates = (SIGNAL_CHAT_TEMPLATES
-                     if context.get("context_kind") in {"signal_run", "signal_workspace"}
-                     else CHAT_TEMPLATES)
+        templates = (
+            LEARNING_CHAT_TEMPLATES if context.get("context_kind") == "learning_system"
+            else SIGNAL_CHAT_TEMPLATES
+            if context.get("context_kind") in {"signal_run", "signal_workspace"}
+            else CHAT_TEMPLATES
+        )
         template = next((item for item in templates if item["id"] == template_id), None)
         if template_id is not None and template is None:
             raise ValueError("chat turn template is no longer supported")
@@ -353,7 +398,11 @@ class CodexChatService:
             conversation = self._store.get_chat_conversation(conversation_id)
             assert conversation is not None
             context_kind = str(conversation.get("context_kind") or "trend_analysis")
-            access_profile = "signal_run" if context_kind == "signal_workspace" else context_kind
+            access_profile = (
+                "signal_run"
+                if context_kind in {"signal_workspace", "learning_system"}
+                else context_kind
+            )
             codex_thread_id = conversation.get("codex_thread_id")
             policy_version = _thread_policy_version(self._bridge, access_profile)
             stored_policy = str(conversation.get("codex_policy_version") or "")
@@ -379,7 +428,9 @@ class CodexChatService:
             self._store.update_chat_turn(turn_id, "running")
             stream.publish("started", {"turn_id": turn_id})
             renderer = (
-                render_signal_workspace_chat_prompt
+                render_learning_chat_prompt
+                if context.get("context_kind") == "learning_system"
+                else render_signal_workspace_chat_prompt
                 if context.get("context_kind") == "signal_workspace"
                 else render_signal_chat_prompt
                 if context.get("context_kind") == "signal_run"

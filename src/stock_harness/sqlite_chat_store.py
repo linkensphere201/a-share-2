@@ -315,6 +315,93 @@ class SQLiteChatStoreMixin:
             "turns": turns,
         }
 
+    def get_or_create_learning_chat_conversation(
+        self, *, system_id: str, title: str, force_new: bool = False,
+    ) -> dict[str, object]:
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        with self._lock, self._transaction():
+            existing = None if force_new else self._connection.execute(
+                """SELECT conversation_id FROM ai_chat_conversations
+                   WHERE context_kind = 'learning_system' AND context_id = ?
+                     AND status = 'active'
+                   ORDER BY updated_at_ms DESC LIMIT 1""",
+                (system_id,),
+            ).fetchone()
+            if existing is None:
+                conversation_id = str(uuid4())
+                self._connection.execute(
+                    """INSERT INTO ai_chat_conversations(
+                           conversation_id, context_kind, context_id, title,
+                           status, created_at_ms, updated_at_ms
+                       ) VALUES (?, 'learning_system', ?, ?, 'active', ?, ?)""",
+                    (conversation_id, system_id, f"{title} · 学习讨论", now_ms, now_ms),
+                )
+            else:
+                conversation_id = str(existing[0])
+                self._connection.execute(
+                    "UPDATE ai_chat_conversations SET updated_at_ms = ? WHERE conversation_id = ?",
+                    (now_ms, conversation_id),
+                )
+        result = self.get_learning_chat_conversation(conversation_id)
+        assert result is not None
+        return result
+
+    def list_learning_chat_conversations(
+        self, *, system_id: str, include_archived: bool = True,
+    ) -> list[dict[str, object]]:
+        archived = "" if include_archived else "AND status = 'active'"
+        with self._lock:
+            rows = self._connection.execute(
+                f"""SELECT conversation_id, context_id, title, status,
+                           created_at_ms, updated_at_ms,
+                           (SELECT count(*) FROM ai_chat_turns AS turn
+                            WHERE turn.conversation_id = ai_chat_conversations.conversation_id)
+                    FROM ai_chat_conversations
+                    WHERE context_kind = 'learning_system' AND context_id = ? {archived}
+                    ORDER BY updated_at_ms DESC""",
+                (system_id,),
+            ).fetchall()
+        return [{
+            "conversation_id": str(row[0]), "context_kind": "learning_system",
+            "context_id": str(row[1]), "source_run_id": None,
+            "title": str(row[2]), "status": str(row[3]),
+            "created_at_ms": int(row[4]), "updated_at_ms": int(row[5]),
+            "as_of_date": datetime.fromtimestamp(
+                int(row[5]) / 1000, tz=timezone.utc
+            ).date().isoformat(),
+            "turn_count": int(row[6]),
+        } for row in rows]
+
+    def get_learning_chat_conversation(
+        self, conversation_id: str,
+    ) -> dict[str, object] | None:
+        with self._lock:
+            row = self._connection.execute(
+                """SELECT conversation_id, context_id, title, codex_thread_id,
+                          codex_policy_version, status, created_at_ms, updated_at_ms
+                   FROM ai_chat_conversations
+                   WHERE conversation_id = ? AND context_kind = 'learning_system'""",
+                (conversation_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            turns = self._load_chat_turns_locked(conversation_id)
+        as_of_date = datetime.fromtimestamp(
+            int(row[7]) / 1000, tz=timezone.utc
+        ).date().isoformat()
+        return {
+            "conversation_id": str(row[0]), "context_kind": "learning_system",
+            "context_id": str(row[1]), "symbol": None, "timeframe": None,
+            "source_run_id": None, "title": str(row[2]),
+            "codex_thread_id": row[3], "codex_policy_version": row[4],
+            "status": str(row[5]), "created_at_ms": int(row[6]),
+            "updated_at_ms": int(row[7]), "as_of_date": as_of_date,
+            "algorithm_version": "learning-visible-text-v1", "config_version": "",
+            "completion_state": "complete", "preview": False,
+            "input_digest": "", "source_observed_at_ms": None,
+            "turns": turns,
+        }
+
     def list_chat_conversations(
         self, *, symbol: str, timeframe: str, source_run_id: str | None = None,
         include_archived: bool = True,
@@ -399,6 +486,8 @@ class SQLiteChatStoreMixin:
                 return self.get_signal_chat_conversation(conversation_id)
             if kind is not None and str(kind[0]) == "signal_workspace":
                 return self.get_signal_workspace_chat_conversation(conversation_id)
+            if kind is not None and str(kind[0]) == "learning_system":
+                return self.get_learning_chat_conversation(conversation_id)
             row = self._connection.execute(
                 """
                 SELECT conversation.conversation_id, instrument.symbol,

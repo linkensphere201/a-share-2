@@ -102,6 +102,8 @@ def create_chat_router() -> APIRouter:
                 },
                 selected_signal_item_ids=payload.selected_signal_item_ids,
                 selected_signal_run_id=payload.selected_signal_run_id,
+                learning_asset_path=payload.learning_asset_path,
+                learning_page_title=payload.learning_page_title,
             )
         except RuntimeError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error

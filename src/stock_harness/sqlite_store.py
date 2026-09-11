@@ -361,8 +361,8 @@ class SQLiteMarketDataStore(
             if (
                 conversation_sql is not None
                 and turn_context_sql is not None
-                and "signal_workspace" in str(conversation_sql[0])
-                and "signal_workspace" in str(turn_context_sql[0])
+                and "learning_system" in str(conversation_sql[0])
+                and "learning_system" in str(turn_context_sql[0])
             ):
                 return
             self._connection.execute("PRAGMA foreign_keys = OFF")
@@ -370,11 +370,12 @@ class SQLiteMarketDataStore(
                 self._connection.executescript(
                     """
                     BEGIN IMMEDIATE;
-                    CREATE TABLE ai_chat_conversations_v4 (
+                    CREATE TABLE ai_chat_conversations_v5 (
                         conversation_id TEXT PRIMARY KEY,
                         context_kind TEXT NOT NULL CHECK (
                             context_kind IN (
-                                'trend_analysis', 'signal_run', 'signal_workspace'
+                                'trend_analysis', 'signal_run', 'signal_workspace',
+                                'learning_system'
                             )
                         ),
                         context_id TEXT NOT NULL,
@@ -389,7 +390,7 @@ class SQLiteMarketDataStore(
                         updated_at_ms INTEGER NOT NULL,
                         FOREIGN KEY (instrument_id) REFERENCES instruments(instrument_id)
                     );
-                    INSERT INTO ai_chat_conversations_v4(
+                    INSERT INTO ai_chat_conversations_v5(
                         conversation_id, context_kind, context_id, instrument_id,
                         timeframe, source_run_id, title, codex_thread_id,
                         codex_policy_version, status, created_at_ms, updated_at_ms
@@ -399,12 +400,13 @@ class SQLiteMarketDataStore(
                            codex_policy_version, status, created_at_ms, updated_at_ms
                     FROM ai_chat_conversations;
 
-                    CREATE TABLE ai_chat_turn_contexts_v3 (
+                    CREATE TABLE ai_chat_turn_contexts_v4 (
                         turn_id TEXT PRIMARY KEY,
                         schema_version TEXT NOT NULL,
                         context_kind TEXT NOT NULL CHECK (
                             context_kind IN (
-                                'trend_analysis', 'signal_run', 'signal_workspace'
+                                'trend_analysis', 'signal_run', 'signal_workspace',
+                                'learning_system'
                             )
                         ),
                         context_id TEXT NOT NULL,
@@ -414,7 +416,7 @@ class SQLiteMarketDataStore(
                         context_json TEXT NOT NULL,
                         FOREIGN KEY (turn_id) REFERENCES ai_chat_turns(turn_id) ON DELETE CASCADE
                     ) WITHOUT ROWID;
-                    INSERT INTO ai_chat_turn_contexts_v3(
+                    INSERT INTO ai_chat_turn_contexts_v4(
                         turn_id, schema_version, context_kind, context_id,
                         source_run_id, as_of_date, input_digest, context_json
                     )
@@ -423,9 +425,9 @@ class SQLiteMarketDataStore(
                     FROM ai_chat_turn_contexts;
 
                     DROP TABLE ai_chat_turn_contexts;
-                    ALTER TABLE ai_chat_turn_contexts_v3 RENAME TO ai_chat_turn_contexts;
+                    ALTER TABLE ai_chat_turn_contexts_v4 RENAME TO ai_chat_turn_contexts;
                     DROP TABLE ai_chat_conversations;
-                    ALTER TABLE ai_chat_conversations_v4 RENAME TO ai_chat_conversations;
+                    ALTER TABLE ai_chat_conversations_v5 RENAME TO ai_chat_conversations;
                     CREATE INDEX ai_chat_conversations_latest
                     ON ai_chat_conversations(context_kind, context_id, updated_at_ms DESC);
                     COMMIT;

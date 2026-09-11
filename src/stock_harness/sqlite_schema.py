@@ -722,7 +722,7 @@ ON ai_analysis_reports(instrument_id, timeframe, revision DESC);
 CREATE TABLE IF NOT EXISTS ai_chat_conversations (
     conversation_id TEXT PRIMARY KEY,
     context_kind TEXT NOT NULL DEFAULT 'trend_analysis' CHECK (
-        context_kind IN ('trend_analysis', 'signal_run', 'signal_workspace')
+        context_kind IN ('trend_analysis', 'signal_run', 'signal_workspace', 'learning_system')
     ),
     context_id TEXT NOT NULL,
     instrument_id INTEGER,
@@ -775,7 +775,7 @@ CREATE TABLE IF NOT EXISTS ai_chat_turn_contexts (
     turn_id TEXT PRIMARY KEY,
     schema_version TEXT NOT NULL,
     context_kind TEXT NOT NULL DEFAULT 'trend_analysis' CHECK (
-        context_kind IN ('trend_analysis', 'signal_run', 'signal_workspace')
+        context_kind IN ('trend_analysis', 'signal_run', 'signal_workspace', 'learning_system')
     ),
     context_id TEXT NOT NULL,
     source_run_id TEXT,

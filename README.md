@@ -54,6 +54,8 @@ Open `http://127.0.0.1:5173`. The Vite server proxies `/api` to the local API on
 
 The workstation toolbar provides a window-group selector and a visible `布局管理` command on desktop. The graphical editor creates groups from templates, adds horizontal or vertical list/chart windows, configures list-to-chart relationships, selects the startup default, and supports undo/redo. Structural editing is intentionally hidden on mobile.
 
+`交易系统学习` opens the published local course inside StockHarness. The course selector, original HTML navigation, video/subtitle/keyframe content, and a resizable Codex discussion pane share one workspace. Conversations persist per course; each question captures the currently visible course page as a bounded immutable context snapshot. Course media remains external under the configured ignored learning-data root and is not embedded in the executable.
+
 ## Desktop Application
 
 Build the Windows desktop package:

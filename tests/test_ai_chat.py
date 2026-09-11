@@ -136,6 +136,55 @@ def test_result_bound_chat_streams_and_persists_a_completed_turn() -> None:
     store.close()
 
 
+def test_learning_chat_freezes_current_course_page_and_uses_read_only_profile(
+    tmp_path: Path,
+) -> None:
+    learning_root = tmp_path / "learning"
+    site = learning_root / "systems" / "trend-genggui" / "site"
+    site.mkdir(parents=True)
+    (site / "index.html").write_text("<h1>课程首页</h1>", encoding="utf-8")
+    (site / "entry.html").write_text(
+        "<h1>突破开仓</h1><p>先确认趋势，再检查失效位和盈亏比。</p>",
+        encoding="utf-8",
+    )
+    (learning_root / "catalog.json").write_text(json.dumps({
+        "schema_version": "1.0", "systems": [{
+            "system_id": "trend-genggui", "title": "趋势交易体系",
+            "methodology": "trend-trading", "status": "published",
+            "default": True, "corpus_version": "test-v1",
+            "publication_version": "site-v1",
+            "index_path": "systems/trend-genggui/site/index.html",
+        }],
+    }, ensure_ascii=False), encoding="utf-8")
+    store = SQLiteMarketDataStore(":memory:")
+    bridge = FakeCodexBridge()
+
+    with TestClient(create_app(
+        store, codex_bridge=bridge, learning_root=learning_root,
+    )) as client:
+        conversation = client.post("/api/ai/conversations", json={
+            "context_kind": "learning_system", "context_id": "trend-genggui",
+        }).json()
+        turn = client.post(
+            f"/api/ai/conversations/{conversation['conversation_id']}/turns",
+            json={
+                "content": "这里的开仓条件是什么？", "template_id": "learning-rules",
+                "learning_asset_path": "systems/trend-genggui/site/entry.html",
+                "learning_page_title": "突破开仓",
+            },
+        ).json()
+        client.get(f"/api/ai/turns/{turn['turn_id']}/events")
+        context = store.get_chat_turn_context(turn["turn_id"])
+
+    assert context is not None
+    assert context["context_kind"] == "learning_system"
+    assert context["page"]["asset_path"].endswith("entry.html")
+    assert "失效位和盈亏比" in context["page"]["content"]
+    assert "<stockharness_learning_context>" in bridge.prompts[0]
+    assert bridge.access_profiles == ["signal_run"]
+    store.close()
+
+
 def test_signal_result_chat_uses_signal_template_and_retries_from_saved_context() -> None:
     store = SQLiteMarketDataStore(":memory:")
     store.upsert_instruments([
@@ -344,6 +393,10 @@ def test_typed_chat_context_migration_preserves_legacy_conversation(tmp_path: Pa
     restored_context = migrated.get_chat_turn_context(str(turn["turn_id"]))
     assert restored_context is not None
     assert restored_context["source_run_id"] == run.run_id
+    learning = migrated.get_or_create_learning_chat_conversation(
+        system_id="trend-genggui", title="趋势交易体系",
+    )
+    assert learning["context_kind"] == "learning_system"
     migrated.close()
 
 

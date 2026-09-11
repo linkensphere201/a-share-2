@@ -95,3 +95,52 @@ def test_learning_api_opens_loopback_course_and_serves_assets(tmp_path: Path) ->
     assert media.content == b"2345"
     assert media.headers["content-range"] == "bytes 2-5/10"
     assert missing.status_code == 404
+
+
+def test_learning_chat_context_is_bounded_to_visible_course_page(tmp_path: Path) -> None:
+    _create_library(tmp_path)
+    page = tmp_path / "systems" / "trend-genggui" / "site" / "episode.html"
+    page.write_text(
+        "<html><head><style>.hidden{}</style><script>secret()</script></head>"
+        "<body><h1>突破与回踩</h1><p>等待结构确认，不引入未来信息。</p></body></html>",
+        encoding="utf-8",
+    )
+    library = LearningLibrary(tmp_path)
+
+    context = library.build_chat_context(
+        "trend-genggui",
+        asset_path="systems/trend-genggui/site/episode.html",
+        page_title="突破课程",
+    )
+
+    assert context["context_kind"] == "learning_system"
+    assert context["context_id"] == "trend-genggui"
+    assert context["page"]["title"] == "突破课程"
+    assert "突破与回踩" in context["page"]["content"]
+    assert "secret" not in context["page"]["content"]
+    with pytest.raises(LearningLibraryError, match="selected course"):
+        library.build_chat_context("trend-genggui", asset_path="catalog.json")
+
+
+def test_learning_chat_conversation_is_persisted_by_course(tmp_path: Path) -> None:
+    _create_library(tmp_path)
+    store = SQLiteMarketDataStore(":memory:")
+    app = create_app(store=store, learning_root=tmp_path)
+
+    with TestClient(app) as client:
+        created = client.post("/api/ai/conversations", json={
+            "context_kind": "learning_system", "context_id": "trend-genggui",
+        })
+        reused = client.post("/api/ai/conversations", json={
+            "context_kind": "learning_system", "context_id": "trend-genggui",
+        })
+        listed = client.get(
+            "/api/ai/conversations?context_kind=learning_system"
+            "&context_id=trend-genggui"
+        )
+
+    store.close()
+    assert created.status_code == 201
+    assert reused.json()["conversation_id"] == created.json()["conversation_id"]
+    assert created.json()["context_kind"] == "learning_system"
+    assert listed.json()["items"][0]["context_id"] == "trend-genggui"

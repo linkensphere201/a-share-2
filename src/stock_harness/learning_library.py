@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import date
 import hashlib
+from html.parser import HTMLParser
 import json
 from pathlib import Path
 import re
@@ -17,6 +19,7 @@ PUBLIC_SUFFIXES = {
     ".html", ".css", ".js", ".json", ".jpg", ".jpeg", ".png", ".webp",
     ".vtt", ".mp4", ".webm", ".mkv", ".m4a",
 }
+LEARNING_CONTEXT_MAX_CHARS = 24_000
 
 
 class LearningLibraryError(RuntimeError):
@@ -35,6 +38,8 @@ class LearningLibrary:
                 continue
             try:
                 system = self._validated_system(raw)
+                if system["status"] != "published":
+                    continue
                 index = self.resolve_public_file(str(system["index_path"]))
             except (LearningLibraryError, FileNotFoundError):
                 continue
@@ -47,6 +52,60 @@ class LearningLibrary:
             (item for item in self.list_systems() if item["system_id"] == normalized),
             None,
         )
+
+    def build_chat_context(
+        self, system_id: str, *, asset_path: str | None = None,
+        page_title: str | None = None,
+    ) -> dict[str, object]:
+        system = self.get_system(system_id)
+        if system is None:
+            raise LearningLibraryError("trading-system course is not published")
+        relative_path = str(asset_path or system["index_path"]).replace("\\", "/").strip("/")
+        site_prefix = f"systems/{system_id}/site/"
+        if not relative_path.startswith(site_prefix):
+            raise LearningLibraryError("learning chat page must belong to the selected course")
+        page = self.resolve_public_file(relative_path)
+        if page.suffix.lower() != ".html":
+            raise LearningLibraryError("learning chat context must reference an HTML page")
+        parser = _VisibleTextParser()
+        parser.feed(page.read_text(encoding="utf-8-sig", errors="replace"))
+        full_text = parser.text()
+        content = full_text[:LEARNING_CONTEXT_MAX_CHARS]
+        digest = hashlib.sha256(full_text.encode("utf-8")).hexdigest()
+        today = date.today().isoformat()
+        return {
+            "schema_version": "learning-system-chat-context-v1",
+            "context_kind": "learning_system",
+            "context_id": system_id,
+            "workspace_reference": f"learning-system:{system_id}:{relative_path}",
+            "source_run_id": None,
+            "as_of_date": today,
+            "input_start_date": today,
+            "input_end_date": today,
+            "input_digest": digest,
+            "algorithm_version": "learning-visible-text-v1",
+            "config_version": str(system.get("publication_version") or ""),
+            "completion_state": "complete",
+            "preview": False,
+            "stale": False,
+            "stale_reasons": [],
+            "warnings": [],
+            "truncated": len(content) < len(full_text),
+            "visible_evidence_codes": [],
+            "course": {
+                "system_id": system_id,
+                "title": system["title"],
+                "methodology": system["methodology"],
+                "corpus_version": system["corpus_version"],
+                "publication_version": system["publication_version"],
+            },
+            "page": {
+                "asset_path": relative_path,
+                "title": (page_title or "").strip()[:200],
+                "content": content,
+                "content_chars": len(content),
+            },
+        }
 
     def resolve_public_file(self, relative_path: str) -> Path:
         value = relative_path.replace("\\", "/").strip("/")
@@ -145,3 +204,27 @@ def _consume(
 ) -> None:
     while chunk := source.read(chunk_size):
         callback(chunk)
+
+
+class _VisibleTextParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self._hidden_depth = 0
+        self._parts: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag.lower() in {"script", "style", "noscript", "svg"}:
+            self._hidden_depth += 1
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.lower() in {"script", "style", "noscript", "svg"} and self._hidden_depth:
+            self._hidden_depth -= 1
+
+    def handle_data(self, data: str) -> None:
+        if not self._hidden_depth:
+            value = " ".join(data.split())
+            if value:
+                self._parts.append(value)
+
+    def text(self) -> str:
+        return "\n".join(self._parts)

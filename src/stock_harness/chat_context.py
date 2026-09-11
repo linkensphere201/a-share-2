@@ -375,6 +375,24 @@ def render_signal_workspace_chat_prompt(
     ])
 
 
+def render_learning_chat_prompt(
+    context: dict[str, object], user_message: str, template_instruction: str | None,
+) -> str:
+    instruction = template_instruction or "直接回答用户关于当前课程页面的问题。"
+    return "\n".join([
+        "你正在 StockHarness 的交易系统学习工作台中与用户讨论课程内容。",
+        "course 和 page 是本轮冻结的课程与当前页面正文；回答必须优先依据它们。",
+        "明确区分课程原意、你的解释、StockHarness 已实现能力和仍需验证的推断。",
+        "当前页面内容不足时应直接说明，不得虚构视频、图表、讲师原话或规则。",
+        "可以结合已有市场分析工具举例，但不得把课程讨论表述为确定收益或交易指令。",
+        f"本轮模板要求：{instruction}",
+        "<stockharness_learning_context>",
+        json.dumps(context, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+        "</stockharness_learning_context>",
+        "<user_question>", user_message.strip(), "</user_question>",
+    ])
+
+
 def render_chat_prompt(
     context: dict[str, object], user_message: str, template_instruction: str | None
 ) -> str:

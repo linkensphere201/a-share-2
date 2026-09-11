@@ -22,6 +22,7 @@ export type CodexCapabilities = {
   }
   templates: ChatTemplate[]
   signal_templates?: ChatTemplate[]
+  learning_templates?: ChatTemplate[]
 }
 
 export type ChatMessage = {
@@ -42,7 +43,7 @@ export type ChatTurn = {
 
 export type ChatConversation = {
   conversation_id: string
-  context_kind?: 'trend_analysis' | 'signal_run' | 'signal_workspace'
+  context_kind?: 'trend_analysis' | 'signal_run' | 'signal_workspace' | 'learning_system'
   context_id?: string
   symbol: string | null
   timeframe: string | null
@@ -61,7 +62,7 @@ export type ChatConversation = {
 
 export type ChatConversationSummary = {
   conversation_id: string
-  context_kind?: 'trend_analysis' | 'signal_run' | 'signal_workspace'
+  context_kind?: 'trend_analysis' | 'signal_run' | 'signal_workspace' | 'learning_system'
   context_id?: string
   source_run_id: string | null
   title: string
@@ -163,6 +164,22 @@ export function listSignalWorkspaceConversations(
   return jsonRequest(`/api/ai/conversations?${query}`)
 }
 
+export function openLearningConversation(
+  systemId: string, forceNew = false,
+): Promise<ChatConversation> {
+  return jsonRequest('/api/ai/conversations', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ context_kind: 'learning_system', context_id: systemId, force_new: forceNew }),
+  })
+}
+
+export function listLearningConversations(
+  systemId: string,
+): Promise<{ items: ChatConversationSummary[] }> {
+  const query = new URLSearchParams({ context_kind: 'learning_system', context_id: systemId })
+  return jsonRequest(`/api/ai/conversations?${query}`)
+}
+
 export function updateChatConversation(
   conversationId: string, update: { title?: string; status?: 'active' | 'archived' },
 ): Promise<ChatConversation> {
@@ -191,13 +208,16 @@ export function startChatTurn(
   },
   selectedSignalItemIds?: string[],
   selectedSignalRunId?: string,
+  learningPage?: { assetPath: string; title?: string },
 ): Promise<{ turn_id: string; status: string }> {
   return jsonRequest(`/api/ai/conversations/${encodeURIComponent(conversationId)}/turns`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ content, template_id: templateId || null, ...userInputs,
       selected_signal_item_ids: selectedSignalItemIds ?? [],
-      selected_signal_run_id: selectedSignalRunId ?? null }),
+      selected_signal_run_id: selectedSignalRunId ?? null,
+      learning_asset_path: learningPage?.assetPath ?? null,
+      learning_page_title: learningPage?.title ?? null }),
   })
 }
 
