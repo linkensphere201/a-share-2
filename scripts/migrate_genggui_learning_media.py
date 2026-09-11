@@ -107,7 +107,7 @@ def migrate(library_root: Path, media_map: Path, downloads: Path) -> dict[str, o
             "methodology": "applied-market-structure-research",
             "status": "published", "default": False,
             "corpus_version": "stockharness-practice-v1",
-            "publication_version": "practice-site-v1",
+            "publication_version": "practice-site-v2",
             "index_path": "systems/stockharness-practice/site/index.html",
         }],
     })

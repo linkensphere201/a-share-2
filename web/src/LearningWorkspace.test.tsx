@@ -20,7 +20,7 @@ describe('LearningWorkspace', () => {
         methodology: 'applied-market-structure-research', status: 'published',
         default: false, available: true,
         index_path: 'systems/stockharness-practice/site/index.html',
-        corpus_version: 'practice-v1', publication_version: 'practice-site-v1',
+        corpus_version: 'practice-v1', publication_version: 'practice-site-v2',
       }] })
       if (url === '/api/ai/codex/status') return response({
         codex: { available: true, authenticated: true, experimental: true },
@@ -46,7 +46,7 @@ describe('LearningWorkspace', () => {
       target: { value: 'stockharness-practice' },
     })
     expect(screen.getByTitle('StockHarness实践问题分析').getAttribute('src')).toBe(
-      '/learning/systems/stockharness-practice/site/index.html?publication=practice-site-v1&reload=0',
+      '/learning/systems/stockharness-practice/site/index.html?publication=practice-site-v2&reload=0',
     )
     await waitFor(() => expect(screen.getByText('Codex 课程讨论')).toBeTruthy())
     expect(screen.getByLabelText('课程讨论输入')).toBeTruthy()
