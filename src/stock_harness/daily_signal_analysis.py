@@ -18,8 +18,8 @@ from stock_harness.structural_scenario_engine import (
 )
 
 
-ALGORITHM_VERSION = "daily-market-board-observation-v4"
-CONFIG_VERSION = "daily-market-board-defaults-v4"
+ALGORITHM_VERSION = "daily-market-board-observation-v5"
+CONFIG_VERSION = "daily-market-board-defaults-v5"
 MINIMUM_BARS = 120
 LOOKBACK_BARS = 260
 
@@ -229,6 +229,8 @@ def render_board_summary(
         f"最近{nearest[0]}下降边界距离{nearest[1]:.2f} ATR"
         if nearest is not None else "暂无合格下降边界"
     )
+    if nearest is not None:
+        boundary_text += _envelope_speed_sentence(envelopes, nearest[0])
     return primary, "\n".join((
         f"【临界状态】{_state_label(primary)}（{_transition_label(transition)}）",
         f"- 结论：{_state_conclusion(primary)}",
@@ -487,6 +489,24 @@ def _nearest_envelope(envelopes: dict[str, object]) -> tuple[str, float] | None:
         if isinstance(value, dict) and value.get("distance_atr") is not None:
             candidates.append((str(key), float(value["distance_atr"])))
     return min(candidates, key=lambda item: abs(item[1])) if candidates else None
+
+
+def _envelope_speed_sentence(envelopes: object, label: str) -> str:
+    if not isinstance(envelopes, dict) or not isinstance(envelopes.get(label), dict):
+        return ""
+    envelope = envelopes[label]
+    state = str(envelope.get("speed_state") or "")
+    change = _number(envelope.get("slope_change_ratio"))
+    state_label = {
+        "accelerating": "加速",
+        "decelerating": "减速",
+        "flattening": "钝化",
+        "stable": "速度稳定",
+    }.get(state)
+    if state_label is None:
+        return ""
+    magnitude = f"{abs(change) * 100:.0f}%" if change is not None else ""
+    return f"；较上一版{state_label}{magnitude}"
 
 
 def _mapping_value(value: object, key: str) -> float | None:

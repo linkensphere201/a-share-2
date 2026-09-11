@@ -373,7 +373,7 @@ export function GeneratedAnalysisOverlay({
         {lines.map(item => (
           <g key={item.id} className={highlightedItemId === item.id ? 'generated-line-group highlighted' : 'generated-line-group'}>
             <line
-              className={`generated-trend-line ${item.kind} ${item.horizon}${highlightedItemId === item.id ? ' highlighted' : ''}`}
+              className={`generated-trend-line ${item.kind} ${item.horizon} ${item.evolutionRole ?? 'current'}${highlightedItemId === item.id ? ' highlighted' : ''}`}
               x1={item.line.x1}
               y1={item.line.y1}
               x2={item.line.x2}

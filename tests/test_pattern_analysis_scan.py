@@ -23,11 +23,5 @@ def test_scan_profile_returns_bounded_shared_structure_features() -> None:
     assert result.atr5 > 0
     assert result.short_shape["state"] == "falling"
     assert result.medium_shape["state"] == "falling"
-    assert result.descending_envelopes["1y"] is not None
-    assert result.descending_envelopes["1y"]["period_bars"] == 250
-    envelope = result.descending_envelopes["1y"]
-    assert envelope["start_date"] < envelope["end_date"]
-    assert envelope["start_price"] > envelope["end_price"]
-    assert envelope["confirmation_price"] > envelope["boundary"]
-    assert envelope["invalidation_price"] < envelope["boundary"]
+    assert result.descending_envelopes == {"3m": None, "6m": None, "1y": None}
     assert "deceleration_count" in result.downside_deceleration

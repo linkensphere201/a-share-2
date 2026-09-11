@@ -21,6 +21,7 @@ export type GeneratedTrendLineGeometry = {
   score: number
   touchCount: number
   label?: string
+  evolutionRole?: 'current' | 'previous'
 }
 
 export type GeneratedZoneGeometry = {
@@ -297,6 +298,7 @@ export function projectGeneratedTrendLines(
       score: typeof item.payload.score === 'number' ? item.payload.score : 0,
       touchCount: typeof item.payload.touch_count === 'number' ? item.payload.touch_count : 0,
       label: typeof item.payload.major_line_code === 'string' ? item.payload.major_line_code : undefined,
+      evolutionRole: item.payload.evolution_role === 'previous' ? 'previous' : 'current',
     }]
   })
 }

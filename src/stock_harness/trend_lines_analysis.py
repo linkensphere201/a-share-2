@@ -9,11 +9,11 @@ from itertools import combinations
 from typing import Sequence
 
 from stock_harness.analysis_inputs import AnalysisBar
+from stock_harness.trend_line_engine import evaluate_standard_trend_line
 from stock_harness.trend_line_envelope import (
     EnvelopePolicy,
     EnvelopeSide,
     dominates_prior_extremes,
-    evaluate_trend_line_envelope,
 )
 from stock_harness.trend_pivots import (
     PivotKind, PricePivot, causal_average_true_range,
@@ -155,11 +155,11 @@ def _fit_candidate(
         atrs[max(0, first_index - 1)], side,
     ):
         return None
-    slope = (second.price - first.price) / span
     policy = EnvelopePolicy(
         wick_breach_percent=config.touch_tolerance_percent * 100,
         close_breach_percent=config.body_tolerance_percent * 100,
     )
+    slope = (second.price - first.price) / span
     event_index = _recent_close_event_index(
         bars, atrs, first_index, first.price, slope, side,
         config.recent_event_bars, policy,
@@ -168,12 +168,14 @@ def _fit_candidate(
         return None
     evaluation_end = event_index - 1 if event_index is not None else len(bars) - 1
     contact_indexes = [index_by_date[item.pivot_date] for item in eligible_pivots]
-    envelope = evaluate_trend_line_envelope(
-        bars, atrs, first_index, second_index, first.price, slope,
+    standard = evaluate_standard_trend_line(
+        bars, atrs, first_index, second_index,
         evaluation_end, contact_indexes,
         max(1, config.min_anchor_span_bars // 2), side,
         policy,
     )
+    slope = standard.slope_per_bar
+    envelope = standard.integrity
     if (
         envelope.wick_breach_count
         or envelope.body_breach_count
@@ -198,7 +200,7 @@ def _fit_candidate(
         + 0.15 * residual_score
         + 0.10 * penetration_score
     )
-    projected = first.price + slope * (len(bars) - 1 - first_index)
+    projected = standard.projected_price
     return TrendLineCandidate(
         kind=kind,
         horizon=horizon,

@@ -7,6 +7,13 @@ from dataclasses import dataclass
 import math
 from statistics import fmean
 
+from stock_harness.analysis_inputs import AnalysisBar
+from stock_harness.major_descending_lines import (
+    MajorDescendingLine,
+    MajorLinePeriod,
+    MajorLineState,
+    detect_major_descending_lines,
+)
 from stock_harness.models import StoredDailyBar
 
 
@@ -39,10 +46,7 @@ def scan_daily_structure(
         atr20=atr20,
         short_shape=_shape(closes, short_period),
         medium_shape=_shape(closes, medium_period),
-        descending_envelopes={
-            label: _descending_upper_envelope(bars, period, atr14)
-            for label, period in (("3m", 63), ("6m", 126), ("1y", 250))
-        },
+        descending_envelopes=_canonical_descending_envelopes(bars, atr14),
         downside_deceleration=_downside_deceleration(bars, atr14),
     )
 
@@ -70,42 +74,83 @@ def _shape(closes: Sequence[float], periods: int) -> dict[str, object]:
     return {"state": state, "slope_per_10": _round(change)}
 
 
-def _descending_upper_envelope(
-    bars: Sequence[StoredDailyBar], periods: int, atr14: float,
+def _canonical_descending_envelopes(
+    bars: Sequence[StoredDailyBar], atr14: float,
+) -> dict[str, dict[str, object] | None]:
+    labels = {item.value: item for item in MajorLinePeriod}
+    if atr14 <= 0:
+        return {label: None for label in labels}
+    analysis_bars = tuple(_analysis_bar(bar) for bar in bars)
+    lines = detect_major_descending_lines(analysis_bars, include_candidates=True)
+    return {
+        label: _line_payload(
+            next((line for line in lines if line.period is period), None),
+            atr14, bars[-1].close,
+        )
+        for label, period in labels.items()
+    }
+
+
+def _line_payload(
+    line: MajorDescendingLine | None, atr14: float, latest_close: float,
 ) -> dict[str, object] | None:
-    if len(bars) < periods + 1 or atr14 <= 0:
+    if line is None:
         return None
-    history = list(bars[-(periods + 1):-1])
-    highs = [bar.high for bar in history]
-    slope = _linear_slope(highs)
-    if slope >= 0:
-        return None
-    intercept = fmean(highs) - slope * (len(highs) - 1) / 2
-    intercept += max(value - (intercept + slope * index) for index, value in enumerate(highs))
-    boundary = intercept + slope * len(highs)
-    latest = bars[-1]
-    distance = (boundary - latest.close) / atr14
-    buffer = max(boundary * .005, atr14 * .25)
     state = (
-        "broken" if latest.close > boundary + buffer
-        else "approaching" if 0 <= distance <= 1
+        "broken" if line.state in {MajorLineState.BROKEN_OUT, MajorLineState.BREAKOUT_RETEST}
+        else "approaching" if line.state is MajorLineState.CRITICAL_BREAKOUT
         else "none"
     )
+    boundary = line.projected_price
+    buffer = max(boundary * .005, atr14 * .25)
+    evolution = line.evolution
+    previous_line = None if evolution is None else {
+        "start_date": line.first_date,
+        "start_price": _round(line.first_price),
+        "end_date": line.previous_second_date,
+        "end_price": _round(evolution.previous_second_price),
+        "slope_per_bar": _round(evolution.previous_slope_per_bar),
+        "log_slope_per_20": _round(evolution.previous_log_slope_per_20),
+    }
     return {
-        "period_bars": periods,
-        "start_date": history[0].trade_date.isoformat(),
-        "end_date": latest.trade_date.isoformat(),
-        "start_price": _round(intercept),
-        "end_price": _round(boundary),
+        "period_bars": line.lifecycle_span_bars,
+        "start_date": line.first_date,
+        "end_date": line.second_date,
+        "start_price": _round(line.first_price),
+        "end_price": _round(line.second_price),
         "boundary": _round(boundary),
-        "slope_per_bar": _round(slope),
-        "distance_atr": _round(distance),
+        "slope_per_bar": _round(line.slope_per_bar),
+        "log_slope_per_20": _round(line.log_slope_per_20),
+        "distance_atr": _round((boundary - latest_close) / atr14),
         "confirmation_price": _round(boundary + buffer),
         "confirmation_buffer_atr": _round(buffer / atr14),
         "invalidation_price": _round(boundary - atr14 * .25),
         "invalidation_buffer_atr": .25,
         "state": state,
+        "line_state": line.state.value,
+        "confirmation_state": line.confirmation_state,
+        "independent_touch_count": line.independent_touch_count,
+        "speed_state": evolution.speed_state.value if evolution else None,
+        "slope_change_ratio": _round(evolution.slope_change_ratio) if evolution else None,
+        "previous_line": previous_line,
+        "line_item_id": line.item_id,
     }
+
+
+def _analysis_bar(bar: StoredDailyBar) -> AnalysisBar:
+    return AnalysisBar(
+        period_start=bar.trade_date,
+        period_end=bar.trade_date,
+        open=bar.open,
+        high=bar.high,
+        low=bar.low,
+        close=bar.close,
+        volume=bar.volume,
+        sources=(str(getattr(bar, "source", "daily-scan")),),
+        contains_provisional=False,
+        period_complete=True,
+        observed_at_ms=int(getattr(bar, "updated_at_ms", 0)),
+    )
 
 
 def _downside_deceleration(

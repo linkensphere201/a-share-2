@@ -8,12 +8,16 @@ from itertools import combinations
 from typing import Sequence
 
 from stock_harness.analysis_inputs import AnalysisBar
+from stock_harness.trend_line_engine import (
+    TrendLineEvolution,
+    compare_reanchored_lines,
+    evaluate_standard_trend_line,
+)
 from stock_harness.trend_line_envelope import (
     EnvelopeIntegrity,
     EnvelopePolicy,
     EnvelopeSide,
     dominates_prior_extremes,
-    evaluate_trend_line_envelope,
 )
 from stock_harness.trend_pivots import causal_average_true_range
 
@@ -25,6 +29,8 @@ class MajorLinePeriod(StrEnum):
 
 
 class MajorLineState(StrEnum):
+    CANDIDATE = "candidate"
+    FORMING = "forming"
     CRITICAL_BREAKOUT = "critical-breakout"
     BREAKOUT_RETEST = "breakout-retest"
     BROKEN_OUT = "broken-out"
@@ -37,14 +43,16 @@ class MajorLineProfile:
     pivot_radius: int
     minimum_anchor_span: int
     maximum_anchor_span: int
+    minimum_lifecycle_span: int
     minimum_decline_percent: float
     minimum_prominence_percent: float
     dominance_lookback: int
 
 
 PROFILES = (
-    MajorLineProfile(MajorLinePeriod.HALF_YEAR, 250, 5, 100, 179, 6.0, 4.0, 40),
-    MajorLineProfile(MajorLinePeriod.YEAR, 250, 8, 180, 240, 10.0, 6.0, 60),
+    MajorLineProfile(MajorLinePeriod.QUARTER, 126, 4, 20, 90, 63, 4.0, 3.0, 30),
+    MajorLineProfile(MajorLinePeriod.HALF_YEAR, 250, 5, 30, 179, 126, 6.0, 4.0, 40),
+    MajorLineProfile(MajorLinePeriod.YEAR, 250, 8, 60, 240, 180, 10.0, 6.0, 60),
 )
 
 ATR_PERIOD = 14
@@ -79,10 +87,15 @@ class MajorDescendingLine:
     first_prominence_percent: float
     second_prominence_percent: float
     anchor_span_bars: int
+    lifecycle_span_bars: int
     decline_percent: float
     breakout_date: str | None
     volume_ratio_5: float | None
     score: float
+    confirmation_state: str
+    log_slope_per_20: float
+    evolution: TrendLineEvolution | None
+    previous_second_date: str | None
 
 
 @dataclass(slots=True)
@@ -111,18 +124,17 @@ def detect_major_descending_lines(
     periods: Sequence[MajorLinePeriod] | None = None,
     *,
     diagnostics: MajorLineDiagnostics | None = None,
+    include_candidates: bool = False,
 ) -> tuple[MajorDescendingLine, ...]:
     """Return active lines using only bars available at the supplied cutoff."""
     requested = set(periods or tuple(item.period for item in PROFILES))
     results: list[MajorDescendingLine] = []
     for profile in PROFILES:
-        minimum_required = (
-            profile.minimum_anchor_span + profile.pivot_radius * 2 + 4
-        )
+        minimum_required = profile.minimum_lifecycle_span + profile.pivot_radius + 1
         if profile.period not in requested or len(bars) < minimum_required:
             continue
         results.extend(_detect_profile(
-            tuple(bars[-profile.bars:]), profile, diagnostics
+            tuple(bars[-profile.bars:]), profile, diagnostics, include_candidates
         ))
     results.sort(key=lambda item: (_state_rank(item.state), item.score), reverse=True)
     numbered: list[MajorDescendingLine] = []
@@ -137,6 +149,7 @@ def _detect_profile(
     bars: tuple[AnalysisBar, ...],
     profile: MajorLineProfile,
     diagnostics: MajorLineDiagnostics | None,
+    include_candidates: bool,
 ) -> list[MajorDescendingLine]:
     highs = [item.high for item in bars]
     atrs = causal_average_true_range(bars, ATR_PERIOD)
@@ -157,6 +170,11 @@ def _detect_profile(
             if diagnostics is not None:
                 diagnostics.rejected_span += 1
             continue
+        lifecycle_span = len(bars) - 1 - first
+        if lifecycle_span < profile.minimum_lifecycle_span:
+            if diagnostics is not None:
+                diagnostics.rejected_span += 1
+            continue
         if highs[second] >= highs[first] * 0.997:
             if diagnostics is not None:
                 diagnostics.rejected_geometry += 1
@@ -169,8 +187,8 @@ def _detect_profile(
             if diagnostics is not None:
                 diagnostics.rejected_dominance += 1
             continue
-        slope = (highs[second] - highs[first]) / span
         decline = (highs[second] / highs[first] - 1) * 100
+        slope = (highs[second] - highs[first]) / span
         if slope >= 0 or decline > -profile.minimum_decline_percent:
             if diagnostics is not None:
                 diagnostics.rejected_geometry += 1
@@ -181,7 +199,7 @@ def _detect_profile(
                 diagnostics.rejected_geometry += 1
             continue
         state, breakout_index = _classify_state(bars, first, slope)
-        if state is None:
+        if state is None and not include_candidates:
             if diagnostics is not None:
                 diagnostics.rejected_inactive += 1
             continue
@@ -190,10 +208,11 @@ def _detect_profile(
                 diagnostics.rejected_event_order += 1
             continue
         pre_event_end = (breakout_index - 1) if breakout_index is not None else len(bars) - 1
-        integrity = evaluate_trend_line_envelope(
-            bars, atrs, first, second, highs[first], slope, pre_event_end, pivot_indexes,
+        standard = evaluate_standard_trend_line(
+            bars, atrs, first, second, pre_event_end, pivot_indexes,
             profile.pivot_radius * 2, EnvelopeSide.UPPER, ENVELOPE_POLICY,
         )
+        integrity = standard.integrity
         rejected = False
         if integrity.wick_breach_count:
             rejected = True
@@ -211,12 +230,18 @@ def _detect_profile(
             rejected = True
             if diagnostics is not None:
                 diagnostics.rejected_dominant_high += 1
-        if integrity.independent_touch_count < 1:
-            rejected = True
+        confirmed = integrity.independent_touch_count >= 1
+        if not confirmed:
             if diagnostics is not None:
                 diagnostics.rejected_confirmation += 1
+            if not include_candidates:
+                rejected = True
         if rejected:
             continue
+        if not confirmed:
+            state = MajorLineState.CANDIDATE
+        elif state is None:
+            state = MajorLineState.FORMING
         latest = bars[-1]
         distance = (latest.close / projected - 1) * 100
         identity = (
@@ -234,6 +259,9 @@ def _detect_profile(
             + _state_rank(state)
             + 1.5 * min(integrity.independent_touch_count, 3)
             - 0.4 * abs(distance)
+        )
+        evolution = _find_evolution(
+            bars, atrs, important_indexes, first, second, profile,
         )
         candidates.append(MajorDescendingLine(
             item_id=identity,
@@ -266,10 +294,18 @@ def _detect_profile(
                 bars, second, profile.pivot_radius
             ),
             anchor_span_bars=span,
+            lifecycle_span_bars=lifecycle_span,
             decline_percent=decline,
             breakout_date=(bars[breakout_index].period_end.isoformat() if breakout_index is not None else None),
             volume_ratio_5=volume_ratio,
             score=round(score, 6),
+            confirmation_state="confirmed" if confirmed else "two-anchor-candidate",
+            log_slope_per_20=standard.log_slope_per_20,
+            evolution=evolution,
+            previous_second_date=(
+                bars[evolution.previous_second_index].period_end.isoformat()
+                if evolution is not None else None
+            ),
         ))
         if diagnostics is not None:
             diagnostics.accepted += 1
@@ -287,10 +323,47 @@ def _upper_envelope_integrity(
     pivot_indexes: Sequence[int],
     pivot_radius: int,
 ) -> EnvelopeIntegrity:
-    return evaluate_trend_line_envelope(
-        bars, atrs, first, second, bars[first].high, slope, pre_event_end,
-        pivot_indexes, pivot_radius * 2, EnvelopeSide.UPPER, ENVELOPE_POLICY,
-    )
+    return evaluate_standard_trend_line(
+        bars, atrs, first, second, pre_event_end, pivot_indexes,
+        pivot_radius * 2, EnvelopeSide.UPPER, ENVELOPE_POLICY,
+    ).integrity
+
+
+def _find_evolution(
+    bars: Sequence[AnalysisBar],
+    atrs: Sequence[float],
+    important_indexes: Sequence[int],
+    first: int,
+    second: int,
+    profile: MajorLineProfile,
+) -> TrendLineEvolution | None:
+    evaluation_end = max(second - profile.pivot_radius - 1, first + 1)
+    for previous in reversed(important_indexes):
+        if not (
+            first < previous < second
+            and previous - first >= profile.minimum_anchor_span
+            and bars[previous].high < bars[first].high * .997
+        ):
+            continue
+        prior = evaluate_standard_trend_line(
+            bars, atrs, first, previous, max(previous, evaluation_end),
+            important_indexes, profile.pivot_radius * 2,
+            EnvelopeSide.UPPER, ENVELOPE_POLICY,
+        )
+        integrity = prior.integrity
+        if (
+            integrity.wick_breach_count
+            or integrity.body_breach_count
+            or integrity.close_breach_count
+            or integrity.dominant_extreme_count
+        ):
+            continue
+        evolution = compare_reanchored_lines(
+            bars[first].high, previous, bars[previous].high,
+            second, bars[second].high, first_index=first,
+        )
+        return evolution if abs(evolution.previous_log_slope_per_20) > 1e-12 else None
+    return None
 
 
 def _high_prominence_percent(
@@ -397,6 +470,8 @@ def _volume_ratio_5(bars: Sequence[AnalysisBar]) -> float | None:
 
 def _state_rank(state: MajorLineState) -> int:
     return {
+        MajorLineState.CANDIDATE: -1,
+        MajorLineState.FORMING: 0,
         MajorLineState.CRITICAL_BREAKOUT: 1,
         MajorLineState.BREAKOUT_RETEST: 3,
         MajorLineState.BROKEN_OUT: 2,

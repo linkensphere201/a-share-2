@@ -72,13 +72,23 @@ function explainLine(item: AnalysisItem, allItems: AnalysisItem[]): TrendExplana
   const touches = numberValue(payload.touch_count)
   const independentTouches = numberValue(payload.independent_touch_count)
   const maximumBreachAtr = numberValue(payload.maximum_breach_atr)
+  const speedState = stringValue(payload.speed_state)
+  const slopeChange = numberValue(payload.slope_change_ratio)
+  const speedText = speedState ? `；${trendSpeedLabel(speedState)}${slopeChange !== undefined ? ` ${(Math.abs(slopeChange) * 100).toFixed(0)}%` : ''}` : ''
   const state = structuralStateFor(item.item_id, allItems)
   return {
     analysisItemId: item.item_id,
     title: `${horizon}${direction}${role}`,
-    detail: `${stringValue(payload.first_pivot_date) ?? '-'} ${firstPrice} → ${stringValue(payload.second_pivot_date) ?? '-'} ${secondPrice}${projected !== undefined ? `；当前投影 ${projected.toFixed(2)}` : ''}${touches !== undefined ? `；触碰 ${touches} 次` : ''}${independentTouches !== undefined ? `，独立确认 ${independentTouches} 次` : ''}${maximumBreachAtr !== undefined ? `；形成期最大越界 ${maximumBreachAtr.toFixed(2)} ATR` : ''}${state ? `；${structuralStateLabel(state)}` : ''}。`,
+    detail: `${stringValue(payload.first_pivot_date) ?? '-'} ${firstPrice} → ${stringValue(payload.second_pivot_date) ?? '-'} ${secondPrice}${projected !== undefined ? `；当前投影 ${projected.toFixed(2)}` : ''}${touches !== undefined ? `；触碰 ${touches} 次` : ''}${independentTouches !== undefined ? `，独立确认 ${independentTouches} 次` : ''}${maximumBreachAtr !== undefined ? `；形成期最大越界 ${maximumBreachAtr.toFixed(2)} ATR` : ''}${speedText}${state ? `；${structuralStateLabel(state)}` : ''}。`,
     score: numberValue(payload.score),
   }
+}
+
+function trendSpeedLabel(value: string): string {
+  return ({
+    accelerating: '趋势加速', decelerating: '趋势减速',
+    flattening: '趋势钝化', stable: '趋势速度稳定',
+  } as Record<string, string>)[value] ?? value
 }
 
 function explainZone(item: AnalysisItem, allItems: AnalysisItem[]): TrendExplanationItem {

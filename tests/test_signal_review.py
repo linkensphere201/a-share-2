@@ -348,11 +348,12 @@ def test_daily_price_space_calculates_only_reproducible_long_risk_reward() -> No
 def test_daily_summary_exposes_exact_confirmation_and_invalidation_prices() -> None:
     bars = _daily_bars("BK001.DC", 260, falling=True)
     observation = analyze_daily_series("BK001.DC", bars, bars[-1].trade_date)
-    envelope = next(
-        value for value in observation["metrics"]["descending_envelopes"].values()
-        if value is not None
-    )
-    envelope["state"] = "broken"
+    envelope = {
+        "state": "broken", "boundary": 82.5,
+        "confirmation_price": 83.0, "invalidation_price": 81.75,
+        "distance_atr": -.5,
+    }
+    observation["metrics"]["descending_envelopes"]["6m"] = envelope
     observation["state_codes"] = ["bullish-boundary-triggered"]
 
     _, rendered = render_board_summary(observation, None)

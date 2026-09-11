@@ -32,6 +32,37 @@ const forestry: DailyConclusionSource = {
 }
 
 describe('daily conclusion projection', () => {
+  it('renders canonical current and previous lines for a reanchored boundary', () => {
+    const source: DailyConclusionSource = {
+      runId: 'forestry-v5', effectiveDate: '2026-09-10', stateCodes: [],
+      metrics: { descending_envelopes: { '6m': {
+        start_date: '2025-12-30', start_price: 3466.3817,
+        end_date: '2026-05-13', end_price: 3077.6775,
+        boundary: 2688.9733, state: 'none',
+        confirmation_state: 'two-anchor-candidate',
+        speed_state: 'decelerating', slope_change_ratio: -.386297,
+        previous_line: {
+          start_date: '2025-12-30', start_price: 3466.3817,
+          end_date: '2026-04-01', end_price: 3032.2247,
+        },
+      } } },
+    }
+
+    const result = mergeDailyConclusionAnalysis(null, source)
+    const current = result.run?.items.find(item => item.item_id === 'daily-review:envelope:6m')
+    const previous = result.run?.items.find(item => item.item_id === 'daily-review:envelope:6m:previous')
+
+    expect(current?.payload).toMatchObject({
+      first_pivot_date: '2025-12-30', first_price: 3466.3817,
+      second_pivot_date: '2026-05-13', second_price: 3077.6775,
+      projected_price: 2688.9733, speed_state: 'decelerating',
+    })
+    expect(previous?.payload).toMatchObject({
+      first_pivot_date: '2025-12-30', second_pivot_date: '2026-04-01',
+      evolution_role: 'previous', superseded_by_line_id: 'daily-review:envelope:6m',
+    })
+  })
+
   it('restores legacy first-level line and risk/reward geometry without an M4 run', () => {
     const result = mergeDailyConclusionAnalysis(null, forestry)
 

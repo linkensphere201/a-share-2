@@ -57,7 +57,7 @@ from stock_harness.trend_context import (
 )
 
 
-ALGORITHM_VERSION = "trend-causal-replay-v28"
+ALGORITHM_VERSION = "trend-causal-replay-v29"
 LOGGER = logging.getLogger(__name__)
 
 
@@ -641,7 +641,35 @@ def _generated_items(
             }),
         },
     )]
-    for line in detect_major_descending_lines(analysis_input.bars):
+    for line in detect_major_descending_lines(
+        analysis_input.bars, include_candidates=True,
+    ):
+        if (
+            line.evolution is not None
+            and line.previous_second_date is not None
+            and line.code.endswith("-01")
+        ):
+            items.append(GeneratedAnalysisItem(
+                item_id=f"{line.item_id}-previous",
+                item_type=GeneratedItemType.LINE,
+                payload={
+                    "kind": "resistance",
+                    "horizon": "long",
+                    "major_line_code": f"{line.code}-PREV",
+                    "first_pivot_date": line.first_date,
+                    "first_price": line.first_price,
+                    "second_pivot_date": line.previous_second_date,
+                    "second_price": line.evolution.previous_second_price,
+                    "slope_per_bar": line.evolution.previous_slope_per_bar,
+                    "log_slope_per_20": line.evolution.previous_log_slope_per_20,
+                    "projected_price": None,
+                    "touch_count": 0,
+                    "score": max(0.0, line.score - 0.01),
+                    "evolution_role": "previous",
+                    "superseded_by_line_id": line.item_id,
+                    "ai_reference_code": f"{line.code}-PREV",
+                },
+            ))
         items.append(GeneratedAnalysisItem(
             item_id=line.item_id,
             item_type=GeneratedItemType.LINE,
@@ -680,6 +708,19 @@ def _generated_items(
                 "score": line.score,
                 "score_components": {"shared_major_line_detector": 1.0},
                 "invalidation_reason": None,
+                "confirmation_state": line.confirmation_state,
+                "lifecycle_span_bars": line.lifecycle_span_bars,
+                "log_slope_per_20": line.log_slope_per_20,
+                "speed_state": (
+                    line.evolution.speed_state.value if line.evolution else None
+                ),
+                "slope_change_ratio": (
+                    line.evolution.slope_change_ratio if line.evolution else None
+                ),
+                "previous_line_item_id": (
+                    f"{line.item_id}-previous"
+                    if line.evolution and line.code.endswith("-01") else None
+                ),
             },
         ))
     long_bars = analysis_input.bars[-horizons.long:]

@@ -22,9 +22,14 @@ from stock_harness.sqlite_store import SQLiteMarketDataStore
 
 LOGGER = logging.getLogger(__name__)
 STRATEGY_ID = "major-descending-breakout"
-STRATEGY_VERSION = "major-descending-breakout-v3"
-CONFIG_VERSION = "screener-major-descending-v3"
+STRATEGY_VERSION = "major-descending-breakout-v4"
+CONFIG_VERSION = "screener-major-descending-v4"
 DEFAULT_HORIZONS = AnalysisHorizons(60, 120, 250)
+SCREENABLE_STATES = (
+    MajorLineState.CRITICAL_BREAKOUT,
+    MajorLineState.BREAKOUT_RETEST,
+    MajorLineState.BROKEN_OUT,
+)
 
 
 class ScreenerBusyError(RuntimeError):
@@ -49,7 +54,7 @@ class ScreenerService:
             "name": "大斜边突破",
             "version": STRATEGY_VERSION,
             "periods": [MajorLinePeriod.HALF_YEAR.value, MajorLinePeriod.YEAR.value],
-            "states": [item.value for item in MajorLineState],
+            "states": [item.value for item in SCREENABLE_STATES],
             "final_bars_only": True,
         }]
 
@@ -112,7 +117,7 @@ class ScreenerService:
     ) -> None:
         started = time.perf_counter()
         universe = self._store.list_active_stock_symbols_for_screening()
-        state_set = set(states)
+        state_set = set(states).intersection(SCREENABLE_STATES)
         diagnostics = MajorLineDiagnostics()
         candidates: list[tuple[dict[str, str], MajorDescendingLine, dict[str, object]]] = []
         self._store.update_screener_progress(

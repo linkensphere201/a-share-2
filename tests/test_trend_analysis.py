@@ -117,7 +117,7 @@ def test_explicit_recalculate_registers_and_persists_only_requested_timeframes()
             if item["item_id"] == "key-level-volume-profile-evidence"
         )
         assert "not exact position cost" in evidence["payload"]["uncertainty"]
-        assert results[0]["algorithm_version"] == "trend-causal-replay-v28"
+        assert results[0]["algorithm_version"] == "trend-causal-replay-v29"
         projection = next(
             item for item in results[0]["items"]
             if item["item_id"] == "core-analysis-projection"

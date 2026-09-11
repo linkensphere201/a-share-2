@@ -94,27 +94,56 @@ function projectDailyItems(
     const startDate = stringValue(envelope.value.start_date)
       ?? stringValue(priceSpace?.start_date)
     const endDate = stringValue(envelope.value.end_date) ?? source.effectiveDate
-    const boundary = numberValue(envelope.value.end_price)
-      ?? numberValue(envelope.value.boundary)
+    const boundary = numberValue(envelope.value.boundary)
+      ?? numberValue(envelope.value.end_price)
     const slope = numberValue(envelope.value.slope_per_bar)
     const period = numberValue(envelope.value.period_bars)
     const startPrice = numberValue(envelope.value.start_price)
       ?? (boundary !== undefined && slope !== undefined && period !== undefined
         ? boundary - slope * period : undefined)
-    if (startDate && endDate && startPrice !== undefined && boundary !== undefined) {
+    const secondPrice = numberValue(envelope.value.end_price) ?? boundary
+    if (startDate && endDate && startPrice !== undefined
+      && secondPrice !== undefined && boundary !== undefined) {
       items.push({
         item_id: lineId,
         item_type: 'line',
         payload: {
           kind: 'resistance', horizon: envelope.label === '3m' ? 'medium' : 'long',
           first_pivot_date: startDate, second_pivot_date: endDate,
-          first_price: startPrice, second_price: boundary,
+          first_price: startPrice, second_price: secondPrice,
           projected_price: boundary, score: 1, touch_count: 0,
           major_line_code: `${envelope.label.toUpperCase()}下降边界`,
           ai_reference_code: '一级结论', source: 'daily-board-observation',
+          confirmation_state: envelope.value.confirmation_state,
+          speed_state: envelope.value.speed_state,
+          slope_change_ratio: envelope.value.slope_change_ratio,
+          evolution_role: 'current',
         },
       })
       references.boundaryItemId = lineId
+    }
+    const previous = recordValue(envelope.value.previous_line)
+    const previousStartDate = stringValue(previous?.start_date)
+    const previousEndDate = stringValue(previous?.end_date)
+    const previousStartPrice = numberValue(previous?.start_price)
+    const previousEndPrice = numberValue(previous?.end_price)
+    if (previousStartDate && previousEndDate
+      && previousStartPrice !== undefined && previousEndPrice !== undefined) {
+      items.push({
+        item_id: `${lineId}:previous`, item_type: 'line',
+        payload: {
+          kind: 'resistance', horizon: envelope.label === '3m' ? 'medium' : 'long',
+          first_pivot_date: previousStartDate,
+          second_pivot_date: previousEndDate,
+          first_price: previousStartPrice,
+          second_price: previousEndPrice,
+          score: .99, touch_count: 0,
+          major_line_code: `${envelope.label.toUpperCase()}前版边界`,
+          ai_reference_code: '趋势线对比', source: 'daily-board-observation',
+          evolution_role: 'previous',
+          superseded_by_line_id: lineId,
+        },
+      })
     }
     const confirmation = numberValue(envelope.value.confirmation_price)
       ?? numberValue(priceSpace?.trigger_entry_price)

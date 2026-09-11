@@ -1,6 +1,7 @@
 from datetime import date, timedelta
 
 from stock_harness.analysis_inputs import AnalysisBar
+from stock_harness.daily_signal_analysis import analyze_daily_series, render_board_summary
 from stock_harness.major_descending_lines import (
     MajorLinePeriod,
     MajorLineState,
@@ -8,6 +9,8 @@ from stock_harness.major_descending_lines import (
     _upper_envelope_integrity,
     detect_major_descending_lines,
 )
+from stock_harness.pattern_analysis_scan import scan_daily_structure
+from stock_harness.models import StoredDailyBar
 from stock_harness.trend_pivots import causal_average_true_range
 
 
@@ -73,7 +76,53 @@ def test_rejects_short_anchor_span_from_major_line_period():
         ) for index, item in enumerate(bars)
     )
     values = detect_major_descending_lines(altered, [MajorLinePeriod.YEAR])
-    assert all(item.anchor_span_bars >= 180 for item in values)
+    assert all(item.anchor_span_bars >= 60 for item in values)
+    assert all(item.lifecycle_span_bars >= 180 for item in values)
+
+
+def test_forestry_products_reanchors_to_latest_major_high_and_does_not_claim_breakout():
+    bars = _forestry_products_20260910()
+
+    detected = detect_major_descending_lines(
+        bars, [MajorLinePeriod.HALF_YEAR], include_candidates=True,
+    )
+
+    assert len(detected) == 1
+    line = detected[0]
+    assert line.first_date == "2025-12-30"
+    assert line.first_price == 3466.3817
+    assert line.second_date == "2026-05-13"
+    assert line.second_price == 3077.6775
+    assert round(line.projected_price, 4) == 2688.9733
+    assert line.state is MajorLineState.CANDIDATE
+    assert line.confirmation_state == "two-anchor-candidate"
+    assert line.independent_touch_count == 0
+    assert line.evolution is not None
+    assert line.evolution.speed_state.value == "decelerating"
+    assert line.evolution.slope_change_ratio < -.15
+    assert not detect_major_descending_lines(
+        bars, [MajorLinePeriod.HALF_YEAR]
+    )
+
+    stored = [StoredDailyBar(
+        "700472.TI", item.period_end, item.open, item.high, item.low,
+        item.close, item.volume, "fixture", 0,
+    ) for item in bars]
+    envelope = scan_daily_structure(stored).descending_envelopes["6m"]
+    assert envelope is not None
+    assert envelope["start_price"] == 3466.3817
+    assert envelope["end_price"] == 3077.6775
+    assert envelope["boundary"] == 2688.9733
+    assert envelope["state"] == "none"
+    assert envelope["confirmation_state"] == "two-anchor-candidate"
+    assert envelope["speed_state"] == "decelerating"
+    observation = analyze_daily_series(
+        "700472.TI", stored, date(2026, 9, 10),
+    )
+    assert "bullish-boundary-triggered" not in observation["state_codes"]
+    assert "descending-envelope-6m-broken" not in observation["state_codes"]
+    _, summary = render_board_summary(observation, None)
+    assert "较上一版减速" in summary
 
 
 def test_rejects_line_that_cuts_through_intermediate_price_structure():
@@ -200,6 +249,46 @@ def _annil_v1_shape(with_intermediate_escape: bool) -> tuple[AnalysisBar, ...]:
         result.append(AnalysisBar(
             current_date, current_date, close, high, close - 0.3, close,
             1_000_000, ("tushare",), False, True, 0,
+        ))
+    return tuple(result)
+
+
+def _forestry_products_20260910() -> tuple[AnalysisBar, ...]:
+    first, second, end = 20, 104, 188
+    first_price, second_price = 3466.3817, 3077.6775
+    slope = (second_price - first_price) / (second - first)
+    first_date = date(2025, 12, 30)
+    second_date = date(2026, 5, 13)
+    end_date = date(2026, 9, 10)
+    result = []
+    for index in range(end + 1):
+        if index <= first:
+            elapsed = round(28 * index / first)
+            current_date = first_date - timedelta(days=28 - elapsed)
+        elif index <= second:
+            elapsed = round((second_date - first_date).days * (index - first) / (second - first))
+            current_date = first_date + timedelta(days=elapsed)
+        else:
+            elapsed = round((end_date - second_date).days * (index - second) / (end - second))
+            current_date = second_date + timedelta(days=elapsed)
+        boundary = first_price + slope * (index - first)
+        high = boundary - 300
+        close = boundary - 350
+        if index < first:
+            high, close = 3100.0, 3050.0
+        if index == first:
+            high, close = first_price, first_price - 55
+        if index == 58:
+            high, close = 3055.6417, 2990.0
+        if index == 82:
+            high, close = 3032.2247, 2960.0
+        if index == second:
+            high, close = second_price, second_price - 70
+        if index == end:
+            high, close = 2650.0, 2631.662
+        result.append(AnalysisBar(
+            current_date, current_date, close, high, close - 45, close,
+            1_000_000, ("forestry-products-fixture",), False, True, 0,
         ))
     return tuple(result)
 
