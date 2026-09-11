@@ -2,7 +2,7 @@ import {
   useEffect, useMemo, useRef, useState, type CSSProperties,
   type PointerEvent as ReactPointerEvent,
 } from 'react'
-import { ArrowLeft, Boxes, Eye, Layers3, ListFilter, MessageSquare, Pin, PinOff, Play, Radar, RefreshCw, Search } from 'lucide-react'
+import { ArrowLeft, Boxes, Eye, Layers3, ListFilter, MessageSquare, Pin, PinOff, Play, Radar, RefreshCw, RotateCcw, Search } from 'lucide-react'
 import { ChartCanvas } from './ChartCanvas'
 import { MarketBoardBadge } from './MarketBoardBadge'
 import type { ThemeDefinition } from './themeStore'
@@ -42,6 +42,7 @@ type HotspotFilter = 'all' | 'rising' | 'confirmed' | 'fading'
 type LeadingFilter = 'all' | 'strengthening' | 'confirmed'
 type PoolLifecycleFilter = 'all' | ObservationPoolItem['lifecycle_state']
 type PoolPresentationView = 'focus' | 'opportunity' | 'risk' | 'all'
+type SignalRunContextMenu = { x: number; y: number; run: SignalRun }
 
 const phaseLabels: Record<string, string> = {
   queued: '等待执行', memberships: '读取板块成分',
@@ -69,6 +70,8 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
   const [runs, setRuns] = useState<SignalRun[]>([])
   const [selectedRun, setSelectedRun] = useState<SignalRun>()
   const [startingRun, setStartingRun] = useState(false)
+  const [pendingEffectiveDate, setPendingEffectiveDate] = useState<string>()
+  const [runContextMenu, setRunContextMenu] = useState<SignalRunContextMenu>()
   const [items, setItems] = useState<SignalItem[]>([])
   const [selectedItem, setSelectedItem] = useState<SignalItem>()
   const [profile, setProfile] = useState<ProfileFilter>('all')
@@ -115,6 +118,15 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
   useEffect(() => {
     window.localStorage.setItem(COLUMN_WIDTHS_KEY, JSON.stringify(columnWidths))
   }, [columnWidths])
+
+  useEffect(() => {
+    if (!runContextMenu) return
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setRunContextMenu(undefined)
+    }
+    window.addEventListener('keydown', closeOnEscape)
+    return () => window.removeEventListener('keydown', closeOnEscape)
+  }, [runContextMenu])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -449,18 +461,27 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
     setHighlightedEvidenceId(undefined)
   }
 
-  const run = async () => {
+  const run = async (effectiveDate?: string) => {
     if (!selectedDefinition || runBusy) return
+    setRunContextMenu(undefined)
+    setPendingEffectiveDate(effectiveDate)
     setStartingRun(true)
     try {
       setError('')
-      const next = await startSignalRun(selectedDefinition.signal_id)
+      const next = await startSignalRun(selectedDefinition.signal_id, effectiveDate)
       setRuns(current => [next, ...current])
       setSelectedRun(next)
+      logInfo('signal-review', effectiveDate ? '历史复盘重跑任务已创建' : '本期复盘任务已创建', {
+        signal_id: selectedDefinition.signal_id,
+        effective_date: next.effective_date,
+        revision: next.revision,
+        run_id: next.run_id,
+      })
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason))
     } finally {
       setStartingRun(false)
+      setPendingEffectiveDate(undefined)
     }
   }
   const latestSucceededDate = runs.reduce((latest, item) => (
@@ -605,7 +626,7 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
       <button className={`icon-button${chatOpen ? ' active' : ''}`} title={workspaceChatAvailable ? 'Codex 多轮复盘讨论' : '完成至少一轮复盘后可讨论'} aria-label="Codex 信号讨论" disabled={!selectedDefinition || !workspaceChatAvailable} onClick={() => setChatOpen(value => !value)}><MessageSquare size={14}/></button>
       <button className="primary-button signal-run-action" disabled={!selectedDefinition || runBusy} onClick={() => void run()}>
         {runBusy ? <RefreshCw size={14} className="spin"/> : <Play size={14}/>}<span>{startingRun
-          ? '正在创建本期任务'
+          ? pendingEffectiveDate ? `正在重跑 ${pendingEffectiveDate}` : '正在创建本期任务'
           : activeRun ? `${phaseLabels[activeRun.phase] ?? activeRun.phase} ${activeProgress}%` : '运行本期信号'}</span>
       </button>
     </header>
@@ -614,8 +635,12 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
       <aside className="signal-runs">
         <header><span>历史轮次</span><small>{runs.length}</small></header>
         <div className="signal-scroll">{startingRun && <div className="signal-run-pending" role="status" aria-live="polite">
-          <RefreshCw size={14} className="spin"/><span>正在创建本期任务<small>准备运行记录与数据截止日</small></span>
-        </div>}{runs.length === 0 && !startingRun && <div className="signal-empty compact">尚未运行</div>}{runs.map(item => <button key={item.run_id} className={selectedRun?.run_id === item.run_id ? 'active' : ''} onClick={() => setSelectedRun(item)}>
+          <RefreshCw size={14} className="spin"/><span>{pendingEffectiveDate ? `正在重跑 ${pendingEffectiveDate}` : '正在创建本期任务'}<small>{pendingEffectiveDate ? '旧结果保留，正在创建同日新修订版' : '准备运行记录与数据截止日'}</small></span>
+        </div>}{runs.length === 0 && !startingRun && <div className="signal-empty compact">尚未运行</div>}{runs.map(item => <button key={item.run_id} className={selectedRun?.run_id === item.run_id ? 'active' : ''} onClick={() => setSelectedRun(item)} onContextMenu={event => {
+          event.preventDefault()
+          setSelectedRun(item)
+          setRunContextMenu({ ...signalRunMenuPosition(event.clientX, event.clientY), run: item })
+        }}>
           <span>{item.effective_date} <i>R{item.revision}</i></span>
           <small>{item.status === 'running' ? `${phaseLabels[item.phase] ?? item.phase} ${progress}%` : item.status === 'failed' ? '执行失败' : `${item.item_count} 项`}</small>
           <em className={item.status}/>
@@ -752,7 +777,24 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
       {chatOpen && <div className="signal-column-resizer" role="separator" aria-orientation="vertical" aria-label="调整Codex对话栏宽度" title="左右拖动调整Codex对话栏宽度" onPointerDown={event => startColumnResize('chat', event)}/>}
       {chatOpen && selectedDefinition && <SignalChatPanel key={selectedDefinition.signal_id} signalId={selectedDefinition.signal_id} runs={runs} run={selectedRun} items={items} selectedItem={selectedItem} selectedPoolItem={selectedPoolItem} onReferencePreview={previewReference} onReferenceActivate={activateReference} onClose={() => setChatOpen(false)}/>}
     </section>
+    {runContextMenu && <div className="signal-context-layer" onPointerDown={event => {
+      if (event.target === event.currentTarget) setRunContextMenu(undefined)
+    }} onContextMenu={event => event.preventDefault()}>
+      <div className="signal-context-menu" role="menu" style={{ left: runContextMenu.x, top: runContextMenu.y }}>
+        <header>{runContextMenu.run.effective_date} · R{runContextMenu.run.revision}</header>
+        <button role="menuitem" disabled={runBusy || runContextMenu.run.status === 'running'} onClick={() => void run(runContextMenu.run.effective_date)}>
+          <RotateCcw size={14}/><span>重跑该日</span>
+        </button>
+      </div>
+    </div>}
   </main>
+}
+
+function signalRunMenuPosition(x: number, y: number) {
+  return {
+    x: Math.max(8, Math.min(x, window.innerWidth - 210)),
+    y: Math.max(8, Math.min(y, window.innerHeight - 100)),
+  }
 }
 
 type SignalViewEmptyExplanation = {

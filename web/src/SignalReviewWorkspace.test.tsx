@@ -121,6 +121,35 @@ describe('SignalReviewWorkspace', () => {
     expect(fetchMock.mock.calls.some(call => call[1]?.method === 'POST')).toBe(true)
   })
 
+  it('reruns a historical date from its right-click menu as a new revision', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url === '/api/signals/definitions') return response({ items: [definition] })
+      if (url.includes('/api/signals/runs?')) return response({ items: [run] })
+      if (url.endsWith('/items')) return response({ items })
+      if (url.endsWith('/scores')) return response({ items: [] })
+      if (url.includes('/api/signals/weekly-board-recognition/runs') && init?.method === 'POST') {
+        expect(JSON.parse(String(init.body))).toEqual({ effective_date: '2026-09-04' })
+        return response({ ...run, run_id: 'run-2', revision: 3 }, 202)
+      }
+      throw new Error(`unexpected URL ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+    render(<SignalReviewWorkspace theme={themes[0]} onClose={() => undefined}/>)
+
+    const runLabel = await screen.findByText('2026-09-04')
+    fireEvent.contextMenu(runLabel.closest('button')!, { clientX: 32, clientY: 80 })
+    await user.click(screen.getByRole('menuitem', { name: '重跑该日' }))
+
+    await vi.waitFor(() => expect(fetchMock.mock.calls.some(call => {
+      const init = call[1] as RequestInit | undefined
+      return init?.method === 'POST' && String(init.body).includes('2026-09-04')
+    })).toBe(true))
+    expect(screen.getByText('R3')).toBeTruthy()
+    expect(screen.queryByRole('menu')).toBeNull()
+  })
+
   it('shows immediate feedback while the run request is still pending', async () => {
     let resolveStart: ((value: Response) => void) | undefined
     const pendingStart = new Promise<Response>(resolve => { resolveStart = resolve })

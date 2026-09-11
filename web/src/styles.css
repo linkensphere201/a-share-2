@@ -198,6 +198,12 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .signal-run-pending svg { color: var(--theme-accent); }
 .signal-run-pending span { display: grid; gap: 3px; }
 .signal-run-pending small { color: var(--theme-muted); font-size: 9px; }
+.signal-context-layer { position: fixed; z-index: 80; inset: 0; }
+.signal-context-menu { position: fixed; width: 198px; padding: 4px; border: 1px solid var(--theme-border); border-radius: 4px; background: var(--theme-raised); box-shadow: 0 12px 32px #000a; }
+.signal-context-menu header { padding: 6px 8px; overflow: hidden; color: var(--theme-muted); border-bottom: 1px solid var(--theme-border); text-overflow: ellipsis; white-space: nowrap; font-size: 9px; }
+.signal-context-menu button { width: 100%; min-height: 30px; display: flex; align-items: center; gap: 7px; padding: 5px 8px; color: var(--theme-text); border: 0; border-radius: 2px; background: transparent; text-align: left; font-size: 10px; }
+.signal-context-menu button:hover { background: var(--theme-hover); }
+.signal-context-menu button:disabled { opacity: .42; cursor: not-allowed; }
 @keyframes signal-pending-pulse { from { background: var(--theme-surface); } to { background: var(--theme-accent-soft); } }
 .signal-progress { background: var(--theme-border); }
 .signal-progress i { display: block; height: 100%; background: var(--theme-accent); transition: width .25s ease; }

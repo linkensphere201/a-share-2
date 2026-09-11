@@ -395,9 +395,12 @@ export async function loadObservationPool(
   ))
 }
 
-export async function startSignalRun(signalId: string): Promise<SignalRun> {
+export async function startSignalRun(
+  signalId: string, effectiveDate?: string,
+): Promise<SignalRun> {
   return json<SignalRun>(await fetch(`/api/signals/${encodeURIComponent(signalId)}/runs`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(effectiveDate ? { effective_date: effectiveDate } : {}),
   }))
 }
 
