@@ -87,7 +87,7 @@ export function LearningWorkspace({ onClose }: { onClose: () => void }) {
       <button className="icon-button" title="刷新课程页面" aria-label="刷新课程页面" disabled={!system} onClick={() => setReloadKey(value => value + 1)}><RefreshCw size={14}/></button>
     </header>
     {error ? <section className="learning-unavailable"><BookOpen size={28}/><span>{error}</span></section> : system && page ? <section className="learning-body">
-      <iframe key={`${system.system_id}:${reloadKey}`} ref={frameRef} title={system.title} src={learningSystemUrl(system)} onLoad={syncPage}/>
+      <iframe key={`${system.system_id}:${reloadKey}`} ref={frameRef} title={system.title} src={learningSystemUrl(system, system.index_path, reloadKey)} onLoad={syncPage}/>
       <div className="learning-resizer" role="separator" aria-orientation="vertical" aria-label="调整课程对话栏宽度" onPointerDown={startResize}/>
       <LearningChatPanel key={system.system_id} system={system} page={page}/>
     </section> : <section className="learning-unavailable"><span>正在加载课程目录...</span></section>}

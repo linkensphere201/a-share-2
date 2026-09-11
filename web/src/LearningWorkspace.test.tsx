@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { LearningWorkspace } from './LearningWorkspace'
 
@@ -15,6 +15,12 @@ describe('LearningWorkspace', () => {
         status: 'published', default: true, available: true,
         index_path: 'systems/trend-genggui/site/index.html',
         corpus_version: 'v1', publication_version: 'site-v1',
+      }, {
+        system_id: 'stockharness-practice', title: 'StockHarness实践问题分析',
+        methodology: 'applied-market-structure-research', status: 'published',
+        default: false, available: true,
+        index_path: 'systems/stockharness-practice/site/index.html',
+        corpus_version: 'practice-v1', publication_version: 'practice-site-v1',
       }] })
       if (url === '/api/ai/codex/status') return response({
         codex: { available: true, authenticated: true, experimental: true },
@@ -34,7 +40,13 @@ describe('LearningWorkspace', () => {
 
     expect(await screen.findByText('交易系统学习')).toBeTruthy()
     expect((await screen.findByTitle('趋势交易体系')).getAttribute('src')).toBe(
-      '/learning/systems/trend-genggui/site/index.html',
+      '/learning/systems/trend-genggui/site/index.html?publication=site-v1&reload=0',
+    )
+    fireEvent.change(screen.getByLabelText('选择交易系统课程'), {
+      target: { value: 'stockharness-practice' },
+    })
+    expect(screen.getByTitle('StockHarness实践问题分析').getAttribute('src')).toBe(
+      '/learning/systems/stockharness-practice/site/index.html?publication=practice-site-v1&reload=0',
     )
     await waitFor(() => expect(screen.getByText('Codex 课程讨论')).toBeTruthy())
     expect(screen.getByLabelText('课程讨论输入')).toBeTruthy()

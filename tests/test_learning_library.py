@@ -91,6 +91,7 @@ def test_learning_api_opens_loopback_course_and_serves_assets(tmp_path: Path) ->
         "http://testserver/learning/systems/trend-genggui/site/index.html"
     ]
     assert page.text == "<h1>course</h1>"
+    assert page.headers["cache-control"] == "no-cache"
     assert media.status_code == 206
     assert media.content == b"2345"
     assert media.headers["content-range"] == "bytes 2-5/10"

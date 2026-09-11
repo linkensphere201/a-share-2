@@ -17,8 +17,13 @@ export async function listLearningSystems(): Promise<LearningSystem[]> {
   return (payload.items ?? []).filter(item => item.available)
 }
 
-export function learningSystemUrl(system: LearningSystem): string {
-  return `/learning/${system.index_path}`
+export function learningSystemUrl(
+  system: LearningSystem,
+  assetPath = system.index_path,
+  reloadKey = 0,
+): string {
+  const version = encodeURIComponent(system.publication_version || 'unversioned')
+  return `/learning/${assetPath}?publication=${version}&reload=${reloadKey}`
 }
 
 export async function openDefaultLearningSystem(): Promise<LearningSystem> {

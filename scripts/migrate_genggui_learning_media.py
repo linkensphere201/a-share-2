@@ -101,6 +101,14 @@ def migrate(library_root: Path, media_map: Path, downloads: Path) -> dict[str, o
             "default": True, "corpus_version": "genggui-28-v1",
             "publication_version": "video-study-html-v1",
             "index_path": f"systems/{SYSTEM_ID}/site/index.html",
+        }, {
+            "system_id": "stockharness-practice",
+            "title": "StockHarness实践问题分析",
+            "methodology": "applied-market-structure-research",
+            "status": "published", "default": False,
+            "corpus_version": "stockharness-practice-v1",
+            "publication_version": "practice-site-v1",
+            "index_path": "systems/stockharness-practice/site/index.html",
         }],
     })
     return manifest

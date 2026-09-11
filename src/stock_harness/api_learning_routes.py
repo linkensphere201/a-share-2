@@ -52,7 +52,9 @@ def create_learning_router(
     @router.get("/learning/{asset_path:path}", include_in_schema=False)
     def learning_asset(asset_path: str) -> FileResponse:
         try:
-            return FileResponse(library.resolve_public_file(asset_path))
+            path = library.resolve_public_file(asset_path)
+            headers = {"Cache-Control": "no-cache"} if path.suffix.lower() == ".html" else None
+            return FileResponse(path, headers=headers)
         except FileNotFoundError as error:
             raise HTTPException(status_code=404, detail="learning asset not found") from error
         except LearningLibraryError as error:
