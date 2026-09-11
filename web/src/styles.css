@@ -1333,21 +1333,21 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .generated-risk-reward { transition: opacity 100ms ease, filter 100ms ease; }
 .chart-generated-analysis.has-highlight .generated-risk-reward:not(.highlighted) { opacity: .16; }
 .generated-risk-reward rect, .generated-risk-reward line { vector-effect: non-scaling-stroke; }
-.generated-risk-reward .risk-region { fill: #ef535026; stroke: #ef53508f; stroke-width: .7; }
-.generated-risk-reward .reward-region { fill: #26a26912; stroke: #26a26970; stroke-width: .7; }
-.generated-risk-reward .reward-region.target-t2 { fill: #49a88616; }
-.generated-risk-reward .reward-region.target-t3 { fill: #6daf9a1a; }
-.generated-risk-reward .reward-region.selected { fill: #26a2692b; stroke: #56bd91; stroke-width: 1.15; }
+.generated-risk-reward .risk-region { fill: #ef535012; stroke: #ef535066; stroke-width: .7; }
+.generated-risk-reward .reward-region { fill: #26a26908; stroke: #26a26952; stroke-width: .7; }
+.generated-risk-reward .reward-region.target-t2 { fill: #49a8860a; }
+.generated-risk-reward .reward-region.target-t3 { fill: #6daf9a0c; }
+.generated-risk-reward .reward-region.selected { fill: #26a26912; stroke: #56bd9199; stroke-width: 1.15; }
 .generated-risk-reward .entry-line { stroke: var(--theme-text-strong); stroke-width: 1; }
 .generated-risk-reward .invalidation-line { stroke: #ef5350; stroke-width: 1; stroke-dasharray: 3 2; }
 .generated-risk-reward .target-line { stroke: #26a269; stroke-width: 1; stroke-dasharray: 3 2; }
 .generated-risk-reward .risk-reward-target { opacity: .62; }
 .generated-risk-reward .risk-reward-target.selected { opacity: 1; }
 .generated-risk-reward .risk-reward-target.selected .target-line { stroke-width: 1.5; }
-.generated-risk-reward text { fill: var(--theme-text-strong); font-family: "Microsoft YaHei UI", "Microsoft YaHei", sans-serif; font-size: 9px; font-weight: 400; paint-order: stroke; stroke: color-mix(in srgb, var(--theme-base) 88%, transparent); stroke-width: 2px; }
+.generated-risk-reward text { fill: var(--theme-text-strong); opacity: .82; font-family: "Microsoft YaHei UI", "Microsoft YaHei", sans-serif; font-size: 9px; font-weight: 400; paint-order: stroke; stroke: color-mix(in srgb, var(--theme-base) 58%, transparent); stroke-width: 1.4px; }
 .generated-risk-reward.invalidated .reward-region,
 .generated-risk-reward.extended .reward-region,
-.generated-risk-reward.no-entry .reward-region { fill: #9aa6b414; stroke: #9aa6b466; }
+.generated-risk-reward.no-entry .reward-region { fill: #9aa6b40a; stroke: #9aa6b44d; }
 .generated-risk-reward.invalidated .target-line,
 .generated-risk-reward.extended .target-line,
 .generated-risk-reward.no-entry .target-line { stroke: #9aa6b4; }
