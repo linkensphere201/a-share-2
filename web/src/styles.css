@@ -260,7 +260,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .signal-score-badge { width: 42px; height: 36px; display: grid; grid-template-columns: 15px 1fr; grid-template-rows: 21px 11px; align-items: center; padding: 2px 3px; border: 1px solid currentColor; border-radius: 3px; color: #8a8f98; background: color-mix(in srgb, currentColor 8%, transparent); line-height: 1; }
 .signal-score-badge i { font-size: 10px; font-style: normal; }
 .signal-score-badge strong { justify-self: end; font-size: 14px; font-weight: 500; }
-.signal-score-badge small { grid-column: 1 / -1; justify-self: end; color: currentColor !important; font-size: 7px !important; opacity: .72; }
+.signal-score-badge small { grid-column: 1 / -1; justify-self: end; color: currentColor !important; font-size: 9px !important; opacity: 1; }
 .signal-score-badge.grade-s, .signal-score-summary.grade-s { color: #d8aa4f; }
 .signal-score-badge.grade-a, .signal-score-summary.grade-a { color: #3aa7b8; }
 .signal-score-badge.grade-b, .signal-score-summary.grade-b { color: #6d91a8; }
@@ -268,14 +268,14 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .signal-score-badge.grade-d, .signal-score-summary.grade-d { color: #626870; }
 .signal-score-badge.ineligible { border-style: dashed; filter: saturate(.65); }
 .signal-score-badge.unavailable { display: grid; place-items: center; color: var(--theme-faint); }
-.signal-score-summary { display: grid; grid-template-columns: 48px minmax(0, 1fr) 72px; gap: 4px 8px; align-items: center; padding: 8px 9px; border-bottom: 1px solid var(--theme-border); border-left: 3px solid currentColor; background: color-mix(in srgb, currentColor 5%, var(--theme-surface)); }
+.signal-score-summary { display: grid; grid-template-columns: 48px minmax(0, 1fr) 72px; gap: 5px 8px; align-items: center; padding: 9px; border-bottom: 1px solid var(--theme-border); border-left: 3px solid currentColor; background: color-mix(in srgb, currentColor 5%, var(--theme-surface)); font-synthesis: none; text-rendering: optimizeLegibility; -webkit-font-smoothing: subpixel-antialiased; }
 .signal-score-summary > div { min-width: 0; }
-.signal-score-summary > div > span { color: var(--theme-text-strong); font-size: 11px; }
-.signal-score-summary p { margin: 2px 0; color: var(--theme-text); font-size: 9px; line-height: 1.4; }
-.signal-score-summary small { color: var(--theme-muted); font-size: 8px; line-height: 1.35; }
-.signal-score-summary > em { grid-column: 2 / -1; color: var(--theme-muted); font-size: 8px; font-style: normal; }
+.signal-score-summary > div > span { color: var(--theme-text-strong); font-size: 12px; line-height: 1.4; }
+.signal-score-summary p { margin: 3px 0; color: var(--theme-text); font-size: 11px; line-height: 1.5; }
+.signal-score-summary small { color: color-mix(in srgb, var(--theme-text) 78%, var(--theme-muted)); font-size: 10px; line-height: 1.45; }
+.signal-score-summary > em { grid-column: 2 / -1; color: color-mix(in srgb, var(--theme-text) 72%, var(--theme-muted)); font-size: 10px; line-height: 1.4; font-style: normal; }
 .signal-hotspot-state { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 5px; padding-top: 5px; border-top: 1px solid var(--theme-border); }
-.signal-hotspot-state > span { min-width: 0; padding: 4px 5px; color: var(--theme-text); border-left: 2px solid #6d91a8; background: color-mix(in srgb, #6d91a8 6%, var(--theme-base)); font-size: 9px; }
+.signal-hotspot-state > span { min-width: 0; padding: 5px 6px; color: var(--theme-text); border-left: 2px solid #6d91a8; background: color-mix(in srgb, #6d91a8 6%, var(--theme-base)); font-size: 10px; line-height: 1.4; }
 .signal-hotspot-state > span.strengthening { border-left-color: #d85a57; }
 .signal-hotspot-state > span.declining { border-left-color: #4b9b67; }
 .signal-hotspot-state small { display: block; overflow: hidden; margin-top: 2px; text-overflow: ellipsis; white-space: nowrap; }
@@ -283,13 +283,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .signal-score-sparkline { justify-self: end; overflow: visible; }
 .signal-score-sparkline polyline { fill: none; stroke: currentColor; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
 .signal-score-sparkline circle { fill: var(--theme-surface); stroke: currentColor; stroke-width: 1.2; cursor: pointer; }
-.signal-score-new { justify-self: end; color: var(--theme-faint); font-size: 8px; }
+.signal-score-new { justify-self: end; color: color-mix(in srgb, var(--theme-text) 72%, var(--theme-muted)); font-size: 10px; }
 .signal-hard-events { grid-column: 2 / -1; display: flex; flex-wrap: wrap; gap: 3px; }
-.signal-hard-events button { padding: 2px 4px; border: 1px solid color-mix(in srgb, currentColor 55%, transparent); border-radius: 2px; background: transparent; color: var(--theme-muted); font: inherit; font-size: 8px; cursor: crosshair; }
+.signal-hard-events button { min-height: 23px; padding: 2px 5px; border: 1px solid color-mix(in srgb, currentColor 55%, transparent); border-radius: 2px; background: transparent; color: var(--theme-muted); font: inherit; font-size: 10px; cursor: crosshair; }
 .signal-hard-events button:hover, .signal-hard-events button:focus-visible { background: color-mix(in srgb, currentColor 12%, transparent); color: var(--theme-text-strong); outline: none; }
 .signal-hard-events button.high { color: #d8aa4f; }
 .signal-hard-events button.down { color: #c58188; }
-.signal-score-diagnostics { grid-column: 1 / -1; color: var(--theme-muted); font-size: 8px; }
+.signal-score-diagnostics { grid-column: 1 / -1; color: color-mix(in srgb, var(--theme-text) 76%, var(--theme-muted)); font-size: 10px; line-height: 1.45; }
 .signal-score-diagnostics summary { cursor: pointer; }
 .signal-score-diagnostics > div { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 4px; }
 .signal-score-diagnostics > div span { display: inline-flex; gap: 4px; padding: 2px 4px; border: 1px solid var(--theme-border); border-radius: 2px; }
