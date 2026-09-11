@@ -93,9 +93,17 @@ def _descending_upper_envelope(
     )
     return {
         "period_bars": periods,
+        "start_date": history[0].trade_date.isoformat(),
+        "end_date": latest.trade_date.isoformat(),
+        "start_price": _round(intercept),
+        "end_price": _round(boundary),
         "boundary": _round(boundary),
         "slope_per_bar": _round(slope),
         "distance_atr": _round(distance),
+        "confirmation_price": _round(boundary + buffer),
+        "confirmation_buffer_atr": _round(buffer / atr14),
+        "invalidation_price": _round(boundary - atr14 * .25),
+        "invalidation_buffer_atr": .25,
         "state": state,
     }
 

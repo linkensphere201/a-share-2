@@ -345,6 +345,23 @@ def test_daily_price_space_calculates_only_reproducible_long_risk_reward() -> No
     assert "存在博弈空间" in rendered
 
 
+def test_daily_summary_exposes_exact_confirmation_and_invalidation_prices() -> None:
+    bars = _daily_bars("BK001.DC", 260, falling=True)
+    observation = analyze_daily_series("BK001.DC", bars, bars[-1].trade_date)
+    envelope = next(
+        value for value in observation["metrics"]["descending_envelopes"].values()
+        if value is not None
+    )
+    envelope["state"] = "broken"
+    observation["state_codes"] = ["bullish-boundary-triggered"]
+
+    _, rendered = render_board_summary(observation, None)
+
+    assert f"边界{envelope['boundary']:.2f}" in rendered
+    assert f"收于{envelope['confirmation_price']:.2f}上方确认" in rendered
+    assert f"收于{envelope['invalidation_price']:.2f}下方视为失败" in rendered
+
+
 def test_daily_price_space_does_not_claim_trade_space_without_a_setup() -> None:
     bars = _daily_bars("BK001.DC", 140)
     observation = analyze_daily_series("BK001.DC", bars, bars[-1].trade_date)

@@ -482,6 +482,76 @@ describe('SignalReviewWorkspace', () => {
     expect(screen.getByTestId('signal-chart').dataset.highlight).toBe('line-1')
   })
 
+  it('projects and highlights first-level geometry when deep M4 was not allocated', async () => {
+    const dailyDefinition = {
+      ...definition, signal_id: 'daily-market-board-review', cadence: 'daily',
+      profiles: ['market', 'attention'],
+    }
+    const dailyRun = {
+      ...run, run_id: 'review-20260910', signal_id: dailyDefinition.signal_id,
+      cadence: 'daily', effective_date: '2026-09-10',
+    }
+    const score = signalScore('700472.TI', 86, true, 1, [{
+      event_type: 'major-trend-breakout', direction: 'up', severity: 'high',
+      state: 'confirmed', source_code: 'descending-envelope-6m-broken',
+    }])
+    const forestry = {
+      ...items[0], item_id: 'forestry', item_key: 'attention:700472.TI',
+      symbol: '700472.TI', name: '林业产品(A股)', kind: 'sector', exchange: 'TI',
+      profile: 'attention',
+      payload: {
+        effective_date: '2026-09-10', deep_analysis_run_id: null,
+        state_codes: ['bullish-boundary-triggered', 'descending-envelope-6m-broken'],
+        rendered_summary: [
+          '【临界状态】多头边界已触发',
+          '- 形态：6m下降边界已经突破。',
+          '- 目标/空间：计划入场2600.14、失效位2571.80，盈亏比16.85:1。',
+          '- 确认/失效：边界上方确认；边界下方失效。',
+        ].join('\n'),
+        metrics: {
+          atr14: 74.2733,
+          descending_envelopes: { '6m': {
+            boundary: 2585.972791, distance_atr: -0.61515,
+            period_bars: 126, slope_per_bar: -8.070409, state: 'broken',
+          } },
+          price_space: {
+            kind: 'structural-trade-scenario', direction: 'long', state: 'triggered',
+            setup_family: 'trend-line-break', horizon: 'long', start_date: '2026-03-19',
+            entry_price: 2600.141374, invalidation_price: 2571.804208,
+            risk_percent: 1.0898, selected_target_label: 'T1', has_trade_space: true,
+            targets: [{ label: 'T1', price: 3077.6775, basis: 'historical-range-high',
+              risk_reward_ratio: 16.851937, stressed_risk_reward_ratio: 14.98838 }],
+          },
+        },
+        score_result: score,
+      },
+      evidence: [],
+    }
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === '/api/signals/definitions') return response({ items: [dailyDefinition] })
+      if (url.includes('/api/signals/runs?')) return response({ items: [dailyRun] })
+      if (url.endsWith('/items')) return response({ items: [forestry] })
+      if (url.endsWith('/scores')) return response({ items: [] })
+      if (url.endsWith('/attention')) return response({ items: [] })
+      if (url.includes('/board-observations?')) return response({ items: [], total: 0 })
+      throw new Error(`unexpected URL ${url}`)
+    }))
+    const user = userEvent.setup()
+    render(<SignalReviewWorkspace theme={themes[0]} onClose={() => undefined}/>)
+
+    await user.click((await screen.findByText('700472.TI')).closest('button')!)
+    expect(screen.getByTestId('signal-chart').dataset.analysisRun).toBe(
+      'daily-review:review-20260910',
+    )
+    expect(screen.getByRole('region', { name: '盈亏比场景' })).toBeTruthy()
+    fireEvent.pointerEnter(screen.getByText(/目标\/空间/))
+    expect(screen.getByTestId('signal-chart').dataset.highlight).toBe('daily-review:scenario')
+    fireEvent.pointerLeave(screen.getByText(/目标\/空间/))
+    fireEvent.pointerEnter(screen.getByRole('button', { name: '大级别突破' }))
+    expect(screen.getByTestId('signal-chart').dataset.highlight).toBe('daily-review:envelope:6m')
+  })
+
   it('opens the persisted stock pool with sources and its exact M4 chart', async () => {
     const dailyDefinition = {
       ...definition, signal_id: 'daily-market-board-review', cadence: 'daily',

@@ -28,6 +28,11 @@ import {
 } from './tradingSystems'
 import type { GeneratedBreakoutState } from './generatedAnalysisProjection'
 import { logInfo, logWarning } from './eventLogger'
+import { DailyConclusionSummary } from './DailyConclusionSummary'
+import {
+  dailyConclusionReferenceFor, dailyConclusionSource,
+  mergeDailyConclusionAnalysis,
+} from './dailyConclusionProjection'
 
 type Props = { theme: ThemeDefinition; onClose: () => void }
 type ProfileFilter = 'all' | SignalProfile
@@ -258,10 +263,21 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
   const deepAnalysisRunId = selectedPoolItem?.payload.m4_analysis?.run_id
     ?? selectedObservation?.deep_analysis_run_id
     ?? selectedItem?.payload.deep_analysis_run_id
+  const conclusionSource = useMemo(() => dailyConclusionSource(
+    selectedRun?.run_id, selectedObservation,
+    selectedItem?.profile === 'attention' ? selectedItem : undefined,
+  ), [selectedItem, selectedObservation, selectedRun?.run_id])
+  const conclusionAnalysis = useMemo(
+    () => mergeDailyConclusionAnalysis(exactAnalysis, conclusionSource),
+    [conclusionSource, exactAnalysis],
+  )
+  const displayedAnalysis = conclusionAnalysis.run
   useEffect(() => {
     setExactAnalysis(null)
     setTrendExplanationOpen(false)
     setChartBreakoutState(undefined)
+    setScenarioHighlightedItemId(undefined)
+    setSelectedScenarioTarget(undefined)
     setTrendRecalculationState('idle')
     setReviewTrendState(current => ({ ...current, analysisStatus: 'not-run' }))
     if (!deepAnalysisRunId) return
@@ -705,12 +721,12 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
         </div>}
         <div className="signal-chart">{inspected
           ? <ChartCanvas key={`${selectedRun?.run_id}:${inspected.symbol}`} symbol={inspected.symbol} instrumentName={inspected.name} instrumentKind={selectedPoolItem?.kind ?? selectedItem?.kind ?? 'sector'} focused theme={theme} range="1Y" priceMode="normal" volumeVisible indicator="none" settlementVisible={false} openInterestVisible={false} asOfDate={selectedRun?.effective_date}
-              toolbarContent={<TradingSystemControls embedded instrumentKind={selectedPoolItem?.kind ?? selectedItem?.kind ?? 'sector'} state={reviewTrendState} breakoutState={chartBreakoutState} analysisRun={exactAnalysis} recalculationState={trendRecalculationState} recalculationAvailable={recalculationAvailable} recalculationDisabledReason="历史轮次保持冻结，只能重新测算最新复盘日期" onChange={setReviewTrendState} onRecalculate={recalculateInspectedTrend} explanationOpen={trendExplanationOpen} onExplanationOpenChange={setTrendExplanationOpen}/>}
-              trendAnalysisEnabled={reviewTrendState.enabled && Boolean(exactAnalysis)} trendAnalysisOverride={exactAnalysis} highlightedAnalysisItemId={highlightedAnalysisItemId} selectedScenarioTarget={selectedScenarioTarget} riskRewardVisible={scenarioVisible}
+              toolbarContent={<TradingSystemControls embedded instrumentKind={selectedPoolItem?.kind ?? selectedItem?.kind ?? 'sector'} state={reviewTrendState} breakoutState={chartBreakoutState} analysisRun={displayedAnalysis} recalculationState={trendRecalculationState} recalculationAvailable={recalculationAvailable} recalculationDisabledReason="历史轮次保持冻结，只能重新测算最新复盘日期" onChange={setReviewTrendState} onRecalculate={recalculateInspectedTrend} explanationOpen={trendExplanationOpen} onExplanationOpenChange={setTrendExplanationOpen}/>}
+              trendAnalysisEnabled={reviewTrendState.enabled && Boolean(displayedAnalysis)} trendAnalysisOverride={displayedAnalysis} highlightedAnalysisItemId={highlightedAnalysisItemId} selectedScenarioTarget={selectedScenarioTarget} riskRewardVisible={scenarioVisible}
               showTentativePivots={Boolean(reviewTrendState.settings.showTentativePivots)} shortTrendLinesVisible={reviewTrendState.layers['short-trend-lines'] !== false} mediumTrendLinesVisible={reviewTrendState.layers['medium-trend-lines'] !== false} longTrendLinesVisible={reviewTrendState.layers['long-trend-lines'] !== false} keyLevelsVisible={reviewTrendState.layers['key-levels'] !== false} volumeZonesVisible={reviewTrendState.layers['volume-zones'] !== false} patternsVisible={reviewTrendState.layers.patterns !== false} breakoutStateVisible={reviewTrendState.layers['breakout-state'] !== false} trendIsolation={reviewTrendState.isolate} onBreakoutStateChange={setChartBreakoutState}/>
           : <div className="signal-empty">选择一项结果查看 K 线</div>}
-          {trendExplanationOpen && exactAnalysis && <TrendExplanationPanel
-            run={exactAnalysis}
+          {trendExplanationOpen && displayedAnalysis && <TrendExplanationPanel
+            run={displayedAnalysis}
             selectedScenarioTarget={selectedScenarioTarget}
             scenarioVisible={scenarioVisible}
             onScenarioTargetChange={setSelectedScenarioTarget}
@@ -724,10 +740,10 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
         </div>
         <div className="signal-evidence"><div className="signal-evidence-resizer" role="separator" aria-orientation="horizontal" aria-label="调整固定算法结论高度" title="上下拖动调整结论区域高度" onPointerDown={startEvidenceResize}/><header><span>{selectedPoolItem ? '观察池依据' : selectedObservation ? '一级分析' : selectedItem?.payload.rendered_summary ? '固定算法结论' : '引用证据'}</span><small>{selectedPoolItem ? selectedPoolItem.sources.length : selectedObservation ? selectedObservation.state_codes.length : selectedItem?.evidence.length ?? 0}</small></header>
           <div className="signal-evidence-content">
-            {inspectedScore && <ScoreSummary score={inspectedScore} onHistorySelect={openHistoricalScore}/>}
-            {exactAnalysis && <TradeScenarioPanel run={exactAnalysis} selectedTargetLabel={selectedScenarioTarget} visible={scenarioVisible} onTargetChange={setSelectedScenarioTarget} onVisibleChange={setScenarioVisible} onHighlightItemChange={setScenarioHighlightedItemId}/>}
+            {inspectedScore && <ScoreSummary score={inspectedScore} onHistorySelect={openHistoricalScore} onEvidenceHighlight={(eventType) => setScenarioHighlightedItemId(dailyConclusionReferenceFor('hard-event', conclusionAnalysis.references, eventType))}/>}
+            {displayedAnalysis && <TradeScenarioPanel run={displayedAnalysis} selectedTargetLabel={selectedScenarioTarget} visible={scenarioVisible} onTargetChange={setSelectedScenarioTarget} onVisibleChange={setScenarioVisible} onHighlightItemChange={setScenarioHighlightedItemId}/>}
             {selectedPoolItem ? <PoolEvidence item={selectedPoolItem} selectedSourceId={highlightedEvidenceId ?? selectedEvidenceId} onSourceActivate={activatePoolSource}/>
-              : selectedObservation ? <pre className="signal-fixed-summary">{observationSummary(selectedObservation)}</pre> : <div className="signal-analysis-details">{selectedItem?.payload.rendered_summary && <pre className="signal-fixed-summary">{selectedItem.payload.rendered_summary}</pre>}<div className="signal-evidence-list">{selectedItem?.evidence.map(evidence => <button key={evidence.evidence_id} className={(highlightedEvidenceId ?? selectedEvidenceId) === evidence.evidence_id ? 'active' : ''} onClick={() => setSelectedEvidenceId(evidence.evidence_id)} title="点击查看该轮固定算法引用的原始或 M4 证据">
+              : selectedObservation ? <DailyConclusionSummary text={observationSummary(selectedObservation)} references={conclusionAnalysis.references} onHighlight={setScenarioHighlightedItemId}/> : <div className="signal-analysis-details">{selectedItem?.payload.rendered_summary && <DailyConclusionSummary text={selectedItem.payload.rendered_summary} references={conclusionAnalysis.references} onHighlight={setScenarioHighlightedItemId}/>}<div className="signal-evidence-list">{selectedItem?.evidence.map(evidence => <button key={evidence.evidence_id} className={(highlightedEvidenceId ?? selectedEvidenceId) === evidence.evidence_id ? 'active' : ''} onClick={() => setSelectedEvidenceId(evidence.evidence_id)} title="点击查看该轮固定算法引用的原始或 M4 证据">
             <code>[{evidence.alias}]</code><span>{evidenceTitle(evidence)}<small>{evidenceDetail(evidence)}</small></span>
           </button>)}</div></div>}
           </div>
@@ -951,9 +967,10 @@ function ScoreBadge({ score, fallback, rank }: {
   </span>
 }
 
-function ScoreSummary({ score, onHistorySelect }: {
+function ScoreSummary({ score, onHistorySelect, onEvidenceHighlight }: {
   score: SignalScoreResult
   onHistorySelect?: (runId: string, symbol: string, entityKey?: string) => void
+  onEvidenceHighlight?: (eventType?: string) => void
 }) {
   return <section className={`signal-score-summary grade-${score.grade.toLowerCase()}`} aria-label="固定算法综合评分">
     <ScoreBadge score={score}/>
@@ -975,7 +992,14 @@ function ScoreSummary({ score, onHistorySelect }: {
       <span>{score.limit_up_count ?? 0} 家涨停<small>最高 {score.max_limit_up_streak ?? 0} 连板 · 扩散 {((score.positive_return_5_ratio ?? 0) * 100).toFixed(0)}%</small></span>
       <span>{score.theme_name ?? boardCapacityLabel(score.board_capacity_tier)}<small>{boardCapacityLabel(score.board_capacity_tier)} · 容量匹配 {score.capacity_fit_score?.toFixed(0) ?? '-'}</small></span>
     </div>}
-    {score.hard_events.length > 0 && <div className="signal-hard-events">{score.hard_events.slice(0, 3).map(event => <span key={event.event_type} className={`${event.direction} ${event.severity}`}>{hardEventLabel(event.event_type)}</span>)}</div>}
+    {score.hard_events.length > 0 && <div className="signal-hard-events">{score.hard_events.slice(0, 3).map(event => <button
+      key={event.event_type}
+      className={`${event.direction} ${event.severity}`}
+      onPointerEnter={() => onEvidenceHighlight?.(event.event_type)}
+      onPointerLeave={() => onEvidenceHighlight?.(undefined)}
+      onFocus={() => onEvidenceHighlight?.(event.event_type)}
+      onBlur={() => onEvidenceHighlight?.(undefined)}
+    >{hardEventLabel(event.event_type)}</button>)}</div>}
     <details className="signal-score-diagnostics"><summary>评分明细</summary>
       <div>{Object.entries(score.components).map(([name, value]) => <span key={name}>{name}<small>{value.toFixed(1)}</small></span>)}</div>
       {score.disqualifiers.length > 0 && <p>失格：{score.disqualifiers.join(' · ')}</p>}

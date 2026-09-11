@@ -18,8 +18,8 @@ from stock_harness.structural_scenario_engine import (
 )
 
 
-ALGORITHM_VERSION = "daily-market-board-observation-v3"
-CONFIG_VERSION = "daily-market-board-defaults-v3"
+ALGORITHM_VERSION = "daily-market-board-observation-v4"
+CONFIG_VERSION = "daily-market-board-defaults-v4"
 MINIMUM_BARS = 120
 LOOKBACK_BARS = 260
 
@@ -238,7 +238,7 @@ def render_board_summary(
         *([f"- 广度：{_breadth_sentence(metrics)}"] if "board_breadth" in metrics else []),
         f"- 目标/空间：{_price_space_sentence(metrics)}",
         f"- 近期对比：{_transition_sentence(transition, prior, recent, primary)}",
-        f"- 确认/失效：{_conditions(primary, nearest)}",
+        f"- 确认/失效：{_conditions(primary, nearest, metrics)}",
     ))
 
 
@@ -621,9 +621,23 @@ def _transition_sentence(
     return f"较{label}{_transition_label(value)}；{context}。"
 
 
-def _conditions(state: str, nearest: tuple[str, float] | None) -> str:
+def _conditions(
+    state: str, nearest: tuple[str, float] | None,
+    metrics: dict[str, object],
+) -> str:
     if state in {"bullish-transition-candidate", "bullish-boundary-triggered"}:
         period = nearest[0] if nearest else "当前"
+        envelopes = metrics.get("descending_envelopes")
+        envelope = envelopes.get(period) if isinstance(envelopes, dict) else None
+        if isinstance(envelope, dict):
+            boundary = _number(envelope.get("boundary"))
+            confirmation = _number(envelope.get("confirmation_price"))
+            invalidation = _number(envelope.get("invalidation_price"))
+            if boundary is not None and confirmation is not None and invalidation is not None:
+                return (
+                    f"{period}边界{boundary:.2f}；放量收于{confirmation:.2f}上方确认；"
+                    f"收于{invalidation:.2f}下方视为失败。"
+                )
         return f"放量收于{period}边界上方确认；重新跌回边界下方0.25 ATR视为失败。"
     if state == "oversold-exhaustion-candidate":
         return "收盘突破短期反转边界才确认；放量创新低则失效。"

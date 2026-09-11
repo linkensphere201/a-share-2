@@ -279,9 +279,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .signal-score-sparkline circle { fill: var(--theme-surface); stroke: currentColor; stroke-width: 1.2; cursor: pointer; }
 .signal-score-new { justify-self: end; color: var(--theme-faint); font-size: 8px; }
 .signal-hard-events { grid-column: 2 / -1; display: flex; flex-wrap: wrap; gap: 3px; }
-.signal-hard-events span { padding: 2px 4px; border: 1px solid color-mix(in srgb, currentColor 55%, transparent); border-radius: 2px; color: var(--theme-muted); font-size: 8px; }
-.signal-hard-events span.high { color: #d8aa4f; }
-.signal-hard-events span.down { color: #c58188; }
+.signal-hard-events button { padding: 2px 4px; border: 1px solid color-mix(in srgb, currentColor 55%, transparent); border-radius: 2px; background: transparent; color: var(--theme-muted); font: inherit; font-size: 8px; cursor: crosshair; }
+.signal-hard-events button:hover, .signal-hard-events button:focus-visible { background: color-mix(in srgb, currentColor 12%, transparent); color: var(--theme-text-strong); outline: none; }
+.signal-hard-events button.high { color: #d8aa4f; }
+.signal-hard-events button.down { color: #c58188; }
 .signal-score-diagnostics { grid-column: 1 / -1; color: var(--theme-muted); font-size: 8px; }
 .signal-score-diagnostics summary { cursor: pointer; }
 .signal-score-diagnostics > div { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 4px; }
@@ -304,6 +305,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .signal-evidence button span { min-width: 0; overflow: hidden; color: var(--theme-text-strong); text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
 .signal-evidence button small { display: block; margin-top: 3px; overflow: hidden; color: var(--theme-text); text-overflow: ellipsis; white-space: nowrap; font-size: 10px; line-height: 1.45; }
 .signal-fixed-summary { min-height: 0; margin: 0; padding: 10px 12px; overflow: auto; color: var(--theme-text-strong); white-space: pre-wrap; font: 12px/1.65 "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", sans-serif; font-synthesis: none; }
+.signal-interactive-summary { display: block; }
+.signal-interactive-summary > span { display: block; min-width: 0; padding: 0 3px; border-left: 2px solid transparent; white-space: pre-wrap; }
+.signal-interactive-summary > .has-chart-evidence { cursor: crosshair; }
+.signal-interactive-summary > .has-chart-evidence:hover,
+.signal-interactive-summary > .has-chart-evidence:focus-visible { border-left-color: var(--theme-accent); background: color-mix(in srgb, var(--theme-accent) 9%, transparent); outline: none; }
 .signal-analysis-details { min-height: 0; overflow: auto; }
 .signal-analysis-details .signal-fixed-summary { overflow: visible; border-bottom: 1px solid var(--theme-border); }
 .signal-view-empty { display: grid; align-content: start; gap: 7px; margin: 10px; padding: 12px; border: 1px solid var(--theme-border); border-left: 3px solid #d8aa4f; border-radius: 4px; background: color-mix(in srgb, #d8aa4f 5%, var(--theme-surface)); color: var(--theme-text); }
