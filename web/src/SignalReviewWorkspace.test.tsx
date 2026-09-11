@@ -122,10 +122,14 @@ describe('SignalReviewWorkspace', () => {
   })
 
   it('reruns a historical date from its right-click menu as a new revision', async () => {
+    const newerRun = {
+      ...run, run_id: 'run-newer', effective_date: '2026-09-08', revision: 1,
+      prior_run_id: null, started_at_ms: 3, completed_at_ms: 4,
+    }
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       if (url === '/api/signals/definitions') return response({ items: [definition] })
-      if (url.includes('/api/signals/runs?')) return response({ items: [run] })
+      if (url.includes('/api/signals/runs?')) return response({ items: [newerRun, run] })
       if (url.endsWith('/items')) return response({ items })
       if (url.endsWith('/scores')) return response({ items: [] })
       if (url.includes('/api/signals/weekly-board-recognition/runs') && init?.method === 'POST') {
@@ -136,7 +140,7 @@ describe('SignalReviewWorkspace', () => {
     })
     vi.stubGlobal('fetch', fetchMock)
     const user = userEvent.setup()
-    render(<SignalReviewWorkspace theme={themes[0]} onClose={() => undefined}/>)
+    const { container } = render(<SignalReviewWorkspace theme={themes[0]} onClose={() => undefined}/>)
 
     const runLabel = await screen.findByText('2026-09-04')
     fireEvent.contextMenu(runLabel.closest('button')!, { clientX: 32, clientY: 80 })
@@ -148,6 +152,12 @@ describe('SignalReviewWorkspace', () => {
     })).toBe(true))
     expect(screen.getByText('R3')).toBeTruthy()
     expect(screen.queryByRole('menu')).toBeNull()
+    expect([...container.querySelectorAll('.signal-runs .signal-scroll > button')]
+      .map(item => item.textContent)).toEqual([
+        expect.stringContaining('2026-09-08 R1'),
+        expect.stringContaining('2026-09-04 R3'),
+        expect.stringContaining('2026-09-04 R2'),
+      ])
   })
 
   it('shows immediate feedback while the run request is still pending', async () => {

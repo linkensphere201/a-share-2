@@ -348,7 +348,8 @@ class SQLiteSignalReviewStoreMixin:
         with self._lock:
             rows = self._connection.execute(
                 f"""SELECT {_SIGNAL_RUN_COLUMNS} FROM signal_review_runs {where}
-                ORDER BY started_at_ms DESC, run_id DESC LIMIT ?""", parameters,
+                ORDER BY effective_date DESC, revision DESC,
+                         started_at_ms DESC, run_id DESC LIMIT ?""", parameters,
             ).fetchall()
         return [_run_row(row) for row in rows]
 

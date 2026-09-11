@@ -60,6 +60,24 @@ def test_signal_review_snapshots_preserve_revisions_and_diffs() -> None:
     items = store.list_signal_review_items(str(second["run_id"]))
     assert [item["symbol"] for item in items] == ["000001.SZ", "000002.SZ"]
     assert items[0]["evidence"][0]["alias"] == "S1"
+
+    newer = store.create_signal_review_run(
+        signal_id=WEEKLY_RECOGNITION_SIGNAL,
+        definition_version="definition-v1", algorithm_version="algorithm-v1",
+        cadence="weekly", effective_date=date(2026, 9, 5), parameters={},
+    )
+    old_date_rerun = store.create_signal_review_run(
+        signal_id=WEEKLY_RECOGNITION_SIGNAL,
+        definition_version="definition-v1", algorithm_version="algorithm-v1",
+        cadence="weekly", effective_date=date(2026, 9, 4), parameters={},
+    )
+    ordered = store.list_signal_review_runs(WEEKLY_RECOGNITION_SIGNAL)
+    assert [(item["effective_date"], item["revision"]) for item in ordered] == [
+        (date(2026, 9, 5), int(newer["revision"])),
+        (date(2026, 9, 4), int(old_date_rerun["revision"])),
+        (date(2026, 9, 4), 2),
+        (date(2026, 9, 4), 1),
+    ]
     store.close()
 
 

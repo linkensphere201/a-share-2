@@ -141,8 +141,9 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
     if (!selectedDefinition) return
     const controller = new AbortController()
     listSignalRuns(selectedDefinition.signal_id, controller.signal).then(value => {
-      setRuns(value)
-      setSelectedRun(current => value.find(item => item.run_id === current?.run_id) ?? value[0])
+      const ordered = orderSignalRuns(value)
+      setRuns(ordered)
+      setSelectedRun(current => ordered.find(item => item.run_id === current?.run_id) ?? ordered[0])
     }).catch(reason => { if (reason.name !== 'AbortError') setError(String(reason)) })
     return () => controller.abort()
   }, [selectedDefinition])
@@ -184,7 +185,7 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
       try {
         const next = await loadSignalRun(selectedRun.run_id)
         setSelectedRun(next)
-        setRuns(await listSignalRuns(selectedDefinition.signal_id))
+        setRuns(orderSignalRuns(await listSignalRuns(selectedDefinition.signal_id)))
       } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)) }
     }, 1200)
     return () => window.clearInterval(timer)
@@ -469,7 +470,7 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
     try {
       setError('')
       const next = await startSignalRun(selectedDefinition.signal_id, effectiveDate)
-      setRuns(current => [next, ...current])
+      setRuns(current => orderSignalRuns([next, ...current]))
       setSelectedRun(next)
       logInfo('signal-review', effectiveDate ? '历史复盘重跑任务已创建' : '本期复盘任务已创建', {
         signal_id: selectedDefinition.signal_id,
@@ -529,7 +530,8 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
       const historicalRun = await loadSignalRun(runId)
       setHistorySelection({ symbol, entityKey })
       setSelectedRun(historicalRun)
-      setRuns(current => current.some(item => item.run_id === runId) ? current : [...current, historicalRun])
+      setRuns(current => current.some(item => item.run_id === runId)
+        ? current : orderSignalRuns([...current, historicalRun]))
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason))
     }
@@ -795,6 +797,15 @@ function signalRunMenuPosition(x: number, y: number) {
     x: Math.max(8, Math.min(x, window.innerWidth - 210)),
     y: Math.max(8, Math.min(y, window.innerHeight - 100)),
   }
+}
+
+function orderSignalRuns(values: SignalRun[]) {
+  return [...values].sort((left, right) => (
+    right.effective_date.localeCompare(left.effective_date)
+    || right.revision - left.revision
+    || right.started_at_ms - left.started_at_ms
+    || right.run_id.localeCompare(left.run_id)
+  ))
 }
 
 type SignalViewEmptyExplanation = {
