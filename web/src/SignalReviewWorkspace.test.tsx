@@ -617,7 +617,7 @@ describe('SignalReviewWorkspace', () => {
         },
         sources: [{
           source_type: 'm4-analysis', source_reference: 'pool-m4-1',
-          source_entity_key: 'scenario-1', reason: '独立强势且形成结构化交易场景',
+          source_entity_key: 'scenario-1', reason: 'bounded-pool-analysis',
           payload: { analysis_item_id: 'line-1' },
         }],
       }, {
@@ -652,7 +652,11 @@ describe('SignalReviewWorkspace', () => {
     await user.click((await screen.findByText('300001.SZ')).closest('button')!)
     expect(screen.getByTestId('signal-chart').textContent).toBe('300001.SZ')
     expect(screen.getByTestId('signal-chart').dataset.analysisRun).toBe('pool-m4-1')
-    expect(screen.getByText('独立强势且形成结构化交易场景')).toBeTruthy()
+    expect(screen.getByText('独立强势 · 形态分析')).toBeTruthy()
+    expect(screen.getByText('观察池内形态分析')).toBeTruthy()
+    expect(screen.getByText('形态分析 · 形态对象')).toBeTruthy()
+    expect(screen.getByText('形态分析 已完成')).toBeTruthy()
+    expect(screen.queryByText('bounded-pool-analysis')).toBeNull()
     expect(screen.getByText('具备机会资格')).toBeTruthy()
     await user.click(screen.getByText('[O1]').closest('button')!)
     expect(screen.getByText('[O1]').closest('button')?.classList.contains('active')).toBe(true)

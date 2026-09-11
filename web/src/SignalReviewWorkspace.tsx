@@ -904,7 +904,34 @@ function filterReasonLabel(value: string): string {
     'weak-leader': '板块龙头强度不足',
     'weak-breadth': '板块内部扩散不足',
     'weak-activity': '量能活跃度不足',
-  } as Record<string, string>)[value] ?? value
+  } as Record<string, string>)[value] ?? (/[\u4e00-\u9fff]/.test(value) ? value : '其他过滤条件')
+}
+
+function scoreComponentLabel(value: string): string {
+  return ({
+    multi_horizon: '多周期趋势',
+    price_volume: '量价配合',
+    relative_strength: '相对强弱',
+    risk_reward: '盈亏比',
+    shape_trigger: '形态触发',
+    target_quality: '目标质量',
+    breadth: '内部扩散',
+    leader: '龙头强度',
+    activity: '量能活跃',
+    persistence: '持续性',
+    capacity_fit: '容量匹配',
+  } as Record<string, string>)[value] ?? '其他评分项'
+}
+
+function scorePenaltyLabel(value: string): string {
+  return ({
+    'weak-risk-reward': '盈亏比不足',
+    'weak-target-quality': '目标位质量不足',
+    'late-stage-extension': '走势延伸过度',
+    'weak-volume-confirmation': '量能确认不足',
+    'market-capacity-mismatch': '市场容量不匹配',
+    'single-session-anomaly': '单日异动',
+  } as Record<string, string>)[value] ?? (/[\u4e00-\u9fff]/.test(value) ? value : '其他扣分项')
 }
 
 function createReviewTrendState(): TradingSystemWindowState {
@@ -972,7 +999,75 @@ function poolClassification(item: ObservationPoolItem) {
     'board-opportunity': '板块机会',
     'board-watch': '板块观察',
   }
-  return classification ? (labels[classification] ?? classification) : item.kind === 'sector' ? '板块观察' : '个股观察'
+  return classification ? (labels[classification] ?? '其他观察') : item.kind === 'sector' ? '板块观察' : '个股观察'
+}
+
+function poolSourceTypeLabel(value: string): string {
+  return ({
+    'board-membership': '板块成分',
+    'hard-anomaly': '硬异动',
+    'attention-registry': '关注登记',
+    'recognition-assignment': '辨识度标的',
+    'pool-lifecycle': '观察池状态',
+    'independent-strength': '独立强势',
+    'm4-analysis': '形态分析',
+    'trend-score': '趋势评分',
+  } as Record<string, string>)[value] ?? '其他算法来源'
+}
+
+function poolSourceReasonLabel(value: string): string {
+  return ({
+    'pooled-board-member': '板块观察池成分股',
+    cooldown: '冷却期保留',
+    historical: '历史辨识度',
+    'auto-promoted': '自动关注',
+    'not-selected-current-run': '本轮未再次入选',
+    'relative-strength-regime': '相对强弱异动',
+    recent: '近期辨识度',
+    'bullish-boundary-triggered': '多头边界触发',
+    'prior-state-strengthened': '较上一轮增强',
+    'structure-invalidated': '结构失效',
+    'trend-breakout': '趋势突破',
+    'prior-state-changed': '较上一轮变化',
+    'trend-boundary-proximity': '接近趋势边界',
+    'downside-exhaustion': '下跌动能衰竭',
+    'major-trend-breakout': '大级别趋势突破',
+    'counter-trend-resilience': '逆势抗跌',
+    'decaying-independent-move': '独立行情减弱',
+    'independent-decline': '独立下跌',
+    'independent-advance': '独立上涨',
+    'sudden-volume-expansion': '突然放量',
+    'bounded-pool-analysis': '观察池内形态分析',
+    'one-session-event-anomaly': '单日事件异动',
+    'eligible-top-20': '趋势评分前 20',
+    'prior-state-weakened': '较上一轮减弱',
+    'emerging-independent-move': '独立行情形成中',
+    'boundary-volume-contraction': '边界附近缩量',
+    neutral: '中性',
+    'oversold-rebound-triggered': '超跌反弹触发',
+    resynchronized: '恢复同步',
+    'manual-user-selection': '手工加入',
+    'candidate-evidence-retained': '候选证据保留',
+    'independent-strength': '独立强势',
+  } as Record<string, string>)[value] ?? (/[\u4e00-\u9fff]/.test(value) ? value : '其他算法依据')
+}
+
+function poolSourceEntityLabel(source: ObservationPoolSource): string {
+  const key = source.source_entity_key
+  if (source.source_type === 'board-membership') return `成分股 ${key}`
+  if (['hard-anomaly', 'attention-registry', 'trend-score'].includes(source.source_type)) return `板块 ${key}`
+  if (source.source_type === 'recognition-assignment') return `标的 ${key.replace(/^(recent|historical):/, '')}`
+  if (['independent-strength', 'pool-lifecycle'].includes(source.source_type)) return `标的 ${key}`
+  if (source.source_type === 'm4-analysis') return '形态对象'
+  return '来源对象'
+}
+
+function poolAnalysisStateLabel(value?: string): string {
+  return ({
+    completed: '已完成', succeeded: '已完成', current: '已完成',
+    running: '计算中', pending: '等待计算', failed: '失败',
+    skipped: '已跳过', deferred: '已延后',
+  } as Record<string, string>)[value ?? ''] ?? '已测算'
 }
 
 function PoolScoreBadge({ item }: { item: ObservationPoolItem }) {
@@ -993,15 +1088,15 @@ function PoolEvidence({ item, selectedSourceId, onSourceActivate }: {
   return <div className="signal-pool-evidence">
     <div className="signal-pool-summary">
       <span>{poolClassification(item)}<small>{poolLifecycleLabel(item.lifecycle_state)}</small></span>
-      <span>来源 {item.sources.length}<small>{(item.payload.source_types ?? []).join(' · ') || '固定算法'}</small></span>
+      <span>来源 {item.sources.length}<small>{(item.payload.source_types ?? []).map(poolSourceTypeLabel).join(' · ') || '固定算法'}</small></span>
       {classification && <span>{classification.opportunity_eligible ? '具备机会资格' : '继续观察'}<small>可信目标 {classification.credible_target_count ?? 0}</small></span>}
-      {m4 && <span>M4 {m4.status ?? m4.state ?? '已测算'}<small>{m4.warning_count ?? 0} 条警告</small></span>}
+      {m4 && <span>形态分析 {poolAnalysisStateLabel(m4.status ?? m4.state)}<small>{m4.warning_count ?? 0} 条警告</small></span>}
     </div>
     <div className="signal-pool-sources">{item.sources.map((source, index) => {
       const sourceId = `${source.source_type}:${source.source_entity_key}`
-      return <button key={`${sourceId}:${index}`} className={selectedSourceId === sourceId ? 'active' : ''} onClick={() => void onSourceActivate(source)} title="打开该项来源证据">
+      return <button key={`${sourceId}:${index}`} className={selectedSourceId === sourceId ? 'active' : ''} onClick={() => void onSourceActivate(source)} title={`${source.source_type} · ${source.source_entity_key} · ${source.reason}`}>
         <code>[O{index + 1}]</code>
-        <span>{source.reason}<small>{source.source_type} · {source.source_entity_key}</small></span>
+        <span>{poolSourceReasonLabel(source.reason)}<small>{poolSourceTypeLabel(source.source_type)} · {poolSourceEntityLabel(source)}</small></span>
       </button>
     })}</div>
   </div>
@@ -1054,9 +1149,9 @@ function ScoreSummary({ score, onHistorySelect, onEvidenceHighlight }: {
       onBlur={() => onEvidenceHighlight?.(undefined)}
     >{hardEventLabel(event.event_type)}</button>)}</div>}
     <details className="signal-score-diagnostics"><summary>评分明细</summary>
-      <div>{Object.entries(score.components).map(([name, value]) => <span key={name}>{name}<small>{value.toFixed(1)}</small></span>)}</div>
-      {score.disqualifiers.length > 0 && <p>失格：{score.disqualifiers.join(' · ')}</p>}
-      {score.penalties.length > 0 && <p>扣分：{score.penalties.map(item => `${item.code} ${item.points}`).join(' · ')}</p>}
+      <div>{Object.entries(score.components).map(([name, value]) => <span key={name} title={name}>{scoreComponentLabel(name)}<small>{value.toFixed(1)}</small></span>)}</div>
+      {score.disqualifiers.length > 0 && <p title={score.disqualifiers.join(' · ')}>失格：{score.disqualifiers.map(filterReasonLabel).join(' · ')}</p>}
+      {score.penalties.length > 0 && <p title={score.penalties.map(item => item.code).join(' · ')}>扣分：{score.penalties.map(item => `${scorePenaltyLabel(item.code)} ${item.points}`).join(' · ')}</p>}
     </details>
   </section>
 }
