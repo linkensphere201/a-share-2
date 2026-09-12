@@ -17,7 +17,7 @@ MANIFEST_SCHEMA_VERSION = "1.0"
 SYSTEM_ID_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 PUBLIC_SUFFIXES = {
     ".html", ".css", ".js", ".json", ".jpg", ".jpeg", ".png", ".webp",
-    ".vtt", ".mp4", ".webm", ".mkv", ".m4a",
+    ".svg", ".vtt", ".mp4", ".webm", ".mkv", ".m4a",
 }
 LEARNING_CONTEXT_MAX_CHARS = 24_000
 

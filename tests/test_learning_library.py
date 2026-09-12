@@ -17,6 +17,12 @@ def _create_library(root: Path) -> None:
     site = root / "systems" / "trend-genggui" / "site"
     site.mkdir(parents=True)
     (site / "index.html").write_text("<h1>course</h1>", encoding="utf-8")
+    figures = site / "assets" / "figures"
+    figures.mkdir(parents=True)
+    (figures / "lesson.svg").write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"></svg>',
+        encoding="utf-8",
+    )
     media = root / "systems" / "trend-genggui" / "media"
     media.mkdir()
     (media / "episode.mp4").write_bytes(b"0123456789")
@@ -78,6 +84,9 @@ def test_learning_api_opens_loopback_course_and_serves_assets(tmp_path: Path) ->
         catalog = client.get("/api/learning/systems")
         opened_response = client.post("/api/learning/systems/trend-genggui/open")
         page = client.get("/learning/systems/trend-genggui/site/index.html")
+        figure = client.get(
+            "/learning/systems/trend-genggui/site/assets/figures/lesson.svg"
+        )
         media = client.get(
             "/learning/systems/trend-genggui/media/episode.mp4",
             headers={"Range": "bytes=2-5"},
@@ -92,6 +101,9 @@ def test_learning_api_opens_loopback_course_and_serves_assets(tmp_path: Path) ->
     ]
     assert page.text == "<h1>course</h1>"
     assert page.headers["cache-control"] == "no-cache"
+    assert figure.status_code == 200
+    assert figure.headers["content-type"].startswith("image/svg+xml")
+    assert b"<svg" in figure.content
     assert media.status_code == 206
     assert media.content == b"2345"
     assert media.headers["content-range"] == "bytes 2-5/10"
