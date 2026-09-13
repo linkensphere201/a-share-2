@@ -3,10 +3,19 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 import hashlib
 import json
 
-from stock_harness.mean_reversion_policy import build_mean_reversion_decision
+from stock_harness.mean_reversion_policy import (
+    MeanReversionPolicyConfig,
+    build_mean_reversion_decision,
+)
+from stock_harness.mean_reversion_context import (
+    board_execution_context,
+    build_market_permission,
+    normalize_relative_strength,
+)
 from stock_harness.review_scoring import score_grade
 from stock_harness.review_systems.contracts import (
     ANALYSIS_RESULT_CONTRACT_VERSION,
@@ -16,7 +25,7 @@ from stock_harness.review_systems.contracts import (
 
 
 MEAN_REVERSION_SYSTEM_ID = "mean-reversion"
-MEAN_REVERSION_VERSION = "mean-reversion-daily-v4"
+MEAN_REVERSION_VERSION = "mean-reversion-daily-v5"
 
 
 class MeanReversionReviewSystem:
@@ -29,11 +38,61 @@ class MeanReversionReviewSystem:
         dependencies=("mean_reversion_facts",),
     )
 
+    def __init__(
+        self, *, policy_config: MeanReversionPolicyConfig = MeanReversionPolicyConfig(),
+        version_suffix: str = "",
+    ) -> None:
+        self._policy_config = policy_config
+        if version_suffix:
+            self.definition = replace(
+                type(self).definition,
+                version=f"{MEAN_REVERSION_VERSION}-{version_suffix}",
+            )
+
     def analyze(self, context: AnalysisSystemContext) -> Sequence[dict[str, object]]:
+        all_entities = [
+            entity for scope in self.definition.supported_scopes
+            for entity in context.entities_by_scope.get(scope, ())
+        ]
+        candidate_count = sum(
+            str(_mapping(entity.get("mean_reversion")).get("state"))
+            == "reversal-confirmed"
+            for scope in ("board", "stock")
+            for entity in context.entities_by_scope.get(scope, ())
+        )
+        permission = (
+            _mapping(context.dependencies.get("mean_reversion_market_permission"))
+            or build_market_permission(
+                context.entities_by_scope.get("market", ()),
+                candidate_count=candidate_count,
+                entity_count=int(_number(context.dependencies.get(
+                    "mean_reversion_analyzed_entity_count",
+                ))) or len(all_entities),
+                liquidity=_mapping(context.dependencies.get("market_liquidity_context")),
+            )
+        )
+        capacities = _mapping(context.dependencies.get("board_capacity_features"))
+        hotspots = _mapping(context.dependencies.get("board_hotspot_features"))
         pending = []
         for scope in self.definition.supported_scopes:
             for entity in context.entities_by_scope.get(scope, ()):
-                pending.append(analyze_mean_reversion_entity(scope, entity))
+                symbol = str(entity.get("symbol") or "")
+                decision_context = {
+                    "market_permission": permission,
+                    "relative_strength": normalize_relative_strength(entity),
+                    "board_context": (
+                        _mapping(entity.get("board_context"))
+                        or board_execution_context(
+                            entity, _mapping(capacities.get(symbol)),
+                            _mapping(hotspots.get(symbol)),
+                        )
+                    ) if scope == "board" else {},
+                }
+                pending.append(analyze_mean_reversion_entity(
+                    scope, entity, decision_context=decision_context,
+                    policy_config=self._policy_config,
+                    system_version=self.definition.version,
+                ))
         groups: dict[tuple[str, str], list[dict[str, object]]] = {}
         for result in pending:
             groups.setdefault(
@@ -79,7 +138,10 @@ class MeanReversionReviewSystem:
 
 
 def analyze_mean_reversion_entity(
-    scope: str, entity: Mapping[str, object],
+    scope: str, entity: Mapping[str, object], *,
+    decision_context: Mapping[str, object] | None = None,
+    policy_config: MeanReversionPolicyConfig = MeanReversionPolicyConfig(),
+    system_version: str = MEAN_REVERSION_VERSION,
 ) -> dict[str, object]:
     """Analyze one point-in-time entity for replay and production orchestration."""
     symbol = str(entity.get("symbol") or "").upper()
@@ -96,29 +158,36 @@ def analyze_mean_reversion_entity(
         dict(value) for value in _sequence(facts.get("targets"))
         if isinstance(value, Mapping)
     ]
-    decision = build_mean_reversion_decision(scope, facts)
+    decision = build_mean_reversion_decision(
+        scope, facts, context=decision_context, config=policy_config,
+    )
     execution = _mapping(decision.get("execution"))
     selected = _mapping(execution.get("selected_target")) or None
     entry = _optional_number(execution.get("entry_price"))
     invalidation = _optional_number(execution.get("invalidation_price"))
     selected_price = _optional_number(selected.get("price")) if selected else None
 
-    center_points = 20.0 if bool(center.get("stable")) else 0.0
+    market_permission = _mapping(_mapping(decision.get("context")).get("market_permission"))
+    relative_strength = _mapping(_mapping(decision.get("context")).get("relative_strength"))
+    market_points = {
+        "allowed": 15.0, "unknown": 7.5, "observe-only": 3.0, "blocked": 0.0,
+    }.get(str(market_permission.get("status") or "unknown"), 5.0)
+    center_points = 15.0 if bool(center.get("stable")) else 0.0
     if family == "directional-pullback" and facts.get("parent_trend") != "up":
-        center_points = min(center_points, 6.0)
+        center_points = min(center_points, 4.0)
     deviation = abs(_number(facts.get("recent_low_deviation_atr")))
     deviation_threshold = 1.5 if family == "oversold-exhaustion" else .65
     deviation_points = (
-        min(15.0, 6.0 + max(0.0, deviation - deviation_threshold) * 6.0)
+        min(5.0, 2.0 + max(0.0, deviation - deviation_threshold) * 2.0)
         if family != "none" and deviation >= deviation_threshold else 0.0
     )
     path = str(price_volume.get("path") or "neutral")
     volume_points = {
-        "volume-backed-reclaim": 20.0,
-        "capitulation-absorption": 18.0,
-        "shrinking-volume-stabilization": 14.0,
-        "neutral": 8.0,
-        "shrinking-volume-rebound": 4.0,
+        "volume-backed-reclaim": 15.0,
+        "capitulation-absorption": 13.0,
+        "shrinking-volume-stabilization": 11.0,
+        "neutral": 6.0,
+        "shrinking-volume-rebound": 3.0,
         "expanding-volume-decline": 0.0,
         "volume-backed-structural-break": 0.0,
     }.get(path, 6.0)
@@ -126,16 +195,25 @@ def analyze_mean_reversion_entity(
     confirmation_quality = _number(
         _mapping(decision.get("confirmation")).get("quality_score")
     )
-    exhaustion_points = min(
-        15.0, exhaustion_count * 1.5 + confirmation_quality * .09,
+    confirmation_payload = _mapping(facts.get("confirmation"))
+    stabilization_points = min(
+        20.0,
+        confirmation_quality * .12
+        + _number(confirmation_payload.get("hold_sessions")) * 3.0
+        + (4.0 if confirmation_payload.get("structural_hold") else 0.0),
+    )
+    relative_points = 15.0 if relative_strength.get("passed") else (
+        7.5 if not relative_strength.get("available") else 0.0
     )
     selected_rr = _number(selected.get("stressed_risk_reward_ratio")) if selected else 0.0
-    rr_points = min(30.0, selected_rr * 10.0)
+    rr_points = min(15.0, selected_rr * 7.5)
     components = {
+        "market_permission": round(market_points, 2),
         "center_regime": round(center_points, 2),
         "normalized_deviation": round(deviation_points, 2),
         "price_volume": round(volume_points, 2),
-        "exhaustion_confirmation": round(exhaustion_points, 2),
+        "stabilization_confirmation": round(stabilization_points, 2),
+        "relative_strength": round(relative_points, 2),
         "risk_reward": round(rr_points, 2),
     }
     penalties = []
@@ -153,7 +231,7 @@ def analyze_mean_reversion_entity(
     verdict = _verdict(family, state, eligible)
     summary = _summary(family, state, facts, selected)
     risk_summary = _risk_summary(disqualifiers, facts)
-    evidence = _evidence(facts)
+    evidence = _evidence(facts, decision)
     opportunity = {
         "state": state, "direction": "long", "entry_price": entry,
         "tier": decision.get("tier"),
@@ -173,7 +251,7 @@ def analyze_mean_reversion_entity(
     result = {
         "contract_version": ANALYSIS_RESULT_CONTRACT_VERSION,
         "system_id": MEAN_REVERSION_SYSTEM_ID,
-        "system_version": MEAN_REVERSION_VERSION,
+        "system_version": system_version,
         "setup_family": family, "timeframe": "daily",
         "entity_scope": scope, "entity_key": str(entity.get("entity_key") or symbol),
         "symbol": symbol,
@@ -302,10 +380,33 @@ def _finalize_result(
     return result
 
 
-def _evidence(facts: Mapping[str, object]) -> list[dict[str, object]]:
+def _evidence(
+    facts: Mapping[str, object], decision: Mapping[str, object],
+) -> list[dict[str, object]]:
     center = _mapping(facts.get("center"))
     confirmation = _mapping(facts.get("confirmation"))
-    return [{
+    decision_context = _mapping(decision.get("context"))
+    permission = _mapping(decision_context.get("market_permission"))
+    relative = _mapping(decision_context.get("relative_strength"))
+    board_context = _mapping(decision_context.get("board_context"))
+    contextual = [{
+        "evidence_id": "mr:market-permission", "kind": "market-permission",
+        "label": "市场环境许可", "value": {
+            "status": permission.get("status"),
+            "candidate_count": permission.get("candidate_count"),
+            "candidate_pressure_ratio": permission.get("candidate_pressure_ratio"),
+            "liquidity_regime": _mapping(permission.get("liquidity")).get("regime"),
+        },
+    }, {
+        "evidence_id": "mr:relative-strength", "kind": "relative-strength",
+        "label": "相对强度确认", "value": dict(relative),
+    }]
+    if board_context:
+        contextual.append({
+            "evidence_id": "mr:board-context", "kind": "board-execution-context",
+            "label": "板块宽度与容量确认", "value": dict(board_context),
+        })
+    return contextual + [{
         "evidence_id": "mr:center", "kind": "moving-center",
         "label": "运动中心", "value": center.get("price"),
     }, {
@@ -425,6 +526,8 @@ def _state_label(value: str) -> str:
         "unqualified": "不符合", "stable-center": "中心稳定",
         "deviation-building": "偏离扩大", "extreme-pending": "极端偏离",
         "exhaustion-watch": "衰竭观察", "reversal-confirmed": "反转确认",
+        "initial-reclaim-observation": "首次反弹观察",
+        "confirmation-hold": "确认守位中",
         "reverting": "回归进行中", "target-reached": "到达目标",
         "continued-divergence": "持续背离", "structural-break": "结构断裂",
     }.get(value, value)

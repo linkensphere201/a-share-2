@@ -207,6 +207,7 @@ def analyze_daily_series(
         "price_space": _price_space(visible, states, envelopes, atr14),
         "mean_reversion": build_mean_reversion_facts(
             visible, volume_semantics=volume_semantics,
+            benchmark_bars=benchmark_bars,
         ),
     }
     return _observation(

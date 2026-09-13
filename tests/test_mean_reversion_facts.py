@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date, timedelta
 
 from stock_harness.mean_reversion_facts import (
@@ -13,8 +14,10 @@ from stock_harness.models import StoredDailyBar
 def test_directional_pullback_requires_price_confirmation() -> None:
     closes = [100 + index * .35 for index in range(125)]
     closes.extend([144 - index * .55 for index in range(14)])
-    closes.extend([136.6, 136.8, 137.0, 138.2])
+    closes.extend([136.6, 136.8, 137.0, 138.5, 138.7, 139.0])
     bars = _bars(closes, final_high_offset=.3, final_volume=1_400)
+    bars[-3] = replace(bars[-3], high=closes[-3] + .3)
+    bars[-2] = replace(bars[-2], volume=1_400)
 
     facts = build_mean_reversion_facts(bars)
 
@@ -24,6 +27,35 @@ def test_directional_pullback_requires_price_confirmation() -> None:
     assert facts["confirmation"]["confirmed"] is True
     assert facts["price_volume"]["path"] == "volume-backed-reclaim"
     assert len(facts["chart"]["center_points"]) == 120
+
+
+def test_first_reclaim_is_observation_not_same_day_opportunity() -> None:
+    closes = [100 + index * .35 for index in range(125)]
+    closes.extend([144 - index * .55 for index in range(14)])
+    closes.extend([136.6, 136.8, 137.0, 138.5])
+
+    bars = _bars(closes, final_high_offset=.3, final_volume=1_400)
+    facts = build_mean_reversion_facts(bars)
+
+    assert facts["confirmation"]["stage"] == "initial-reclaim"
+    assert facts["confirmation"]["confirmed"] is False
+    assert facts["state"] == "initial-reclaim-observation"
+
+
+def test_consecutive_momentum_day_does_not_count_as_one_day_retest() -> None:
+    closes = [100 + index * .35 for index in range(125)]
+    closes.extend([144 - index * .55 for index in range(14)])
+    closes.extend([136.6, 136.8, 137.0, 138.5, 141.0])
+
+    bars = _bars(closes, final_volume=1_800)
+    bars[-2] = replace(bars[-2], high=closes[-2] + .3)
+    facts = build_mean_reversion_facts(bars)
+
+    assert facts["confirmation"]["hold_sessions"] == 1
+    assert facts["confirmation"]["first_hold_retest"] is False
+    assert facts["confirmation"]["first_hold_stand"] is False
+    assert facts["confirmation"]["confirmed"] is False
+    assert facts["state"] == "confirmation-hold"
 
 
 def test_expanding_structural_decline_is_never_treated_as_reversion() -> None:
@@ -74,19 +106,20 @@ def test_decision_inputs_are_causal_even_when_future_path_reverses() -> None:
 def test_targets_separate_reversion_centers_from_trend_extension() -> None:
     closes = [100 + index * .35 for index in range(125)]
     closes.extend([144 - index * .55 for index in range(14)])
-    closes.extend([136.6, 136.8, 137.0, 138.2])
+    closes.extend([136.6, 136.8, 137.0, 138.5, 138.7, 139.0])
 
-    facts = build_mean_reversion_facts(
-        _bars(closes, final_high_offset=.3, final_volume=1_400),
-    )
+    bars = _bars(closes, final_high_offset=.3, final_volume=1_400)
+    bars[-3] = replace(bars[-3], high=closes[-3] + .3)
+    bars[-2] = replace(bars[-2], volume=1_400)
+    facts = build_mean_reversion_facts(bars)
 
-    assert facts["version"] == "mean-reversion-facts-v3"
+    assert facts["version"] == "mean-reversion-facts-v4"
     assert facts["confirmation"]["quality_score"] >= 55
     assert any(target["target_class"] == "mean-reversion" for target in facts["targets"])
     assert {target["target_class"] for target in facts["targets"]} <= {
         "mean-reversion", "extension",
     }
-    assert facts["maximum_holding_sessions"] == 20
+    assert facts["maximum_holding_sessions"] == 10
 
 
 def test_synthetic_volume_disables_volume_confirmation() -> None:

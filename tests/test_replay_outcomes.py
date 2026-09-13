@@ -185,8 +185,8 @@ def test_fast_mean_reversion_adapter_preserves_production_opportunity_gates() ->
 
     assert signal is None
     assert counters["stock:family:directional-pullback"] == 1
-    assert counters["stock:state:reversal-confirmed"] == 1
-    assert counters["stock:rejected:near-target-reward-risk-below-1r"] == 1
+    assert counters["stock:state:exhaustion-watch"] == 1
+    assert counters["stock:rejected:near-target-reward-risk-below-1r"] == 0
     assert counters["stock:rejected:no-credible-target-at-3r"] == 0
 
 

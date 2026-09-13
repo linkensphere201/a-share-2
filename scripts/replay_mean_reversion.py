@@ -9,6 +9,7 @@ import time
 from stock_harness.config import load_runtime_settings
 from stock_harness.mean_reversion_replay import (
     MeanReversionReplayAdapter,
+    REPLAY_VARIANTS,
     SQLiteReplayFutureDataSource,
     select_replay_dates,
 )
@@ -24,6 +25,7 @@ def main() -> None:
     parser.add_argument("--through", type=date.fromisoformat)
     parser.add_argument("--evaluation-through", type=date.fromisoformat)
     parser.add_argument("--output", type=Path, default=Path(".tmp/reports/mean-reversion-40d.json"))
+    parser.add_argument("--variant", choices=tuple(REPLAY_VARIANTS), default="full")
     args = parser.parse_args()
     if not 1 <= args.sessions <= 250:
         parser.error("--sessions must be between 1 and 250")
@@ -53,6 +55,7 @@ def main() -> None:
                 f"mean_reversion_replay_progress {index}/{total} "
                 f"date={cutoff} signals={count}", flush=True,
             ),
+            variant=args.variant,
         )
         report = AnalysisReplayEngine(
             SQLiteReplayFutureDataSource(store, evaluation_through),
@@ -63,6 +66,7 @@ def main() -> None:
             "through": through.isoformat(),
             "evaluation_through": evaluation_through.isoformat(),
             "elapsed_seconds": round(time.perf_counter() - started, 3),
+            "variant": args.variant,
         })
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(

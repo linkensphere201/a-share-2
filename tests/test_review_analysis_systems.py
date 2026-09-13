@@ -9,6 +9,7 @@ from stock_harness.review_systems import (
     MeanReversionReviewSystem,
     ReviewAnalysisSystemRegistry,
     ScorerAnalysisSystemAdapter,
+    analyze_mean_reversion_entity,
 )
 from stock_harness.review_scoring import TREND_BREAKOUT_SCORER, default_scorer_registry
 
@@ -72,13 +73,18 @@ def test_mean_reversion_result_has_complete_contract_and_independent_scope_rank(
     assert market["rank"] == 1 and stock["rank"] == 1
     assert board_a["scorecard"]["ranking_universe"] == "board:directional-pullback:daily"
     assert set(board_a["scorecard"]["dimensions"]) == {
-        "center_regime", "normalized_deviation", "price_volume",
-        "exhaustion_confirmation", "risk_reward",
+        "market_permission", "center_regime", "normalized_deviation",
+        "price_volume", "stabilization_confirmation", "relative_strength",
+        "risk_reward",
     }
     assert sum(board_a["scorecard"]["dimensions"].values()) <= 100
     assert {item["role"] for item in board_a["chart_projection"]} >= {
         "moving-center", "atr-deviation-band", "confirmation", "invalidation", "target",
     }
+    evidence_ids = {item["evidence_id"] for item in board_a["evidence"]}
+    assert "mr:market-permission" in evidence_ids
+    assert "mr:relative-strength" in evidence_ids
+    assert "mr:board-context" in evidence_ids
 
 
 def test_stock_oversold_falling_knife_is_disabled_in_v1() -> None:
@@ -146,6 +152,44 @@ def test_mean_reversion_rejects_low_quality_confirmation_without_future_label() 
     assert result["eligible"] is False
     assert "confirmation-quality-insufficient" in result["disqualifiers"]
     assert "invalidation-first" not in result["disqualifiers"]
+
+
+def test_mean_reversion_keeps_board_observation_only_without_member_evidence() -> None:
+    entity = _entity("BOARD", "board", score_target=2)
+    entity.pop("board_context")
+
+    result = MeanReversionReviewSystem().analyze(AnalysisSystemContext(
+        entities_by_scope={"board": [entity]},
+        dependencies={"mean_reversion_facts": True},
+    ))[0]
+
+    assert result["eligible"] is False
+    assert "board-execution-evidence-unavailable" in result["disqualifiers"]
+
+
+def test_market_observe_only_blocks_countertrend_but_not_directional_pullback() -> None:
+    context = {
+        "market_permission": {"status": "observe-only"},
+        "relative_strength": {"available": True, "passed": True},
+        "board_context": {"available": True, "passed": True},
+    }
+    directional = _entity("DIRECTIONAL", "board", score_target=2)
+    oversold = _entity("OVERSOLD", "board", score_target=2)
+    oversold["mean_reversion"]["setup_family"] = "oversold-exhaustion"
+
+    directional_result = analyze_mean_reversion_entity(
+        "board", directional, decision_context=context,
+    )
+    oversold_result = analyze_mean_reversion_entity(
+        "board", oversold, decision_context=context,
+    )
+
+    assert directional_result["eligibility"]["eligible"] is True
+    assert oversold_result["eligibility"]["eligible"] is False
+    assert (
+        "market-permission-observe-only"
+        in oversold_result["eligibility"]["rejection_reasons"]
+    )
 
 
 def test_mean_reversion_history_only_compares_compatible_setup_family() -> None:
@@ -230,6 +274,11 @@ def _entity(
         "symbol": symbol,
         "entity_key": symbol,
         "entity_scope": scope,
+        "relative_strength": {
+            "market_excess": {"5": .02, "20": 0},
+            "board_excess": {"5": .01, "20": 0},
+        },
+        "board_context": {"available": True, "passed": True},
         "mean_reversion": {
             "version": "mean-reversion-facts-v2",
             "coverage_state": "complete",

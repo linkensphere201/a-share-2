@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 
 
 POLICY_VERSION = "mean-reversion-policy-v1"
@@ -11,8 +12,16 @@ MINIMUM_TRADEABLE_STRESSED_RR = 1.0
 STRESSED_ASYMMETRY_THRESHOLD = 3.0
 
 
+@dataclass(frozen=True, slots=True)
+class MeanReversionPolicyConfig:
+    enforce_market_permission: bool = True
+    enforce_relative_strength: bool = True
+    enforce_board_context: bool = True
+
+
 def build_mean_reversion_decision(
-    scope: str, facts: Mapping[str, object],
+    scope: str, facts: Mapping[str, object], *, context: Mapping[str, object] | None = None,
+    config: MeanReversionPolicyConfig = MeanReversionPolicyConfig(),
 ) -> dict[str, object]:
     """Separate setup validity, confirmation, execution, and asymmetry tiers."""
     family = str(facts.get("setup_family") or "none")
@@ -23,6 +32,10 @@ def build_mean_reversion_decision(
     entry = _optional_number(confirmation.get("entry_price"))
     invalidation = _optional_number(facts.get("invalidation_price"))
     quality = _confirmation_quality(confirmation)
+    context = context or {}
+    market_permission = _mapping(context.get("market_permission"))
+    relative_strength = _mapping(context.get("relative_strength"))
+    board_context = _mapping(context.get("board_context"))
 
     validity_reasons = [str(value) for value in _sequence(facts.get("disqualifiers"))]
     if facts.get("coverage_state") != "complete":
@@ -35,6 +48,24 @@ def build_mean_reversion_decision(
         validity_reasons.append("parent-uptrend-not-qualified")
     if bool(_mapping(facts.get("regime")).get("persistent_one_way_decline")):
         validity_reasons.append("persistent-decline-regime")
+    if config.enforce_market_permission and market_permission.get("status") == "blocked":
+        validity_reasons.append("market-permission-blocked")
+    elif (
+        config.enforce_market_permission
+        and market_permission.get("status") == "observe-only"
+        and family == "oversold-exhaustion"
+    ):
+        validity_reasons.append("market-permission-observe-only")
+    if config.enforce_relative_strength and scope in {"stock", "board"}:
+        if not bool(relative_strength.get("available")):
+            validity_reasons.append("relative-strength-unavailable")
+        elif not bool(relative_strength.get("passed")):
+            validity_reasons.append("relative-strength-not-recovering")
+    if config.enforce_board_context and scope == "board":
+        if not bool(board_context.get("available")):
+            validity_reasons.append("board-execution-evidence-unavailable")
+        elif not bool(board_context.get("passed")):
+            validity_reasons.append("board-breadth-or-capacity-not-confirmed")
 
     confirmation_reasons = []
     if state != "reversal-confirmed" or not bool(confirmation.get("confirmed")):
@@ -77,6 +108,12 @@ def build_mean_reversion_decision(
     )
     return {
         "policy_version": POLICY_VERSION,
+        "policy_config": {
+            "enforce_market_permission": config.enforce_market_permission,
+            "enforce_relative_strength": config.enforce_relative_strength,
+            "enforce_board_context": config.enforce_board_context,
+        },
+        "context": dict(context),
         "eligible": eligible,
         "tier": tier,
         "validity": {"valid": not validity_reasons, "reasons": validity_reasons},

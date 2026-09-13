@@ -9,12 +9,13 @@ from statistics import fmean, median
 from stock_harness.models import StoredDailyBar
 
 
-FACT_VERSION = "mean-reversion-facts-v3"
+FACT_VERSION = "mean-reversion-facts-v4"
 MINIMUM_BARS = 120
 
 
 def build_mean_reversion_facts(
     bars: Sequence[StoredDailyBar], *, volume_semantics: str = "traded",
+    benchmark_bars: Sequence[StoredDailyBar] = (),
 ) -> dict[str, object]:
     """Build point-in-time facts without assigning a system score or verdict."""
     ordered = sorted(bars, key=lambda bar: bar.trade_date)
@@ -50,6 +51,22 @@ def build_mean_reversion_facts(
     ema60_slope_atr = _slope_atr(ema60, current_atr, 20)
     return20 = current / closes[-21] - 1
     return60 = current / closes[-61] - 1
+    benchmark_closes = [
+        float(bar.close) for bar in sorted(benchmark_bars, key=lambda bar: bar.trade_date)
+        if bar.trade_date <= ordered[-1].trade_date and bar.close > 0
+    ]
+    market_excess = {
+        str(period): _round(
+            current / closes[-period - 1] - 1
+            - (benchmark_closes[-1] / benchmark_closes[-period - 1] - 1)
+        ) if len(benchmark_closes) > period else None
+        for period in (5, 20)
+    }
+    relative_recovering = bool(
+        market_excess["5"] is not None and market_excess["20"] is not None
+        and float(market_excess["5"]) >= -.02
+        and float(market_excess["5"]) >= float(market_excess["20"]) - .01
+    )
     parent_uptrend = bool(
         ema20[-1] >= ema60[-1] * .985
         and ema60[-1] >= ema120[-1] * .98
@@ -115,19 +132,20 @@ def build_mean_reversion_facts(
         "capitulation_absorbed": capitulation_absorbed,
     }
     exhaustion_count = sum(exhaustion_signals.values())
-    confirmation_boundary = max(highs[-5:-1])
-    confirmed = bool(
-        current > confirmation_boundary * 1.002
-        and closes[-2] <= confirmation_boundary
-        and close_location >= .6
+    confirmation = _multi_stage_confirmation(
+        ordered, atr, volumes, median_volume20,
     )
+    confirmation_boundary = float(confirmation["boundary_price"])
+    confirmed = bool(confirmation["confirmed"])
     confirmation_quality = _confirmation_quality(
         confirmed=confirmed,
         close_location=close_location,
         volume_ratio=volume_ratio,
         exhaustion_count=exhaustion_count,
         recent_range_ratio=recent_range_ratio,
-        breakout_atr=(current - confirmation_boundary) / current_atr,
+        breakout_atr=float(confirmation["breakout_atr"]),
+        hold_sessions=int(confirmation["hold_sessions"]),
+        retest_volume_ratio=_optional_float(confirmation.get("retest_volume_ratio")),
     )
     expanding_volume_decline = bool(
         closes[-1] < closes[-2]
@@ -166,17 +184,34 @@ def build_mean_reversion_facts(
         state = "structural-break"
     elif setup_family == "none":
         state = "stable-center" if center_stable else "unqualified"
-    elif confirmed and exhaustion_count >= 3 and not weak_rebound:
+    elif confirmed and not weak_rebound:
         state = "reversal-confirmed"
+    elif confirmation["stage"] == "initial-reclaim":
+        state = "initial-reclaim-observation"
+    elif confirmation["stage"] == "holding":
+        state = "confirmation-hold"
+    elif confirmation["stage"] == "reverting":
+        state = "reverting"
+    elif confirmation["stage"] == "failed-hold":
+        state = "continued-divergence"
     elif exhaustion_count >= 3:
         state = "exhaustion-watch"
     elif recent_low_deviation is not None and recent_low_deviation <= -1.5:
         state = "extreme-pending"
     else:
         state = "deviation-building"
-    holding_sessions = 20 if setup_family == "directional-pullback" else 10
-    invalidation_lookback = 10 if holding_sessions == 20 else 5
-    invalidation = min(lows[-invalidation_lookback:]) - current_atr * .25
+    holding_sessions = 10
+    invalidation_lookback = 10 if setup_family == "directional-pullback" else 5
+    confirmation_low = _optional_float(confirmation.get("structural_low"))
+    invalidation_anchor = (
+        confirmation_low if confirmed and confirmation_low is not None
+        else min(lows[-invalidation_lookback:])
+    )
+    invalidation = invalidation_anchor - current_atr * .25
+    invalidation_basis = (
+        "confirmation-structure-low-minus-0.25-atr" if confirmed and confirmation_low is not None
+        else f"local-{invalidation_lookback}-session-low-minus-0.25-atr"
+    )
     targets = _targets(
         current, invalidation, current_atr,
         [
@@ -214,6 +249,11 @@ def build_mean_reversion_facts(
         "recent_low_deviation_atr": _round(recent_low_deviation),
         "atr14": _round(current_atr), "atr_percent": _round(atr_percent),
         "parent_trend": "up" if parent_uptrend else "not-up",
+        "relative_strength": {
+            "market_excess": market_excess,
+            "recovering": relative_recovering,
+            "available": len(benchmark_closes) > 20,
+        },
         "regime": {
             "classification": (
                 "up" if parent_uptrend else "persistent-decline-risk"
@@ -242,15 +282,15 @@ def build_mean_reversion_facts(
         },
         "setup_family": setup_family, "state": state,
         "confirmation": {
-            "confirmed": confirmed, "boundary_price": _round(confirmation_boundary),
+            **confirmation,
             "entry_price": _round(current) if confirmed else None,
             "quality_score": _round(confirmation_quality),
-            "breakout_atr": _round((current - confirmation_boundary) / current_atr),
         },
         "invalidation_price": _round(invalidation),
         "invalidation": {
             "price": _round(invalidation),
-            "basis": f"local-{invalidation_lookback}-session-low-minus-0.25-atr",
+            "anchor_price": _round(invalidation_anchor),
+            "basis": invalidation_basis,
             "lookback_sessions": invalidation_lookback,
         },
         "maximum_holding_sessions": holding_sessions,
@@ -358,6 +398,7 @@ def _targets(
 def _confirmation_quality(
     *, confirmed: bool, close_location: float, volume_ratio: float | None,
     exhaustion_count: int, recent_range_ratio: float, breakout_atr: float,
+    hold_sessions: int, retest_volume_ratio: float | None,
 ) -> float:
     if not confirmed:
         return 0.0
@@ -369,8 +410,119 @@ def _confirmation_quality(
     exhaustion_points = min(20.0, exhaustion_count * 4.0)
     contraction_points = min(15.0, max(0.0, (1.2 - recent_range_ratio) / .6 * 15.0))
     breakout_points = min(20.0, max(8.0, breakout_atr * 40.0))
+    hold_points = min(15.0, hold_sessions * 7.5)
+    retest_points = (
+        10.0 if retest_volume_ratio is not None and retest_volume_ratio <= .9
+        else 5.0 if retest_volume_ratio is None else 0.0
+    )
     return min(100.0, location_points + volume_points + exhaustion_points
-               + contraction_points + breakout_points)
+               + contraction_points + breakout_points + hold_points + retest_points)
+
+
+def _multi_stage_confirmation(
+    bars: Sequence[StoredDailyBar], atrs: Sequence[float], volumes: Sequence[float],
+    median_volume20: float,
+) -> dict[str, object]:
+    last = len(bars) - 1
+    current_atr = max(atrs[-1], 1e-9)
+
+    def reclaim(index: int) -> tuple[bool, float, float]:
+        boundary = max(float(bar.high) for bar in bars[index - 5:index])
+        daily_range = max(float(bars[index].high - bars[index].low), 1e-9)
+        location = (float(bars[index].close) - float(bars[index].low)) / daily_range
+        passed = bool(
+            float(bars[index].close) > boundary * 1.002
+            and float(bars[index - 1].close) <= boundary
+            and location >= .6
+        )
+        return passed, boundary, location
+
+    current_reclaim, current_boundary, _ = reclaim(last)
+    selected: tuple[int, float] | None = None
+    for index in range(max(5, last - 3), last):
+        passed, boundary, _ = reclaim(index)
+        if passed:
+            selected = (index, boundary)
+    if selected is None:
+        return {
+            "stage": "initial-reclaim" if current_reclaim else "pending",
+            "initial_reclaim": current_reclaim,
+            "initial_reclaim_date": bars[-1].trade_date.isoformat() if current_reclaim else None,
+            "confirmed": False, "boundary_price": _round(current_boundary),
+            "hold_sessions": 0, "structural_hold": False,
+            "retest_volume_ratio": None,
+            "breakout_atr": _round((float(bars[-1].close) - current_boundary) / current_atr),
+        }
+
+    reclaim_index, boundary = selected
+    hold_sessions = last - reclaim_index
+    structural_low = min(float(bar.low) for bar in bars[reclaim_index - 4:reclaim_index + 1])
+    held = all(
+        float(bar.low) >= structural_low - current_atr * .1
+        and float(bar.close) >= boundary * .985
+        for bar in bars[reclaim_index + 1:last + 1]
+    )
+    retest_volumes = [
+        volumes[index] for index in range(reclaim_index + 1, last + 1)
+        if bars[index].close < bars[reclaim_index].close
+    ]
+    retest_ratio = (
+        fmean(retest_volumes) / median_volume20
+        if retest_volumes and median_volume20 > 0 else None
+    )
+    first_hold_index = reclaim_index + 1
+    first_hold_retest = bool(
+        hold_sessions >= 1
+        and float(bars[first_hold_index].close) < float(bars[reclaim_index].close)
+        and float(bars[first_hold_index].low) <= boundary + current_atr * .35
+        and median_volume20 > 0
+        and volumes[first_hold_index] / median_volume20 <= .9
+    )
+    first_hold_breakout_atr = (
+        (float(bars[first_hold_index].close) - boundary) / current_atr
+        if hold_sessions >= 1 else 0.0
+    )
+    first_hold_stand = bool(
+        hold_sessions >= 1
+        and 0.0 <= first_hold_breakout_atr <= .5
+        and float(bars[first_hold_index].low) <= boundary + current_atr * .35
+        and (
+            median_volume20 <= 0
+            or volumes[first_hold_index] / median_volume20 <= 1.05
+        )
+    )
+    prior_reconfirmed = bool(
+        hold_sessions > 1 and (first_hold_retest or first_hold_stand)
+    )
+    reconfirmed = bool(
+        held and not prior_reconfirmed
+        and float(bars[-1].close) >= boundary * 1.002
+        and (
+            (hold_sessions == 1 and (first_hold_retest or first_hold_stand))
+            or hold_sessions == 2
+        )
+        and (retest_ratio is None or retest_ratio <= 1.05)
+    )
+    return {
+        "stage": (
+            "confirmed" if reconfirmed else "reverting"
+            if held and prior_reconfirmed else "holding" if held else "failed-hold"
+        ),
+        "initial_reclaim": True,
+        "initial_reclaim_date": bars[reclaim_index].trade_date.isoformat(),
+        "confirmed": reconfirmed, "boundary_price": _round(boundary),
+        "hold_sessions": hold_sessions, "structural_hold": held,
+        "structural_low": _round(structural_low),
+        "retest_volume_ratio": _round(retest_ratio),
+        "first_hold_retest": first_hold_retest,
+        "first_hold_stand": first_hold_stand,
+        "prior_reconfirmed": prior_reconfirmed,
+        "breakout_atr": _round((float(bars[-1].close) - boundary) / current_atr),
+    }
+
+
+def _optional_float(value: object) -> float | None:
+    return float(value) if isinstance(value, (int, float)) else None
 
 
 def _points(bars: Sequence[StoredDailyBar], values: Sequence[float]) -> list[dict[str, object]]:

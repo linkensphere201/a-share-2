@@ -679,7 +679,12 @@ class SignalReviewService:
             },
             prior_results={MEAN_REVERSION_SYSTEM_ID: mean_prior},
             recent_results={MEAN_REVERSION_SYSTEM_ID: mean_recent},
-            dependencies={"mean_reversion_facts": True},
+            dependencies={
+                "mean_reversion_facts": True,
+                "market_liquidity_context": market_liquidity,
+                "board_capacity_features": board_capacities,
+                "board_hotspot_features": hotspot_features,
+            },
         ))
         mean_scores = list(mean_execution.results)
         mean_score_by_symbol = {
@@ -1189,6 +1194,12 @@ def _mean_reversion_entity(
         "symbol": symbol, "entity_key": entity_key or symbol,
         "entity_scope": scope,
         "mean_reversion": facts if isinstance(facts, dict) else {},
+        "relative_strength": {
+            "market_excess": metrics.get("relative_strength", {})
+            if isinstance(metrics, dict) else {},
+        },
+        "board_breadth": metrics.get("board_breadth", {})
+        if isinstance(metrics, dict) else {},
         "input_digest": payload.get("input_digest"),
     }
 
@@ -1219,6 +1230,10 @@ def _mean_reversion_stock_scan_entity(record: object) -> dict[str, object]:
         "entity_key": str(record["symbol"]),
         "entity_scope": "stock",
         "mean_reversion": facts,
+        "relative_strength": {
+            "market_excess": metrics.get("market_excess", {}),
+            "board_excess": metrics.get("board_excess", {}),
+        } if isinstance(metrics, dict) else {},
     }
 
 
