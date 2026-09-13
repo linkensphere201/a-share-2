@@ -222,6 +222,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .signal-mean-scope button { display: flex; align-items: center; justify-content: center; gap: 5px; border: 1px solid transparent; border-radius: 2px; background: transparent; color: var(--theme-muted); font-size: 9px; }
 .signal-mean-scope button.active { border-color: color-mix(in srgb, #d8aa5d 45%, var(--theme-border)); background: color-mix(in srgb, #d8aa5d 9%, var(--theme-base)); color: var(--theme-text-strong); }
 .signal-mean-scope small { color: #d8aa5d !important; }
+.signal-mean-filter { min-height: 29px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 3px; padding: 3px 6px; border-bottom: 1px solid var(--theme-border); }
+.signal-mean-filter button { display: flex; align-items: center; justify-content: center; gap: 5px; border: 1px solid transparent; border-radius: 2px; background: transparent; color: var(--theme-muted); font-size: 9px; }
+.signal-mean-filter button.active { border-color: color-mix(in srgb, var(--theme-accent) 45%, var(--theme-border)); background: var(--theme-accent-soft); color: var(--theme-text-strong); }
+.signal-mean-filter small { color: var(--theme-accent) !important; }
 .signal-hard-event-strip { min-height: 27px; display: flex; align-items: center; gap: 6px; overflow: hidden; padding: 3px 8px; color: var(--theme-muted); border-bottom: 1px solid var(--theme-border); background: color-mix(in srgb, #d8aa4f 5%, var(--theme-surface)); font-size: 8px; }
 .signal-hard-event-strip > span { flex: 0 0 auto; color: #d8aa4f; font-size: 9px; }
 .signal-hard-event-strip small { overflow: hidden; padding: 2px 4px; color: var(--theme-muted); border: 1px solid color-mix(in srgb, #d8aa4f 28%, var(--theme-border)); border-radius: 2px; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }

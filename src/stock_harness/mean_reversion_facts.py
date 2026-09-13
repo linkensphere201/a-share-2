@@ -9,7 +9,7 @@ from statistics import fmean, median
 from stock_harness.models import StoredDailyBar
 
 
-FACT_VERSION = "mean-reversion-facts-v1"
+FACT_VERSION = "mean-reversion-facts-v2"
 MINIMUM_BARS = 120
 
 
@@ -38,8 +38,13 @@ def build_mean_reversion_facts(
     atr_percent = current_atr / current if current > 0 else 0.0
     center = ema20[-1]
     deviation = (current - center) / current_atr if current_atr > 0 else None
+    recent_low_deviations = [
+        (low - daily_center) / daily_atr
+        for low, daily_center, daily_atr in zip(lows[-10:], ema20[-10:], atr[-10:])
+        if daily_atr > 0
+    ]
     recent_low_deviation = (
-        (min(lows[-10:]) - center) / current_atr if current_atr > 0 else None
+        min(recent_low_deviations) if recent_low_deviations else None
     )
     ema20_slope_atr = _slope_atr(ema20, current_atr, 10)
     ema60_slope_atr = _slope_atr(ema60, current_atr, 20)
@@ -163,6 +168,18 @@ def build_mean_reversion_facts(
             ("T3", max(highs[-61:-1]), "prior-60-session-high"),
         ],
     )
+    chart = (
+        {
+            "center_points": _points(ordered[-120:], ema20[-120:]),
+            "upper_band_points": _points_with_band(
+                ordered[-120:], ema20[-120:], atr[-120:], 1.5,
+            ),
+            "lower_band_points": _points_with_band(
+                ordered[-120:], ema20[-120:], atr[-120:], -1.5,
+            ),
+        }
+        if setup_family != "none" else {}
+    )
     return {
         "version": FACT_VERSION,
         "coverage_state": "complete",
@@ -204,11 +221,7 @@ def build_mean_reversion_facts(
         "invalidation_price": _round(invalidation),
         "targets": targets,
         "structural_break": structural_break,
-        "chart": {
-            "center_points": _points(ordered[-120:], ema20[-120:]),
-            "upper_band_points": _points_with_band(ordered[-120:], ema20[-120:], atr[-120:], 1.5),
-            "lower_band_points": _points_with_band(ordered[-120:], ema20[-120:], atr[-120:], -1.5),
-        },
+        "chart": chart,
         "disqualifiers": [
             *([] if center_stable else ["unstable-center"]),
             *(["structural-break"] if structural_break else []),

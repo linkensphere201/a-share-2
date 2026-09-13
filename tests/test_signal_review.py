@@ -9,7 +9,7 @@ from stock_harness.signal_review import (
     _apply_transition_attention,
     _aggregate_assignments, _assign_evidence_aliases,
     _compare_items, _order_daily_deep_candidates, _result_digest,
-    _market_style_divergence, _score_history,
+    _market_style_divergence, _mean_reversion_stock_scan_entity, _score_history,
     _build_board_pool_snapshot, _stock_opportunity_classification,
 )
 from stock_harness.daily_signal_analysis import (
@@ -22,6 +22,25 @@ from stock_harness.chat_context import build_signal_chat_context
 from stock_harness.review_scoring import (
     RECOGNITION_SCORER, default_scorer_registry, score_entities,
 )
+
+
+def test_mean_reversion_stock_scan_entity_preserves_input_risk_gates() -> None:
+    entity = _mean_reversion_stock_scan_entity({
+        "symbol": "000001.SZ",
+        "coverage_state": "complete",
+        "selection_qualified": False,
+        "risk_name": True,
+        "disqualifiers": ["source-gap"],
+        "metrics": {"mean_reversion": {
+            "coverage_state": "complete",
+            "disqualifiers": ["structural-break"],
+        }},
+    })
+
+    assert entity["entity_scope"] == "stock"
+    assert entity["mean_reversion"]["disqualifiers"] == [
+        "adjustment-factors-incomplete", "risk-name", "source-gap", "structural-break",
+    ]
 
 
 def test_signal_review_snapshots_preserve_revisions_and_diffs() -> None:
@@ -573,6 +592,12 @@ def test_daily_signal_persists_every_board_but_displays_attention_only() -> None
     mean_scores = [score for score in scores if score["system_id"] == "mean-reversion"]
     assert {score["entity_scope"] for score in mean_scores} == {"market", "board"}
     assert all(score["contract_version"] == "review-analysis-result-v1" for score in mean_scores)
+    mean_history = store.list_signal_review_score_history_projection(
+        str(run["run_id"]), "mean-reversion",
+    )
+    assert len(mean_history) == len(mean_scores)
+    assert all(item["scorecard"]["ranking_universe"] for item in mean_history)
+    assert all("chart_projection" not in item for item in mean_history)
     mean_context = build_signal_chat_context(
         store,
         run_id=str(run["run_id"]),

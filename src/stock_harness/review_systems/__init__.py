@@ -11,6 +11,7 @@ from stock_harness.review_systems.contracts import (
 )
 from stock_harness.review_systems.mean_reversion import (
     MEAN_REVERSION_SYSTEM_ID,
+    MEAN_REVERSION_VERSION,
     MeanReversionReviewSystem,
 )
 from stock_harness.review_systems.registry import ReviewAnalysisSystemRegistry
@@ -22,6 +23,7 @@ __all__ = [
     "AnalysisSystemDefinition",
     "AnalysisSystemExecution",
     "MEAN_REVERSION_SYSTEM_ID",
+    "MEAN_REVERSION_VERSION",
     "MeanReversionReviewSystem",
     "ReviewAnalysisSystem",
     "ReviewAnalysisSystemRegistry",

@@ -15,7 +15,7 @@ from stock_harness.review_systems.contracts import (
 
 
 MEAN_REVERSION_SYSTEM_ID = "mean-reversion"
-MEAN_REVERSION_VERSION = "mean-reversion-daily-v1"
+MEAN_REVERSION_VERSION = "mean-reversion-daily-v3"
 
 
 class MeanReversionReviewSystem:
@@ -53,8 +53,14 @@ class MeanReversionReviewSystem:
             ).encode("utf-8")).hexdigest()
             for rank, result in enumerate(values, 1):
                 entity_key = str(result["entity_key"])
-                current_prior = prior.get(entity_key) or prior.get(str(result["symbol"]))
-                history = list(recent.get(entity_key, recent.get(str(result["symbol"]), ())))[:5]
+                candidates = list(recent.get(
+                    entity_key, recent.get(str(result["symbol"]), ()),
+                ))
+                history = _compatible_history(result, candidates)[:5]
+                current_prior = history[0] if history else None
+                if current_prior is None:
+                    fallback = prior.get(entity_key) or prior.get(str(result["symbol"]))
+                    current_prior = fallback if _is_compatible_history(result, fallback) else None
                 output.append(_finalize_result(
                     result, rank, len(values), digest, current_prior, history,
                 ))
@@ -109,24 +115,30 @@ def _analyze_entity(scope: str, entity: Mapping[str, object]) -> dict[str, objec
     ):
         disqualifiers.append("invalid-long-price-ordering")
 
-    center_points = 25.0 if bool(center.get("stable")) else 0.0
+    center_points = 20.0 if bool(center.get("stable")) else 0.0
     if family == "directional-pullback" and facts.get("parent_trend") != "up":
-        center_points = min(center_points, 8.0)
+        center_points = min(center_points, 6.0)
         disqualifiers.append("parent-uptrend-not-qualified")
+    deviation = abs(_number(facts.get("recent_low_deviation_atr")))
+    deviation_threshold = 1.5 if family == "oversold-exhaustion" else .65
+    deviation_points = (
+        min(15.0, 6.0 + max(0.0, deviation - deviation_threshold) * 6.0)
+        if family != "none" and deviation >= deviation_threshold else 0.0
+    )
     path = str(price_volume.get("path") or "neutral")
     volume_points = {
-        "volume-backed-reclaim": 25.0,
-        "capitulation-absorption": 22.0,
-        "shrinking-volume-stabilization": 17.0,
-        "neutral": 10.0,
-        "shrinking-volume-rebound": 5.0,
+        "volume-backed-reclaim": 20.0,
+        "capitulation-absorption": 18.0,
+        "shrinking-volume-stabilization": 14.0,
+        "neutral": 8.0,
+        "shrinking-volume-rebound": 4.0,
         "expanding-volume-decline": 0.0,
         "volume-backed-structural-break": 0.0,
-    }.get(path, 8.0)
+    }.get(path, 6.0)
     exhaustion_count = int(_number(exhaustion.get("signal_count")))
-    exhaustion_points = min(15.0, exhaustion_count * 3.0)
+    exhaustion_points = min(12.5, exhaustion_count * 2.5)
     if bool(confirmation.get("confirmed")):
-        exhaustion_points += 5.0
+        exhaustion_points = min(15.0, exhaustion_points + 2.5)
     best_rr = max(
         (_number(target.get("stressed_risk_reward_ratio")) for target in targets),
         default=0.0,
@@ -134,6 +146,7 @@ def _analyze_entity(scope: str, entity: Mapping[str, object]) -> dict[str, objec
     rr_points = min(30.0, best_rr * 7.5)
     components = {
         "center_regime": round(center_points, 2),
+        "normalized_deviation": round(deviation_points, 2),
         "price_volume": round(volume_points, 2),
         "exhaustion_confirmation": round(exhaustion_points, 2),
         "risk_reward": round(rr_points, 2),
@@ -146,6 +159,8 @@ def _analyze_entity(scope: str, entity: Mapping[str, object]) -> dict[str, objec
     total = max(0.0, min(100.0, sum(components.values()) - sum(
         _number(item["points"]) for item in penalties
     )))
+    if family == "none":
+        total = 0.0
     disqualifiers = sorted(set(disqualifiers))
     eligible = not disqualifiers
     verdict = _verdict(family, state, eligible)
@@ -203,6 +218,31 @@ def _analyze_entity(scope: str, entity: Mapping[str, object]) -> dict[str, objec
         },
     }
     return result
+
+
+def _compatible_history(
+    current: Mapping[str, object], candidates: Sequence[Mapping[str, object]],
+) -> list[Mapping[str, object]]:
+    return [
+        candidate for candidate in candidates
+        if _is_compatible_history(current, candidate)
+    ]
+
+
+def _is_compatible_history(
+    current: Mapping[str, object], candidate: Mapping[str, object] | None,
+) -> bool:
+    if not candidate:
+        return False
+    current_scorecard = _mapping(current.get("scorecard"))
+    candidate_scorecard = _mapping(candidate.get("scorecard"))
+    return all((
+        str(candidate.get("setup_family") or "") == str(current.get("setup_family") or ""),
+        str(candidate.get("entity_scope") or "") == str(current.get("entity_scope") or ""),
+        str(candidate.get("timeframe") or "") == str(current.get("timeframe") or ""),
+        str(candidate_scorecard.get("ranking_universe") or "")
+        == str(current_scorecard.get("ranking_universe") or ""),
+    ))
 
 
 def _finalize_result(

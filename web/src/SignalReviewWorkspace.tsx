@@ -40,6 +40,7 @@ type ProfileFilter = 'all' | SignalProfile
 type ChangeFilter = 'all' | SignalChangeType
 type DailyView = 'results' | 'opportunities' | 'mean-reversion' | 'leading' | 'hotspots' | 'observations' | 'board-pool' | 'stock-pool'
 type AnalysisScope = 'market' | 'board' | 'stock'
+type MeanReversionFilter = 'setups' | 'eligible' | 'all'
 type HotspotFilter = 'all' | 'rising' | 'confirmed' | 'fading'
 type LeadingFilter = 'all' | 'strengthening' | 'confirmed'
 type PoolLifecycleFilter = 'all' | ObservationPoolItem['lifecycle_state']
@@ -99,6 +100,7 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
   const [scores, setScores] = useState<SignalScoreResult[]>([])
   const [selectedScoreSystem, setSelectedScoreSystem] = useState('trend-breakout')
   const [analysisScope, setAnalysisScope] = useState<AnalysisScope>('board')
+  const [meanReversionFilter, setMeanReversionFilter] = useState<MeanReversionFilter>('setups')
   const [selectedAnalysisScore, setSelectedAnalysisScore] = useState<SignalScoreResult>()
   const [highlightedSystemProjectionId, setHighlightedSystemProjectionId] = useState<string>()
   const [hotspotFilter, setHotspotFilter] = useState<HotspotFilter>('rising')
@@ -356,12 +358,16 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
     || right.total_score - left.total_score
     || left.symbol.localeCompare(right.symbol)
   )), [analysisScope, scoresBySystem])
+  const displayedMeanReversionScores = useMemo(() => meanReversionScores.filter(score => (
+    meanReversionFilter === 'all'
+    || (meanReversionFilter === 'eligible' ? score.eligible : score.setup_family !== 'none')
+  )), [meanReversionFilter, meanReversionScores])
   useEffect(() => {
     if (dailyView !== 'mean-reversion') return
     setSelectedAnalysisScore(current => (
-      meanReversionScores.find(item => item.entity_key === current?.entity_key)
+      displayedMeanReversionScores.find(item => item.entity_key === current?.entity_key)
     ))
-  }, [analysisScope, dailyView, meanReversionScores])
+  }, [analysisScope, dailyView, displayedMeanReversionScores])
   const hardEventSummary = useMemo(() => {
     const active = (scoresBySystem.get('trend-breakout') ?? [])
       .flatMap(score => score.hard_events.filter(event => event.state !== 'resolved'))
@@ -676,7 +682,7 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
             : dailyView === 'board-pool' ? '板块观察池'
               : dailyView === 'stock-pool' ? '个股观察池' : '复盘结果'}</span><small>{['board-pool', 'stock-pool'].includes(dailyView)
           ? `当前 ${displayedPoolItems.length} / 全量 ${observationPool?.items.length ?? 0}`
-          : dailyView === 'mean-reversion' ? `${analysisScopeLabel(analysisScope)} ${meanReversionScores.length} 项`
+          : dailyView === 'mean-reversion' ? `${analysisScopeLabel(analysisScope)} ${displayedMeanReversionScores.length}/${meanReversionScores.length} 项`
           : dailyView !== 'results' ? `当前 ${displayedObservations.length} / 全量 ${observationTotal}`
             : selectedRun ? `+${selectedRun.added_count} =${selectedRun.retained_count} -${selectedRun.removed_count}` : '请选择轮次'}</small></header>
         {selectedRun?.status === 'running' && <div className="signal-progress"><i style={{ width: `${progress}%` }}/></div>}
@@ -698,6 +704,13 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
             onClick={() => { setAnalysisScope(scope); setSelectedAnalysisScore(undefined) }}
           >{analysisScopeLabel(scope)}<small>{(scoresBySystem.get('mean-reversion') ?? []).filter(item => item.entity_scope === scope).length}</small></button>)}
         </div>}
+        {dailyView === 'mean-reversion' && <div className="signal-mean-filter" aria-label="均值回归结果筛选">
+          {(['setups', 'eligible', 'all'] as MeanReversionFilter[]).map(value => <button
+            key={value}
+            className={meanReversionFilter === value ? 'active' : ''}
+            onClick={() => setMeanReversionFilter(value)}
+          >{meanReversionFilterLabel(value)}<small>{meanReversionFilterCount(meanReversionScores, value)}</small></button>)}
+        </div>}
         {dailyView === 'hotspots' && <div className="signal-hotspot-filters" aria-label="热点阶段筛选">
           {hotspotMarket && <span className="signal-hotspot-market">{marketCapacityLabel(hotspotMarket.market_liquidity_capacity)} · {marketDirectionLabel(hotspotMarket.market_liquidity_direction)} · {hotspotMarket.radar_slot_limit ?? 1}席</span>}
           {(['all', 'rising', 'confirmed', 'fading'] as HotspotFilter[]).map(value => <button key={value} className={hotspotFilter === value ? 'active' : ''} onClick={() => setHotspotFilter(value)}>{hotspotFilterLabel(value)}<small>{hotspotSummary[value]}</small></button>)}
@@ -712,11 +725,11 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
         </div>}
         {dailyView === 'mean-reversion' ? <>
           <div className="signal-result-head observation"><span>评分</span><span>标的</span><span>结构</span><span>排名</span></div>
-          <div className="signal-scroll signal-mean-list">{meanReversionScores.length === 0 && <SignalViewEmpty explanation={{
+          <div className="signal-scroll signal-mean-list">{displayedMeanReversionScores.length === 0 && <SignalViewEmpty explanation={{
             title: '本轮没有均值回归分析结果',
             detail: '该范围没有进入本轮固定算法输入集，或复盘由旧算法版本生成。',
             reasons: ['重跑该日可生成均值回归结果；各体系评分不会相加。'],
-          }}/>} {meanReversionScores.map(score => <button
+          }}/>} {displayedMeanReversionScores.map(score => <button
             key={`${score.entity_scope}:${score.entity_key}`}
             className={selectedAnalysisScore?.entity_key === score.entity_key ? 'active' : ''}
             onClick={() => {
@@ -1222,6 +1235,16 @@ function scoreSystemLabel(system: string) {
 
 function analysisScopeLabel(scope: AnalysisScope) {
   return { market: '大盘', board: '板块', stock: '个股' }[scope]
+}
+
+function meanReversionFilterLabel(value: MeanReversionFilter) {
+  return value === 'setups' ? '结构候选' : value === 'eligible' ? '已确认' : '全部'
+}
+
+function meanReversionFilterCount(scores: SignalScoreResult[], value: MeanReversionFilter) {
+  if (value === 'all') return scores.length
+  if (value === 'eligible') return scores.filter(score => score.eligible).length
+  return scores.filter(score => score.setup_family !== 'none').length
 }
 
 function meanSetupLabel(value?: string) {

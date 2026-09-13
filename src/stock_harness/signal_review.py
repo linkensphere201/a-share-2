@@ -61,6 +61,7 @@ from stock_harness.review_scoring import (
 )
 from stock_harness.review_systems import (
     MEAN_REVERSION_SYSTEM_ID,
+    MEAN_REVERSION_VERSION,
     AnalysisSystemContext,
     MeanReversionReviewSystem,
     ReviewAnalysisSystemRegistry,
@@ -87,7 +88,7 @@ WEEKLY_RECOGNITION_SIGNAL = "weekly-board-recognition"
 DEFINITION_VERSION = "weekly-board-recognition-v1"
 DAILY_MARKET_BOARD_SIGNAL = "daily-market-board-review"
 DAILY_DEFINITION_VERSION = "daily-market-board-review-v1"
-DAILY_REVIEW_ALGORITHM_VERSION = "daily-market-board-review-v5-multi-system"
+DAILY_REVIEW_ALGORITHM_VERSION = "daily-market-board-review-v7-mean-reversion-audit"
 STOCK_OBSERVATION_SIGNAL = "stock-observation-pool"
 HISTORICAL_LIMIT = 5
 
@@ -654,7 +655,7 @@ class SignalReviewService:
                 "error": stock_execution.error,
             })
         mean_system = analysis_systems.get(MEAN_REVERSION_SYSTEM_ID)
-        mean_prior, mean_recent = _score_history(
+        mean_prior, mean_recent = _mean_reversion_score_history(
             self._store, score_context_runs, MEAN_REVERSION_SYSTEM_ID,
             mean_system.definition.version,
         )
@@ -672,10 +673,8 @@ class SignalReviewService:
                     ) for observation in observations
                 ],
                 "stock": [
-                    _mean_reversion_stock_entity(item)
-                    for item in stock_pool["items"]
-                    if item.get("lifecycle_state") != "cooldown"
-                    and _stock_mean_reversion_facts(item)
+                    _mean_reversion_stock_scan_entity(record)
+                    for record in independent_records
                 ],
             },
             prior_results={MEAN_REVERSION_SYSTEM_ID: mean_prior},
@@ -1157,6 +1156,26 @@ def _score_history(
     return prior, recent
 
 
+def _mean_reversion_score_history(
+    store: SQLiteMarketDataStore,
+    runs: list[dict[str, object]],
+    system_id: str,
+    scorer_version: str,
+) -> tuple[dict[str, dict[str, object]], dict[str, list[dict[str, object]]]]:
+    recent: dict[str, list[dict[str, object]]] = defaultdict(list)
+    for run in runs[:5]:
+        for score in store.list_signal_review_score_history_projection(
+            str(run["run_id"]), system_id,
+        ):
+            if score.get("scorer_version") != scorer_version:
+                continue
+            key = str(score.get("entity_key") or score["symbol"])
+            for history_key in {key, str(score["symbol"])}:
+                recent[history_key].append(score)
+    prior = {key: values[0] for key, values in recent.items() if values}
+    return prior, recent
+
+
 def _mean_reversion_entity(
     symbol: str, scope: str, source: object, *, entity_key: str | None = None,
 ) -> dict[str, object]:
@@ -1174,29 +1193,32 @@ def _mean_reversion_entity(
     }
 
 
-def _stock_mean_reversion_facts(item: object) -> dict[str, object]:
-    if not isinstance(item, dict):
-        return {}
-    payload = item.get("payload")
-    if not isinstance(payload, dict):
-        return {}
-    for key in ("independent_scan", "member_scan"):
-        scan = payload.get(key)
-        metrics = scan.get("metrics") if isinstance(scan, dict) else None
-        facts = metrics.get("mean_reversion") if isinstance(metrics, dict) else None
-        if isinstance(facts, dict) and facts.get("coverage_state") == "complete":
-            return facts
-    return {}
-
-
-def _mean_reversion_stock_entity(item: object) -> dict[str, object]:
-    if not isinstance(item, dict):
-        raise ValueError("stock mean-reversion entity must be an object")
+def _mean_reversion_stock_scan_entity(record: object) -> dict[str, object]:
+    if not isinstance(record, dict):
+        raise ValueError("stock mean-reversion scan record must be an object")
+    metrics = record.get("metrics")
+    source_facts = metrics.get("mean_reversion") if isinstance(metrics, dict) else None
+    facts = dict(source_facts) if isinstance(source_facts, dict) else {
+        "coverage_state": str(record.get("coverage_state") or "insufficient"),
+    }
+    disqualifiers = {
+        str(value) for value in facts.get("disqualifiers", [])
+        if isinstance(value, str)
+    }
+    disqualifiers.update(
+        str(value) for value in record.get("disqualifiers", [])
+        if isinstance(value, str)
+    )
+    if not record.get("selection_qualified", True):
+        disqualifiers.add("adjustment-factors-incomplete")
+    if record.get("risk_name"):
+        disqualifiers.add("risk-name")
+    facts["disqualifiers"] = sorted(disqualifiers)
     return {
-        "symbol": str(item["symbol"]),
-        "entity_key": str(item["symbol"]),
+        "symbol": str(record["symbol"]),
+        "entity_key": str(record["symbol"]),
         "entity_scope": "stock",
-        "mean_reversion": _stock_mean_reversion_facts(item),
+        "mean_reversion": facts,
     }
 
 
@@ -1297,7 +1319,7 @@ def _daily_run_parameters() -> dict[str, object]:
         "stock_deep_analysis_allocator": STOCK_M4_ALLOCATOR_VERSION,
         "stock_presentation_version": STOCK_PRESENTATION_VERSION,
         "analysis_result_contract": "review-analysis-result-v1",
-        "mean_reversion_system": "mean-reversion-daily-v1",
+        "mean_reversion_system": MEAN_REVERSION_VERSION,
         "stock_focus_limit": STOCK_FOCUS_LIMIT,
         "stock_risk_limit": STOCK_RISK_LIMIT,
     }

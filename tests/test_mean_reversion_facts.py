@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-from stock_harness.mean_reversion_facts import build_mean_reversion_facts
+from stock_harness.mean_reversion_facts import (
+    _atr_series,
+    _ema_series,
+    build_mean_reversion_facts,
+)
 from stock_harness.models import StoredDailyBar
 
 
@@ -32,6 +36,7 @@ def test_expanding_structural_decline_is_never_treated_as_reversion() -> None:
     assert facts["state"] == "structural-break"
     assert facts["setup_family"] == "none"
     assert "structural-break" in facts["disqualifiers"]
+    assert facts["chart"] == {}
 
 
 def test_fact_generation_is_point_in_time_and_ignores_future_suffix() -> None:
@@ -56,6 +61,22 @@ def test_synthetic_volume_disables_volume_confirmation() -> None:
     assert facts["price_volume"]["volume_semantics"] == "synthetic"
     assert facts["price_volume"]["volume_ratio20"] is None
     assert facts["price_volume"]["selling_volume_ratio"] is None
+
+
+def test_recent_low_deviation_uses_each_sessions_center_and_atr() -> None:
+    closes = [80 + index * .4 for index in range(130)]
+    closes.extend([132, 127, 123, 121, 120, 121, 122, 123, 124, 125])
+    bars = _bars(closes)
+
+    facts = build_mean_reversion_facts(bars)
+    ema20 = _ema_series([bar.close for bar in bars], 20)
+    atr14 = _atr_series(bars, 14)
+    expected = min(
+        (bar.low - center) / atr
+        for bar, center, atr in zip(bars[-10:], ema20[-10:], atr14[-10:])
+    )
+
+    assert facts["recent_low_deviation_atr"] == round(expected, 6)
 
 
 def _bars(

@@ -71,6 +71,11 @@ def test_mean_reversion_result_has_complete_contract_and_independent_scope_rank(
     assert board_a["rank"] == 1 and board_b["rank"] == 2
     assert market["rank"] == 1 and stock["rank"] == 1
     assert board_a["scorecard"]["ranking_universe"] == "board:directional-pullback:daily"
+    assert set(board_a["scorecard"]["dimensions"]) == {
+        "center_regime", "normalized_deviation", "price_volume",
+        "exhaustion_confirmation", "risk_reward",
+    }
+    assert sum(board_a["scorecard"]["dimensions"].values()) <= 100
     assert {item["role"] for item in board_a["chart_projection"]} >= {
         "moving-center", "atr-deviation-band", "confirmation", "invalidation", "target",
     }
@@ -87,6 +92,58 @@ def test_stock_oversold_falling_knife_is_disabled_in_v1() -> None:
 
     assert result["eligible"] is False
     assert "stock-falling-knife-disabled-v1" in result["disqualifiers"]
+
+
+def test_mean_reversion_without_setup_has_zero_opportunity_score() -> None:
+    entity = _entity("BOARD", "board", score_target=8)
+    entity["mean_reversion"]["setup_family"] = "none"
+
+    result = MeanReversionReviewSystem().analyze(AnalysisSystemContext(
+        entities_by_scope={"board": [entity]},
+        dependencies={"mean_reversion_facts": True},
+    ))[0]
+
+    assert result["total_score"] == 0
+    assert result["eligible"] is False
+    assert "no-mean-reversion-setup" in result["disqualifiers"]
+
+
+def test_mean_reversion_history_only_compares_compatible_setup_family() -> None:
+    entity = _entity("BOARD", "board", score_target=5)
+    incompatible = {
+        **_entity("BOARD", "board", score_target=4),
+        "effective_date": "2026-09-10",
+        "total_score": 75,
+        "scorecard": {
+            "total_score": 75,
+            "ranking_universe": "board:oversold-exhaustion:daily",
+        },
+        "setup_family": "oversold-exhaustion",
+        "timeframe": "daily",
+    }
+    compatible = {
+        **_entity("BOARD", "board", score_target=3),
+        "effective_date": "2026-09-09",
+        "total_score": 60,
+        "scorecard": {
+            "total_score": 60,
+            "ranking_universe": "board:directional-pullback:daily",
+        },
+        "setup_family": "directional-pullback",
+        "timeframe": "daily",
+    }
+
+    result = MeanReversionReviewSystem().analyze(AnalysisSystemContext(
+        entities_by_scope={"board": [entity]},
+        prior_results={"mean-reversion": {"BOARD": incompatible}},
+        recent_results={"mean-reversion": {"BOARD": [incompatible, compatible]}},
+        dependencies={"mean_reversion_facts": True},
+    ))[0]
+
+    assert result["comparison"]["prior_total_score"] == 60
+    assert [item["effective_date"] for item in result["comparison"]["recent"]] == [
+        "2026-09-09",
+    ]
 
 
 def test_legacy_trend_scorer_runs_through_complete_trait_object_contract() -> None:
@@ -134,7 +191,7 @@ def _entity(
         "entity_key": symbol,
         "entity_scope": scope,
         "mean_reversion": {
-            "version": "mean-reversion-facts-v1",
+            "version": "mean-reversion-facts-v2",
             "coverage_state": "complete",
             "as_of_date": "2026-09-11",
             "setup_family": "directional-pullback",

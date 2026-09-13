@@ -317,6 +317,42 @@ class SQLiteSignalReviewStoreMixin:
                 parameters,
             ).fetchone()[0])
 
+    def list_signal_review_score_history_projection(
+        self, run_id: str, system_id: str,
+    ) -> list[dict[str, object]]:
+        """Read comparison fields without deserializing complete result payloads."""
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT score.entity_key, instrument.symbol, run.effective_date,
+                       score.scorer_version, score.entity_scope, score.eligible,
+                       score.total_score, score.grade, score.rank,
+                       json_extract(score.payload_json, '$.setup_family'),
+                       json_extract(score.payload_json, '$.timeframe'),
+                       json_extract(score.payload_json, '$.eligibility.state'),
+                       json_extract(score.payload_json, '$.scorecard.ranking_universe')
+                FROM signal_review_scores AS score
+                JOIN instruments AS instrument USING (instrument_id)
+                JOIN signal_review_runs AS run USING (run_id)
+                WHERE score.run_id = ? AND score.system_id = ?
+                ORDER BY score.entity_scope, score.entity_key
+                """,
+                (run_id, system_id),
+            ).fetchall()
+        return [{
+            "run_id": run_id, "entity_key": str(row[0]), "symbol": str(row[1]),
+            "effective_date": _date_from_key(int(row[2])),
+            "scorer_version": str(row[3]), "entity_scope": str(row[4]),
+            "eligible": bool(row[5]), "total_score": float(row[6]),
+            "grade": str(row[7]), "rank": int(row[8]),
+            "setup_family": str(row[9] or ""), "timeframe": str(row[10] or ""),
+            "eligibility": {"eligible": bool(row[5]), "state": str(row[11] or "")},
+            "scorecard": {
+                "total_score": float(row[6]),
+                "ranking_universe": str(row[12] or ""),
+            },
+        } for row in rows]
+
     def fail_signal_review_run(self, run_id: str, error: str) -> None:
         now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
         with self._lock, self._transaction():

@@ -379,12 +379,22 @@ describe('SignalReviewWorkspace', () => {
       chart_projection: [{ projection_id: 'mr:center', kind: 'series-line', role: 'moving-center', label: '运动中心', points: [] }],
       diagnostics: {}, system_payload: {},
     }
+    const noSetupScore = {
+      ...meanScore, entity_key: 'BK002.DC', symbol: 'BK002.DC', name: 'BK002.DC',
+      eligible: false, total_score: 0, grade: 'D', rank: 1,
+      setup_family: 'none',
+      eligibility: {
+        eligible: false, state: 'stable-center',
+        rejection_reasons: ['no-mean-reversion-setup'],
+      },
+      opportunity: { ...meanScore.opportunity, state: 'stable-center' },
+    }
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
       if (url === '/api/signals/definitions') return response({ items: [dailyDefinition] })
       if (url.includes('/api/signals/runs?')) return response({ items: [dailyRun] })
       if (url.endsWith('/items')) return response({ items: [] })
-      if (url.endsWith('/scores')) return response({ items: [meanScore] })
+      if (url.endsWith('/scores')) return response({ items: [meanScore, noSetupScore] })
       if (url.endsWith('/attention')) return response({ items: [] })
       if (url.includes('/board-observations?')) return response({ items: [], total: 0 })
       throw new Error(`unexpected URL ${url}`)
@@ -393,6 +403,10 @@ describe('SignalReviewWorkspace', () => {
     render(<SignalReviewWorkspace theme={themes[0]} onClose={() => undefined}/>)
 
     await user.click(await screen.findByRole('button', { name: /均值回归/ }))
+    expect(screen.queryByText('BK002.DC')).toBeNull()
+    const filter = screen.getByLabelText('均值回归结果筛选')
+    await user.click(filter.querySelectorAll('button')[2])
+    expect((await screen.findAllByText('BK002.DC')).length).toBe(2)
     await user.click((await screen.findAllByText('BK001.DC'))[0].closest('button')!)
     expect(screen.getByTestId('signal-chart').dataset.systemProjections).toBe('1')
     expect(screen.getByText('收缩回踩后重新站上运动中心')).toBeTruthy()
