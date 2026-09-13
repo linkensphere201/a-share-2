@@ -249,6 +249,21 @@ class TushareDailyProviderTests(unittest.TestCase):
         self.assertEqual(item.trade_date, date(2026, 7, 31))
         self.assertEqual((item.up_limit, item.down_limit), (12.1, 9.9))
 
+    def test_skips_rows_without_a_market_price_limit(self) -> None:
+        class NoLimitClient(_Client):
+            def stk_limit(self, **kwargs):
+                Row = namedtuple("Row", "trade_date ts_code up_limit down_limit")
+                return _Frame([
+                    Row(kwargs["trade_date"], "920071.BJ", 99999.99, 0.0),
+                    Row(kwargs["trade_date"], "600519.SH", 12.1, 9.9),
+                ])
+
+        provider = TushareDailyProvider(_settings(), client=NoLimitClient())
+
+        rows = provider.fetch_stock_daily_limits(date(2026, 9, 3))
+
+        self.assertEqual([item.symbol for item in rows], ["600519.SH"])
+
     def test_fetches_sorted_adjustment_factors_without_pandas(self) -> None:
         provider = TushareDailyProvider(_settings(), client=_Client())
 

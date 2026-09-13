@@ -93,6 +93,11 @@ class IncrementalUpdater:
             store.upsert_trading_dates(provider.code, trading_dates)
             instruments = provider.list_instruments()
             store.upsert_instruments(instruments)
+            stock_symbols = {
+                item.symbol.upper()
+                for item in instruments
+                if item.kind is InstrumentKind.STOCK
+            }
 
             datasets = self._load_datasets(
                 provider, store, instruments, calendar_end, errors
@@ -157,7 +162,17 @@ class IncrementalUpdater:
                 ):
                     continue
                 try:
-                    limits = provider.fetch_stock_daily_limits(trade_date)
+                    fetched_limits = provider.fetch_stock_daily_limits(trade_date)
+                    limits = [
+                        item for item in fetched_limits
+                        if item.symbol.upper() in stock_symbols
+                    ]
+                    ignored = len(fetched_limits) - len(limits)
+                    if ignored:
+                        LOGGER.info(
+                            "stock_daily_limits_out_of_scope_ignored date=%s count=%d",
+                            trade_date, ignored,
+                        )
                     if not limits:
                         errors.append(f"stock daily limits {trade_date}: empty snapshot")
                         continue

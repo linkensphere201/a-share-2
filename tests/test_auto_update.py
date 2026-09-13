@@ -106,6 +106,14 @@ class OutOfScopeSectorRejectionProvider(FakeProvider):
         return bars
 
 
+class OutOfScopeDailyLimitProvider(FakeProvider):
+    def fetch_stock_daily_limits(self, trade_date):
+        return [
+            StockDailyLimit("600519.SH", trade_date, 12.1, 9.9),
+            StockDailyLimit("200011.SZ", trade_date, 5.5, 4.5),
+        ]
+
+
 def _settings(tmp_path: Path):
     provider_config = tmp_path / "providers.yaml"
     storage_config = tmp_path / "storage.yaml"
@@ -160,6 +168,18 @@ def test_incremental_update_persists_calendar_and_skips_completed_snapshots(tmp_
         assert store.list_trading_dates(
             "tushare", date(2026, 7, 1), date(2026, 8, 3)
         ) == [date(2026, 7, 31), date(2026, 8, 3)]
+
+
+def test_incremental_update_ignores_out_of_scope_daily_limits(tmp_path: Path):
+    settings = _settings(tmp_path)
+
+    result = IncrementalUpdater(settings, OutOfScopeDailyLimitProvider).run_once(
+        datetime(2026, 8, 3, 19, 0)
+    )
+
+    assert result.errors == ()
+    with SQLiteMarketDataStore(settings.database_path, mmap_size_mib=0) as store:
+        assert store.has_stock_daily_limits(date(2026, 8, 3))
 
 
 def test_auto_update_rebuilds_active_value_after_historical_correction(tmp_path: Path):

@@ -401,6 +401,7 @@ class TushareDailyProvider:
             fields="trade_date,ts_code,up_limit,down_limit",
         ))
         limits: list[StockDailyLimit] = []
+        ignored_rows = 0
         for row in rows:
             values = {
                 key: _field(row, key)
@@ -416,8 +417,19 @@ class TushareDailyProvider:
                 up_limit=float(values["up_limit"]),
                 down_limit=float(values["down_limit"]),
             )
+            if item.up_limit >= 99_999 and item.down_limit == 0:
+                # Tushare represents stocks without a daily price limit (for
+                # example, a newly listed Beijing-market stock) with a zero
+                # boundary. Such a row is absent by market rule, not corrupt.
+                ignored_rows += 1
+                continue
             item.validate()
             limits.append(item)
+        if ignored_rows:
+            LOGGER.info(
+                "stock_daily_limit_rows_ignored date=%s count=%d",
+                trade_date, ignored_rows,
+            )
         return limits
 
     def fetch_active_market_value_features(

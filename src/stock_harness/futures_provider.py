@@ -256,6 +256,8 @@ class TushareFuturesProvider:
                 trading_day = _required_date(row, "trade_date")
                 if not window_start <= trading_day <= window_end:
                     raise ValueError("fut_daily returned a date outside the requested window")
+                if _is_untraded_daily_row(row):
+                    continue
                 bar = self._parse_daily_bar(contract, row, trading_day)
                 if bar is None:
                     rejections.append(FuturesDailyRowRejection(
@@ -297,6 +299,9 @@ class TushareFuturesProvider:
             row_day = _required_date(row, "trade_date")
             if row_day != trading_day:
                 raise ValueError("fut_daily returned an unexpected batch date")
+            if _is_untraded_daily_row(row):
+                ignored_rows += 1
+                continue
             bar = self._parse_daily_bar(contract, row, row_day)
             if bar is None:
                 rejections.append(FuturesDailyRowRejection(
@@ -536,6 +541,17 @@ def _optional_text(row: Any, name: str) -> str | None:
 def _scaled_optional(row: Any, name: str, scale: float) -> float | None:
     value = _optional_float(row, name)
     return None if value is None else value * scale
+
+
+def _is_untraded_daily_row(row: Any) -> bool:
+    """Identify provider settlement placeholders that cannot form a candle."""
+    try:
+        if _number(row, "vol") != 0:
+            return False
+        prices = tuple(_optional_float(row, name) for name in ("open", "high", "low"))
+        return all(value is None or value == 0 for value in prices)
+    except (TypeError, ValueError):
+        return False
 
 
 def _required_date(row: Any, name: str) -> date:

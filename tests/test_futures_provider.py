@@ -168,6 +168,36 @@ def test_rejects_only_invalid_daily_rows_without_losing_valid_history(caplog) ->
     assert "empty field" not in caplog.text
 
 
+def test_ignores_zero_volume_settlement_placeholder_rows() -> None:
+    class SettlementPlaceholderClient(_Client):
+        def fut_daily(self, **kwargs):
+            valid = super().fut_daily(**kwargs)[0]
+            placeholder = {
+                **valid,
+                "trade_date": "20260819",
+                "open": None,
+                "high": None,
+                "low": None,
+                "close": 103.0,
+                "settle": 103.0,
+                "vol": 0.0,
+                "amount": 0.0,
+            }
+            return [placeholder, valid]
+
+    provider = TushareFuturesProvider(_settings(), SettlementPlaceholderClient())
+    contract = provider.discover_exchange(
+        FuturesExchange.SHFE, date(2026, 8, 20),
+    ).contracts[0]
+
+    result = provider.fetch_contract_daily_result(
+        contract, date(2026, 8, 19), date(2026, 8, 20),
+    )
+
+    assert [bar.trading_day for bar in result.bars] == [date(2026, 8, 20)]
+    assert result.rejections == ()
+
+
 def test_fetches_one_exchange_daily_batch_with_canonical_contract_identity() -> None:
     provider = TushareFuturesProvider(_settings(), _Client())
     contract = provider.discover_exchange(
