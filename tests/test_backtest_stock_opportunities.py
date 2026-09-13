@@ -20,7 +20,7 @@ _SPEC.loader.exec_module(module)
 def test_replay_defaults_to_four_bounded_feature_workers() -> None:
     assert module.DEFAULT_SCAN_WORKERS == 4
     assert module.FUTURE_MOVE_HORIZONS == {
-        7: 0.10, 20: 0.30, 60: 0.50, 120: 1.00,
+        10: 0.10, 60: 0.50, 120: 1.00,
     }
 
 

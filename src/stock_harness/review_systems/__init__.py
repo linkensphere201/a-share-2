@@ -13,6 +13,7 @@ from stock_harness.review_systems.mean_reversion import (
     MEAN_REVERSION_SYSTEM_ID,
     MEAN_REVERSION_VERSION,
     MeanReversionReviewSystem,
+    analyze_mean_reversion_entity,
 )
 from stock_harness.review_systems.registry import ReviewAnalysisSystemRegistry
 from stock_harness.review_systems.scorer_adapter import ScorerAnalysisSystemAdapter
@@ -25,6 +26,7 @@ __all__ = [
     "MEAN_REVERSION_SYSTEM_ID",
     "MEAN_REVERSION_VERSION",
     "MeanReversionReviewSystem",
+    "analyze_mean_reversion_entity",
     "ReviewAnalysisSystem",
     "ReviewAnalysisSystemRegistry",
     "ScorerAnalysisSystemAdapter",

@@ -16,6 +16,13 @@ import time
 from typing import Any, Iterable, Mapping, Sequence
 
 from stock_harness.config import load_runtime_settings
+from stock_harness.models import StoredDailyBar
+from stock_harness.replay import (
+    DEFAULT_EVALUATION_HORIZONS,
+    FrozenSignal,
+    evaluate_frozen_signal,
+    summarize_evaluations,
+)
 from stock_harness.review_scoring import STOCK_OPPORTUNITY_SCORER
 from stock_harness.signal_review import DAILY_MARKET_BOARD_SIGNAL, SignalReviewService
 from stock_harness.sqlite_store import SQLiteMarketDataStore
@@ -34,7 +41,7 @@ from stock_harness.stock_relative_strength import ALGORITHM_VERSION as RELATIVE_
 
 FEATURE_CACHE_VERSION = "stock-focus-replay-features-v1"
 DEFAULT_SCAN_WORKERS = 4
-FUTURE_MOVE_HORIZONS = {7: 0.10, 20: 0.30, 60: 0.50, 120: 1.00}
+FUTURE_MOVE_HORIZONS = {10: 0.10, 60: 0.50, 120: 1.00}
 
 
 def main() -> None:
@@ -616,12 +623,14 @@ def evaluate_focus_recall(
     event_symbols: dict[tuple[int, date], set[str]] = {}
     eligible_symbols: dict[tuple[int, date], set[str]] = {}
     symbols = store.list_stock_symbols_with_daily_bars(replay_dates[0], replay_dates[-1])
+    available_through = store.get_latest_stock_daily_bar_date() or replay_dates[-1]
     qualified_symbols = skipped_discontinuous = 0
+    standard_evaluations: list[dict[str, object]] = []
     for position, symbol in enumerate(symbols, 1):
-        bars = store.get_daily_bars(symbol, replay_dates[0], replay_dates[-1])
+        bars = store.get_daily_bars(symbol, replay_dates[0], available_through)
         if not bars:
             continue
-        factors = store.get_adjustment_factors(symbol, replay_dates[0], replay_dates[-1])
+        factors = store.get_adjustment_factors(symbol, replay_dates[0], available_through)
         factor_by_date = {item.trade_date: item.factor for item in factors}
         exact_adjusted = all(bar.trade_date in factor_by_date for bar in bars)
         if not exact_adjusted and _raw_discontinuous(bars):
@@ -643,6 +652,22 @@ def evaluate_focus_recall(
             index = index_by_date.get(replay_date)
             if index is None or closes[index] <= 0:
                 continue
+            if symbol in focus_by_date.get(replay_date, set()):
+                future_bars = [StoredDailyBar(
+                    symbol=bar.symbol, trade_date=bar.trade_date,
+                    open=bar.open * applied_factors.get(bar.trade_date, 1.0),
+                    high=bar.high * applied_factors.get(bar.trade_date, 1.0),
+                    low=bar.low * applied_factors.get(bar.trade_date, 1.0),
+                    close=bar.close * applied_factors.get(bar.trade_date, 1.0),
+                    volume=bar.volume, source=bar.source,
+                    updated_at_ms=bar.updated_at_ms,
+                ) for bar in bars[index + 1:index + 122]]
+                standard_evaluations.append(evaluate_frozen_signal(FrozenSignal(
+                    system_id=STOCK_OPPORTUNITY_SCORER,
+                    system_version="stock-opportunity-replay-v1",
+                    symbol=symbol, scope="stock", signal_date=replay_date,
+                    direction="long", reference_close=closes[index],
+                ), future_bars))
             for horizon, threshold in horizons.items():
                 high = future_max[horizon][index]
                 if high is not None:
@@ -692,6 +717,15 @@ def evaluate_focus_recall(
         "status": "completed",
         "selection_uses_future_labels": False,
         "label_price": "maximum future session high",
+        "standard_outcomes": {
+            "horizons": list(DEFAULT_EVALUATION_HORIZONS),
+            "reference_close": summarize_evaluations(
+                standard_evaluations, basis="reference_close",
+            ),
+            "next_open": summarize_evaluations(
+                standard_evaluations, basis="next_open",
+            ),
+        },
         "qualified_symbol_count": qualified_symbols,
         "skipped_raw_discontinuous_count": skipped_discontinuous,
         "horizons": metrics,

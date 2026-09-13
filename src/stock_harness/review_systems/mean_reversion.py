@@ -32,7 +32,7 @@ class MeanReversionReviewSystem:
         pending = []
         for scope in self.definition.supported_scopes:
             for entity in context.entities_by_scope.get(scope, ()):
-                pending.append(_analyze_entity(scope, entity))
+                pending.append(analyze_mean_reversion_entity(scope, entity))
         groups: dict[tuple[str, str], list[dict[str, object]]] = {}
         for result in pending:
             groups.setdefault(
@@ -77,7 +77,10 @@ class MeanReversionReviewSystem:
         }
 
 
-def _analyze_entity(scope: str, entity: Mapping[str, object]) -> dict[str, object]:
+def analyze_mean_reversion_entity(
+    scope: str, entity: Mapping[str, object],
+) -> dict[str, object]:
+    """Analyze one point-in-time entity for replay and production orchestration."""
     symbol = str(entity.get("symbol") or "").upper()
     if not symbol:
         raise ValueError("mean-reversion entity symbol is required")
