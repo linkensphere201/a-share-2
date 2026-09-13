@@ -38,6 +38,7 @@ def evaluate_frozen_signal(
         "available_future_sessions": len(bars),
         "reference_close": reference,
         "next_open": executable,
+        "maximum_holding": _maximum_holding_outcome(signal, bars),
     }
 
 
@@ -93,12 +94,39 @@ def summarize_evaluations(
         basis_value = evaluation.get(basis)
         if isinstance(basis_value, Mapping):
             event_counts[str(basis_value.get("first_boundary_event") or "none")] += 1
+    holding_values = [
+        value for evaluation in evaluations
+        if isinstance((value := evaluation.get("maximum_holding")), Mapping)
+        and value.get("status") == "complete"
+    ]
+    holding_returns = [
+        value for item in holding_values
+        if (value := _number(item.get("close_return"))) is not None
+    ]
+    holding_events = Counter(
+        str(item.get("first_boundary_event") or "none") for item in holding_values
+    )
+    boundary_sessions = [
+        int(value) for item in holding_values
+        if isinstance((value := item.get("first_boundary_event_session")), int)
+    ]
     return {
         "contract_version": EVALUATION_CONTRACT_VERSION,
         "basis": basis,
         "signal_count": len(evaluations),
         "horizons": horizon_metrics,
         "first_boundary_events": dict(sorted(event_counts.items())),
+        "maximum_holding": {
+            "complete_count": len(holding_values),
+            "right_censored_count": len(evaluations) - len(holding_values),
+            "positive_close_rate": _ratio(
+                sum(value > 0 for value in holding_returns), len(holding_returns),
+            ),
+            "mean_close_return": _mean(holding_returns),
+            "median_close_return": _median(holding_returns),
+            "first_boundary_events": dict(sorted(holding_events.items())),
+            "median_first_boundary_session": _median(boundary_sessions),
+        },
     }
 
 
@@ -197,6 +225,31 @@ def _risk(signal: FrozenSignal, entry: float) -> float | None:
         else signal.invalidation_price - entry
     )
     return value if value > 0 else None
+
+
+def _maximum_holding_outcome(
+    signal: FrozenSignal, bars: Sequence[StoredDailyBar],
+) -> dict[str, object] | None:
+    value = signal.metadata.get("maximum_holding_sessions")
+    if not isinstance(value, int) or value <= 0:
+        return None
+    if len(bars) < value:
+        return {
+            "status": "right-censored", "available_sessions": len(bars),
+            "required_sessions": value,
+        }
+    window = bars[:value]
+    event, session = _first_boundary_event(signal, window)
+    return {
+        "status": "complete", "holding_sessions": value,
+        "end_date": window[-1].trade_date.isoformat(),
+        "close_return": _round(_directional_return(
+            signal.direction, signal.reference_close, float(window[-1].close),
+        )),
+        "first_boundary_event": event,
+        "first_boundary_event_session": session,
+        "expired_without_boundary": event == "neither",
+    }
 
 
 def _favorable_return(

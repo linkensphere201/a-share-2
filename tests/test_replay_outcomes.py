@@ -59,6 +59,23 @@ def test_common_summary_never_counts_right_censoring_as_failure() -> None:
     assert summary["horizons"]["60"]["positive_close_rate"] is None
 
 
+def test_common_evaluator_reports_system_declared_maximum_holding_lifecycle() -> None:
+    signal = FrozenSignal(
+        system_id="mean-reversion", system_version="v1", symbol="TEST",
+        scope="stock", signal_date=date(2026, 1, 1), direction="long",
+        reference_close=10, invalidation_price=9, selected_target_price=12,
+        metadata={"maximum_holding_sessions": 20},
+    )
+
+    evaluation = evaluate_frozen_signal(signal, _bars(60))
+    summary = summarize_evaluations([evaluation])
+
+    assert evaluation["maximum_holding"]["holding_sessions"] == 20
+    assert evaluation["maximum_holding"]["first_boundary_event"] == "target-first"
+    assert summary["maximum_holding"]["complete_count"] == 1
+    assert summary["maximum_holding"]["median_first_boundary_session"] == 19
+
+
 def test_common_evaluator_normalizes_short_direction_and_ambiguous_boundaries() -> None:
     signal = FrozenSignal(
         system_id="short-system", system_version="v1", symbol="TEST",
@@ -169,8 +186,8 @@ def test_fast_mean_reversion_adapter_preserves_production_opportunity_gates() ->
     assert signal is None
     assert counters["stock:family:directional-pullback"] == 1
     assert counters["stock:state:reversal-confirmed"] == 1
-    assert counters["stock:rejected:no-credible-target-at-3r"] == 1
-    assert counters["stock:rejected:invalid-long-price-ordering"] == 1
+    assert counters["stock:rejected:near-target-reward-risk-below-1r"] == 1
+    assert counters["stock:rejected:no-credible-target-at-3r"] == 0
 
 
 def test_replay_dates_prefer_completed_benchmark_bars_over_sparse_calendar() -> None:

@@ -51,6 +51,44 @@ def test_fact_generation_is_point_in_time_and_ignores_future_suffix() -> None:
     assert baseline["as_of_date"] == all_bars[len(prefix) - 1].trade_date.isoformat()
 
 
+def test_decision_inputs_are_causal_even_when_future_path_reverses() -> None:
+    prefix = [100 + index * .35 for index in range(125)]
+    prefix.extend([144 - index * .55 for index in range(14)])
+    prefix.extend([136.6, 136.8, 137.0, 138.2])
+    falling_future = [130, 120, 110]
+    rallying_future = [145, 155, 165]
+
+    prefix_bars = _bars(prefix)
+    cutoff = build_mean_reversion_facts(prefix_bars)
+    falling = build_mean_reversion_facts([
+        *prefix_bars, *_bars(falling_future, start_offset=len(prefix)),
+    ][:len(prefix)])
+    rallying = build_mean_reversion_facts([
+        *prefix_bars, *_bars(rallying_future, start_offset=len(prefix)),
+    ][:len(prefix)])
+
+    assert cutoff == falling == rallying
+    assert cutoff["regime"]["causal_through"] == cutoff["as_of_date"]
+
+
+def test_targets_separate_reversion_centers_from_trend_extension() -> None:
+    closes = [100 + index * .35 for index in range(125)]
+    closes.extend([144 - index * .55 for index in range(14)])
+    closes.extend([136.6, 136.8, 137.0, 138.2])
+
+    facts = build_mean_reversion_facts(
+        _bars(closes, final_high_offset=.3, final_volume=1_400),
+    )
+
+    assert facts["version"] == "mean-reversion-facts-v3"
+    assert facts["confirmation"]["quality_score"] >= 55
+    assert any(target["target_class"] == "mean-reversion" for target in facts["targets"])
+    assert {target["target_class"] for target in facts["targets"]} <= {
+        "mean-reversion", "extension",
+    }
+    assert facts["maximum_holding_sessions"] == 20
+
+
 def test_synthetic_volume_disables_volume_confirmation() -> None:
     closes = [100 + index * .1 for index in range(130)]
 
@@ -81,12 +119,12 @@ def test_recent_low_deviation_uses_each_sessions_center_and_atr() -> None:
 
 def _bars(
     closes: list[float], *, final_high_offset: float = 1,
-    final_volume: int = 1_000,
+    final_volume: int = 1_000, start_offset: int = 0,
 ) -> list[StoredDailyBar]:
     start = date(2025, 1, 1)
     return [StoredDailyBar(
         symbol="TEST",
-        trade_date=start + timedelta(days=index),
+        trade_date=start + timedelta(days=start_offset + index),
         open=close - .2,
         high=close + (final_high_offset if index == len(closes) - 1 else .6),
         low=close - .6,

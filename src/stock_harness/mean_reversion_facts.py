@@ -9,7 +9,7 @@ from statistics import fmean, median
 from stock_harness.models import StoredDailyBar
 
 
-FACT_VERSION = "mean-reversion-facts-v2"
+FACT_VERSION = "mean-reversion-facts-v3"
 MINIMUM_BARS = 120
 
 
@@ -48,11 +48,18 @@ def build_mean_reversion_facts(
     )
     ema20_slope_atr = _slope_atr(ema20, current_atr, 10)
     ema60_slope_atr = _slope_atr(ema60, current_atr, 20)
+    return20 = current / closes[-21] - 1
+    return60 = current / closes[-61] - 1
     parent_uptrend = bool(
         ema20[-1] >= ema60[-1] * .985
         and ema60[-1] >= ema120[-1] * .98
         and ema60_slope_atr >= 0
         and current >= ema120[-1] * .98
+    )
+    persistent_decline_regime = bool(
+        ema20[-1] < ema60[-1] < ema120[-1]
+        and ema20_slope_atr < -.8 and ema60_slope_atr < -.5
+        and return20 <= -.08 and return60 <= -.12
     )
     center_stable = bool(
         current_atr > 0 and ema20_slope_atr > -1.8 and ema60_slope_atr > -1.2
@@ -114,6 +121,14 @@ def build_mean_reversion_facts(
         and closes[-2] <= confirmation_boundary
         and close_location >= .6
     )
+    confirmation_quality = _confirmation_quality(
+        confirmed=confirmed,
+        close_location=close_location,
+        volume_ratio=volume_ratio,
+        exhaustion_count=exhaustion_count,
+        recent_range_ratio=recent_range_ratio,
+        breakout_atr=(current - confirmation_boundary) / current_atr,
+    )
     expanding_volume_decline = bool(
         closes[-1] < closes[-2]
         and volume_ratio is not None and volume_ratio >= 1.35
@@ -159,13 +174,16 @@ def build_mean_reversion_facts(
         state = "extreme-pending"
     else:
         state = "deviation-building"
-    invalidation = min(lows[-10:]) - current_atr * .25
+    holding_sessions = 20 if setup_family == "directional-pullback" else 10
+    invalidation_lookback = 10 if holding_sessions == 20 else 5
+    invalidation = min(lows[-invalidation_lookback:]) - current_atr * .25
     targets = _targets(
         current, invalidation, current_atr,
         [
-            ("T1", center, "ema20-center"),
-            ("T2", _volume_weighted_center(ordered[-60:]), "turnover-weighted-center"),
-            ("T3", max(highs[-61:-1]), "prior-60-session-high"),
+            (center, "ema20-center", "mean-reversion", min(10, holding_sessions)),
+            (_volume_weighted_center(ordered[-20:]), "turnover-weighted-center-20", "mean-reversion", holding_sessions),
+            (max(highs[-21:-1]), "prior-20-session-high", "mean-reversion", holding_sessions),
+            (max(highs[-61:-1]), "prior-60-session-high", "extension", 60),
         ],
     )
     chart = (
@@ -196,6 +214,15 @@ def build_mean_reversion_facts(
         "recent_low_deviation_atr": _round(recent_low_deviation),
         "atr14": _round(current_atr), "atr_percent": _round(atr_percent),
         "parent_trend": "up" if parent_uptrend else "not-up",
+        "regime": {
+            "classification": (
+                "up" if parent_uptrend else "persistent-decline-risk"
+                if persistent_decline_regime else "mixed"
+            ),
+            "return20": _round(return20), "return60": _round(return60),
+            "persistent_one_way_decline": persistent_decline_regime,
+            "causal_through": ordered[-1].trade_date.isoformat(),
+        },
         "momentum": {
             "speed_recent": _round(speed_recent),
             "speed_prior": _round(speed_prior),
@@ -217,8 +244,16 @@ def build_mean_reversion_facts(
         "confirmation": {
             "confirmed": confirmed, "boundary_price": _round(confirmation_boundary),
             "entry_price": _round(current) if confirmed else None,
+            "quality_score": _round(confirmation_quality),
+            "breakout_atr": _round((current - confirmation_boundary) / current_atr),
         },
         "invalidation_price": _round(invalidation),
+        "invalidation": {
+            "price": _round(invalidation),
+            "basis": f"local-{invalidation_lookback}-session-low-minus-0.25-atr",
+            "lookback_sessions": invalidation_lookback,
+        },
+        "maximum_holding_sessions": holding_sessions,
         "targets": targets,
         "structural_break": structural_break,
         "chart": chart,
@@ -227,6 +262,7 @@ def build_mean_reversion_facts(
             *(["structural-break"] if structural_break else []),
             *(["expanding-volume-decline"] if expanding_volume_decline else []),
             *(["weak-shrinking-volume-rebound"] if weak_rebound else []),
+            *(["persistent-decline-regime"] if persistent_decline_regime else []),
         ],
     }
 
@@ -296,14 +332,14 @@ def _volume_weighted_center(bars: Sequence[StoredDailyBar]) -> float:
 
 def _targets(
     entry: float, invalidation: float, atr: float,
-    candidates: Sequence[tuple[str, float, str]],
+    candidates: Sequence[tuple[float, str, str, int]],
 ) -> list[dict[str, object]]:
     risk = entry - invalidation
     if risk <= 0:
         return []
     result = []
     seen: list[float] = []
-    for _, price, basis in sorted(candidates, key=lambda item: item[1]):
+    for price, basis, target_class, horizon in sorted(candidates, key=lambda item: item[0]):
         if price <= entry + atr * .2 or any(abs(price - value) <= atr * .25 for value in seen):
             continue
         raw = (price - entry) / risk
@@ -312,9 +348,29 @@ def _targets(
             "label": f"T{len(result) + 1}", "price": _round(price),
             "basis": basis, "risk_reward_ratio": _round(raw),
             "stressed_risk_reward_ratio": _round(stressed),
+            "target_class": target_class,
+            "maximum_holding_sessions": horizon,
         })
         seen.append(price)
     return result
+
+
+def _confirmation_quality(
+    *, confirmed: bool, close_location: float, volume_ratio: float | None,
+    exhaustion_count: int, recent_range_ratio: float, breakout_atr: float,
+) -> float:
+    if not confirmed:
+        return 0.0
+    location_points = min(25.0, max(0.0, (close_location - .5) / .5 * 25.0))
+    volume_points = (
+        20.0 if volume_ratio is not None and volume_ratio >= 1.0
+        else 10.0 if volume_ratio is None or volume_ratio >= .7 else 0.0
+    )
+    exhaustion_points = min(20.0, exhaustion_count * 4.0)
+    contraction_points = min(15.0, max(0.0, (1.2 - recent_range_ratio) / .6 * 15.0))
+    breakout_points = min(20.0, max(8.0, breakout_atr * 40.0))
+    return min(100.0, location_points + volume_points + exhaustion_points
+               + contraction_points + breakout_points)
 
 
 def _points(bars: Sequence[StoredDailyBar], values: Sequence[float]) -> list[dict[str, object]]:

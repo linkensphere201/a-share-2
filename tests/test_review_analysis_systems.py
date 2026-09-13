@@ -108,6 +108,46 @@ def test_mean_reversion_without_setup_has_zero_opportunity_score() -> None:
     assert "no-mean-reversion-setup" in result["disqualifiers"]
 
 
+def test_mean_reversion_uses_nearest_center_without_requiring_stressed_3r() -> None:
+    entity = _entity("BOARD", "board", score_target=1.2)
+    entity["mean_reversion"]["targets"] = [{
+        "label": "T1", "price": 10.75, "basis": "ema20-center",
+        "target_class": "mean-reversion", "risk_reward_ratio": 1.5,
+        "stressed_risk_reward_ratio": 1.227273,
+        "maximum_holding_sessions": 10,
+    }, {
+        "label": "T2", "price": 14, "basis": "prior-60-session-high",
+        "target_class": "extension", "risk_reward_ratio": 8,
+        "stressed_risk_reward_ratio": 6.545455,
+        "maximum_holding_sessions": 60,
+    }]
+
+    result = MeanReversionReviewSystem().analyze(AnalysisSystemContext(
+        entities_by_scope={"board": [entity]},
+        dependencies={"mean_reversion_facts": True},
+    ))[0]
+
+    assert result["eligible"] is True
+    assert result["opportunity"]["tier"] == "asymmetric-3r"
+    assert result["selected_target_label"] == "T1"
+    assert result["stressed_risk_reward"] < 3
+    assert result["opportunity"]["asymmetry"]["target"]["label"] == "T2"
+
+
+def test_mean_reversion_rejects_low_quality_confirmation_without_future_label() -> None:
+    entity = _entity("BOARD", "board", score_target=2)
+    entity["mean_reversion"]["confirmation"]["quality_score"] = 40
+
+    result = MeanReversionReviewSystem().analyze(AnalysisSystemContext(
+        entities_by_scope={"board": [entity]},
+        dependencies={"mean_reversion_facts": True},
+    ))[0]
+
+    assert result["eligible"] is False
+    assert "confirmation-quality-insufficient" in result["disqualifiers"]
+    assert "invalidation-first" not in result["disqualifiers"]
+
+
 def test_mean_reversion_history_only_compares_compatible_setup_family() -> None:
     entity = _entity("BOARD", "board", score_target=5)
     incompatible = {
@@ -204,10 +244,12 @@ def _entity(
             "price_volume": {"path": "volume-backed-reclaim"},
             "confirmation": {
                 "confirmed": True, "boundary_price": 9.9, "entry_price": entry,
+                "quality_score": 80,
             },
             "invalidation_price": invalidation,
             "targets": [{
                 "label": "T1", "price": target, "basis": "prior-platform",
+                "target_class": "mean-reversion",
                 "risk_reward_ratio": score_target * 1.2,
                 "stressed_risk_reward_ratio": score_target,
             }],

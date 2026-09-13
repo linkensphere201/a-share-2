@@ -5,6 +5,7 @@ from stock_harness.replay.contracts import (
     EVALUATION_CONTRACT_VERSION,
     FrozenSignal,
 )
+from stock_harness.replay.cases import CASE_LIBRARY_VERSION, select_replay_cases
 from stock_harness.replay.engine import AnalysisReplayEngine, ReplaySystemAdapter
 from stock_harness.replay.outcomes import (
     evaluate_frozen_signal,
@@ -17,6 +18,8 @@ __all__ = [
     "DEFAULT_EVALUATION_HORIZONS",
     "EVALUATION_CONTRACT_VERSION",
     "FrozenSignal",
+    "CASE_LIBRARY_VERSION",
+    "select_replay_cases",
     "ReplaySystemAdapter",
     "evaluate_frozen_signal",
     "summarize_evaluations",

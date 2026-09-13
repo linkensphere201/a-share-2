@@ -225,7 +225,14 @@ def _analyze(
         selected_target_price=float(opportunity["selected_target_price"]),
         metadata={
             "state": state,
+            "opportunity_tier": opportunity.get("tier"),
+            "maximum_holding_sessions": opportunity.get("maximum_holding_sessions"),
+            "selected_target_label": opportunity.get("selected_target_label"),
             "stressed_risk_reward": opportunity.get("stressed_risk_reward"),
+            "has_stressed_3r_target": (
+                opportunity.get("asymmetry", {}).get("has_stressed_3r_target")
+                if isinstance(opportunity.get("asymmetry"), dict) else False
+            ),
         },
     )
 

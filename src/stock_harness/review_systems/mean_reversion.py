@@ -6,6 +6,7 @@ from collections.abc import Mapping, Sequence
 import hashlib
 import json
 
+from stock_harness.mean_reversion_policy import build_mean_reversion_decision
 from stock_harness.review_scoring import score_grade
 from stock_harness.review_systems.contracts import (
     ANALYSIS_RESULT_CONTRACT_VERSION,
@@ -15,7 +16,7 @@ from stock_harness.review_systems.contracts import (
 
 
 MEAN_REVERSION_SYSTEM_ID = "mean-reversion"
-MEAN_REVERSION_VERSION = "mean-reversion-daily-v3"
+MEAN_REVERSION_VERSION = "mean-reversion-daily-v4"
 
 
 class MeanReversionReviewSystem:
@@ -95,33 +96,16 @@ def analyze_mean_reversion_entity(
         dict(value) for value in _sequence(facts.get("targets"))
         if isinstance(value, Mapping)
     ]
-    disqualifiers = [str(value) for value in _sequence(facts.get("disqualifiers"))]
-    if facts.get("coverage_state") != "complete":
-        disqualifiers.append("incomplete-data")
-    if family == "none":
-        disqualifiers.append("no-mean-reversion-setup")
-    if scope == "stock" and family == "oversold-exhaustion":
-        disqualifiers.append("stock-falling-knife-disabled-v1")
-    if state != "reversal-confirmed":
-        disqualifiers.append("price-confirmation-pending")
-    selected = next((target for target in targets if (
-        _optional_number(target.get("stressed_risk_reward_ratio")) is not None
-        and _number(target.get("stressed_risk_reward_ratio")) >= 3
-    )), None)
-    if selected is None:
-        disqualifiers.append("no-credible-target-at-3r")
-    entry = _optional_number(confirmation.get("entry_price"))
-    invalidation = _optional_number(facts.get("invalidation_price"))
+    decision = build_mean_reversion_decision(scope, facts)
+    execution = _mapping(decision.get("execution"))
+    selected = _mapping(execution.get("selected_target")) or None
+    entry = _optional_number(execution.get("entry_price"))
+    invalidation = _optional_number(execution.get("invalidation_price"))
     selected_price = _optional_number(selected.get("price")) if selected else None
-    if entry is None or invalidation is None or selected_price is None or not (
-        selected_price > entry > invalidation
-    ):
-        disqualifiers.append("invalid-long-price-ordering")
 
     center_points = 20.0 if bool(center.get("stable")) else 0.0
     if family == "directional-pullback" and facts.get("parent_trend") != "up":
         center_points = min(center_points, 6.0)
-        disqualifiers.append("parent-uptrend-not-qualified")
     deviation = abs(_number(facts.get("recent_low_deviation_atr")))
     deviation_threshold = 1.5 if family == "oversold-exhaustion" else .65
     deviation_points = (
@@ -139,14 +123,14 @@ def analyze_mean_reversion_entity(
         "volume-backed-structural-break": 0.0,
     }.get(path, 6.0)
     exhaustion_count = int(_number(exhaustion.get("signal_count")))
-    exhaustion_points = min(12.5, exhaustion_count * 2.5)
-    if bool(confirmation.get("confirmed")):
-        exhaustion_points = min(15.0, exhaustion_points + 2.5)
-    best_rr = max(
-        (_number(target.get("stressed_risk_reward_ratio")) for target in targets),
-        default=0.0,
+    confirmation_quality = _number(
+        _mapping(decision.get("confirmation")).get("quality_score")
     )
-    rr_points = min(30.0, best_rr * 7.5)
+    exhaustion_points = min(
+        15.0, exhaustion_count * 1.5 + confirmation_quality * .09,
+    )
+    selected_rr = _number(selected.get("stressed_risk_reward_ratio")) if selected else 0.0
+    rr_points = min(30.0, selected_rr * 10.0)
     components = {
         "center_regime": round(center_points, 2),
         "normalized_deviation": round(deviation_points, 2),
@@ -164,14 +148,15 @@ def analyze_mean_reversion_entity(
     )))
     if family == "none":
         total = 0.0
-    disqualifiers = sorted(set(disqualifiers))
-    eligible = not disqualifiers
+    disqualifiers = list(decision["rejection_reasons"])
+    eligible = bool(decision["eligible"])
     verdict = _verdict(family, state, eligible)
     summary = _summary(family, state, facts, selected)
     risk_summary = _risk_summary(disqualifiers, facts)
     evidence = _evidence(facts)
     opportunity = {
         "state": state, "direction": "long", "entry_price": entry,
+        "tier": decision.get("tier"),
         "confirmation_price": _optional_number(confirmation.get("boundary_price")),
         "invalidation_price": invalidation, "targets": targets,
         "selected_target_label": selected.get("label") if selected else None,
@@ -182,7 +167,8 @@ def analyze_mean_reversion_entity(
         "stressed_risk_reward": (
             _optional_number(selected.get("stressed_risk_reward_ratio")) if selected else None
         ),
-        "maximum_holding_sessions": 20 if family == "directional-pullback" else 10,
+        "maximum_holding_sessions": facts.get("maximum_holding_sessions"),
+        "asymmetry": decision.get("asymmetry"),
     }
     result = {
         "contract_version": ANALYSIS_RESULT_CONTRACT_VERSION,
@@ -211,11 +197,13 @@ def analyze_mean_reversion_entity(
         "chart_projection": _chart_projection(facts, targets),
         "diagnostics": {
             "facts_version": facts.get("version"),
+            "policy_version": decision.get("policy_version"),
             "coverage_state": facts.get("coverage_state"),
             "warnings": [], "input_digest": entity.get("input_digest"),
         },
         "system_payload": {
             "mean_reversion": facts,
+            "decision": decision,
             "price_volume_path": path,
             "exhaustion_signal_count": exhaustion_count,
         },
@@ -410,7 +398,7 @@ def _summary(
     return (
         f"{family_label}，当前为{_state_label(state)}；"
         f"最近低点偏离{facts.get('recent_low_deviation_atr')} ATR"
-        + (f"，最近可用目标压力盈亏比{rr}:1。" if rr is not None else "，暂无达到门槛的目标空间。")
+        + (f"，近端回归目标压力盈亏比{rr}:1。" if rr is not None else "，近端运动中心已被消耗或不可执行。")
     )
 
 
