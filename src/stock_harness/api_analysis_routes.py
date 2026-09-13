@@ -271,6 +271,10 @@ def create_analysis_router() -> APIRouter:
     def recalculate_trend_analysis(
         payload: TrendAnalysisInput, request: Request
     ) -> dict[str, object]:
+        LOGGER.info(
+            "trend_analysis_started symbol=%s timeframes=%s",
+            payload.symbol, payload.timeframes,
+        )
         horizons = AnalysisHorizons(
             payload.short_horizon_bars,
             payload.medium_horizon_bars,

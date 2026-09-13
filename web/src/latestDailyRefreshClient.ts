@@ -30,19 +30,29 @@ export async function refreshLatestDailyBar(
 ): Promise<LatestDailyRefreshResult> {
   const futures = isFuturesSymbol(symbol)
   if (!futures && shouldUseFinalDailyRefresh(now)) {
-    const request = await fetch('/api/update/refresh', { method: 'POST', signal })
+    const request = await fetch(
+      `/api/update/refresh?symbol=${encodeURIComponent(symbol)}`,
+      { method: 'POST', signal },
+    )
     if (!request.ok) throw new Error(`HTTP ${request.status}`)
-    const status = await waitForFinalDailyUpdate(signal)
+    const requested = await request.json() as FinalDailyUpdateStatus
+    const status = requested.state === 'up-to-date'
+      ? requested
+      : await waitForFinalDailyUpdate(signal)
     const items = await loadDailyBars(symbol, signal)
     return {
       mode: 'final',
       items,
       warning: status.state === 'warning' || status.state === 'error',
       status: status.state,
-      feedback: status.state === 'warning' || status.state === 'error' ? 'fallback' : 'success',
+      feedback: status.state === 'up-to-date'
+        ? 'canonical'
+        : status.state === 'warning' || status.state === 'error' ? 'fallback' : 'success',
       message: status.state === 'warning' || status.state === 'error'
         ? '正式日线更新有警告，已保留可用数据'
-        : '正式日线更新完成',
+        : status.state === 'up-to-date'
+          ? '主库已是最新交易日，直接进行测算'
+          : '正式日线更新完成',
       error: status.error ?? undefined,
       rowsChanged: status.rows_changed,
     }

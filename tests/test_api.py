@@ -683,6 +683,69 @@ def test_manual_final_daily_update_endpoint_queues_background_refresh():
         store.close()
 
 
+def test_manual_final_daily_update_skips_when_requested_symbol_is_current():
+    store = SQLiteMarketDataStore(":memory:")
+    store.upsert_instruments([
+        Instrument("000001.SZ", "Ping An", InstrumentKind.STOCK, "SZSE"),
+        Instrument("399006.SZ", "ChiNext", InstrumentKind.INDEX, "SZSE"),
+    ])
+    store.upsert_daily_bars("test", [
+        DailyBar("000001.SZ", date(2026, 9, 11), 10, 11, 9, 10.5, 100),
+        DailyBar("399006.SZ", date(2026, 9, 11), 3000, 3100, 2950, 3050, 200),
+    ])
+    calls: list[str] = []
+    client = TestClient(create_app(
+        store,
+        update_status=lambda: {"state": "idle"},
+        update_trigger=lambda: calls.append("triggered") or {
+            "accepted": True, "state": "queued",
+        },
+        now_provider=lambda: datetime(2026, 9, 13, 10, 30),
+    ))
+    try:
+        with client:
+            response = client.post("/api/update/refresh?symbol=399006.SZ")
+        assert response.status_code == 202
+        assert response.json() == {
+            "accepted": False,
+            "state": "up-to-date",
+            "symbol": "399006.SZ",
+            "latest_date": "2026-09-11",
+            "market_latest_date": "2026-09-11",
+        }
+        assert calls == []
+    finally:
+        store.close()
+
+
+def test_manual_final_daily_update_does_not_skip_stale_weekday_close():
+    store = SQLiteMarketDataStore(":memory:")
+    store.upsert_instruments([
+        Instrument("000001.SZ", "Ping An", InstrumentKind.STOCK, "SZSE"),
+        Instrument("399006.SZ", "ChiNext", InstrumentKind.INDEX, "SZSE"),
+    ])
+    store.upsert_daily_bars("test", [
+        DailyBar("000001.SZ", date(2026, 9, 11), 10, 11, 9, 10.5, 100),
+        DailyBar("399006.SZ", date(2026, 9, 11), 3000, 3100, 2950, 3050, 200),
+    ])
+    calls: list[str] = []
+    client = TestClient(create_app(
+        store,
+        update_status=lambda: {"state": "idle"},
+        update_trigger=lambda: calls.append("triggered") or {
+            "accepted": True, "state": "queued",
+        },
+        now_provider=lambda: datetime(2026, 9, 14, 18, 30),
+    ))
+    try:
+        with client:
+            response = client.post("/api/update/refresh?symbol=399006.SZ")
+        assert response.json()["state"] == "queued"
+        assert calls == ["triggered"]
+    finally:
+        store.close()
+
+
 def test_final_daily_bar_suppresses_same_day_provisional_bar_for_all_endpoints():
     store, _ = _client()
     store.upsert_daily_bars(

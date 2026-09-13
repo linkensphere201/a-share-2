@@ -17,9 +17,9 @@ from stock_harness.stock_relative_strength import (
 )
 
 
-BOARD_MEMBER_SCAN_VERSION = "board-member-lightweight-scan-v2"
-INDEPENDENT_SCAN_VERSION = "full-market-independent-scan-v2"
-UNIFIED_STOCK_POOL_VERSION = "unified-stock-observation-pool-v4"
+BOARD_MEMBER_SCAN_VERSION = "board-member-lightweight-scan-v3"
+INDEPENDENT_SCAN_VERSION = "full-market-independent-scan-v3"
+UNIFIED_STOCK_POOL_VERSION = "unified-stock-observation-pool-v5"
 BATCH_SIZE = 200
 
 
@@ -462,6 +462,16 @@ def _select_independent_records(
     )[:100]
     for record in readiness:
         selected[str(record["symbol"])] = record
+    mean_reversion = sorted(
+        (record for record in records
+         if record.get("selection_qualified", True)
+         and _mean_reversion_candidate_score(record) > 0),
+        key=lambda record: (
+            -_mean_reversion_candidate_score(record), str(record["symbol"]),
+        ),
+    )[:100]
+    for record in mean_reversion:
+        selected[str(record["symbol"])] = record
     for record in records:
         symbol = str(record["symbol"])
         if (
@@ -505,6 +515,29 @@ def _readiness_score(record: Mapping[str, object]) -> float:
         return 0.0
     value = metrics.get("opportunity_readiness_score")
     return float(value) if isinstance(value, (int, float)) else 0.0
+
+
+def _mean_reversion_candidate_score(record: Mapping[str, object]) -> float:
+    metrics = record.get("metrics")
+    if not isinstance(metrics, Mapping):
+        return 0.0
+    facts = metrics.get("mean_reversion")
+    if not isinstance(facts, Mapping) or facts.get("setup_family") == "none":
+        return 0.0
+    if facts.get("structural_break") or record.get("risk_name"):
+        return 0.0
+    state = str(facts.get("state") or "")
+    state_score = {
+        "reversal-confirmed": 100.0,
+        "exhaustion-watch": 80.0,
+        "extreme-pending": 65.0,
+        "deviation-building": 50.0,
+    }.get(state, 0.0)
+    exhaustion = facts.get("exhaustion")
+    count = float(exhaustion.get("signal_count") or 0) if isinstance(exhaustion, Mapping) else 0.0
+    deviation = facts.get("recent_low_deviation_atr")
+    deviation_score = min(15.0, abs(float(deviation)) * 5.0) if isinstance(deviation, (int, float)) else 0.0
+    return state_score + count * 2.0 + deviation_score
 
 
 def _independent_score(value: Mapping[str, object]) -> float:

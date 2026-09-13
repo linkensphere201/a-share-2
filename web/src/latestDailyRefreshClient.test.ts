@@ -79,6 +79,27 @@ it('waits for a post-close update and returns a warning without hiding bars', as
   expect(result.items).toHaveLength(1)
 })
 
+it('reuses current canonical data without polling the full-market updater', async () => {
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(response({
+      accepted: false, state: 'up-to-date', latest_date: '2026-09-11',
+    }, 202))
+    .mockResolvedValueOnce(response({
+      items: [{ trade_date: '2026-09-11', close: 3050 }],
+    }))
+  vi.stubGlobal('fetch', fetchMock)
+
+  const result = await refreshLatestDailyBar(
+    '399006.SZ', new Date('2026-09-13T10:30:00+08:00'),
+  )
+
+  expect(fetchMock.mock.calls[0][0]).toBe('/api/update/refresh?symbol=399006.SZ')
+  expect(fetchMock).toHaveBeenCalledTimes(2)
+  expect(result).toMatchObject({
+    mode: 'final', status: 'up-to-date', feedback: 'canonical', warning: false,
+  })
+})
+
 it('lets the backend apply futures sessions and reloads the fused provisional bar', async () => {
   const fetchMock = vi.fn()
     .mockResolvedValueOnce(response({

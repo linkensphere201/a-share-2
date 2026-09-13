@@ -29,6 +29,7 @@ import {
 import type { GeneratedBreakoutState } from './generatedAnalysisProjection'
 import { logInfo, logWarning } from './eventLogger'
 import { DailyConclusionSummary } from './DailyConclusionSummary'
+import { MeanReversionResultPanel } from './MeanReversionResultPanel'
 import {
   dailyConclusionReferenceFor, dailyConclusionSource,
   mergeDailyConclusionAnalysis,
@@ -37,7 +38,8 @@ import {
 type Props = { theme: ThemeDefinition; onClose: () => void }
 type ProfileFilter = 'all' | SignalProfile
 type ChangeFilter = 'all' | SignalChangeType
-type DailyView = 'results' | 'opportunities' | 'leading' | 'hotspots' | 'observations' | 'board-pool' | 'stock-pool'
+type DailyView = 'results' | 'opportunities' | 'mean-reversion' | 'leading' | 'hotspots' | 'observations' | 'board-pool' | 'stock-pool'
+type AnalysisScope = 'market' | 'board' | 'stock'
 type HotspotFilter = 'all' | 'rising' | 'confirmed' | 'fading'
 type LeadingFilter = 'all' | 'strengthening' | 'confirmed'
 type PoolLifecycleFilter = 'all' | ObservationPoolItem['lifecycle_state']
@@ -96,6 +98,9 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
   const [attention, setAttention] = useState<SignalAttention[]>([])
   const [scores, setScores] = useState<SignalScoreResult[]>([])
   const [selectedScoreSystem, setSelectedScoreSystem] = useState('trend-breakout')
+  const [analysisScope, setAnalysisScope] = useState<AnalysisScope>('board')
+  const [selectedAnalysisScore, setSelectedAnalysisScore] = useState<SignalScoreResult>()
+  const [highlightedSystemProjectionId, setHighlightedSystemProjectionId] = useState<string>()
   const [hotspotFilter, setHotspotFilter] = useState<HotspotFilter>('rising')
   const [leadingFilter, setLeadingFilter] = useState<LeadingFilter>('strengthening')
   const [historySelection, setHistorySelection] = useState<{ symbol: string; entityKey?: string }>()
@@ -344,6 +349,19 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
     (scoresBySystem.get(selectedScoreSystem) ?? [])
       .map(item => [item.symbol, item]),
   ), [scoresBySystem, selectedScoreSystem])
+  const meanReversionScores = useMemo(() => (
+    scoresBySystem.get('mean-reversion') ?? []
+  ).filter(item => item.entity_scope === analysisScope).sort((left, right) => (
+    Number(right.eligible) - Number(left.eligible)
+    || right.total_score - left.total_score
+    || left.symbol.localeCompare(right.symbol)
+  )), [analysisScope, scoresBySystem])
+  useEffect(() => {
+    if (dailyView !== 'mean-reversion') return
+    setSelectedAnalysisScore(current => (
+      meanReversionScores.find(item => item.entity_key === current?.entity_key)
+    ))
+  }, [analysisScope, dailyView, meanReversionScores])
   const hardEventSummary = useMemo(() => {
     const active = (scoresBySystem.get('trend-breakout') ?? [])
       .flatMap(score => score.hard_events.filter(event => event.state !== 'resolved'))
@@ -422,8 +440,8 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
   ) as Record<SignalProfile, number>, [items])
   const daily = selectedDefinition?.cadence === 'daily'
   const workspaceChatAvailable = runs.some(item => item.status === 'succeeded')
-  const inspected = selectedPoolItem ?? selectedObservation ?? selectedItem
-  const inspectedScore = selectedPoolItem?.payload.opportunity_score
+  const inspected = selectedAnalysisScore ?? selectedPoolItem ?? selectedObservation ?? selectedItem
+  const inspectedScore = selectedAnalysisScore ?? selectedPoolItem?.payload.opportunity_score
     ?? (selectedObservation
     ? scoreBySymbol.get(selectedObservation.symbol)
     : selectedItem?.payload.score_result)
@@ -431,7 +449,7 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
   const highlightedAnalysisItemId = scenarioHighlightedItemId ?? selectedItem?.evidence.find(
     evidence => evidence.evidence_id === activeEvidenceId,
   )?.source_item_id ?? undefined
-  const criticalAlert = buildCriticalAlert(selectedObservation ?? selectedItem)
+  const criticalAlert = selectedAnalysisScore ? undefined : buildCriticalAlert(selectedObservation ?? selectedItem)
   const pinned = selectedObservation
     ? attention.find(item => item.symbol === selectedObservation.symbol)?.manual_pinned ?? false
     : false
@@ -651,25 +669,35 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
       <div className="signal-column-resizer" role="separator" aria-orientation="vertical" aria-label="调整历史轮次栏宽度" title="左右拖动调整历史轮次栏宽度" onPointerDown={event => startColumnResize('runs', event)}/>
       <section className="signal-results">
         <header><span>{dailyView === 'observations' ? '全部板块观察'
+          : dailyView === 'mean-reversion' ? '均值回归体系'
           : dailyView === 'leading' ? '热点启动前导雷达'
           : dailyView === 'hotspots' ? '近期热点雷达'
           : dailyView === 'opportunities' ? '板块机会评分'
             : dailyView === 'board-pool' ? '板块观察池'
               : dailyView === 'stock-pool' ? '个股观察池' : '复盘结果'}</span><small>{['board-pool', 'stock-pool'].includes(dailyView)
           ? `当前 ${displayedPoolItems.length} / 全量 ${observationPool?.items.length ?? 0}`
+          : dailyView === 'mean-reversion' ? `${analysisScopeLabel(analysisScope)} ${meanReversionScores.length} 项`
           : dailyView !== 'results' ? `当前 ${displayedObservations.length} / 全量 ${observationTotal}`
             : selectedRun ? `+${selectedRun.added_count} =${selectedRun.retained_count} -${selectedRun.removed_count}` : '请选择轮次'}</small></header>
         {selectedRun?.status === 'running' && <div className="signal-progress"><i style={{ width: `${progress}%` }}/></div>}
         {daily && <div className="signal-view-switch">
           <button className={dailyView === 'results' ? 'active' : ''} onClick={() => { setDailyView('results'); setSelectedObservation(undefined); setSelectedPoolItem(undefined) }}><ListFilter size={12}/>今日关注</button>
           <button className={dailyView === 'opportunities' ? 'active' : ''} onClick={() => { setDailyView('opportunities'); setSelectedScoreSystem('trend-breakout'); setSelectedItem(undefined); setSelectedPoolItem(undefined) }}><Radar size={12}/>机会评分</button>
+          <button className={dailyView === 'mean-reversion' ? 'active' : ''} onClick={() => { setDailyView('mean-reversion'); setSelectedScoreSystem('mean-reversion'); setSelectedItem(undefined); setSelectedObservation(undefined); setSelectedPoolItem(undefined) }}><RotateCcw size={12}/>均值回归</button>
           <button className={dailyView === 'leading' ? 'active' : ''} onClick={() => { setDailyView('leading'); setSelectedScoreSystem('board-hotspot-leading'); setSelectedItem(undefined); setSelectedPoolItem(undefined) }}><Radar size={12}/>前导雷达</button>
           <button className={dailyView === 'hotspots' ? 'active' : ''} onClick={() => { setDailyView('hotspots'); setSelectedScoreSystem('board-hotspot-emergence'); setSelectedItem(undefined); setSelectedPoolItem(undefined) }}><Radar size={12}/>近期热点</button>
           <button className={dailyView === 'observations' ? 'active' : ''} onClick={() => { setDailyView('observations'); setSelectedItem(undefined); setSelectedPoolItem(undefined) }}><Eye size={12}/>全部观察</button>
           <button className={dailyView === 'board-pool' ? 'active' : ''} onClick={() => { setDailyView('board-pool'); setSelectedItem(undefined); setSelectedObservation(undefined) }}><Layers3 size={12}/>板块池</button>
           <button className={dailyView === 'stock-pool' ? 'active' : ''} onClick={() => { setDailyView('stock-pool'); setSelectedItem(undefined); setSelectedObservation(undefined) }}><Boxes size={12}/>个股池</button>
         </div>}
-        {daily && boardScoreSystems.length > 0 && <div className="signal-score-system-select">当前体系<span>{scoreSystemLabel(selectedScoreSystem)}</span></div>}
+        {daily && boardScoreSystems.length > 0 && dailyView !== 'mean-reversion' && <div className="signal-score-system-select">当前体系<span>{scoreSystemLabel(selectedScoreSystem)}</span></div>}
+        {dailyView === 'mean-reversion' && <div className="signal-mean-scope" aria-label="均值回归分析范围">
+          {(['market', 'board', 'stock'] as AnalysisScope[]).map(scope => <button
+            key={scope}
+            className={analysisScope === scope ? 'active' : ''}
+            onClick={() => { setAnalysisScope(scope); setSelectedAnalysisScore(undefined) }}
+          >{analysisScopeLabel(scope)}<small>{(scoresBySystem.get('mean-reversion') ?? []).filter(item => item.entity_scope === scope).length}</small></button>)}
+        </div>}
         {dailyView === 'hotspots' && <div className="signal-hotspot-filters" aria-label="热点阶段筛选">
           {hotspotMarket && <span className="signal-hotspot-market">{marketCapacityLabel(hotspotMarket.market_liquidity_capacity)} · {marketDirectionLabel(hotspotMarket.market_liquidity_direction)} · {hotspotMarket.radar_slot_limit ?? 1}席</span>}
           {(['all', 'rising', 'confirmed', 'fading'] as HotspotFilter[]).map(value => <button key={value} className={hotspotFilter === value ? 'active' : ''} onClick={() => setHotspotFilter(value)}>{hotspotFilterLabel(value)}<small>{hotspotSummary[value]}</small></button>)}
@@ -682,7 +710,31 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
           <span>独立硬异动 {hardEventSummary.total}</span><small>不等于热点席位</small>
           {hardEventSummary.counts.slice(0, 4).map(([eventType, count]) => <small key={eventType}>{hardEventLabel(eventType)} {count}</small>)}
         </div>}
-        {['board-pool', 'stock-pool'].includes(dailyView) ? <>
+        {dailyView === 'mean-reversion' ? <>
+          <div className="signal-result-head observation"><span>评分</span><span>标的</span><span>结构</span><span>排名</span></div>
+          <div className="signal-scroll signal-mean-list">{meanReversionScores.length === 0 && <SignalViewEmpty explanation={{
+            title: '本轮没有均值回归分析结果',
+            detail: '该范围没有进入本轮固定算法输入集，或复盘由旧算法版本生成。',
+            reasons: ['重跑该日可生成均值回归结果；各体系评分不会相加。'],
+          }}/>} {meanReversionScores.map(score => <button
+            key={`${score.entity_scope}:${score.entity_key}`}
+            className={selectedAnalysisScore?.entity_key === score.entity_key ? 'active' : ''}
+            onClick={() => {
+              setSelectedAnalysisScore(score)
+              setSelectedItem(undefined)
+              setSelectedObservation(undefined)
+              setSelectedPoolItem(undefined)
+              setExactAnalysis(null)
+              setTrendExplanationOpen(false)
+              setHighlightedSystemProjectionId(undefined)
+            }}
+          >
+            <ScoreBadge score={score}/>
+            <span><span className="instrument-name-line"><b>{score.name}</b><MarketBoardBadge instrument={score}/></span><small>{score.symbol}</small></span>
+            <span>{meanSetupLabel(score.setup_family)}<small>{meanStateLabel(score.opportunity?.state)}</small></span>
+            <span>#{score.rank}<small>{score.eligible ? '通过' : '观察'}</small></span>
+          </button>)}</div>
+        </> : ['board-pool', 'stock-pool'].includes(dailyView) ? <>
           <label className="signal-observation-search"><Search size={12}/><input aria-label="搜索观察池" value={poolQuery} onChange={event => setPoolQuery(event.target.value)} placeholder="名称、代码或入池原因"/></label>
           {dailyView === 'stock-pool' && <div className="signal-filters pool-presentation">
             {(['focus', 'opportunity', 'risk', 'all'] as PoolPresentationView[]).map(value => <button key={value} className={poolPresentation === value ? 'active' : ''} onClick={() => setPoolPresentation(value)}>{poolPresentationLabel(value)} {poolPresentationCount(observationPool, value)}</button>)}
@@ -739,6 +791,7 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
       {inspected && <section ref={inspectorRef} className={`signal-inspector${criticalAlert ? ' has-critical' : ''}`} style={{ gridTemplateRows: criticalAlert ? `42px auto minmax(220px, 1fr) ${evidenceHeight}px` : `42px minmax(220px, 1fr) ${evidenceHeight}px` }}>
         <header><span className="instrument-name-line"><span>{inspected.name}</span>{(selectedItem || selectedPoolItem) && <MarketBoardBadge instrument={selectedPoolItem ?? selectedItem!}/>}</span><small>{selectedPoolItem
           ? `${poolLifecycleLabel(selectedPoolItem.lifecycle_state)} · 排名 #${selectedPoolItem.rank} · ${selectedPoolItem.sources.length} 条来源`
+          : selectedAnalysisScore ? `${analysisScopeLabel(analysisScope)} · ${meanSetupLabel(selectedAnalysisScore.setup_family)} · 独立评分 ${selectedAnalysisScore.total_score.toFixed(1)}`
           : selectedItem ? `${profileLabels[selectedItem.profile]} · 得分 ${(selectedItem.score * 100).toFixed(1)} · 置信 ${(selectedItem.confidence * 100).toFixed(1)}` : `${selectedObservation?.effective_date} · 一级固定分析`}</small>{selectedObservation
           ? <button className="icon-button" title={pinned ? '取消手工固定' : '加入手工观察池'} aria-label={pinned ? '取消手工固定' : '加入手工观察池'} onClick={() => void togglePinned()}>{pinned ? <PinOff size={13}/> : <Pin size={13}/>}</button>
           : null}</header>
@@ -747,9 +800,10 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
           <span>{criticalAlert.reason}<small>{criticalAlert.condition}</small></span>
         </div>}
         <div className="signal-chart">{inspected
-          ? <ChartCanvas key={`${selectedRun?.run_id}:${inspected.symbol}`} symbol={inspected.symbol} instrumentName={inspected.name} instrumentKind={selectedPoolItem?.kind ?? selectedItem?.kind ?? 'sector'} focused theme={theme} range="1Y" priceMode="normal" volumeVisible indicator="none" settlementVisible={false} openInterestVisible={false} asOfDate={selectedRun?.effective_date}
-              toolbarContent={<TradingSystemControls embedded instrumentKind={selectedPoolItem?.kind ?? selectedItem?.kind ?? 'sector'} state={reviewTrendState} breakoutState={chartBreakoutState} analysisRun={displayedAnalysis} recalculationState={trendRecalculationState} recalculationAvailable={recalculationAvailable} recalculationDisabledReason="历史轮次保持冻结，只能重新测算最新复盘日期" onChange={setReviewTrendState} onRecalculate={recalculateInspectedTrend} explanationOpen={trendExplanationOpen} onExplanationOpenChange={setTrendExplanationOpen}/>}
+          ? <ChartCanvas key={`${selectedRun?.run_id}:${inspected.symbol}`} symbol={inspected.symbol} instrumentName={inspected.name} instrumentKind={selectedAnalysisScore?.kind ?? selectedPoolItem?.kind ?? selectedItem?.kind ?? 'sector'} focused theme={theme} range="1Y" priceMode="normal" volumeVisible indicator="none" settlementVisible={false} openInterestVisible={false} asOfDate={selectedRun?.effective_date}
+              toolbarContent={<TradingSystemControls embedded instrumentKind={selectedAnalysisScore?.kind ?? selectedPoolItem?.kind ?? selectedItem?.kind ?? 'sector'} state={reviewTrendState} breakoutState={chartBreakoutState} analysisRun={displayedAnalysis} recalculationState={trendRecalculationState} recalculationAvailable={recalculationAvailable} recalculationDisabledReason="历史轮次保持冻结，只能重新测算最新复盘日期" onChange={setReviewTrendState} onRecalculate={recalculateInspectedTrend} explanationOpen={trendExplanationOpen} onExplanationOpenChange={setTrendExplanationOpen}/>}
               trendAnalysisEnabled={reviewTrendState.enabled && Boolean(displayedAnalysis)} trendAnalysisOverride={displayedAnalysis} highlightedAnalysisItemId={highlightedAnalysisItemId} selectedScenarioTarget={selectedScenarioTarget} riskRewardVisible={scenarioVisible}
+              analysisSystemProjection={selectedAnalysisScore?.chart_projection} highlightedSystemProjectionId={highlightedSystemProjectionId}
               showTentativePivots={Boolean(reviewTrendState.settings.showTentativePivots)} shortTrendLinesVisible={reviewTrendState.layers['short-trend-lines'] !== false} mediumTrendLinesVisible={reviewTrendState.layers['medium-trend-lines'] !== false} longTrendLinesVisible={reviewTrendState.layers['long-trend-lines'] !== false} keyLevelsVisible={reviewTrendState.layers['key-levels'] !== false} volumeZonesVisible={reviewTrendState.layers['volume-zones'] !== false} patternsVisible={reviewTrendState.layers.patterns !== false} breakoutStateVisible={reviewTrendState.layers['breakout-state'] !== false} trendIsolation={reviewTrendState.isolate} onBreakoutStateChange={setChartBreakoutState}/>
           : <div className="signal-empty">选择一项结果查看 K 线</div>}
           {trendExplanationOpen && displayedAnalysis && <TrendExplanationPanel
@@ -765,9 +819,10 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
             }}
           />}
         </div>
-        <div className="signal-evidence"><div className="signal-evidence-resizer" role="separator" aria-orientation="horizontal" aria-label="调整固定算法结论高度" title="上下拖动调整结论区域高度" onPointerDown={startEvidenceResize}/><header><span>{selectedPoolItem ? '观察池依据' : selectedObservation ? '一级分析' : selectedItem?.payload.rendered_summary ? '固定算法结论' : '引用证据'}</span><small>{selectedPoolItem ? selectedPoolItem.sources.length : selectedObservation ? selectedObservation.state_codes.length : selectedItem?.evidence.length ?? 0}</small></header>
+        <div className="signal-evidence"><div className="signal-evidence-resizer" role="separator" aria-orientation="horizontal" aria-label="调整固定算法结论高度" title="上下拖动调整结论区域高度" onPointerDown={startEvidenceResize}/><header><span>{selectedAnalysisScore ? '均值回归固定算法结论' : selectedPoolItem ? '观察池依据' : selectedObservation ? '一级分析' : selectedItem?.payload.rendered_summary ? '固定算法结论' : '引用证据'}</span><small>{selectedAnalysisScore ? '独立体系' : selectedPoolItem ? selectedPoolItem.sources.length : selectedObservation ? selectedObservation.state_codes.length : selectedItem?.evidence.length ?? 0}</small></header>
           <div className="signal-evidence-content">
-            {inspectedScore && <ScoreSummary score={inspectedScore} onHistorySelect={openHistoricalScore} onEvidenceHighlight={(eventType) => setScenarioHighlightedItemId(dailyConclusionReferenceFor('hard-event', conclusionAnalysis.references, eventType))}/>}
+            {inspectedScore && !selectedAnalysisScore && <ScoreSummary score={inspectedScore} onHistorySelect={openHistoricalScore} onEvidenceHighlight={(eventType) => setScenarioHighlightedItemId(dailyConclusionReferenceFor('hard-event', conclusionAnalysis.references, eventType))}/>}
+            {selectedAnalysisScore && <MeanReversionResultPanel score={selectedAnalysisScore} highlightedProjectionId={highlightedSystemProjectionId} onHighlight={setHighlightedSystemProjectionId}/>}
             {displayedAnalysis && <TradeScenarioPanel run={displayedAnalysis} selectedTargetLabel={selectedScenarioTarget} visible={scenarioVisible} onTargetChange={setSelectedScenarioTarget} onVisibleChange={setScenarioVisible} onHighlightItemChange={setScenarioHighlightedItemId}/>}
             {selectedPoolItem ? <PoolEvidence item={selectedPoolItem} selectedSourceId={highlightedEvidenceId ?? selectedEvidenceId} onSourceActivate={activatePoolSource}/>
               : selectedObservation ? <DailyConclusionSummary text={observationSummary(selectedObservation)} references={conclusionAnalysis.references} onHighlight={setScenarioHighlightedItemId}/> : <div className="signal-analysis-details">{selectedItem?.payload.rendered_summary && <DailyConclusionSummary text={selectedItem.payload.rendered_summary} references={conclusionAnalysis.references} onHighlight={setScenarioHighlightedItemId}/>}<div className="signal-evidence-list">{selectedItem?.evidence.map(evidence => <button key={evidence.evidence_id} className={(highlightedEvidenceId ?? selectedEvidenceId) === evidence.evidence_id ? 'active' : ''} onClick={() => setSelectedEvidenceId(evidence.evidence_id)} title="点击查看该轮固定算法引用的原始或 M4 证据">
@@ -777,7 +832,7 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
         </div>
       </section>}
       {chatOpen && <div className="signal-column-resizer" role="separator" aria-orientation="vertical" aria-label="调整Codex对话栏宽度" title="左右拖动调整Codex对话栏宽度" onPointerDown={event => startColumnResize('chat', event)}/>}
-      {chatOpen && selectedDefinition && <SignalChatPanel key={selectedDefinition.signal_id} signalId={selectedDefinition.signal_id} runs={runs} run={selectedRun} items={items} selectedItem={selectedItem} selectedPoolItem={selectedPoolItem} onReferencePreview={previewReference} onReferenceActivate={activateReference} onClose={() => setChatOpen(false)}/>}
+      {chatOpen && selectedDefinition && <SignalChatPanel key={selectedDefinition.signal_id} signalId={selectedDefinition.signal_id} runs={runs} run={selectedRun} items={items} selectedItem={selectedItem} selectedPoolItem={selectedPoolItem} selectedScore={selectedAnalysisScore} onReferencePreview={previewReference} onReferenceActivate={activateReference} onClose={() => setChatOpen(false)}/>}
     </section>
     {runContextMenu && <div className="signal-context-layer" onPointerDown={event => {
       if (event.target === event.currentTarget) setRunContextMenu(undefined)
@@ -1159,9 +1214,28 @@ function ScoreSummary({ score, onHistorySelect, onEvidenceHighlight }: {
 function scoreSystemLabel(system: string) {
   return {
     'trend-breakout': '趋势突破',
+    'mean-reversion': '均值回归',
     'board-hotspot-emergence': '近期热点',
     'board-hotspot-leading': '热点前导',
   }[system] ?? system
+}
+
+function analysisScopeLabel(scope: AnalysisScope) {
+  return { market: '大盘', board: '板块', stock: '个股' }[scope]
+}
+
+function meanSetupLabel(value?: string) {
+  return value === 'directional-pullback' ? '趋势内折返'
+    : value === 'oversold-exhaustion' ? '超跌衰竭' : '无结构'
+}
+
+function meanStateLabel(value?: string) {
+  return {
+    'reversal-confirmed': '反转确认', 'exhaustion-watch': '衰竭观察',
+    'extreme-pending': '极端偏离', 'deviation-building': '偏离扩大',
+    'structural-break': '结构破坏', 'stable-center': '中心附近',
+    unqualified: '不符合',
+  }[value ?? ''] ?? value ?? '-'
 }
 
 function leadingStateLabel(state?: string) {

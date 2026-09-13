@@ -8,9 +8,10 @@ from math import isfinite, log1p, sqrt
 from statistics import fmean, median
 
 from stock_harness.models import StoredDailyBar
+from stock_harness.mean_reversion_facts import build_mean_reversion_facts
 
 
-ALGORITHM_VERSION = "stock-relative-strength-v2"
+ALGORITHM_VERSION = "stock-relative-strength-v3"
 SCORER_VERSION = "stock-independent-strength-v2"
 MINIMUM_BARS = 120
 LOOKBACK_BARS = 260
@@ -131,6 +132,7 @@ def analyze_relative_strength(
         "price_volume_confirmation": round(price_volume_confirmation, 6),
         "market_reference_count": len(market_references),
         "board_reference_count": len(board_references),
+        "mean_reversion": build_mean_reversion_facts(visible),
     }
     classification = classify_relative_strength(metrics)
     eligible = classification in {

@@ -19,6 +19,29 @@ export type SignalDefinition = {
     dependencies: string[]
     score_combination: 'independent'
   }>
+  analysis_systems?: AnalysisSystemDefinition[]
+}
+
+export type AnalysisSystemDefinition = {
+  system_id: string
+  version: string
+  display_name: string
+  supported_scopes: Array<'market' | 'board' | 'stock'>
+  setup_families: string[]
+  timeframes: string[]
+  dependencies: string[]
+  capabilities: string[]
+}
+
+export type AnalysisChartProjection = {
+  projection_id: string
+  kind: 'series-line' | 'series-band' | 'price-line'
+  role: 'moving-center' | 'atr-deviation-band' | 'confirmation' | 'invalidation' | 'target'
+  label: string
+  price?: number | null
+  points?: Array<{ date: string; price: number }>
+  upper_points?: Array<{ date: string; price: number }>
+  lower_points?: Array<{ date: string; price: number }>
 }
 
 export type SignalRun = {
@@ -157,6 +180,10 @@ export type SignalScoreResult = {
   exchange: string
   effective_date: string
   system_id: string
+  contract_version?: string
+  system_version?: string
+  setup_family?: string
+  timeframe?: string
   scorer_version: string
   entity_scope: string
   eligible: boolean
@@ -252,6 +279,58 @@ export type SignalScoreResult = {
   penalties: Array<{ code: string; points: number }>
   disqualifiers: string[]
   hard_events: SignalHardEvent[]
+  eligibility?: {
+    eligible: boolean
+    state: string
+    rejection_reasons: string[]
+  }
+  scorecard?: {
+    total_score: number
+    grade: string
+    dimensions: Record<string, number>
+    penalties: Array<{ code: string; points: number }>
+    ranking_universe: string
+  }
+  conclusion?: {
+    verdict: string
+    summary: string
+    risk_summary?: string
+    risks: string[]
+    sections: Array<{
+      code: string
+      title: string
+      text: string
+      evidence_refs: string[]
+    }>
+  }
+  evidence?: Array<{
+    evidence_id: string
+    kind: string
+    label: string
+    value: unknown
+  }>
+  opportunity?: {
+    state: string
+    direction: string
+    entry_price?: number | null
+    confirmation_price?: number | null
+    invalidation_price?: number | null
+    selected_target_label?: string | null
+    selected_target_price?: number | null
+    raw_risk_reward?: number | null
+    stressed_risk_reward?: number | null
+    maximum_holding_sessions?: number
+    targets: Array<{
+      label: string
+      price: number
+      basis: string
+      risk_reward_ratio: number
+      stressed_risk_reward_ratio: number
+    }>
+  }
+  chart_projection?: AnalysisChartProjection[]
+  diagnostics?: Record<string, unknown>
+  system_payload?: Record<string, unknown>
   history: Array<{
     run_id?: string
     entity_key?: string

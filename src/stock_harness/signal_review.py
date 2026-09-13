@@ -50,7 +50,6 @@ from stock_harness.observation_systems import (
     BoardHotspotSystem,
     ObservationSystemContext,
     ObservationSystemRegistry,
-    TrendBreakoutSystem,
 )
 from stock_harness.sqlite_store import SQLiteMarketDataStore
 from stock_harness.review_scoring import (
@@ -59,7 +58,13 @@ from stock_harness.review_scoring import (
     STOCK_OPPORTUNITY_SCORER,
     TREND_BREAKOUT_SCORER,
     default_scorer_registry,
-    execute_scorer,
+)
+from stock_harness.review_systems import (
+    MEAN_REVERSION_SYSTEM_ID,
+    AnalysisSystemContext,
+    MeanReversionReviewSystem,
+    ReviewAnalysisSystemRegistry,
+    ScorerAnalysisSystemAdapter,
 )
 from stock_harness.structural_scenario_engine import project_scenario_summary
 from stock_harness.stock_observation_scan import (
@@ -82,19 +87,30 @@ WEEKLY_RECOGNITION_SIGNAL = "weekly-board-recognition"
 DEFINITION_VERSION = "weekly-board-recognition-v1"
 DAILY_MARKET_BOARD_SIGNAL = "daily-market-board-review"
 DAILY_DEFINITION_VERSION = "daily-market-board-review-v1"
-DAILY_REVIEW_ALGORITHM_VERSION = "daily-market-board-review-v4-systems-v2"
+DAILY_REVIEW_ALGORITHM_VERSION = "daily-market-board-review-v5-multi-system"
 STOCK_OBSERVATION_SIGNAL = "stock-observation-pool"
 HISTORICAL_LIMIT = 5
 
 
 def _board_observation_system_registry() -> ObservationSystemRegistry:
-    scorers = default_scorer_registry()
     registry = ObservationSystemRegistry()
-    registry.register(TrendBreakoutSystem(
-        scorers.get(TREND_BREAKOUT_SCORER).version,
-    ))
     registry.register(BoardHotspotSystem())
     registry.register(BoardHotspotLeadingSystem())
+    return registry
+
+
+def _review_analysis_system_registry(scorers=None) -> ReviewAnalysisSystemRegistry:
+    scorers = scorers or default_scorer_registry()
+    registry = ReviewAnalysisSystemRegistry()
+    for system_id, display_name in (
+        (TREND_BREAKOUT_SCORER, "趋势突破"),
+        (MARKET_REGIME_SCORER, "大盘环境"),
+        (STOCK_OPPORTUNITY_SCORER, "个股趋势机会"),
+    ):
+        registry.register(ScorerAnalysisSystemAdapter(
+            scorers.get(system_id), display_name=display_name,
+        ))
+    registry.register(MeanReversionReviewSystem())
     return registry
 
 
@@ -132,6 +148,7 @@ class SignalReviewService:
             "manual_only": True,
             "profiles": ["market", "attention"],
             "observation_systems": _board_observation_system_registry().definitions(),
+            "analysis_systems": _review_analysis_system_registry().definitions(),
         }]
 
     def start_run(
@@ -335,6 +352,7 @@ class SignalReviewService:
             )
 
         scorers = default_scorer_registry()
+        analysis_systems = _review_analysis_system_registry(scorers)
         board_names = {str(board["symbol"]): str(board["name"]) for board in boards}
         board_themes = self._store.resolve_board_theme_profiles(board_names)
         board_capacities = classify_board_capacities(
@@ -385,10 +403,17 @@ class SignalReviewService:
         system_execution_by_id = {
             execution.system_id: execution for execution in system_executions
         }
-        trend_execution = system_execution_by_id[TREND_BREAKOUT_SCORER]
+        trend_execution = analysis_systems.execute(
+            TREND_BREAKOUT_SCORER,
+            AnalysisSystemContext(
+                entities_by_scope={"board": observations},
+                prior_results={TREND_BREAKOUT_SCORER: trend_prior},
+                recent_results={TREND_BREAKOUT_SCORER: trend_recent},
+            ),
+        )
         hotspot_execution = system_execution_by_id[BOARD_HOTSPOT_SYSTEM]
         leading_execution = system_execution_by_id[BOARD_HOTSPOT_LEADING_SYSTEM]
-        trend_scores = trend_execution.results
+        trend_scores = list(trend_execution.results)
         hotspot_scores = hotspot_execution.results
         leading_scores = leading_execution.results
         prior_wave_snapshots = self._store.list_hotspot_wave_snapshots(
@@ -422,11 +447,15 @@ class SignalReviewService:
             self._store, score_context_runs, MARKET_REGIME_SCORER,
             scorers.get(MARKET_REGIME_SCORER).version,
         )
-        market_execution = execute_scorer(
-            scorers.get(MARKET_REGIME_SCORER), items,
-            prior_by_symbol=market_prior, recent_by_symbol=market_recent,
+        market_execution = analysis_systems.execute(
+            MARKET_REGIME_SCORER,
+            AnalysisSystemContext(
+                entities_by_scope={"market": items},
+                prior_results={MARKET_REGIME_SCORER: market_prior},
+                recent_results={MARKET_REGIME_SCORER: market_recent},
+            ),
         )
-        market_scores = market_execution.results
+        market_scores = list(market_execution.results)
         for system_id, execution in (
             (TREND_BREAKOUT_SCORER, trend_execution),
             (BOARD_HOTSPOT_SYSTEM, hotspot_execution),
@@ -594,13 +623,18 @@ class SignalReviewService:
             self._store, score_context_runs, STOCK_OPPORTUNITY_SCORER,
             scorers.get(STOCK_OPPORTUNITY_SCORER).version,
         )
-        stock_execution = execute_scorer(
-            scorers.get(STOCK_OPPORTUNITY_SCORER),
-            [{"symbol": item["symbol"], "payload": item["payload"]}
-             for item in stock_pool["items"] if item["lifecycle_state"] != "cooldown"],
-            prior_by_symbol=stock_prior, recent_by_symbol=stock_recent,
+        stock_execution = analysis_systems.execute(
+            STOCK_OPPORTUNITY_SCORER,
+            AnalysisSystemContext(
+                entities_by_scope={"stock": [
+                    {"symbol": item["symbol"], "payload": item["payload"]}
+                    for item in stock_pool["items"] if item["lifecycle_state"] != "cooldown"
+                ]},
+                prior_results={STOCK_OPPORTUNITY_SCORER: stock_prior},
+                recent_results={STOCK_OPPORTUNITY_SCORER: stock_recent},
+            ),
         )
-        stock_scores = stock_execution.results
+        stock_scores = list(stock_execution.results)
         stock_score_by_symbol = {str(score["symbol"]): score for score in stock_scores}
         for item in stock_pool["items"]:
             score = stock_score_by_symbol.get(str(item["symbol"]))
@@ -619,6 +653,59 @@ class SignalReviewService:
                 "system_id": STOCK_OPPORTUNITY_SCORER,
                 "error": stock_execution.error,
             })
+        mean_system = analysis_systems.get(MEAN_REVERSION_SYSTEM_ID)
+        mean_prior, mean_recent = _score_history(
+            self._store, score_context_runs, MEAN_REVERSION_SYSTEM_ID,
+            mean_system.definition.version,
+        )
+        mean_execution = analysis_systems.execute(MEAN_REVERSION_SYSTEM_ID, AnalysisSystemContext(
+            entities_by_scope={
+                "market": [
+                    _mean_reversion_entity(
+                        str(item["symbol"]), "market",
+                        item.get("payload", {}), entity_key=str(item["item_key"]),
+                    ) for item in items if item.get("profile") == "market"
+                ],
+                "board": [
+                    _mean_reversion_entity(
+                        str(observation["symbol"]), "board", observation,
+                    ) for observation in observations
+                ],
+                "stock": [
+                    _mean_reversion_stock_entity(item)
+                    for item in stock_pool["items"]
+                    if item.get("lifecycle_state") != "cooldown"
+                    and _stock_mean_reversion_facts(item)
+                ],
+            },
+            prior_results={MEAN_REVERSION_SYSTEM_ID: mean_prior},
+            recent_results={MEAN_REVERSION_SYSTEM_ID: mean_recent},
+            dependencies={"mean_reversion_facts": True},
+        ))
+        mean_scores = list(mean_execution.results)
+        mean_score_by_symbol = {
+            (str(score["entity_scope"]), str(score["symbol"])): score
+            for score in mean_scores
+        }
+        for item in stock_pool["items"]:
+            score = mean_score_by_symbol.get(("stock", str(item["symbol"])))
+            if score is not None:
+                item["payload"]["mean_reversion_score"] = score
+        summary["analysis_systems"] = analysis_systems.definitions()
+        summary["mean_reversion_counts"] = {
+            scope: {
+                "analyzed": sum(score["entity_scope"] == scope for score in mean_scores),
+                "eligible": sum(
+                    score["entity_scope"] == scope and bool(score["eligible"])
+                    for score in mean_scores
+                ),
+            } for scope in ("market", "board", "stock")
+        }
+        if mean_execution.error:
+            summary["scoring_errors"].append({
+                "system_id": MEAN_REVERSION_SYSTEM_ID,
+                "error": mean_execution.error,
+            })
         digest = _result_digest(items + [{
             "active": True, "item_key": "all-board-observations",
             "rank": 0, "score": 0, "confidence": 1,
@@ -631,7 +718,7 @@ class SignalReviewService:
             run_id, items=items, summary=summary, input_digest=digest,
             scores=[
                 *trend_scores, *hotspot_scores, *leading_scores,
-                *market_scores, *stock_scores,
+                *market_scores, *stock_scores, *mean_scores,
             ],
             pool_snapshots=[board_pool, stock_pool],
             hotspot_wave_snapshots=hotspot_wave_snapshots,
@@ -1070,6 +1157,49 @@ def _score_history(
     return prior, recent
 
 
+def _mean_reversion_entity(
+    symbol: str, scope: str, source: object, *, entity_key: str | None = None,
+) -> dict[str, object]:
+    payload = source if isinstance(source, dict) else {}
+    metrics = payload.get("metrics")
+    if not isinstance(metrics, dict):
+        nested = payload.get("payload")
+        metrics = nested.get("metrics") if isinstance(nested, dict) else {}
+    facts = metrics.get("mean_reversion") if isinstance(metrics, dict) else {}
+    return {
+        "symbol": symbol, "entity_key": entity_key or symbol,
+        "entity_scope": scope,
+        "mean_reversion": facts if isinstance(facts, dict) else {},
+        "input_digest": payload.get("input_digest"),
+    }
+
+
+def _stock_mean_reversion_facts(item: object) -> dict[str, object]:
+    if not isinstance(item, dict):
+        return {}
+    payload = item.get("payload")
+    if not isinstance(payload, dict):
+        return {}
+    for key in ("independent_scan", "member_scan"):
+        scan = payload.get(key)
+        metrics = scan.get("metrics") if isinstance(scan, dict) else None
+        facts = metrics.get("mean_reversion") if isinstance(metrics, dict) else None
+        if isinstance(facts, dict) and facts.get("coverage_state") == "complete":
+            return facts
+    return {}
+
+
+def _mean_reversion_stock_entity(item: object) -> dict[str, object]:
+    if not isinstance(item, dict):
+        raise ValueError("stock mean-reversion entity must be an object")
+    return {
+        "symbol": str(item["symbol"]),
+        "entity_key": str(item["symbol"]),
+        "entity_scope": "stock",
+        "mean_reversion": _stock_mean_reversion_facts(item),
+    }
+
+
 def _reusable_stock_analysis(
     store: SQLiteMarketDataStore, payload: dict[str, object], cutoff: date,
 ) -> dict[str, object] | None:
@@ -1166,6 +1296,8 @@ def _daily_run_parameters() -> dict[str, object]:
         "stock_deep_analysis_limit": 30,
         "stock_deep_analysis_allocator": STOCK_M4_ALLOCATOR_VERSION,
         "stock_presentation_version": STOCK_PRESENTATION_VERSION,
+        "analysis_result_contract": "review-analysis-result-v1",
+        "mean_reversion_system": "mean-reversion-daily-v1",
         "stock_focus_limit": STOCK_FOCUS_LIMIT,
         "stock_risk_limit": STOCK_RISK_LIMIT,
     }

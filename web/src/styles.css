@@ -218,6 +218,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .signal-score-system-select { min-height: 27px; display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 3px 8px; color: var(--theme-muted); border-bottom: 1px solid var(--theme-border); font-size: 10px; }
 .signal-score-system-select > span { color: var(--theme-text-strong); font-size: 11px; }
 .signal-score-system-select select { height: 21px; color: var(--theme-text); border: 1px solid var(--theme-border); border-radius: 2px; background: var(--theme-base); font-size: 8px; }
+.signal-mean-scope { min-height: 31px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 3px; padding: 4px 6px; border-bottom: 1px solid var(--theme-border); }
+.signal-mean-scope button { display: flex; align-items: center; justify-content: center; gap: 5px; border: 1px solid transparent; border-radius: 2px; background: transparent; color: var(--theme-muted); font-size: 9px; }
+.signal-mean-scope button.active { border-color: color-mix(in srgb, #d8aa5d 45%, var(--theme-border)); background: color-mix(in srgb, #d8aa5d 9%, var(--theme-base)); color: var(--theme-text-strong); }
+.signal-mean-scope small { color: #d8aa5d !important; }
 .signal-hard-event-strip { min-height: 27px; display: flex; align-items: center; gap: 6px; overflow: hidden; padding: 3px 8px; color: var(--theme-muted); border-bottom: 1px solid var(--theme-border); background: color-mix(in srgb, #d8aa4f 5%, var(--theme-surface)); font-size: 8px; }
 .signal-hard-event-strip > span { flex: 0 0 auto; color: #d8aa4f; font-size: 9px; }
 .signal-hard-event-strip small { overflow: hidden; padding: 2px 4px; color: var(--theme-muted); border: 1px solid color-mix(in srgb, #d8aa4f 28%, var(--theme-border)); border-radius: 2px; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
@@ -300,6 +304,25 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .signal-evidence-content { min-height: 0; overflow: auto; }
 .signal-evidence-content > .signal-fixed-summary { overflow: visible; }
 .signal-evidence-content > .trade-scenario-panel { border-bottom: 1px solid var(--theme-border); }
+.mean-reversion-result { min-height: 0; padding: 9px 11px 12px; color: var(--theme-text); font: 11px/1.55 "Microsoft YaHei UI", "Microsoft YaHei", sans-serif; font-weight: 400; font-synthesis: none; }
+.mean-reversion-result > header { display: grid; grid-template-columns: 46px minmax(0, 1fr) auto; align-items: center; gap: 8px; }
+.mean-reversion-result > header > span { display: grid; color: var(--theme-text-strong); }
+.mean-reversion-result > header small { color: var(--theme-muted); font-size: 9px; }
+.mean-reversion-result .score-grade { width: 42px; height: 30px; place-items: center; border: 1px solid currentColor; border-radius: 3px; color: #d8aa5d; font-size: 14px; }
+.mean-reversion-result > header .eligible { color: #58b983; }
+.mean-reversion-result > header .waiting { color: var(--theme-muted); }
+.mean-reversion-result > p { margin: 7px 0; color: var(--theme-text); }
+.mean-reversion-sections { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }
+.mean-reversion-sections button { display: grid; grid-template-columns: 1fr; gap: 2px; padding: 6px 7px; border: 1px solid var(--theme-border); border-radius: 3px; background: transparent; color: var(--theme-text-strong); cursor: crosshair; }
+.mean-reversion-sections button:hover, .mean-reversion-sections button:focus-visible, .mean-reversion-sections button.active { border-color: var(--theme-accent); background: var(--theme-accent-soft); outline: none; }
+.mean-reversion-sections small { overflow: visible !important; white-space: normal !important; color: var(--theme-muted) !important; line-height: 1.4; }
+.mean-reversion-execution { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; margin-top: 7px; }
+.mean-reversion-execution > span { padding: 5px 6px; border-left: 2px solid #d8aa5d; background: var(--theme-surface-alt); color: var(--theme-muted); font-size: 9px; }
+.mean-reversion-execution small { color: var(--theme-text-strong); font-size: 10px; }
+.mean-reversion-targets { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+.mean-reversion-targets button { display: flex; align-items: center; gap: 5px; min-width: 86px; padding: 4px 6px; border: 1px solid #58b98366; border-radius: 2px; background: transparent; color: #58b983; cursor: crosshair; }
+.mean-reversion-targets small { margin: 0 !important; color: var(--theme-text) !important; }
+.mean-reversion-result > footer { margin-top: 7px; padding-top: 6px; border-top: 1px solid var(--theme-border); color: #c98a8e; }
 .signal-evidence-resizer { position: absolute; z-index: 5; top: -4px; right: 0; left: 0; height: 8px; cursor: row-resize; touch-action: none; }
 .signal-evidence-resizer::after { content: ""; position: absolute; top: 3px; right: 0; left: 0; height: 1px; background: transparent; transition: background .12s ease; }
 .signal-evidence-resizer:hover::after, .signal-evidence-resizing .signal-evidence-resizer::after { background: var(--theme-accent); }
@@ -1353,6 +1376,21 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .generated-risk-reward.extended .target-line,
 .generated-risk-reward.no-entry .target-line { stroke: #9aa6b4; }
 .generated-risk-reward.highlighted { opacity: 1; filter: drop-shadow(0 0 3px var(--theme-accent)); }
+.chart-mean-reversion { position: absolute; z-index: 5; inset: 0; overflow: hidden; pointer-events: none; }
+.chart-mean-reversion > svg { display: block; overflow: hidden; }
+.mean-reversion-band { fill: color-mix(in srgb, var(--theme-accent) 8%, transparent); stroke: none; transition: opacity 100ms ease; }
+.mean-reversion-series { fill: none; stroke: #d8aa5d; stroke-width: 1.2; stroke-dasharray: 5 3; vector-effect: non-scaling-stroke; transition: opacity 100ms ease, filter 100ms ease; }
+.mean-reversion-level line { stroke-width: 1; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; }
+.mean-reversion-level.confirmation line { stroke: #65a7df; }
+.mean-reversion-level.invalidation line { stroke: #e06b70; }
+.mean-reversion-level.target line { stroke: #58b983; }
+.mean-reversion-level text { fill: var(--theme-text-strong); font: 9px/1 "Microsoft YaHei UI", "Microsoft YaHei", sans-serif; font-weight: 400; paint-order: stroke; stroke: color-mix(in srgb, var(--theme-base) 70%, transparent); stroke-width: 1.4px; }
+.chart-mean-reversion.has-highlight .mean-reversion-band:not(.highlighted),
+.chart-mean-reversion.has-highlight .mean-reversion-series:not(.highlighted),
+.chart-mean-reversion.has-highlight .mean-reversion-level:not(.highlighted) { opacity: .14; }
+.chart-mean-reversion .highlighted { opacity: 1; filter: drop-shadow(0 0 3px var(--theme-accent)); }
+.chart-mean-reversion .mean-reversion-series.highlighted,
+.chart-mean-reversion .mean-reversion-level.highlighted line { stroke-width: 2.4; }
 .generated-price-zone { vector-effect: non-scaling-stroke; }
 .generated-price-zone.key-level { fill: #e0b45a20; stroke: #d6a84d80; stroke-width: .7; }
 .generated-price-zone.estimated-volume-at-price { fill: #5f9fbd16; stroke: #6ca8c344; stroke-width: .5; }

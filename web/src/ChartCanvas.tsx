@@ -89,6 +89,7 @@ import type { ChartIndicator, ChartRange, PriceMode, VisibleRange } from './char
 import {
   ChartReadout,
   GeneratedAnalysisOverlay,
+  MeanReversionOverlay,
   MarketAnnotationOverlay,
   MeasurementOverlay,
   PaneHeader,
@@ -110,6 +111,8 @@ import {
   type SelectionBox,
   type ViewportSnapshot,
 } from './chartCanvasParts'
+import { projectMeanReversion } from './meanReversionProjection'
+import type { AnalysisChartProjection } from './signalReviewClient'
 
 export type { ChartIndicator, ChartRange, PriceMode, VisibleRange } from './chartTypes'
 export {
@@ -214,6 +217,8 @@ type ChartCanvasProps = {
   riskRewardVisible?: boolean
   supplementalAnalysisItems?: GeneratedAnalysisItem[]
   supplementalAnalysisOnly?: boolean
+  analysisSystemProjection?: AnalysisChartProjection[]
+  highlightedSystemProjectionId?: string
 }
 
 const rising = '#ef5350'
@@ -302,6 +307,8 @@ export function ChartCanvas({
   riskRewardVisible = true,
   supplementalAnalysisItems = [],
   supplementalAnalysisOnly = false,
+  analysisSystemProjection,
+  highlightedSystemProjectionId,
 }: ChartCanvasProps) {
   const middleAveragePeriod = middleMovingAveragePeriod(symbol)
   const middleAveragePeriodRef = useRef(middleAveragePeriod)
@@ -1646,6 +1653,12 @@ export function ChartCanvas({
   const generatedBreakoutState = readGeneratedBreakoutState(
     displayedTrendAnalysis, breakoutStateVisible,
   )
+  const meanReversionGeometry = projectMeanReversion(
+    analysisSystemProjection,
+    chartRef.current,
+    candleRef.current ?? closeLineRef.current,
+    hostRef.current,
+  )
   useEffect(() => {
     onBreakoutStateChange?.(generatedBreakoutState)
   }, [
@@ -1822,6 +1835,10 @@ export function ChartCanvas({
           highlightedItemId={highlightedAnalysisItemId}
         />
       )}
+      {meanReversionGeometry && <MeanReversionOverlay
+        geometry={meanReversionGeometry}
+        highlightedProjectionId={highlightedSystemProjectionId}
+      />}
       {drawingTool === 'trend-line' && (
         <div
           className="chart-drawing-input"

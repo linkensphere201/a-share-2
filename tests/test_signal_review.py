@@ -564,12 +564,25 @@ def test_daily_signal_persists_every_board_but_displays_attention_only() -> None
     assert loud_observation["deep_analysis_run_id"]
     items = store.list_signal_review_items(str(run["run_id"]))
     scores = store.list_signal_review_scores(str(run["run_id"]))
-    assert len(scores) == 8
+    assert len(scores) == 12
     assert {score["system_id"] for score in scores} == {
         "board-hotspot-emergence", "board-hotspot-leading",
-        "market-regime", "trend-breakout",
+        "market-regime", "trend-breakout", "mean-reversion",
     }
     assert all(score["participant_count"] == 2 for score in scores)
+    mean_scores = [score for score in scores if score["system_id"] == "mean-reversion"]
+    assert {score["entity_scope"] for score in mean_scores} == {"market", "board"}
+    assert all(score["contract_version"] == "review-analysis-result-v1" for score in mean_scores)
+    mean_context = build_signal_chat_context(
+        store,
+        run_id=str(run["run_id"]),
+        selected_item_ids=["score:mean-reversion:board:BK001.DC"],
+    )
+    assert mean_context["selected_items"][0]["symbol"] == "BK001.DC"
+    assert mean_context["selected_items"][0]["profile"] == (
+        "analysis-system:mean-reversion"
+    )
+    assert mean_context["selected_scores"][0]["system_id"] == "mean-reversion"
     assert {item["symbol"] for item in items if item["profile"] == "attention"} == {"BK002.DC"}
     focused_board = next(item for item in items if item["profile"] == "attention")
     assert focused_board["payload"]["score_result"]["system_id"] == "trend-breakout"

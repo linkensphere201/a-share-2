@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import timedelta
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
@@ -51,14 +52,58 @@ def create_operations_router() -> APIRouter:
         return {"state": "disabled"} if callback is None else callback()
 
     @router.post("/api/update/refresh", status_code=status.HTTP_202_ACCEPTED)
-    def trigger_auto_update(request: Request) -> dict[str, object]:
+    def trigger_auto_update(
+        request: Request,
+        symbol: str | None = Query(default=None, min_length=1, max_length=96),
+    ) -> dict[str, object]:
+        normalized_symbol = symbol.strip().upper() if symbol else None
+        if normalized_symbol:
+            selected_store = store(request)
+            symbol_date = selected_store.get_latest_daily_bar_date(normalized_symbol)
+            market_date = selected_store.get_latest_stock_daily_bar_date()
+            now = runtime(request).now_provider()
+            calendar_end = now.date()
+            later_open_dates = (
+                selected_store.list_trading_dates(
+                    "tushare", symbol_date + timedelta(days=1), calendar_end,
+                )
+                if symbol_date is not None and symbol_date < calendar_end else []
+            )
+            weekday_after_close_is_pending = (
+                calendar_end.weekday() < 5
+                and now.hour >= 15
+                and symbol_date is not None
+                and symbol_date < calendar_end
+            )
+            if (
+                symbol_date is not None
+                and market_date is not None
+                and symbol_date >= market_date
+                and not later_open_dates
+                and not weekday_after_close_is_pending
+            ):
+                result: dict[str, object] = {
+                    "accepted": False,
+                    "state": "up-to-date",
+                    "symbol": normalized_symbol,
+                    "latest_date": symbol_date.isoformat(),
+                    "market_latest_date": market_date.isoformat(),
+                }
+                LOGGER.info(
+                    "manual_final_daily_update_skipped symbol=%s latest_date=%s "
+                    "market_latest_date=%s reason=up-to-date",
+                    normalized_symbol,
+                    symbol_date,
+                    market_date,
+                )
+                return result
         callback = runtime(request).update_trigger
         if callback is None:
             raise HTTPException(status_code=503, detail="auto update is disabled")
         result = callback()
         LOGGER.info(
-            "manual_final_daily_update_requested accepted=%s state=%s",
-            result.get("accepted"), result.get("state"),
+            "manual_final_daily_update_requested symbol=%s accepted=%s state=%s",
+            normalized_symbol, result.get("accepted"), result.get("state"),
         )
         return result
 

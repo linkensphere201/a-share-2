@@ -119,7 +119,7 @@ def build_server(
         system_id: Annotated[str | None, Field(max_length=100)] = None,
         limit: Annotated[int, Field(ge=1, le=200)] = 200,
     ) -> dict[str, object]:
-        """Read independent trend, hotspot, or future plugin scores for one run."""
+        """Read independent trend, mean-reversion, hotspot, or other plugin scores."""
         return await invoke(service.list_signal_scores, run_id, system_id, limit)
 
     @server.tool(title="Search StockHarness instruments", annotations=READ_ONLY)

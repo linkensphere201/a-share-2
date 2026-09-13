@@ -152,7 +152,32 @@ def build_signal_chat_context(
         raise ValueError("signal chat accepts at most 20 selected items")
     items = []
     pool_items: list[dict[str, object]] = []
+    score_items: list[dict[str, object]] = []
     for item_id in requested:
+        if item_id.startswith("score:"):
+            parts = item_id.split(":", 3)
+            if len(parts) != 4 or parts[2] not in {"market", "board", "stock"}:
+                raise ValueError("invalid analysis-system score reference")
+            score_item = next((
+                item for item in store.list_signal_review_scores(
+                    run_id, system_id=parts[1], limit=5000,
+                )
+                if str(item.get("entity_scope")) == parts[2]
+                and str(item.get("symbol")).upper() == parts[3].upper()
+            ), None)
+            if score_item is None:
+                raise ValueError(
+                    "selected analysis-system score does not belong to the source run"
+                )
+            score_items.append({
+                **score_item,
+                "effective_date": (
+                    score_item["effective_date"].isoformat()
+                    if isinstance(score_item.get("effective_date"), date)
+                    else score_item.get("effective_date")
+                ),
+            })
+            continue
         if item_id.startswith("pool:"):
             parts = item_id.split(":", 2)
             if len(parts) != 3 or parts[1] not in {"board", "stock"}:
@@ -221,9 +246,26 @@ def build_signal_chat_context(
             "confidence": None, "metrics": pool_item.get("payload", {}),
             "evidence": item_evidence,
         })
+    for score_item in score_items:
+        selected.append({
+            "item_id": (
+                f"score:{score_item['system_id']}:{score_item['entity_scope']}:"
+                f"{score_item['symbol']}"
+            ),
+            "symbol": score_item["symbol"],
+            "name": score_item.get("name") or score_item["symbol"],
+            "profile": f"analysis-system:{score_item['system_id']}",
+            "rank": score_item.get("rank"),
+            "change_type": score_item.get("state"),
+            "active": bool(score_item.get("eligible")),
+            "score": score_item.get("total_score"),
+            "confidence": None,
+            "metrics": score_item,
+            "evidence": score_item.get("evidence", []),
+        })
     selected_keys = {
         str(value)
-        for item in [*items, *pool_items]
+        for item in [*items, *pool_items, *score_items]
         for value in (item.get("item_key"), item.get("symbol"))
         if value
     }
@@ -240,6 +282,21 @@ def build_signal_chat_context(
         if str(score.get("entity_key")) in selected_keys
         or str(score.get("symbol")) in selected_keys
     ]
+    selected_score_identities = {
+        (
+            str(item.get("system_id")), str(item.get("entity_scope")),
+            str(item.get("symbol")).upper(),
+        )
+        for item in score_items
+    }
+    selected_scores.sort(key=lambda item: (
+        (
+            str(item.get("system_id")), str(item.get("entity_scope")),
+            str(item.get("symbol")).upper(),
+        ) not in selected_score_identities,
+        int(item.get("rank") or 0),
+        str(item.get("system_id")),
+    ))
     effective_date = run["effective_date"]
     assert isinstance(effective_date, date)
     return {

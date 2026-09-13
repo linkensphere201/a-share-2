@@ -11,6 +11,7 @@ from statistics import fmean, median
 
 from stock_harness.analysis_inputs import AnalysisBar
 from stock_harness.models import StoredDailyBar
+from stock_harness.mean_reversion_facts import build_mean_reversion_facts
 from stock_harness.pattern_analysis import PatternAnalysisService
 from stock_harness.structural_scenario_engine import (
     build_coarse_structural_scenario_items,
@@ -18,8 +19,8 @@ from stock_harness.structural_scenario_engine import (
 )
 
 
-ALGORITHM_VERSION = "daily-market-board-observation-v5"
-CONFIG_VERSION = "daily-market-board-defaults-v5"
+ALGORITHM_VERSION = "daily-market-board-observation-v6"
+CONFIG_VERSION = "daily-market-board-defaults-v6"
 MINIMUM_BARS = 120
 LOOKBACK_BARS = 260
 
@@ -204,6 +205,9 @@ def analyze_daily_series(
         "downside": downside,
         "descending_envelopes": envelopes,
         "price_space": _price_space(visible, states, envelopes, atr14),
+        "mean_reversion": build_mean_reversion_facts(
+            visible, volume_semantics=volume_semantics,
+        ),
     }
     return _observation(
         symbol, effective_date, visible, "complete", metrics,

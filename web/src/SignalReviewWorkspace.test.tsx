@@ -10,12 +10,16 @@ import type { ObservationPoolItem, SignalItem } from './signalReviewClient'
 import { themes } from './themeStore'
 
 vi.mock('./ChartCanvas', () => ({
-  ChartCanvas: ({ symbol, highlightedAnalysisItemId, trendAnalysisOverride, toolbarContent }: {
+  ChartCanvas: ({
+    symbol, highlightedAnalysisItemId, trendAnalysisOverride,
+    analysisSystemProjection, toolbarContent,
+  }: {
     symbol: string
     highlightedAnalysisItemId?: string
     trendAnalysisOverride?: { run_id?: string } | null
+    analysisSystemProjection?: unknown[]
     toolbarContent?: ReactNode
-  }) => <div data-testid="signal-chart" data-symbol={symbol} data-highlight={highlightedAnalysisItemId} data-analysis-run={trendAnalysisOverride?.run_id}>{symbol}{toolbarContent}</div>,
+  }) => <div data-testid="signal-chart" data-symbol={symbol} data-highlight={highlightedAnalysisItemId} data-analysis-run={trendAnalysisOverride?.run_id} data-system-projections={analysisSystemProjection?.length ?? 0}>{symbol}{toolbarContent}</div>,
 }))
 
 afterEach(() => {
@@ -353,6 +357,46 @@ describe('SignalReviewWorkspace', () => {
     expect(screen.getByText('较上一轮增强')).toBeTruthy()
     await user.click(screen.getByRole('button', { name: /打开 2026-09-03 冻结评分/ }))
     expect(fetchMock.mock.calls.some(call => String(call[0]) === '/api/signals/runs/run-0')).toBe(true)
+  })
+
+  it('shows independent mean-reversion scopes and projects its chart evidence', async () => {
+    const dailyDefinition = {
+      ...definition, signal_id: 'daily-market-board-review', name: '每日复盘',
+      cadence: 'daily', profiles: ['market', 'attention'],
+    }
+    const dailyRun = { ...run, signal_id: dailyDefinition.signal_id, cadence: 'daily' }
+    const meanScore = {
+      ...signalScore('BK001.DC', 78, true, 1, []),
+      system_id: 'mean-reversion', system_version: 'mean-reversion-daily-v1',
+      scorer_version: 'mean-reversion-daily-v1', contract_version: 'review-analysis-result-v1',
+      setup_family: 'directional-pullback', timeframe: 'daily',
+      summary: '收缩回踩后重新站上运动中心',
+      eligibility: { eligible: true, state: 'reversal-confirmed', rejection_reasons: [] },
+      scorecard: { total_score: 78, grade: 'A', dimensions: {}, penalties: [], ranking_universe: 'board:directional-pullback:daily' },
+      conclusion: { verdict: '机会已确认', summary: '收缩回踩后重新站上运动中心', sections: [{ code: 'regime', title: '运动中心', text: '中心稳定', evidence_refs: ['mr:center'] }], risks: [] },
+      evidence: [],
+      opportunity: { state: 'reversal-confirmed', confirmation_price: 10, invalidation_price: 9, targets: [{ label: 'T1', price: 13, stressed_risk_reward_ratio: 3 }], stressed_risk_reward: 3, maximum_holding_sessions: 20 },
+      chart_projection: [{ projection_id: 'mr:center', kind: 'series-line', role: 'moving-center', label: '运动中心', points: [] }],
+      diagnostics: {}, system_payload: {},
+    }
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === '/api/signals/definitions') return response({ items: [dailyDefinition] })
+      if (url.includes('/api/signals/runs?')) return response({ items: [dailyRun] })
+      if (url.endsWith('/items')) return response({ items: [] })
+      if (url.endsWith('/scores')) return response({ items: [meanScore] })
+      if (url.endsWith('/attention')) return response({ items: [] })
+      if (url.includes('/board-observations?')) return response({ items: [], total: 0 })
+      throw new Error(`unexpected URL ${url}`)
+    }))
+    const user = userEvent.setup()
+    render(<SignalReviewWorkspace theme={themes[0]} onClose={() => undefined}/>)
+
+    await user.click(await screen.findByRole('button', { name: /均值回归/ }))
+    await user.click((await screen.findAllByText('BK001.DC'))[0].closest('button')!)
+    expect(screen.getByTestId('signal-chart').dataset.systemProjections).toBe('1')
+    expect(screen.getByText('收缩回踩后重新站上运动中心')).toBeTruthy()
+    expect(screen.getByText('3.00:1')).toBeTruthy()
   })
 
   it('restores the trend score system after visiting a radar tab', async () => {

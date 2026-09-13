@@ -28,6 +28,7 @@ import {
   type RenderBar,
 } from './chartData'
 import type { ChartPaneRatios } from './workspace'
+import type { MeanReversionGeometry } from './meanReversionProjection'
 import type {
   HistogramData,
   IChartApi,
@@ -445,6 +446,39 @@ function trendLineDashPattern(dash: TrendLineDash): string | undefined {
   if (dash === 'long-dashed') return '14 7'
   if (dash === 'dash-dot') return '12 5 2 5'
   return '6 4'
+}
+
+export function MeanReversionOverlay({
+  geometry,
+  highlightedProjectionId,
+}: {
+  geometry: MeanReversionGeometry
+  highlightedProjectionId?: string
+}) {
+  return <div
+    className={`chart-mean-reversion${highlightedProjectionId ? ' has-highlight' : ''}`}
+    aria-label="均值回归分析图层"
+  >
+    <svg width="100%" height="100%" aria-hidden="true">
+      {geometry.bands.map(band => <polygon
+        key={band.id}
+        className={`mean-reversion-band${highlightedProjectionId === band.id ? ' highlighted' : ''}`}
+        points={band.polygon}
+      ><title>{band.label}</title></polygon>)}
+      {geometry.lines.map(line => <polyline
+        key={line.id}
+        className={`mean-reversion-series ${line.role}${highlightedProjectionId === line.id ? ' highlighted' : ''}`}
+        points={line.points}
+      ><title>{line.label}</title></polyline>)}
+      {geometry.levels.map(level => <g
+        key={level.id}
+        className={`mean-reversion-level ${level.role}${highlightedProjectionId === level.id ? ' highlighted' : ''}`}
+      >
+        <line x1="0" y1={level.y} x2={level.width} y2={level.y}/>
+        <text x="6" y={Math.max(12, level.y - 4)}>{level.label} {level.price.toFixed(2)}</text>
+      </g>)}
+    </svg>
+  </div>
 }
 
 export function MarketAnnotationOverlay({ geometry }: { geometry: MarketAnnotationGeometry }) {

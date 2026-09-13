@@ -6,10 +6,12 @@ import {
   openSignalWorkspaceConversation, startChatTurn, streamChatTurn,
   type ChatConversation, type ChatConversationSummary, type CodexCapabilities,
 } from './aiChatClient'
-import type { ObservationPoolItem, SignalItem, SignalRun } from './signalReviewClient'
+import type {
+  ObservationPoolItem, SignalItem, SignalRun, SignalScoreResult,
+} from './signalReviewClient'
 
 export function SignalChatPanel({
-  signalId, runs, run, items, selectedItem, selectedPoolItem,
+  signalId, runs, run, items, selectedItem, selectedPoolItem, selectedScore,
   onReferencePreview, onReferenceActivate, onClose,
 }: {
   signalId: string
@@ -18,6 +20,7 @@ export function SignalChatPanel({
   items: SignalItem[]
   selectedItem?: SignalItem
   selectedPoolItem?: ObservationPoolItem
+  selectedScore?: SignalScoreResult
   onReferencePreview: (itemId?: string, evidenceId?: string) => void
   onReferenceActivate: (itemId: string, evidenceId: string) => void
   onClose: () => void
@@ -112,7 +115,9 @@ export function SignalChatPanel({
     try {
       const turn = await startChatTurn(
         conversation.conversation_id, content, templateId, undefined,
-        selectedItem
+        selectedScore
+          ? [`score:${selectedScore.system_id}:${selectedScore.entity_scope}:${selectedScore.symbol}`]
+          : selectedItem
           ? [selectedItem.item_id]
           : selectedPoolItem
             ? [`pool:${selectedPoolItem.kind === 'sector' ? 'board' : 'stock'}:${selectedPoolItem.symbol}`]
