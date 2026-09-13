@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import argparse
-from datetime import date, timedelta
+from datetime import date
 import json
 from pathlib import Path
 import time
@@ -10,6 +10,7 @@ from stock_harness.config import load_runtime_settings
 from stock_harness.mean_reversion_replay import (
     MeanReversionReplayAdapter,
     SQLiteReplayFutureDataSource,
+    select_replay_dates,
 )
 from stock_harness.replay import AnalysisReplayEngine
 from stock_harness.sqlite_store import SQLiteMarketDataStore
@@ -43,9 +44,7 @@ def main() -> None:
         evaluation_through = min(args.evaluation_through or latest, latest)
         if evaluation_through < through:
             parser.error("--evaluation-through cannot precede --through")
-        dates = store.list_trading_dates(
-            "tushare", through - timedelta(days=max(90, args.sessions * 3)), through,
-        )[-args.sessions:]
+        dates = select_replay_dates(store, through, args.sessions)
         if len(dates) != args.sessions:
             raise SystemExit(f"requested {args.sessions} sessions but found {len(dates)}")
         adapter = MeanReversionReplayAdapter(

@@ -5,7 +5,7 @@ from datetime import date, timedelta
 import pytest
 
 from stock_harness.models import StoredDailyBar
-from stock_harness.mean_reversion_replay import _analyze
+from stock_harness.mean_reversion_replay import _analyze, select_replay_dates
 from stock_harness.replay import (
     AnalysisReplayEngine,
     DEFAULT_EVALUATION_HORIZONS,
@@ -171,3 +171,20 @@ def test_fast_mean_reversion_adapter_preserves_production_opportunity_gates() ->
     assert counters["stock:state:reversal-confirmed"] == 1
     assert counters["stock:rejected:no-credible-target-at-3r"] == 1
     assert counters["stock:rejected:invalid-long-price-ordering"] == 1
+
+
+def test_replay_dates_prefer_completed_benchmark_bars_over_sparse_calendar() -> None:
+    dates = [date(2026, 1, 1) + timedelta(days=index) for index in range(4)]
+
+    class Store:
+        def get_daily_bars(self, symbol, start_date, end_date):
+            assert symbol == "000001.SH"
+            return [_bars(1)[0].__class__(
+                symbol=symbol, trade_date=value, open=10, high=10,
+                low=10, close=10, volume=1, source="test", updated_at_ms=0,
+            ) for value in dates]
+
+        def list_trading_dates(self, source, start_date, end_date):
+            raise AssertionError("calendar fallback should not be used")
+
+    assert select_replay_dates(Store(), dates[-1], 3) == dates[-3:]

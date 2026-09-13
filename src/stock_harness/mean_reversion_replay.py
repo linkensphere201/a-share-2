@@ -45,6 +45,24 @@ class MeanReversionReplayStore(Protocol):
 
     def get_instrument_kind(self, symbol: str) -> InstrumentKind | None: ...
 
+    def list_trading_dates(
+        self, source: str, start_date: date, end_date: date,
+    ) -> list[date]: ...
+
+
+def select_replay_dates(
+    store: MeanReversionReplayStore, through: date, sessions: int,
+) -> list[date]:
+    """Prefer actual benchmark sessions and use the provider calendar as fallback."""
+    date_start = through - timedelta(days=max(180, sessions * 4))
+    dates = [
+        bar.trade_date
+        for bar in store.get_daily_bars("000001.SH", date_start, through)
+    ][-sessions:]
+    if len(dates) == sessions:
+        return dates
+    return store.list_trading_dates("tushare", date_start, through)[-sessions:]
+
 
 class MeanReversionReplayAdapter:
     """Generate only frozen eligible signals; never write daily-review snapshots."""
