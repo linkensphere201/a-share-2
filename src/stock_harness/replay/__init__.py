@@ -4,6 +4,7 @@ from stock_harness.replay.contracts import (
     DEFAULT_EVALUATION_HORIZONS,
     EVALUATION_CONTRACT_VERSION,
     FrozenSignal,
+    ExitPlan,
 )
 from stock_harness.replay.cases import CASE_LIBRARY_VERSION, select_replay_cases
 from stock_harness.replay.engine import AnalysisReplayEngine, ReplaySystemAdapter
@@ -18,6 +19,7 @@ __all__ = [
     "DEFAULT_EVALUATION_HORIZONS",
     "EVALUATION_CONTRACT_VERSION",
     "FrozenSignal",
+    "ExitPlan",
     "CASE_LIBRARY_VERSION",
     "select_replay_cases",
     "ReplaySystemAdapter",

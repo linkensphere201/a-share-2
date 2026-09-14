@@ -57,9 +57,9 @@ def _complete_result(
     opportunity = {
         "state": state,
         "direction": "long" if setup_family != "market-regime" else "environment",
-        "entry_price": None,
+        "entry_price": value.get("entry_price"),
         "confirmation_price": None,
-        "invalidation_price": None,
+        "invalidation_price": value.get("invalidation_price"),
         "targets": ([{
             "label": value.get("selected_target_label"),
             "price": value.get("selected_target_price"),

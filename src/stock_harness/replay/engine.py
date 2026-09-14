@@ -40,7 +40,11 @@ class AnalysisReplayEngine:
         evaluations = [
             evaluate_frozen_signal(
                 signal,
-                self._future_data.future_bars(signal, max(self._horizons)),
+                self._future_data.future_bars(signal, max(
+                    max(self._horizons),
+                    (plan.maximum_holding_sessions or 0)
+                    if (plan := signal.resolved_exit_plan()) else 0,
+                )),
                 horizons=self._horizons,
             )
             for signal in signals
