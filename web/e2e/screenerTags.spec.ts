@@ -15,13 +15,22 @@ test('saved screener tags compose without crowding the result list', async ({ pa
     items: route.request().url().endsWith('/candidates') ? candidates : [run],
   } }))
   await page.route('**/api/analysis/runs/tag-analysis', route => route.fulfill({ json: null }))
+  await page.route('**/api/instrument-board-memberships?**', route => route.fulfill({ json: {
+    basis: 'current', items: candidates.map((item, index) => ({ symbol: item.symbol, boards: [
+      { board_symbol: index % 2 ? 'COMP.TI' : 'PCB.DC', name: index % 2 ? '元件' : 'PCB', classification: index % 2 ? 'industry' : 'concept', source_system: 'test' },
+      ...Array.from({ length: 18 }, (_, i) => ({ board_symbol: `TEST${i}.DC`, name: `概念板块${i}`, classification: 'concept', source_system: 'test' })),
+    ] })),
+  } }))
   await page.goto('/')
   await page.getByRole('button', { name: '选股器', exact: true }).click()
   await page.getByRole('button', { name: /历史辨识度/ }).click()
   await expect(page.getByText(/显示 6\/20/)).toBeVisible()
   await page.getByRole('button', { name: '快速过滤：已突破' }).click()
   await expect(page.getByText(/显示 3\/20/)).toBeVisible()
-  for (const width of [1440, 1024]) {
+  await page.getByRole('button', { name: '元件 3', exact: true }).click()
+  await expect(page.getByText(/显示 3\/20/)).toBeVisible()
+  await page.getByRole('button', { name: '清除板块筛选' }).click()
+  for (const width of [1440, 1024, 390]) {
     await page.setViewportSize({ width, height: 900 })
     const list = page.locator('.screener-results > .screener-scroll')
     const tags = page.getByRole('group', { name: '辨识度标签过滤' })
@@ -29,6 +38,29 @@ test('saved screener tags compose without crowding the result list', async ({ pa
     const b = (await list.boundingBox())!
     expect(b.y).toBeGreaterThan(a.y + a.height)
     expect(b.height).toBeGreaterThan(200)
-    await page.screenshot({ path: info.outputPath(`screener-tags-${width}.png`) })
+    const boardBar = page.getByRole('group', { name: '板块筛选（多选取并集）' })
+    expect(await boardBar.evaluate(element => element.scrollWidth > element.clientWidth)).toBe(true)
+    await boardBar.hover()
+    await page.mouse.wheel(400, 0)
+    await expect.poll(() => boardBar.evaluate(element => element.scrollLeft)).toBeGreaterThan(0)
+    const resultPane = (await page.locator('.screener-results').boundingBox())!
+    expect(resultPane.x + resultPane.width).toBeLessThanOrEqual(width)
+    await boardBar.evaluate(element => { element.scrollLeft = 0 })
+    await page.screenshot({ path: info.outputPath(`screener-tags-${width}.png`), animations: 'disabled' })
   }
+})
+
+test('theme switching preserves preferences and distinguishes light and dark surfaces', async ({ page }, info) => {
+  await page.goto('/')
+  const picker = page.getByRole('combobox', { name: '主题配色' })
+  await expect(picker.locator('option')).toHaveCount(28)
+  for (const id of ['koehler', 'porcelain', 'mint', 'rose', 'arctic', 'graphite', 'forest', 'ink', 'berry']) {
+    await picker.selectOption(id)
+    await expect(page.locator('html')).toHaveAttribute('data-theme', id)
+    expect(await page.evaluate(() => localStorage.getItem('stock-harness.theme.v1'))).toBe(id)
+    await expect(page.locator('.chart-stage').first().locator('canvas').first()).toBeVisible()
+    await page.screenshot({ path: info.outputPath(`theme-${id}.png`), animations: 'disabled' })
+  }
+  await page.reload()
+  await expect(picker).toHaveValue('berry')
 })

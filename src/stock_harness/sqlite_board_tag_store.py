@@ -11,6 +11,41 @@ from stock_harness.sqlite_mapping import _instrument_classification
 
 
 class SQLiteBoardTagStoreMixin:
+    def list_instrument_board_memberships(self, symbols: Sequence[str]) -> dict[str, list[dict[str, object]]]:
+        """Current full affiliations, independent of the bounded display-tag selection."""
+        ordered = list(dict.fromkeys(item.strip().upper() for item in symbols if item.strip()))
+        result: dict[str, list[dict[str, object]]] = {symbol: [] for symbol in ordered}
+        with self._lock:
+            for offset in range(0, len(ordered), 400):
+                chunk = ordered[offset : offset + 400]
+                placeholders = ",".join("?" for _ in chunk)
+                rows = self._connection.execute(
+                    f"""
+                    SELECT DISTINCT member.member_symbol, board.symbol, board.name,
+                           board.exchange, catalog.source_system, catalog.category
+                    FROM board_memberships AS member
+                    JOIN instruments AS board ON board.instrument_id = member.board_instrument_id
+                    LEFT JOIN instrument_catalog_entries AS catalog
+                      ON catalog.instrument_id = board.instrument_id
+                     AND catalog.catalog_source_id = member.source_id
+                    WHERE member.active = 1 AND board.active = 1
+                      AND member.member_symbol IN ({placeholders})
+                    ORDER BY member.member_symbol, board.symbol
+                    """, chunk,
+                ).fetchall()
+                seen: set[tuple[str, str]] = set()
+                for row in rows:
+                    key = (str(row[0]), str(row[1]))
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    result[key[0]].append({
+                        "board_symbol": key[1], "name": str(row[2]),
+                        "classification": _instrument_classification("sector", str(row[3]), row[4], row[5]),
+                        "source_system": str(row[4] or row[3]),
+                    })
+        return result
+
     def list_instrument_board_tags(self, symbols: Sequence[str]) -> dict[str, list[dict[str, object]]]:
         ordered = list(dict.fromkeys(item.strip().upper() for item in symbols if item.strip()))
         result: dict[str, list[dict[str, object]]] = {symbol: [] for symbol in ordered}

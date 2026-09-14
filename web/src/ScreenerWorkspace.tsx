@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useState } from 'react'
 import { ArrowLeft, ChevronLeft, ChevronRight, Filter, ListPlus, Play, RefreshCw, ShieldX, Trash2, X } from 'lucide-react'
 import { ChartCanvas } from './ChartCanvas'
 import { MarketBoardBadge } from './MarketBoardBadge'
+import { fetchInstrumentBoardMemberships, type InstrumentBoardMembership } from './boardTags'
 import { TradingSystemControls } from './TradingSystemControls'
 import { TrendExplanationPanel } from './TrendExplanationPanel'
 import { logError, logInfo } from './eventLogger'
@@ -59,6 +60,11 @@ export function ScreenerWorkspace({
   const [maxResults, setMaxResults] = useState(200)
   const [resultStateFilter, setResultStateFilter] = useState<ResultStateFilter>('all')
   const [historicalOnly, setHistoricalOnly] = useState(false)
+  const [boards, setBoards] = useState<Record<string, InstrumentBoardMembership[]>>({})
+  const [boardFilter, setBoardFilter] = useState<string[]>([])
+  const [boardQuery, setBoardQuery] = useState('')
+  const [boardStatus, setBoardStatus] = useState<'loading' | 'ready' | 'error'>('ready')
+  const [boardRetry, setBoardRetry] = useState(0)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [contextMenu, setContextMenu] = useState<ScreenerContextMenu>()
@@ -72,7 +78,30 @@ export function ScreenerWorkspace({
   const historicalCandidates = useMemo(() => stateCandidates.filter(
     item => item.recognition?.tags.includes('historical'),
   ), [stateCandidates])
-  const filteredCandidates = historicalOnly ? historicalCandidates : stateCandidates
+  const taggedCandidates = historicalOnly ? historicalCandidates : stateCandidates
+  const filteredCandidates = useMemo(() => boardFilter.length === 0 ? taggedCandidates
+    : taggedCandidates.filter(item => boards[item.symbol]?.some(board => boardFilter.includes(board.board_symbol))),
+  [taggedCandidates, boards, boardFilter])
+  const boardOptions = useMemo(() => {
+    const options = new Map<string, InstrumentBoardMembership & { count: number }>()
+    candidates.forEach(item => boards[item.symbol]?.forEach(board => {
+      if (!options.has(board.board_symbol)) options.set(board.board_symbol, { ...board, count: 0 })
+    }))
+    taggedCandidates.forEach(item => new Set(boards[item.symbol]?.map(board => board.board_symbol)).forEach(symbol => {
+      const option = options.get(symbol)
+      if (option) option.count++
+    }))
+    return [...options.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, 'zh-CN') || a.board_symbol.localeCompare(b.board_symbol))
+  }, [candidates, taggedCandidates, boards])
+  const duplicateBoardNames = useMemo(() => {
+    const seen = new Set<string>(), duplicates = new Set<string>()
+    boardOptions.forEach(board => {
+      if (seen.has(board.name)) duplicates.add(board.name)
+      seen.add(board.name)
+    })
+    return duplicates
+  }, [boardOptions])
+  const visibleBoards = boardOptions.filter(board => `${board.name} ${board.board_symbol}`.toLowerCase().includes(boardQuery.trim().toLowerCase()) || boardFilter.includes(board.board_symbol))
   const recognition = candidates[0]?.recognition
   const resultStateCounts = useMemo(() => Object.fromEntries(
     ([...trendStates, 'accumulating'] as ScreenerState[]).map(state => [
@@ -113,6 +142,21 @@ export function ScreenerWorkspace({
 
   useEffect(() => { setResultStateFilter('all') }, [selectedRun?.strategy_id])
   useEffect(() => { setHistoricalOnly(false) }, [selectedRun?.run_id])
+  useEffect(() => { setBoardFilter([]); setBoardQuery('') }, [selectedRun?.run_id])
+
+  useEffect(() => {
+    const controller = new AbortController()
+    setBoards({})
+    if (!candidates.length) { setBoardStatus('ready'); return () => controller.abort() }
+    setBoardStatus('loading')
+    fetchInstrumentBoardMemberships(candidates.map(item => item.symbol), controller.signal)
+      .then(values => {
+        if (controller.signal.aborted) return
+        setBoards(values)
+        setBoardStatus('ready')
+      }).catch(() => { if (!controller.signal.aborted) setBoardStatus('error') })
+    return () => controller.abort()
+  }, [candidates, boardRetry])
 
   useEffect(() => {
     if (!exclusionPoolOpen) return
@@ -271,6 +315,28 @@ export function ScreenerWorkspace({
           <button className={historicalOnly ? 'active' : ''} aria-pressed={historicalOnly} disabled={!recognition?.available} onClick={() => setHistoricalOnly(true)}>历史辨识度 <small>{recognition?.available ? historicalCandidates.length : '—'}</small></button>
         </div>
         {candidates.length > 0 && <div className="screener-tag-source">{recognition?.available ? `辨识度来源 ${recognition.source_date}` : '截至选股日期暂无辨识度复盘数据'} · 显示 {filteredCandidates.length}/{candidates.length}</div>}
+        {candidates.length > 0 && <>
+          <div className="screener-board-search">
+            <label>当前板块<input type="search" aria-label="搜索板块" placeholder="搜索板块" value={boardQuery} onChange={event => setBoardQuery(event.target.value)}/></label>
+            {boardFilter.length > 0 && <button className="icon-button" title="清除板块筛选" aria-label="清除板块筛选" onClick={() => setBoardFilter([])}><X size={13}/></button>}
+          </div>
+          <div className="screener-quick-filters screener-board-filters" role="group" aria-label="板块筛选（多选取并集）" tabIndex={0}>
+            <button className={boardFilter.length === 0 ? 'active' : ''} aria-pressed={boardFilter.length === 0} onClick={() => setBoardFilter([])}>不限板块 <small>{taggedCandidates.length}</small></button>
+            {boardStatus === 'loading' && <span role="status">加载中</span>}
+            {boardStatus === 'error' && <button onClick={() => setBoardRetry(value => value + 1)}><RefreshCw size={12}/>板块加载失败，重试</button>}
+            {boardStatus === 'ready' && visibleBoards.map(board => <button key={board.board_symbol}
+              className={boardFilter.includes(board.board_symbol) ? 'active' : ''}
+              aria-pressed={boardFilter.includes(board.board_symbol)}
+              aria-label={`${board.name}${duplicateBoardNames.has(board.name) ? ` ${board.board_symbol}` : ''} ${board.count}`}
+              title={`${board.name} · ${board.source_system} · ${board.board_symbol}`}
+              onClick={() => toggle(board.board_symbol, boardFilter, setBoardFilter)}>
+              <i className={`board-filter-dot ${board.classification}`}/>{board.name}
+              {duplicateBoardNames.has(board.name) && <small>{board.board_symbol}</small>}
+              <small>{board.count}</small>
+            </button>)}
+            {boardStatus === 'ready' && !visibleBoards.length && <span role="status">{boardOptions.length ? '无匹配板块' : '暂无板块数据'}</span>}
+          </div>
+        </>}
         <div className="screener-result-head"><span>#</span><span>标的</span><span>周期/状态</span><span>得分</span></div>
         <div className="screener-scroll">{selectedRun?.status === 'failed' && <div className="screener-empty compact error">{selectedRun.error ?? '选股任务失败'}</div>}{selectedRun?.status === 'succeeded' && candidates.length === 0 && <div className="screener-empty compact">本轮没有符合条件的标的</div>}{candidates.length > 0 && filteredCandidates.length === 0 && <div className="screener-empty compact">当前筛选组合没有符合条件的标的</div>}{filteredCandidates.map(item => <button key={item.symbol} className={selected?.symbol === item.symbol ? 'active' : ''} onClick={() => setSelected(item)} onContextMenu={event => {
           event.preventDefault()

@@ -1,11 +1,15 @@
 // @vitest-environment jsdom
 
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ReactNode } from 'react'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ScreenerWorkspace } from './ScreenerWorkspace'
 import { themes } from './themeStore'
+import { fetchInstrumentBoardMemberships } from './boardTags'
+
+vi.mock('./boardTags', () => ({ fetchInstrumentBoardMemberships: vi.fn() }))
+beforeEach(() => { vi.mocked(fetchInstrumentBoardMemberships).mockReset().mockResolvedValue({}) })
 
 vi.mock('./ChartCanvas', () => ({
   ChartCanvas: ({ symbol, asOfDate, highlightedAnalysisItemId, toolbarContent }: {
@@ -20,6 +24,61 @@ afterEach(() => {
 })
 
 describe('ScreenerWorkspace', () => {
+  it('unions selected boards and intersects state and historical filters without rescanning', async () => {
+    const recognition = { available: true, source_date: '2026-08-31', source_run_id: 'weekly-1', tags: ['historical'] }
+    const pcb = { board_symbol: 'PCB.DC', name: 'PCB', classification: 'concept' as const, source_system: 'eastmoney' }
+    const components = { ...pcb, board_symbol: 'COMP.TI', name: '元件', classification: 'industry' as const }
+    vi.mocked(fetchInstrumentBoardMemberships).mockResolvedValue({
+      '000001.SZ': [pcb], '000002.SZ': [components], '000003.SZ': [pcb, components],
+    })
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/candidates')) return response({ items: [
+        { ...candidate, recognition },
+        { ...candidate, rank: 2, symbol: '000002.SZ', name: '元件标的', state: 'broken-out', recognition },
+        { ...candidate, rank: 3, symbol: '000003.SZ', name: '双板块标的', recognition: { ...recognition, tags: [] } },
+      ] })
+      if (url.includes('/api/analysis/runs/')) return response(analysis)
+      if (url.includes('/api/screener/runs?')) return response({ items: [{ ...run, candidate_count: 3 }] })
+      throw new Error(`unexpected URL ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+    renderScreener()
+    await user.click(await screen.findByRole('button', { name: 'PCB 2' }))
+    expect(screen.queryByText('000002.SZ')).toBeNull()
+    await user.type(screen.getByRole('searchbox', { name: '搜索板块' }), '元件')
+    expect(screen.getByRole('button', { name: 'PCB 2' })).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: '元件 2' }))
+    expect(screen.getByText(/显示 3\/3/)).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: /历史辨识度/ }))
+    expect(screen.getByText(/显示 2\/3/)).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: '快速过滤：已突破' }))
+    expect(screen.getByText(/显示 1\/3/)).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: '元件 1' }))
+    expect(screen.getByText('当前筛选组合没有符合条件的标的')).toBeTruthy()
+    expect(screen.queryByTestId('screener-chart')).toBeNull()
+    await user.click(screen.getByRole('button', { name: '清除板块筛选' }))
+    expect(screen.getByText(/显示 1\/3/)).toBeTruthy()
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes('/candidates'))).toHaveLength(1)
+    expect(fetchInstrumentBoardMemberships).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps unfiltered results available when board loading fails and retries explicitly', async () => {
+    vi.mocked(fetchInstrumentBoardMemberships).mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce({})
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/candidates')) return response({ items: [candidate] })
+      if (url.includes('/api/analysis/runs/')) return response(analysis)
+      return response({ items: [run] })
+    }))
+    renderScreener()
+    const retry = await screen.findByRole('button', { name: /板块加载失败/ })
+    expect(screen.getAllByText('000001.SZ').length).toBeGreaterThan(0)
+    await userEvent.click(retry)
+    expect(await screen.findByText('暂无板块数据')).toBeTruthy()
+  })
+
   it('intersects historical recognition with state filters without rerunning screening', async () => {
     const recognition = { available: true, source_date: '2026-08-31', source_run_id: 'weekly-1', tags: ['historical'] }
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {

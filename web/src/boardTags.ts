@@ -14,6 +14,25 @@ export type InstrumentBoardTag = {
 
 type BoardTagRecord = { symbol: string; tags: InstrumentBoardTag[] }
 
+export type InstrumentBoardMembership = Pick<InstrumentBoardTag, 'board_symbol' | 'name' | 'source_system'> & {
+  classification: 'industry' | 'concept' | 'sector'
+}
+
+export async function fetchInstrumentBoardMemberships(
+  symbols: string[], signal?: AbortSignal,
+): Promise<Record<string, InstrumentBoardMembership[]>> {
+  const result: Record<string, InstrumentBoardMembership[]> = {}
+  for (let offset = 0; offset < symbols.length; offset += 500) {
+    const params = new URLSearchParams()
+    symbols.slice(offset, offset + 500).forEach(symbol => params.append('symbol', symbol))
+    const response = await fetch(`/api/instrument-board-memberships?${params}`, { signal })
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    const body = await response.json() as { items: { symbol: string; boards: InstrumentBoardMembership[] }[] }
+    body.items.forEach(item => { result[item.symbol] = item.boards })
+  }
+  return result
+}
+
 export async function fetchInstrumentBoardTags(
   symbols: string[], signal?: AbortSignal,
 ): Promise<Record<string, InstrumentBoardTag[]>> {

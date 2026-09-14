@@ -385,6 +385,17 @@ def create_market_router() -> APIRouter:
             for item in normalized_symbols
         ]}
 
+    @router.get("/api/instrument-board-memberships")
+    def instrument_board_memberships(
+        request: Request, symbol: list[str] = Query(default=[])
+    ) -> dict[str, object]:
+        if len(symbol) > 500:
+            raise HTTPException(status_code=422, detail="at most 500 symbols are allowed")
+        boards = store(request).list_instrument_board_memberships(symbol)
+        return {"basis": "current", "items": [
+            {"symbol": item, "boards": values} for item, values in boards.items()
+        ]}
+
     @router.post("/api/instrument-board-tags/rebuild")
     def rebuild_instrument_board_tags(request: Request) -> dict[str, object]:
         result = store(request).rebuild_instrument_board_tags()

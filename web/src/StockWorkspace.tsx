@@ -733,13 +733,16 @@ export function StockWorkspace() {
             )}
             <label className="theme-picker" title="主题配色">
               <Palette size={14}/>
+              <span className="theme-color-swatch" aria-hidden="true"><i/><i/></span>
               <select aria-label="主题配色" value={theme.id} onChange={event => {
                 const next = themes.find(item => item.id === event.target.value) ?? theme
                 persistTheme(next)
                 setTheme(next)
                 logInfo('theme', '工作台主题已切换', { theme: next.id })
               }}>
-                {themes.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+                {(['light', 'dark'] as const).map(mode => <optgroup key={mode} label={mode === 'light' ? '浅色' : '深色'}>
+                  {themes.filter(item => item.mode === mode).map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+                </optgroup>)}
               </select>
             </label>
             <button className="command-button layout-entry" title="布局管理" aria-label="布局管理" onClick={() => setLayoutManagerOpen(true)}><Settings2 size={15}/>布局管理</button>

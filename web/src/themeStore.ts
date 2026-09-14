@@ -11,6 +11,9 @@ export type ThemeColors = {
   muted: string
   accent: string
   accentSoft: string
+  onAccent: string
+  secondary: string
+  secondarySoft: string
   chartBackground: string
   chartGrid: string
   crosshair: string
@@ -33,12 +36,14 @@ const dark = (
   text: string,
   muted: string,
   accent: string,
+  secondary = '#d6b774',
 ): ThemeDefinition => ({
   id, name, mode: 'dark', colors: {
     base, surface, surfaceAlt: mix(surface, raised, .55), raised,
     hover: mix(raised, text, .1), border, borderStrong: mix(border, text, .22),
     text, textStrong: mix(text, '#ffffff', .45), muted, accent,
-    accentSoft: mix(raised, accent, .3), chartBackground: base,
+    onAccent: contrastInk(accent), secondary, secondarySoft: mix(raised, secondary, .14),
+    accentSoft: mix(raised, accent, .2), chartBackground: base,
     chartGrid: mix(base, text, .09), crosshair: mix(muted, text, .35),
   },
 })
@@ -53,12 +58,14 @@ const light = (
   text: string,
   muted: string,
   accent: string,
+  secondary = '#92546f',
 ): ThemeDefinition => ({
   id, name, mode: 'light', colors: {
     base, surface, surfaceAlt: mix(surface, raised, .55), raised,
     hover: mix(raised, text, .07), border, borderStrong: mix(border, text, .2),
     text, textStrong: mix(text, '#000000', .35), muted, accent,
-    accentSoft: mix(raised, accent, .18), chartBackground: base,
+    onAccent: contrastInk(accent), secondary, secondarySoft: mix(raised, secondary, .09),
+    accentSoft: mix(raised, accent, .12), chartBackground: base,
     chartGrid: mix(base, text, .1), crosshair: mix(muted, text, .3),
   },
 })
@@ -84,7 +91,24 @@ export const themes: ThemeDefinition[] = [
   dark('sorbet', 'Sorbet', '#171219', '#211923', '#2d2230', '#47364b', '#e0d1df', '#9c849b', '#d47aaf'),
   dark('torte', 'Torte', '#101010', '#181818', '#232323', '#3a3a3a', '#d6d6d6', '#858585', '#c4925d'),
   dark('zaibatsu', 'Zaibatsu', '#0d1217', '#121a21', '#19252e', '#2d414f', '#cbd9e2', '#788e9c', '#3fa6c9'),
-]
+  light('porcelain', 'Porcelain', '#f2f5f6', '#ffffff', '#e5ecf0', '#c5cfd6', '#283842', '#5c707c', '#246c91', '#9c536b'),
+  light('mint', 'Mint', '#f0f6f3', '#ffffff', '#e0eee7', '#bed4ca', '#263d34', '#576f63', '#226e56', '#91527a'),
+  light('rose', 'Rose', '#faf3f5', '#ffffff', '#f1e4e9', '#d9c6cf', '#402e38', '#78606c', '#9b3d62', '#267c83'),
+  light('arctic', 'Arctic', '#f2f6fa', '#ffffff', '#e3ecf6', '#c0cfe0', '#29394b', '#586e84', '#325f9e', '#987023'),
+  dark('graphite', 'Graphite', '#141618', '#1c2023', '#2a3034', '#404b52', '#e1e6e8', '#9aa9b2', '#6cc9ce', '#e3b879'),
+  dark('forest', 'Forest', '#101916', '#18241f', '#25352e', '#40574b', '#dce8df', '#a1b6a8', '#8fd2a8', '#e7b8ca'),
+  dark('ink', 'Ink', '#17171b', '#222228', '#30303a', '#484855', '#e8e6ed', '#aaa5ba', '#e7b777', '#81cbd0'),
+  dark('berry', 'Berry', '#1c151a', '#292027', '#392d36', '#55414e', '#eee1e9', '#b7a0b0', '#e6a2c0', '#91cdbb'),
+].map(theme => {
+  const colors = theme.colors
+  const backgrounds = [colors.base, colors.surface, colors.raised, colors.hover, colors.accentSoft]
+  // Small secondary labels need readable contrast even on selected rows.
+  const ink = theme.mode === 'dark' ? '#ffffff' : '#000000'
+  for (let step = 0; step < 30 && backgrounds.some(background => contrastRatio(colors.muted, background) < 4.5); step++) {
+    colors.muted = mix(colors.muted, ink, .08)
+  }
+  return theme
+})
 
 export const themeStorageKey = 'stock-harness.theme.v1'
 export const defaultThemeId = 'koehler'
@@ -118,6 +142,9 @@ export function applyTheme(theme: ThemeDefinition): void {
     '--theme-muted': theme.colors.muted,
     '--theme-accent': theme.colors.accent,
     '--theme-accent-soft': theme.colors.accentSoft,
+    '--theme-on-accent': theme.colors.onAccent,
+    '--theme-secondary': theme.colors.secondary,
+    '--theme-secondary-soft': theme.colors.secondarySoft,
   }
   Object.entries(variables).forEach(([name, value]) => root.style.setProperty(name, value))
   root.style.colorScheme = theme.mode
@@ -132,4 +159,18 @@ function mix(left: string, right: string, weight: number): string {
   const channel = (color: string, offset: number) => Number.parseInt(color.slice(offset, offset + 2), 16)
   const value = [1, 3, 5].map(offset => Math.round(channel(left, offset) * (1 - weight) + channel(right, offset) * weight))
   return `#${value.map(item => item.toString(16).padStart(2, '0')).join('')}`
+}
+
+export function contrastRatio(left: string, right: string): number {
+  const luminance = (color: string) => {
+    const channels = [1, 3, 5].map(offset => Number.parseInt(color.slice(offset, offset + 2), 16) / 255)
+      .map(channel => channel <= .04045 ? channel / 12.92 : ((channel + .055) / 1.055) ** 2.4)
+    return channels[0] * .2126 + channels[1] * .7152 + channels[2] * .0722
+  }
+  const a = luminance(left), b = luminance(right)
+  return (Math.max(a, b) + .05) / (Math.min(a, b) + .05)
+}
+
+function contrastInk(background: string): string {
+  return contrastRatio(background, '#ffffff') >= contrastRatio(background, '#000000') ? '#ffffff' : '#000000'
 }
