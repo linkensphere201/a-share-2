@@ -97,7 +97,8 @@ def _line_payload(
     if line is None:
         return None
     state = (
-        "broken" if line.state in {MajorLineState.BROKEN_OUT, MajorLineState.BREAKOUT_RETEST}
+        "broken" if line.state is MajorLineState.BROKEN_OUT
+        else "retest" if line.state is MajorLineState.BREAKOUT_RETEST
         else "approaching" if line.state is MajorLineState.CRITICAL_BREAKOUT
         else "none"
     )

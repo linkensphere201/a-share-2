@@ -88,7 +88,7 @@ WEEKLY_RECOGNITION_SIGNAL = "weekly-board-recognition"
 DEFINITION_VERSION = "weekly-board-recognition-v1"
 DAILY_MARKET_BOARD_SIGNAL = "daily-market-board-review"
 DAILY_DEFINITION_VERSION = "daily-market-board-review-v1"
-DAILY_REVIEW_ALGORITHM_VERSION = "daily-market-board-review-v7-mean-reversion-audit"
+DAILY_REVIEW_ALGORITHM_VERSION = "daily-market-board-review-v8-retest-projection"
 STOCK_OBSERVATION_SIGNAL = "stock-observation-pool"
 HISTORICAL_LIMIT = 5
 

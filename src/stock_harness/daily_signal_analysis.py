@@ -19,8 +19,8 @@ from stock_harness.structural_scenario_engine import (
 )
 
 
-ALGORITHM_VERSION = "daily-market-board-observation-v6"
-CONFIG_VERSION = "daily-market-board-defaults-v6"
+ALGORITHM_VERSION = "daily-market-board-observation-v7"
+CONFIG_VERSION = "daily-market-board-defaults-v7"
 MINIMUM_BARS = 120
 LOOKBACK_BARS = 260
 
@@ -99,6 +99,9 @@ def analyze_daily_series(
                 volume_ratio is not None and volume_ratio >= 1.2
             ):
                 attention.append(f"{label}-descending-envelope-broken")
+        elif state == "retest":
+            states.append(f"descending-envelope-{label}-retest")
+            states.append("bullish-boundary-retest")
 
     valid_distances = [
         float(item["distance_atr"]) for item in envelopes.values()
@@ -365,6 +368,7 @@ def _round(value: float | None) -> float | None:
 def _primary_state(states: Sequence[str]) -> str:
     order = (
         "bullish-boundary-triggered", "oversold-rebound-triggered",
+        "bullish-boundary-retest",
         "bullish-transition-candidate", "oversold-exhaustion-candidate",
         "sudden-volume-expansion", "boundary-volume-contraction",
         "relative-strength-regime", "neutral",
@@ -384,6 +388,7 @@ def _detailed_transition(primary: str, prior: dict[str, object] | None) -> str:
     if primary == "neutral":
         return "invalidated"
     families = {
+        "bullish-boundary-retest": ("bullish", 0),
         "bullish-transition-candidate": ("bullish", 1),
         "bullish-boundary-triggered": ("bullish", 2),
         "oversold-exhaustion-candidate": ("oversold", 1),
@@ -521,6 +526,7 @@ def _mapping_value(value: object, key: str) -> float | None:
 def _state_label(state: str) -> str:
     return {
         "bullish-boundary-triggered": "多头边界已触发",
+        "bullish-boundary-retest": "突破后回踩观察",
         "oversold-rebound-triggered": "超跌反弹已触发",
         "bullish-transition-candidate": "多头临界",
         "oversold-exhaustion-candidate": "下跌衰竭反转临界",
@@ -534,6 +540,7 @@ def _state_label(state: str) -> str:
 def _state_conclusion(state: str) -> str:
     return {
         "bullish-boundary-triggered": "收盘已越过下降边界，仍需后续量价确认。",
+        "bullish-boundary-retest": "此前曾越过下降边界，但当前已回到边界下方，尚未重新站稳，不视为当前突破。",
         "bullish-transition-candidate": "价格接近下降压力边界，尚未形成有效突破。",
         "oversold-exhaustion-candidate": "下跌已经扩展且多项动能衰减，尚未确认反转。",
         "oversold-rebound-triggered": "下跌动能衰减后收盘突破短期反转边界，仍需后续确认。",
@@ -650,7 +657,10 @@ def _conditions(
     state: str, nearest: tuple[str, float] | None,
     metrics: dict[str, object],
 ) -> str:
-    if state in {"bullish-transition-candidate", "bullish-boundary-triggered"}:
+    if state in {
+        "bullish-transition-candidate", "bullish-boundary-triggered",
+        "bullish-boundary-retest",
+    }:
         period = nearest[0] if nearest else "当前"
         envelopes = metrics.get("descending_envelopes")
         envelope = envelopes.get(period) if isinstance(envelopes, dict) else None
@@ -659,11 +669,13 @@ def _conditions(
             confirmation = _number(envelope.get("confirmation_price"))
             invalidation = _number(envelope.get("invalidation_price"))
             if boundary is not None and confirmation is not None and invalidation is not None:
+                prefix = "重新" if state == "bullish-boundary-retest" else ""
                 return (
-                    f"{period}边界{boundary:.2f}；放量收于{confirmation:.2f}上方确认；"
+                    f"{period}边界{boundary:.2f}；{prefix}放量收于{confirmation:.2f}上方确认；"
                     f"收于{invalidation:.2f}下方视为失败。"
                 )
-        return f"放量收于{period}边界上方确认；重新跌回边界下方0.25 ATR视为失败。"
+        prefix = "重新" if state == "bullish-boundary-retest" else ""
+        return f"{prefix}放量收于{period}边界上方确认；跌至边界下方0.25 ATR视为失败。"
     if state == "oversold-exhaustion-candidate":
         return "收盘突破短期反转边界才确认；放量创新低则失效。"
     if state == "oversold-rebound-triggered":

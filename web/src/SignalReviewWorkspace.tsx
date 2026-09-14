@@ -1400,13 +1400,17 @@ export function stateDetailLabels(states?: string[]) {
 function signalStateLabels(): Record<string, string> {
   return {
     'bullish-boundary-triggered': '多头边界已触发',
+    'bullish-boundary-retest': '突破后回踩观察',
     'bullish-transition-candidate': '多头临界',
     'oversold-exhaustion-candidate': '下跌衰竭临界',
     'oversold-rebound-triggered': '超跌反弹已触发',
     'descending-envelope-3m-approaching': '3月斜边临界',
     'descending-envelope-3m-broken': '3月斜边突破',
+    'descending-envelope-3m-retest': '3月斜边回踩',
     'descending-envelope-6m-broken': '6月斜边突破',
+    'descending-envelope-6m-retest': '6月斜边回踩',
     'descending-envelope-1y-broken': '1年斜边突破',
+    'descending-envelope-1y-retest': '1年斜边回踩',
     'sudden-volume-expansion': '突然放量',
     'boundary-volume-contraction': '边界缩量',
     'relative-strength-regime': '相对强弱异动',

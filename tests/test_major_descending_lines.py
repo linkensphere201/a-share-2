@@ -63,6 +63,23 @@ def test_classifies_breakout_retest_after_recent_close_through():
     detected = detect_major_descending_lines(bars, [MajorLinePeriod.YEAR])
     assert any(item.state is MajorLineState.BREAKOUT_RETEST for item in detected)
 
+    stored = [StoredDailyBar(
+        "884271.TI", item.period_end, item.open, item.high, item.low,
+        item.close, item.volume, "fixture", 0,
+    ) for item in bars]
+    envelope = scan_daily_structure(stored).descending_envelopes["1y"]
+    assert envelope is not None
+    assert envelope["state"] == "retest"
+    observation = analyze_daily_series(
+        "884271.TI", stored, stored[-1].trade_date,
+    )
+    assert "bullish-boundary-retest" in observation["state_codes"]
+    assert "descending-envelope-1y-retest" in observation["state_codes"]
+    assert "bullish-boundary-triggered" not in observation["state_codes"]
+    assert "descending-envelope-1y-broken" not in observation["state_codes"]
+    assert observation["metrics"]["price_space"]["scenario_item_id"] is None
+    assert observation["metrics"]["price_space"]["entry_price"] is None
+
 
 def test_rejects_short_anchor_span_from_major_line_period():
     bars = _major_fixture([7.8, 7.9, 8.0, 8.1, 8.2])

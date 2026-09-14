@@ -516,8 +516,27 @@ def _summary(
 
 
 def _risk_summary(disqualifiers: Sequence[str], facts: Mapping[str, object]) -> str:
+    reasons = set(disqualifiers)
+    if str(facts.get("setup_family") or "none") == "none":
+        details = []
+        if "market-permission-blocked" in reasons:
+            details.append("市场流动性环境暂不允许新机会")
+        if "board-execution-evidence-unavailable" in reasons:
+            details.append("板块执行证据覆盖不足")
+        suffix = f"；{'；'.join(details)}。" if details else "。"
+        return f"当前未形成可执行的均值回归偏离{suffix}"
+    labels = {
+        "board-execution-evidence-unavailable": "板块执行证据覆盖不足",
+        "confirmation-quality-insufficient": "价格确认质量不足",
+        "invalid-long-price-ordering": "入场、失效位与目标位顺序无效",
+        "market-permission-blocked": "市场流动性环境暂不允许新机会",
+        "no-mean-reversion-setup": "未形成均值回归结构",
+        "price-confirmation-pending": "价格确认尚未完成",
+        "relative-strength-not-recovering": "相对强度尚未恢复",
+        "structural-break": "均值结构已经破坏",
+    }
     if disqualifiers:
-        return "；".join(disqualifiers[:4])
+        return "；".join(labels.get(code, code) for code in disqualifiers[:4])
     return "结构与量价确认完整；仍需执行失效位和最大持有期。"
 
 

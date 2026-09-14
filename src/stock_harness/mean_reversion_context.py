@@ -97,7 +97,10 @@ def board_execution_context(
         covered = _optional_number(breadth.get("covered_member_count"))
         coverage = covered / members if members and covered is not None else None
     breadth_value = _optional_number(breadth.get("breadth"))
-    diffusion = _optional_number(hotspot.get("positive_return_5_ratio"))
+    hotspot_members = _mapping(hotspot.get("member_snapshot"))
+    diffusion = _optional_number(hotspot_members.get("positive_return_5_ratio"))
+    if diffusion is None:
+        diffusion = _optional_number(hotspot.get("positive_return_5_ratio"))
     capacity_coverage = _optional_number(capacity.get("coverage_ratio"))
     available = all(value is not None for value in (
         coverage, breadth_value, diffusion, capacity_coverage,

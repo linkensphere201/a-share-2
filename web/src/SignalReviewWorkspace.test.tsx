@@ -37,6 +37,12 @@ describe('SignalReviewWorkspace', () => {
     ])).toEqual(['3月斜边突破', '6月斜边突破', '突然放量'])
   })
 
+  it('labels a breakout retest separately from a current breakout', () => {
+    expect(stateDetailLabels([
+      'bullish-boundary-retest', 'descending-envelope-1y-retest', 'neutral',
+    ])).toEqual(['1年斜边回踩'])
+  })
+
   it('does not link ambiguous evidence aliases from legacy runs', () => {
     const duplicate = {
       ...items[1], evidence: [{

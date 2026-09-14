@@ -87,3 +87,17 @@ def test_board_execution_requires_breadth_diffusion_and_capacity_coverage() -> N
 
     assert context["available"] is True
     assert context["passed"] is True
+
+
+def test_board_execution_reads_hotspot_diffusion_from_member_snapshot() -> None:
+    context = board_execution_context(
+        {"board_breadth": {
+            "member_count": 10, "covered_member_count": 9, "breadth": .2,
+        }},
+        {"coverage_ratio": .8},
+        {"member_snapshot": {"positive_return_5_ratio": .6}},
+    )
+
+    assert context["available"] is True
+    assert context["positive_return_5_ratio"] == .6
+    assert context["passed"] is True
