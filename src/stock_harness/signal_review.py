@@ -603,7 +603,9 @@ class SignalReviewService:
                 if item["payload"].get("coverage_state") == "complete"
             ],
         )
-        latest_screener = self._store.get_latest_succeeded_screener_run(cutoff)
+        latest_screener = self._store.get_latest_succeeded_screener_run(
+            cutoff, "major-descending-breakout",
+        )
         screener_candidates = (
             self._store.list_screener_candidates(str(latest_screener["run_id"]))
             if latest_screener else []
