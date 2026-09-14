@@ -11,6 +11,7 @@ EXPECTED_API_OPERATIONS = {
     ("GET", "/api/screener/runs/{run_id}", "200"),
     ("DELETE", "/api/screener/runs/{run_id}", "204"),
     ("GET", "/api/screener/runs/{run_id}/candidates", "200"),
+    ("GET", "/api/screener/exclusion-pool", "200"),
     ("GET", "/api/signals/definitions", "200"),
     ("POST", "/api/signals/{signal_id}/runs", "202"),
     ("GET", "/api/signals/runs", "200"),

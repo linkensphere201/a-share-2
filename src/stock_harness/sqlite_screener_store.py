@@ -86,6 +86,143 @@ class SQLiteScreenerStoreMixin:
             )
         return self.get_screener_run(run_id)  # type: ignore[return-value]
 
+    def record_screener_exclusions(
+        self,
+        strategy_id: str,
+        events: Sequence[dict[str, object]],
+        *,
+        limit: int = 100,
+        through_date: date | None = None,
+    ) -> list[dict[str, object]]:
+        if limit < 1:
+            raise ValueError("screener exclusion-pool limit must be positive")
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        with self._lock, self._transaction():
+            state = self._connection.execute(
+                """
+                SELECT processed_through_date FROM screener_exclusion_sync_state
+                WHERE strategy_id = ?
+                """,
+                (strategy_id,),
+            ).fetchone()
+            processed_key = int(state[0]) if state is not None else None
+            if processed_key is None:
+                existing = self._connection.execute(
+                    """
+                    SELECT max(event_date) FROM screener_exclusion_pool
+                    WHERE strategy_id = ?
+                    """,
+                    (strategy_id,),
+                ).fetchone()
+                if existing is not None and existing[0] is not None:
+                    processed_key = int(existing[0])
+            for event in events:
+                identity = self._canonical_instrument_identity(str(event["symbol"]))
+                if identity is None:
+                    continue
+                _, instrument_id = identity
+                event_date = event["event_date"]
+                if not isinstance(event_date, date):
+                    raise ValueError("screener exclusion event_date must be a date")
+                if processed_key is not None and _date_key(event_date) <= processed_key:
+                    continue
+                existing = self._connection.execute(
+                    """
+                    SELECT event_date FROM screener_exclusion_pool
+                    WHERE strategy_id = ? AND instrument_id = ?
+                    """,
+                    (strategy_id, instrument_id),
+                ).fetchone()
+                if existing is not None and int(existing[0]) >= _date_key(event_date):
+                    continue
+                self._connection.execute(
+                    """
+                    INSERT INTO screener_exclusion_pool(
+                        strategy_id, instrument_id, event_date, reason_code,
+                        reason_text, evidence_json, entered_at_ms
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(strategy_id, instrument_id) DO UPDATE SET
+                        event_date = excluded.event_date,
+                        reason_code = excluded.reason_code,
+                        reason_text = excluded.reason_text,
+                        evidence_json = excluded.evidence_json,
+                        entered_at_ms = excluded.entered_at_ms
+                    """,
+                    (
+                        strategy_id, instrument_id, _date_key(event_date),
+                        str(event["reason_code"]), str(event["reason_text"]),
+                        json.dumps(event.get("evidence", {}), ensure_ascii=False, sort_keys=True),
+                        now_ms,
+                    ),
+                )
+            stale = self._connection.execute(
+                """
+                SELECT entry_id FROM screener_exclusion_pool
+                WHERE strategy_id = ?
+                ORDER BY event_date DESC, entered_at_ms DESC, entry_id DESC
+                LIMIT -1 OFFSET ?
+                """,
+                (strategy_id, limit),
+            ).fetchall()
+            if stale:
+                placeholders = ",".join("?" for _ in stale)
+                self._connection.execute(
+                    f"DELETE FROM screener_exclusion_pool WHERE entry_id IN ({placeholders})",
+                    tuple(int(row[0]) for row in stale),
+                )
+            effective_through = through_date
+            if effective_through is None:
+                effective_through = max(
+                    (
+                        value for value in (event.get("event_date") for event in events)
+                        if isinstance(value, date)
+                    ),
+                    default=None,
+                )
+            if effective_through is not None and (
+                processed_key is None or _date_key(effective_through) > processed_key
+            ):
+                self._connection.execute(
+                    """
+                    INSERT INTO screener_exclusion_sync_state(
+                        strategy_id, processed_through_date, updated_at_ms
+                    ) VALUES (?, ?, ?)
+                    ON CONFLICT(strategy_id) DO UPDATE SET
+                        processed_through_date = excluded.processed_through_date,
+                        updated_at_ms = excluded.updated_at_ms
+                    """,
+                    (strategy_id, _date_key(effective_through), now_ms),
+                )
+        return self.list_screener_exclusion_pool(strategy_id, limit=limit)
+
+    def list_screener_exclusion_pool(
+        self, strategy_id: str, *, limit: int = 100,
+    ) -> list[dict[str, object]]:
+        if not 1 <= limit <= 100:
+            raise ValueError("screener exclusion-pool limit must be between 1 and 100")
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT pool.entry_id, instrument.symbol, instrument.name,
+                       instrument.exchange, pool.event_date, pool.reason_code,
+                       pool.reason_text, pool.evidence_json, pool.entered_at_ms
+                FROM screener_exclusion_pool AS pool
+                JOIN instruments AS instrument USING (instrument_id)
+                WHERE pool.strategy_id = ?
+                ORDER BY pool.event_date DESC, pool.entered_at_ms DESC, pool.entry_id DESC
+                LIMIT ?
+                """,
+                (strategy_id, limit),
+            ).fetchall()
+        return [{
+            "entry_id": int(row[0]), "strategy_id": strategy_id,
+            "symbol": str(row[1]), "name": str(row[2]),
+            "exchange": str(row[3]), "kind": "stock",
+            "event_date": _date_from_key(int(row[4])),
+            "reason_code": str(row[5]), "reason_text": str(row[6]),
+            "evidence": json.loads(str(row[7])), "entered_at_ms": int(row[8]),
+        } for row in rows]
+
     def update_screener_progress(
         self, run_id: str, *, universe_count: int, scanned_count: int
     ) -> None:

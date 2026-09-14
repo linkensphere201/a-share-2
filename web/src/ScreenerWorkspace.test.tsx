@@ -119,6 +119,37 @@ describe('ScreenerWorkspace', () => {
     })
   })
 
+  it('opens the bounded exclusion pool with persisted reasons', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/api/screener/exclusion-pool')) return response({ items: [{
+        entry_id: 1,
+        strategy_id: 'volume-accumulation-20d',
+        symbol: '002519.SZ',
+        name: '银河电子',
+        exchange: 'SZ',
+        kind: 'stock',
+        event_date: '2026-09-11',
+        reason_code: 'limit-up',
+        reason_text: '最近20日触及涨停',
+        evidence: { event_date: '2026-09-11' },
+        entered_at_ms: 1,
+      }] })
+      if (url.includes('/api/screener/runs?')) return response({ items: [] })
+      throw new Error(`unexpected URL ${url}`)
+    }))
+    const user = userEvent.setup()
+    renderScreener()
+
+    await screen.findByText('0/10')
+    await user.selectOptions(screen.getByLabelText('策略'), 'volume-accumulation-20d')
+    await user.click(screen.getByRole('button', { name: /剔除池/ }))
+
+    expect(await screen.findByRole('dialog', { name: '20日堆量蓄势剔除池' })).toBeTruthy()
+    expect(screen.getByText('银河电子')).toBeTruthy()
+    expect(screen.getByText('最近20日触及涨停')).toBeTruthy()
+  })
+
   it('deletes a finished run from its context menu after confirmation', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)

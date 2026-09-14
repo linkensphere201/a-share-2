@@ -224,6 +224,18 @@ def create_analysis_router() -> APIRouter:
     ) -> dict[str, object]:
         return {"items": store(request).list_screener_runs(limit)}
 
+    @router.get("/api/screener/exclusion-pool")
+    def screener_exclusion_pool(
+        request: Request,
+        strategy_id: Literal["volume-accumulation-20d"] = "volume-accumulation-20d",
+        limit: int = Query(default=100, ge=1, le=100),
+    ) -> dict[str, object]:
+        return {
+            "items": store(request).list_screener_exclusion_pool(
+                strategy_id, limit=limit,
+            )
+        }
+
     @router.get("/api/screener/runs/{run_id}")
     def get_screener_run(run_id: str, request: Request) -> dict[str, object]:
         result = store(request).get_screener_run(run_id)

@@ -11,7 +11,7 @@ from stock_harness.analysis_inputs import AnalysisBar
 
 
 STRATEGY_ID = "volume-accumulation-20d"
-STRATEGY_VERSION = "volume-accumulation-20d-v2"
+STRATEGY_VERSION = "volume-accumulation-20d-v3"
 STATE = "accumulating"
 
 

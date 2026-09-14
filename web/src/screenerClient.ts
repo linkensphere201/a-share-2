@@ -70,6 +70,20 @@ export type ScreenerCandidate = {
   }
 }
 
+export type ScreenerExclusionPoolEntry = {
+  entry_id: number
+  strategy_id: ScreenerStrategyId
+  symbol: string
+  name: string
+  exchange: string
+  kind: 'stock'
+  event_date: string
+  reason_code: 'limit-up' | 'large-drop'
+  reason_text: string
+  evidence: { change_percent?: number; threshold_percent?: number; event_date?: string }
+  entered_at_ms: number
+}
+
 async function json<T>(response: Response): Promise<T> {
   if (response.ok) return response.json() as Promise<T>
   let detail = `HTTP ${response.status}`
@@ -97,6 +111,13 @@ export async function listScreenerCandidates(runId: string, signal?: AbortSignal
   const payload = await json<{ items: ScreenerCandidate[] }>(
     await fetch(`/api/screener/runs/${encodeURIComponent(runId)}/candidates`, { signal }),
   )
+  return payload.items
+}
+
+export async function listScreenerExclusionPool(signal?: AbortSignal): Promise<ScreenerExclusionPoolEntry[]> {
+  const payload = await json<{ items: ScreenerExclusionPoolEntry[] }>(await fetch(
+    '/api/screener/exclusion-pool?strategy_id=volume-accumulation-20d&limit=100', { signal },
+  ))
   return payload.items
 }
 

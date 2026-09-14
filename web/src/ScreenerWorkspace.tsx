@@ -1,14 +1,15 @@
 import { memo, useCallback, useEffect, useMemo, useState } from 'react'
-import { ArrowLeft, ChevronLeft, ChevronRight, Filter, ListPlus, Play, RefreshCw, Trash2 } from 'lucide-react'
+import { ArrowLeft, ChevronLeft, ChevronRight, Filter, ListPlus, Play, RefreshCw, ShieldX, Trash2, X } from 'lucide-react'
 import { ChartCanvas } from './ChartCanvas'
 import { MarketBoardBadge } from './MarketBoardBadge'
 import { TradingSystemControls } from './TradingSystemControls'
 import { TrendExplanationPanel } from './TrendExplanationPanel'
 import { logError, logInfo } from './eventLogger'
 import {
-  deleteScreenerRun, listScreenerCandidates, listScreenerRuns, loadScreenerRun, startScreenerRun,
+  deleteScreenerRun, listScreenerCandidates, listScreenerExclusionPool, listScreenerRuns,
+  loadScreenerRun, startScreenerRun,
   type ScreenerCandidate, type ScreenerPeriod, type ScreenerRun, type ScreenerState,
-  type ScreenerStrategyId,
+  type ScreenerExclusionPoolEntry, type ScreenerStrategyId,
 } from './screenerClient'
 import { loadExactTrendAnalysis, type TrendAnalysisRun } from './trendAnalysisClient'
 import {
@@ -60,6 +61,9 @@ export function ScreenerWorkspace({
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [contextMenu, setContextMenu] = useState<ScreenerContextMenu>()
+  const [exclusionPoolOpen, setExclusionPoolOpen] = useState(false)
+  const [exclusionPool, setExclusionPool] = useState<ScreenerExclusionPoolEntry[]>([])
+  const [exclusionPoolLoading, setExclusionPoolLoading] = useState(false)
 
   const filteredCandidates = useMemo(() => resultStateFilter === 'all'
     ? candidates
@@ -101,6 +105,17 @@ export function ScreenerWorkspace({
   }, [selectedRun?.run_id])
 
   useEffect(() => { setResultStateFilter('all') }, [selectedRun?.strategy_id])
+
+  useEffect(() => {
+    if (!exclusionPoolOpen) return
+    const controller = new AbortController()
+    setExclusionPoolLoading(true)
+    listScreenerExclusionPool(controller.signal)
+      .then(setExclusionPool)
+      .catch(value => { if ((value as Error).name !== 'AbortError') setError(String(value)) })
+      .finally(() => setExclusionPoolLoading(false))
+    return () => controller.abort()
+  }, [exclusionPoolOpen, selectedRun?.run_id, selectedRun?.status])
 
   useEffect(() => {
     if (selected) window.localStorage.setItem(selectedCandidateKey, selected.symbol)
@@ -211,6 +226,9 @@ export function ScreenerWorkspace({
       <label className="screener-limit">上限<select value={maxResults} onChange={event => setMaxResults(Number(event.target.value))}>
         {[50, 100, 200, 500].map(value => <option key={value}>{value}</option>)}
       </select></label>
+      {strategyId === 'volume-accumulation-20d' && <button className="command-button" onClick={() => setExclusionPoolOpen(true)}>
+        <ShieldX size={14}/>剔除池 <small>{exclusionPool.length}/100</small>
+      </button>}
       <button className="primary-button" disabled={(strategyId === 'major-descending-breakout' && (!periods.length || !states.length)) || selectedRun?.status === 'running'} onClick={start}>
         {selectedRun?.status === 'running' ? <RefreshCw size={14} className="spin"/> : <Play size={14}/>}开始选股
       </button>
@@ -302,6 +320,23 @@ export function ScreenerWorkspace({
           </button>)}
         </>}
       </div>
+    </div>}
+    {exclusionPoolOpen && <div className="screener-pool-layer" onPointerDown={event => {
+      if (event.target === event.currentTarget) setExclusionPoolOpen(false)
+    }}>
+      <section className="screener-pool-panel" role="dialog" aria-label="20日堆量蓄势剔除池">
+        <header><span><ShieldX size={16}/>20日堆量蓄势剔除池</span><small>{exclusionPool.length}/100 · 先进先出</small><button className="icon-button" title="关闭剔除池" aria-label="关闭剔除池" onClick={() => setExclusionPoolOpen(false)}><X size={15}/></button></header>
+        <div className="screener-pool-head"><span>#</span><span>标的</span><span>进池日期</span><span>进池理由</span></div>
+        <div className="screener-pool-list">
+          {exclusionPoolLoading && <div className="screener-empty compact"><RefreshCw size={15} className="spin"/>加载剔除池</div>}
+          {!exclusionPoolLoading && exclusionPool.length === 0 && <div className="screener-empty compact">剔除池为空</div>}
+          {!exclusionPoolLoading && exclusionPool.map((item, index) => <div key={item.entry_id}>
+            <span>{index + 1}</span>
+            <span><span className="instrument-name-line"><b>{item.name}</b><MarketBoardBadge instrument={item}/></span><small>{item.symbol}</small></span>
+            <span>{item.event_date}</span><span>{item.reason_text}</span>
+          </div>)}
+        </div>
+      </section>
     </div>}
   </main>
 }

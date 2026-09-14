@@ -37,6 +37,8 @@ SCREENABLE_STATES = (
     MajorLineState.BREAKOUT_RETEST,
     MajorLineState.BROKEN_OUT,
 )
+ACCUMULATION_EXCLUSION_LIMIT = 100
+ACCUMULATION_LARGE_DROP_PERCENT = -7.0
 
 
 class ScreenerBusyError(RuntimeError):
@@ -70,6 +72,8 @@ class ScreenerService:
             "window": 20,
             "baseline_window": 20,
             "states": [ACCUMULATION_STATE],
+            "exclusion_pool_limit": ACCUMULATION_EXCLUSION_LIMIT,
+            "large_drop_percent": ACCUMULATION_LARGE_DROP_PERCENT,
             "final_bars_only": True,
         }]
 
@@ -241,6 +245,7 @@ class ScreenerService:
         started = time.perf_counter()
         universe = self._store.list_active_stock_symbols_for_screening()
         matches: list[tuple[dict[str, str], VolumeAccumulationSignal]] = []
+        exclusion_events: list[dict[str, object]] = []
         self._store.update_screener_progress(
             run_id, universe_count=len(universe), scanned_count=0,
         )
@@ -266,6 +271,11 @@ class ScreenerService:
                     )
                     if signal is not None:
                         matches.append((instrument, signal))
+                    event = _latest_accumulation_exclusion_event(
+                        instrument["symbol"], recent, limit_dates,
+                    )
+                    if event is not None:
+                        exclusion_events.append(event)
             except (ValueError, LookupError) as error:
                 LOGGER.debug(
                     "screener_symbol_skipped run_id=%s symbol=%s reason=%s",
@@ -280,6 +290,14 @@ class ScreenerService:
                         "screener_accumulation_progress run_id=%s scanned=%s universe=%s matches=%s",
                         run_id, index, len(universe), len(matches),
                     )
+        exclusion_pool = self._store.record_screener_exclusions(
+            ACCUMULATION_STRATEGY_ID,
+            exclusion_events,
+            limit=ACCUMULATION_EXCLUSION_LIMIT,
+            through_date=cutoff,
+        )
+        excluded_symbols = {str(item["symbol"]) for item in exclusion_pool}
+        matches = [item for item in matches if item[0]["symbol"] not in excluded_symbols]
         matches.sort(key=lambda item: item[1].score, reverse=True)
         retained: list[dict[str, object]] = []
         for instrument, signal in matches[:max_results]:
@@ -304,10 +322,38 @@ class ScreenerService:
             })
         self._store.complete_screener_run(run_id, retained, retention=10)
         LOGGER.info(
-            "screener_accumulation_completed run_id=%s as_of=%s universe=%s matches=%s retained=%s duration_ms=%.1f",
-            run_id, cutoff, len(universe), len(matches), len(retained),
+            "screener_accumulation_completed run_id=%s as_of=%s universe=%s matches=%s retained=%s exclusions=%s duration_ms=%.1f",
+            run_id, cutoff, len(universe), len(matches), len(retained), len(exclusion_pool),
             (time.perf_counter() - started) * 1000,
         )
+
+
+def _latest_accumulation_exclusion_event(symbol, bars, limit_dates):
+    events: list[dict[str, object]] = []
+    if limit_dates:
+        event_date = max(limit_dates)
+        events.append({
+            "symbol": symbol,
+            "event_date": event_date,
+            "reason_code": "limit-up",
+            "reason_text": "最近20日触及涨停",
+            "evidence": {"event_date": event_date.isoformat()},
+        })
+    for index in range(1, len(bars)):
+        change = (bars[index].close / bars[index - 1].close - 1) * 100
+        if change <= ACCUMULATION_LARGE_DROP_PERCENT:
+            events.append({
+                "symbol": symbol,
+                "event_date": bars[index].period_end,
+                "reason_code": "large-drop",
+                "reason_text": f"单日收盘下跌 {abs(change):.2f}%",
+                "evidence": {
+                    "event_date": bars[index].period_end.isoformat(),
+                    "change_percent": round(change, 4),
+                    "threshold_percent": ACCUMULATION_LARGE_DROP_PERCENT,
+                },
+            })
+    return max(events, key=lambda item: item["event_date"]) if events else None
 
 
 def _strategy_version(strategy_id: str) -> str:
@@ -322,6 +368,8 @@ def _parameters(strategy_id, periods, states, max_results: int) -> dict[str, obj
     if strategy_id == ACCUMULATION_STRATEGY_ID:
         return {
             "window": 20, "baseline_window": 20,
+            "exclusion_pool_limit": ACCUMULATION_EXCLUSION_LIMIT,
+            "large_drop_percent": ACCUMULATION_LARGE_DROP_PERCENT,
             "max_results": max_results, "final_bars_only": True,
         }
     return {
