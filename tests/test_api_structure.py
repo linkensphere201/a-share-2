@@ -78,6 +78,7 @@ EXPECTED_API_OPERATIONS = {
     ("GET", "/api/instrument-tags", "200"),
     ("PUT", "/api/instruments/{symbol}/tags", "200"),
     ("GET", "/api/instrument-board-tags", "200"),
+    ("GET", "/api/instrument-board-memberships", "200"),
     ("POST", "/api/instrument-board-tags/rebuild", "200"),
     ("GET", "/api/active-market-value", "200"),
     ("GET", "/api/active-market-value/daily", "200"),
