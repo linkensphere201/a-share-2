@@ -1,4 +1,3 @@
-import { Eye, EyeOff } from 'lucide-react'
 import { useState } from 'react'
 import {
   isVolumeZoneTarget,
@@ -12,7 +11,7 @@ import type { TrendAnalysisRun } from './trendAnalysisClient'
 export function TradeScenarioPanel({
   run,
   selectedTargetLabel,
-  visible = true,
+  visible = false,
   onTargetChange,
   onVisibleChange,
   onHighlightItemChange,
@@ -37,12 +36,8 @@ export function TradeScenarioPanel({
   return <section className={`trade-scenario-panel ${scenario.state}`} aria-label="盈亏比场景">
     <h3>
       <span>交易场景</span>
-      <button
-        title={visible ? '隐藏盈亏比图层' : '显示盈亏比图层'}
-        aria-label={visible ? '隐藏盈亏比图层' : '显示盈亏比图层'}
-        aria-pressed={visible}
-        onClick={() => onVisibleChange?.(!visible)}
-      >{visible ? <Eye size={12}/> : <EyeOff size={12}/>}</button>
+      <label><input type="checkbox" aria-label="显示趋势目标与盈亏比" checked={visible}
+        disabled={!onVisibleChange} onChange={event => onVisibleChange?.(event.target.checked)}/>目标与盈亏比</label>
     </h3>
     <div className="trade-scenario-summary">
       <button

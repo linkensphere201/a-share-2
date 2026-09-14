@@ -29,6 +29,15 @@ const run = {
 afterEach(cleanup)
 
 describe('TradeScenarioPanel', () => {
+  it('requires an explicit checkbox opt-in when visibility is omitted', () => {
+    const onVisibleChange = vi.fn()
+    render(<TradeScenarioPanel run={run} onVisibleChange={onVisibleChange} onHighlightItemChange={() => undefined}/>)
+    const checkbox = screen.getByRole('checkbox', { name: '显示趋势目标与盈亏比' }) as HTMLInputElement
+    expect(checkbox.checked).toBe(false)
+    fireEvent.click(checkbox)
+    expect(onVisibleChange).toHaveBeenCalledWith(true)
+  })
+
   it('switches targets, visibility, and exact evidence highlights', () => {
     const onTargetChange = vi.fn()
     const onVisibleChange = vi.fn()
@@ -49,7 +58,7 @@ describe('TradeScenarioPanel', () => {
     expect(screen.queryByRole('button', { name: /T1.*关键位/ })).toBeNull()
     expect(screen.getByRole('button', { name: /T3.*成交密集区.*盈亏比 5.40/ })).toBeTruthy()
     expect(screen.getByText(/三角形/)).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: /隐藏盈亏比图层/ }))
+    fireEvent.click(screen.getByRole('checkbox', { name: '显示趋势目标与盈亏比' }))
     expect(onVisibleChange).toHaveBeenCalledWith(false)
     const setup = screen.getByRole('button', { name: /向上场景/ })
     fireEvent.pointerEnter(setup)

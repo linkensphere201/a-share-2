@@ -11,7 +11,7 @@ export function TrendExplanationPanel({
   onClose,
   embedded = false,
   selectedScenarioTarget,
-  scenarioVisible = true,
+  scenarioVisible = false,
   onScenarioTargetChange,
   onScenarioVisibleChange,
 }: {

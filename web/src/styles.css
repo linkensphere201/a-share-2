@@ -1259,6 +1259,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .trend-explanation-sections h3 small { color: var(--theme-faint); font-size: 8px; }
 .trade-scenario-panel > h3 { justify-content: space-between; }
 .trade-scenario-panel > h3 > span { font: inherit; color: inherit; }
+.trade-scenario-panel > h3 > label { display: inline-flex; align-items: center; gap: 4px; color: var(--theme-muted); font-size: 10px; }
+.trade-scenario-panel > h3 input, .parallel-review-conclusions header input { accent-color: var(--theme-accent); }
 .trade-scenario-panel > h3 button { width: 22px; height: 22px; display: grid; place-items: center; padding: 0; border: 0; background: transparent; color: var(--theme-muted); }
 .trade-scenario-panel > h3 button:hover { color: var(--theme-text-strong); background: var(--theme-hover); }
 .trade-scenario-summary { display: grid; gap: 7px; padding: 0 9px 9px; }

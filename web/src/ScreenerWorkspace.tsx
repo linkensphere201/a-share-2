@@ -439,7 +439,7 @@ const ScreenerChart = memo(function ScreenerChart({
   const [explanationOpen, setExplanationOpen] = useState(false)
   const [highlightedItemId, setHighlightedItemId] = useState<string | undefined>(candidate.line_item_id)
   const [selectedScenarioTarget, setSelectedScenarioTarget] = useState<string>()
-  const [scenarioVisible, setScenarioVisible] = useState(true)
+  const [scenarioVisible, setScenarioVisible] = useState(false)
   const layers = trendState.layers
   return <div className={explanationOpen ? 'screener-chart-runtime explanation-open' : 'screener-chart-runtime'}>
     <ChartCanvas

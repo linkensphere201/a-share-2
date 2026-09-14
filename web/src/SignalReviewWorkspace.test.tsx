@@ -12,14 +12,15 @@ import { themes } from './themeStore'
 vi.mock('./ChartCanvas', () => ({
   ChartCanvas: ({
     symbol, highlightedAnalysisItemId, trendAnalysisOverride,
-    analysisSystemProjection, toolbarContent,
+    analysisSystemProjection, toolbarContent, riskRewardVisible,
   }: {
     symbol: string
     highlightedAnalysisItemId?: string
     trendAnalysisOverride?: { run_id?: string } | null
     analysisSystemProjection?: unknown[]
+    riskRewardVisible?: boolean
     toolbarContent?: ReactNode
-  }) => <div data-testid="signal-chart" data-symbol={symbol} data-highlight={highlightedAnalysisItemId} data-analysis-run={trendAnalysisOverride?.run_id} data-system-projections={analysisSystemProjection?.length ?? 0}>{symbol}{toolbarContent}</div>,
+  }) => <div data-testid="signal-chart" data-symbol={symbol} data-highlight={highlightedAnalysisItemId} data-analysis-run={trendAnalysisOverride?.run_id} data-risk-visible={String(riskRewardVisible)} data-system-projections={analysisSystemProjection?.length ?? 0}>{symbol}{toolbarContent}</div>,
 }))
 
 afterEach(() => {
@@ -406,7 +407,14 @@ describe('SignalReviewWorkspace', () => {
     expect(screen.queryByRole('button', { name: /^均值回归$/ })).toBeNull()
     expect(screen.queryByText('BK002.DC')).toBeNull()
     await user.click(await screen.findByRole('button', { name: /1\. BK001.DC/ }))
+    expect(screen.getByTestId('signal-chart').dataset.systemProjections).toBe('0')
+    expect(screen.getByTestId('signal-chart').dataset.riskVisible).toBe('false')
+    const meanToggle = screen.getByRole('checkbox', { name: '显示均值结构与目标位' })
+    expect((meanToggle as HTMLInputElement).checked).toBe(false)
+    await user.click(meanToggle)
     expect(screen.getByTestId('signal-chart').dataset.systemProjections).toBe('1')
+    await user.click(meanToggle)
+    expect(screen.getByTestId('signal-chart').dataset.systemProjections).toBe('0')
     expect(screen.getAllByText(/收缩回踩后重新站上运动中心/).length).toBeGreaterThan(0)
     expect(screen.getByText('3.00:1')).toBeTruthy()
   })

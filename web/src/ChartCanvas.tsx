@@ -304,7 +304,7 @@ export function ChartCanvas({
   trendAnalysisOverride,
   highlightedAnalysisItemId,
   selectedScenarioTarget,
-  riskRewardVisible = true,
+  riskRewardVisible = false,
   supplementalAnalysisItems = [],
   supplementalAnalysisOnly = false,
   analysisSystemProjection,

@@ -85,7 +85,7 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
   const [highlightedEvidenceId, setHighlightedEvidenceId] = useState<string>()
   const [scenarioHighlightedItemId, setScenarioHighlightedItemId] = useState<string>()
   const [selectedScenarioTarget, setSelectedScenarioTarget] = useState<string>()
-  const [scenarioVisible, setScenarioVisible] = useState(true)
+  const [scenarioVisible, setScenarioVisible] = useState(false)
   const [selectedEvidenceId, setSelectedEvidenceId] = useState<string>()
   const [dailyView, setDailyView] = useState<DailyView>('results')
   const [observationQuery, setObservationQuery] = useState('')
@@ -102,7 +102,7 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
   const [selectedScoreSystem, setSelectedScoreSystem] = useState('trend-breakout')
   const [analysisScope, setAnalysisScope] = useState<AnalysisScope>('board')
   const [selectedAnalysisScore, setSelectedAnalysisScore] = useState<SignalScoreResult>()
-  const [meanOverlayVisible, setMeanOverlayVisible] = useState(true)
+  const [meanOverlayVisible, setMeanOverlayVisible] = useState(false)
   useEffect(() => { setSelectedAnalysisScore(undefined); setHighlightedSystemProjectionId(undefined) }, [selectedRun?.run_id, dailyView, analysisScope])
   const [highlightedSystemProjectionId, setHighlightedSystemProjectionId] = useState<string>()
   const [hotspotFilter, setHotspotFilter] = useState<HotspotFilter>('rising')
@@ -817,7 +817,7 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
                   : <p>本轮未保存该标的的趋势分析。</p>}
               </section>
               <section aria-label="均值回归分析"><header>均值回归
-                <label><input type="checkbox" checked={meanOverlayVisible} onChange={event => setMeanOverlayVisible(event.target.checked)}/>图形</label>
+                <label><input aria-label="显示均值结构与目标位" type="checkbox" checked={meanOverlayVisible} onChange={event => setMeanOverlayVisible(event.target.checked)}/>结构与目标位</label>
               </header>{inspectedMeanScore ? <MeanReversionResultPanel score={inspectedMeanScore} highlightedProjectionId={highlightedSystemProjectionId} onHighlight={setHighlightedSystemProjectionId}/>
                 : <p>本轮未保存该标的的均值回归分析。</p>}
               </section>
