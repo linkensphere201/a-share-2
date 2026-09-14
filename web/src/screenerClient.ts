@@ -24,6 +24,12 @@ export type ScreenerRun = {
 }
 
 export type ScreenerCandidate = {
+  recognition?: {
+    available: boolean
+    source_run_id: string | null
+    source_date: string | null
+    tags: string[]
+  }
   rank: number
   symbol: string
   name: string

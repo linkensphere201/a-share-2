@@ -20,6 +20,34 @@ afterEach(() => {
 })
 
 describe('ScreenerWorkspace', () => {
+  it('intersects historical recognition with state filters without rerunning screening', async () => {
+    const recognition = { available: true, source_date: '2026-08-31', source_run_id: 'weekly-1', tags: ['historical'] }
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/candidates')) return response({ items: [
+        { ...candidate, recognition },
+        { ...candidate, rank: 2, symbol: '000002.SZ', name: '普通标的', state: 'broken-out', recognition: { ...recognition, tags: [] } },
+      ] })
+      if (url.includes('/api/analysis/runs/')) return response(analysis)
+      if (url.includes('/api/screener/runs?')) return response({ items: [{ ...run, candidate_count: 2 }] })
+      throw new Error(`unexpected URL ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+    renderScreener()
+    await screen.findByText('000002.SZ')
+    await user.click(screen.getByRole('button', { name: /历史辨识度/ }))
+    expect(screen.queryByText('000002.SZ')).toBeNull()
+    expect(screen.getByText(/显示 1\/2/)).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: '快速过滤：已突破' }))
+    expect(screen.queryByText('000001.SZ')).toBeNull()
+    expect(screen.getByText(/显示 0\/2/)).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: /不限标签/ }))
+    expect(screen.getAllByText('000002.SZ').length).toBeGreaterThan(0)
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes('/candidates'))).toHaveLength(1)
+    expect(fetchMock.mock.calls.some(([url]) => String(url) === '/api/screener/runs')).toBe(false)
+  })
+
   it('opens a persisted run and aligns its candidate with the exact analysis line', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)

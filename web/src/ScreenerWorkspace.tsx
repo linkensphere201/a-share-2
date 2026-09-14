@@ -58,6 +58,7 @@ export function ScreenerWorkspace({
   const [states, setStates] = useState<ScreenerState[]>(['critical-breakout', 'breakout-retest', 'broken-out'])
   const [maxResults, setMaxResults] = useState(200)
   const [resultStateFilter, setResultStateFilter] = useState<ResultStateFilter>('all')
+  const [historicalOnly, setHistoricalOnly] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [contextMenu, setContextMenu] = useState<ScreenerContextMenu>()
@@ -65,9 +66,14 @@ export function ScreenerWorkspace({
   const [exclusionPool, setExclusionPool] = useState<ScreenerExclusionPoolEntry[]>([])
   const [exclusionPoolLoading, setExclusionPoolLoading] = useState(false)
 
-  const filteredCandidates = useMemo(() => resultStateFilter === 'all'
+  const stateCandidates = useMemo(() => resultStateFilter === 'all'
     ? candidates
     : candidates.filter(item => item.state === resultStateFilter), [candidates, resultStateFilter])
+  const historicalCandidates = useMemo(() => stateCandidates.filter(
+    item => item.recognition?.tags.includes('historical'),
+  ), [stateCandidates])
+  const filteredCandidates = historicalOnly ? historicalCandidates : stateCandidates
+  const recognition = candidates[0]?.recognition
   const resultStateCounts = useMemo(() => Object.fromEntries(
     ([...trendStates, 'accumulating'] as ScreenerState[]).map(state => [
       state,
@@ -92,6 +98,7 @@ export function ScreenerWorkspace({
     setAnalysis(null)
     const controller = new AbortController()
     listScreenerCandidates(selectedRun.run_id, controller.signal).then(values => {
+      if (controller.signal.aborted) return
       setCandidates(values)
       setSelected(current => values.find(item => item.symbol === (
         current?.symbol ?? window.localStorage.getItem(selectedCandidateKey)
@@ -105,6 +112,7 @@ export function ScreenerWorkspace({
   }, [selectedRun?.run_id])
 
   useEffect(() => { setResultStateFilter('all') }, [selectedRun?.strategy_id])
+  useEffect(() => { setHistoricalOnly(false) }, [selectedRun?.run_id])
 
   useEffect(() => {
     if (!exclusionPoolOpen) return
@@ -258,8 +266,13 @@ export function ScreenerWorkspace({
             onClick={() => setResultStateFilter(state)}
           >{stateLabels[state]} <small>{resultStateCounts[state]}</small></button>)}
         </div>
+        <div className="screener-quick-filters" role="group" aria-label="辨识度标签过滤">
+          <button className={!historicalOnly ? 'active' : ''} aria-pressed={!historicalOnly} onClick={() => setHistoricalOnly(false)}>不限标签 <small>{stateCandidates.length}</small></button>
+          <button className={historicalOnly ? 'active' : ''} aria-pressed={historicalOnly} disabled={!recognition?.available} onClick={() => setHistoricalOnly(true)}>历史辨识度 <small>{recognition?.available ? historicalCandidates.length : '—'}</small></button>
+        </div>
+        {candidates.length > 0 && <div className="screener-tag-source">{recognition?.available ? `辨识度来源 ${recognition.source_date}` : '截至选股日期暂无辨识度复盘数据'} · 显示 {filteredCandidates.length}/{candidates.length}</div>}
         <div className="screener-result-head"><span>#</span><span>标的</span><span>周期/状态</span><span>得分</span></div>
-        <div className="screener-scroll">{selectedRun?.status === 'failed' && <div className="screener-empty compact error">{selectedRun.error ?? '选股任务失败'}</div>}{selectedRun?.status === 'succeeded' && candidates.length === 0 && <div className="screener-empty compact">本轮没有符合条件的标的</div>}{candidates.length > 0 && filteredCandidates.length === 0 && <div className="screener-empty compact">当前状态没有符合条件的标的</div>}{filteredCandidates.map(item => <button key={item.symbol} className={selected?.symbol === item.symbol ? 'active' : ''} onClick={() => setSelected(item)} onContextMenu={event => {
+        <div className="screener-scroll">{selectedRun?.status === 'failed' && <div className="screener-empty compact error">{selectedRun.error ?? '选股任务失败'}</div>}{selectedRun?.status === 'succeeded' && candidates.length === 0 && <div className="screener-empty compact">本轮没有符合条件的标的</div>}{candidates.length > 0 && filteredCandidates.length === 0 && <div className="screener-empty compact">当前筛选组合没有符合条件的标的</div>}{filteredCandidates.map(item => <button key={item.symbol} className={selected?.symbol === item.symbol ? 'active' : ''} onClick={() => setSelected(item)} onContextMenu={event => {
           event.preventDefault()
           setSelected(item)
           setContextMenu({ kind: 'candidate', ...menuPosition(event.clientX, event.clientY), candidate: item, selectingTarget: false })

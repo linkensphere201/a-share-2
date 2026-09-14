@@ -29,6 +29,7 @@ from stock_harness.api_support import (
 from stock_harness.major_descending_lines import MajorLinePeriod, MajorLineState
 from stock_harness.pattern_analysis import PatternAnalysisRequest, PatternAnalysisService
 from stock_harness.screener import ScreenerBusyError
+from stock_harness.screener_result_tags import attach_recognition_tags
 from stock_harness.signal_review import SignalReviewBusyError
 from stock_harness.trend_review_set import has_scoreable_expected_labels
 from stock_harness.trend_reviews import (
@@ -259,9 +260,13 @@ def create_analysis_router() -> APIRouter:
     @router.get("/api/screener/runs/{run_id}/candidates")
     def list_screener_candidates(run_id: str, request: Request) -> dict[str, object]:
         selected_store = store(request)
-        if selected_store.get_screener_run(run_id) is None:
+        run = selected_store.get_screener_run(run_id)
+        if run is None:
             raise HTTPException(status_code=404, detail="screener run not found")
-        return {"items": selected_store.list_screener_candidates(run_id)}
+        return {"items": attach_recognition_tags(
+            selected_store, selected_store.list_screener_candidates(run_id),
+            str(run["as_of_date"]),
+        )}
 
     @router.get("/api/analysis/runs/{run_id}")
     def generated_analysis_run(run_id: str, request: Request) -> dict[str, object]:
