@@ -285,7 +285,7 @@ class SQLiteReplayFutureDataSource:
         self._through = available_through
 
     def future_bars(
-        self, signal: FrozenSignal, sessions: int,
+        self, signal: FrozenSignal, sessions: int | None,
     ) -> Sequence[StoredDailyBar]:
         bars = self._store.get_daily_bars(
             signal.symbol, signal.signal_date + timedelta(days=1), self._through,

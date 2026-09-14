@@ -8,6 +8,7 @@ from statistics import fmean, median
 
 from stock_harness.models import StoredDailyBar
 from stock_harness.replay.observations import evaluate_observation, summarize_observations
+from stock_harness.replay.execution import evaluate_trade, summarize_trades
 from stock_harness.replay.contracts import (
     DEFAULT_EVALUATION_HORIZONS,
     EVALUATION_CONTRACT_VERSION,
@@ -35,7 +36,11 @@ def evaluate_frozen_signal(
     )
     return {
         "contract_version": EVALUATION_CONTRACT_VERSION,
-        "primary_metric": "observation",
+        "primary_metric": "simulated-exit-net-return",
+        "primary_basis": "next_open",
+        "trade": executable["trade"] if executable else {
+            "status": "not-entered", "reason": "no-next-open",
+        },
         "observation": evaluate_observation(signal, bars),
         "horizon_role": "selection-diagnostic-not-realized-pnl",
         "signal": signal.to_dict(),
@@ -51,7 +56,7 @@ def summarize_evaluations(
     evaluations: Sequence[Mapping[str, object]],
     *,
     horizons: Sequence[int] = DEFAULT_EVALUATION_HORIZONS,
-    basis: str = "reference_close",
+    basis: str = "next_open",
 ) -> dict[str, object]:
     """Aggregate every system with identical metrics and right-censoring rules."""
     ordered_horizons = _validate_horizons(horizons)
@@ -117,7 +122,15 @@ def summarize_evaluations(
     ]
     return {
         "contract_version": EVALUATION_CONTRACT_VERSION,
-        "primary_metric": "observation",
+        "primary_metric": "simulated-exit-net-return",
+        "trade": summarize_trades([
+            value["trade"] if isinstance(value := evaluation.get(basis), Mapping)
+            and isinstance(value.get("trade"), Mapping) else {
+                "status": "not-entered", "reason": "no-entry-basis",
+            }
+            for evaluation in evaluations
+        ]),
+        "horizon_role": "selection-diagnostic-not-realized-pnl",
         "observation": summarize_observations(evaluations),
         "basis": basis,
         "signal_count": len(evaluations),
@@ -142,7 +155,7 @@ def summarize_evaluations_by(
     field: str,
     *,
     horizons: Sequence[int] = DEFAULT_EVALUATION_HORIZONS,
-    basis: str = "reference_close",
+    basis: str = "next_open",
 ) -> dict[str, object]:
     """Apply the same evaluator summary to system-owned descriptive groups."""
     groups: dict[str, list[Mapping[str, object]]] = {}
@@ -192,6 +205,7 @@ def _basis_outcomes(
         }
     return {
         "basis": basis,
+        "trade": evaluate_trade(signal, bars, entry),
         "entry_price": _round(entry),
         "risk_per_unit": _round(risk),
         "first_boundary_event": first_event,

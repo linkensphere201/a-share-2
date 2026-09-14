@@ -29,8 +29,8 @@ def test_claim_ends_on_target_and_suffix_cannot_change_it():
     b = evaluate_frozen_signal(value, bars([12, 15], [9.5, 2]))
     assert a["observation"] == b["observation"]
     assert a["observation"]["status"] == "target-reached"
-    assert "trade" not in a["reference_close"]
-    assert a["primary_metric"] == "observation"
+    assert a["trade"] == b["trade"]
+    assert a["primary_metric"] == "simulated-exit-net-return"
 
 
 def test_ambiguous_not_failure_and_pending_not_unfulfilled():
@@ -71,7 +71,7 @@ def test_missing_identity_and_boundaries_are_explicit():
     assert summary["claims_without_event_identity"] == 2
     assert summary["status_counts"]["not-evaluable"] == 2
     assert summary["target_rate"] is None
-    assert "trade" not in summarize_evaluations([a])
+    assert summarize_evaluations([a])["trade"]["status_counts"] == {"not-configured": 1}
 
 
 def test_layered_targets_do_not_rewrite_primary_claim():

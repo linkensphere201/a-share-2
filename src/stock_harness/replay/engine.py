@@ -7,7 +7,9 @@ from datetime import date
 from typing import Protocol
 
 from stock_harness.models import StoredDailyBar
-from stock_harness.replay.contracts import DEFAULT_EVALUATION_HORIZONS, FrozenSignal
+from stock_harness.replay.contracts import (
+    DEFAULT_EVALUATION_HORIZONS, EVALUATION_CONTRACT_VERSION, FrozenSignal,
+)
 from stock_harness.replay.outcomes import (
     evaluate_frozen_signal,
     summarize_evaluations,
@@ -21,7 +23,9 @@ class ReplaySystemAdapter(Protocol):
 
 
 class ReplayFutureDataSource(Protocol):
-    def future_bars(self, signal: FrozenSignal, sessions: int) -> Sequence[StoredDailyBar]: ...
+    def future_bars(self, signal: FrozenSignal, sessions: int | None) -> Sequence[StoredDailyBar]:
+        """Return bars through the source cutoff; None requests all available sessions."""
+        ...
 
 
 class AnalysisReplayEngine:
@@ -41,12 +45,7 @@ class AnalysisReplayEngine:
         evaluations = [
             evaluate_frozen_signal(
                 signal,
-                self._future_data.future_bars(signal, max(
-                    max(self._horizons),
-                    signal.observation_sessions or 0,
-                    (plan.maximum_holding_sessions or 0)
-                    if (plan := signal.resolved_exit_plan()) else 0,
-                )),
+                self._future_data.future_bars(signal, None),
                 horizons=self._horizons,
             )
             for signal in signals
@@ -65,6 +64,11 @@ class AnalysisReplayEngine:
                 ),
             }
         return {
+            "contract_version": EVALUATION_CONTRACT_VERSION,
+            "primary_metric": "simulated-exit-net-return",
+            "primary_basis": "next_open",
+            "execution_model": "daily-ohlc-stop-first-ideal-fill-v1",
+            "performance_role": "independent-claim-simulation-not-portfolio-or-broker-fills",
             "cutoffs": [value.isoformat() for value in cutoffs],
             "signals": [signal.to_dict() for signal in signals],
             "evaluations": evaluations,

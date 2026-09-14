@@ -8,7 +8,7 @@ from datetime import date
 from typing import Literal, Mapping
 
 
-EVALUATION_CONTRACT_VERSION = "analysis-outcome-evaluation-v3"
+EVALUATION_CONTRACT_VERSION = "analysis-outcome-evaluation-v4"
 DEFAULT_EVALUATION_HORIZONS = (10, 60, 120)
 Direction = Literal["long", "short"]
 
@@ -63,11 +63,9 @@ class FrozenSignal:
             return self.exit_plan
         if self.invalidation_price is None or self.selected_target_price is None:
             return None
-        holding = self.metadata.get("maximum_holding_sessions")
         return ExitPlan(
             f"{self.system_id}:frozen-boundaries-v1",
             self.invalidation_price, self.selected_target_price,
-            holding if type(holding) is int and holding > 0 else None,
         )
 
     def validate(self) -> None:
