@@ -320,6 +320,7 @@ def _trend_breakout_score(entity: Mapping[str, object]) -> dict[str, object]:
         "disqualifiers": sorted(set(disqualifiers)),
         "hard_events": hard_events,
         "selected_scenario_id": price_space.get("scenario_item_id"),
+        "setup_state": state,
         "entry_price": entry,
         "invalidation_price": invalidation,
         "selected_target_label": selected.get("label") if selected else None,

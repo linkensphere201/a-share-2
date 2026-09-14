@@ -333,7 +333,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .mean-reversion-sections button:hover, .mean-reversion-sections button:focus-visible, .mean-reversion-sections button.active { border-color: var(--theme-accent); background: var(--theme-accent-soft); outline: none; }
 .mean-reversion-sections small { overflow: visible !important; white-space: normal !important; color: var(--theme-muted) !important; line-height: 1.4; }
 .mean-reversion-execution { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; margin-top: 7px; }
-.mean-reversion-execution > span { padding: 5px 6px; border-left: 2px solid #d8aa5d; background: var(--theme-surface-alt); color: var(--theme-muted); font-size: 9px; }
+.mean-reversion-execution > span, .mean-reversion-execution > button { min-width: 0; padding: 5px 6px; border: 0; border-left: 2px solid #d8aa5d; background: var(--theme-surface-alt); color: var(--theme-muted); font: inherit; font-size: 11px; text-align: left; overflow-wrap: anywhere; }
+.mean-reversion-execution > button { cursor: crosshair; }
+.mean-reversion-execution > button:hover, .mean-reversion-execution > button:focus-visible { outline: 1px solid #d8aa5d; }
 .mean-reversion-execution small { color: var(--theme-text-strong); font-size: 10px; }
 .mean-reversion-targets { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
 .mean-reversion-targets button { display: flex; align-items: center; gap: 5px; min-width: 86px; padding: 4px 6px; border: 1px solid #58b98366; border-radius: 2px; background: transparent; color: #58b983; cursor: crosshair; }

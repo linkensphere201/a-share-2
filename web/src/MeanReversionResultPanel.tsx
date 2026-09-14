@@ -36,10 +36,14 @@ export function MeanReversionResultPanel({
       })}
     </div>
     {opportunity && <div className="mean-reversion-execution">
-      <span>确认<small>{price(opportunity.confirmation_price)}</small></span>
-      <span>失效<small>{price(opportunity.invalidation_price)}</small></span>
+      <button onPointerEnter={() => onHighlight('mr:confirmation')} onPointerLeave={() => onHighlight(undefined)}
+        onFocus={() => onHighlight('mr:confirmation')} onBlur={() => onHighlight(undefined)}>
+        确认<small>{price(opportunity.confirmation_price)}</small></button>
+      <button onPointerEnter={() => onHighlight('mr:invalidation')} onPointerLeave={() => onHighlight(undefined)}
+        onFocus={() => onHighlight('mr:invalidation')} onBlur={() => onHighlight(undefined)}>
+        失效<small>{price(opportunity.invalidation_price)}</small></button>
       <span>压力盈亏比<small>{ratio(opportunity.stressed_risk_reward)}</small></span>
-      <span>最长持有<small>{opportunity.maximum_holding_sessions ?? '-'}日</small></span>
+      <span>观察期限<small>{opportunity.maximum_holding_sessions ?? '-'}日</small></span>
     </div>}
     <div className="mean-reversion-targets">
       {opportunity?.targets.map(target => <button
@@ -64,13 +68,16 @@ function meanStateLabel(value?: string) {
     'reversal-confirmed': '反转已确认', 'exhaustion-watch': '衰竭观察',
     'extreme-pending': '极端偏离', 'deviation-building': '偏离扩大',
     'structural-break': '结构破坏', 'stable-center': '中心附近',
-  }[value ?? ''] ?? value ?? '-'
+    'initial-reclaim-observation': '首次反弹观察', 'confirmation-hold': '确认后观察',
+    'continued-divergence': '偏离持续扩大', 'unqualified': '条件不足',
+    'reverting': '回归进行中', 'target-reached': '回归目标达成', 'expired': '观察到期',
+  }[value ?? ''] ?? '待确认'
 }
 
 function price(value?: number | null) {
-  return typeof value === 'number' ? value.toFixed(2) : '-'
+  return typeof value === 'number' && Number.isFinite(value) ? value.toFixed(2) : '-'
 }
 
 function ratio(value?: number | null) {
-  return typeof value === 'number' ? `${value.toFixed(2)}:1` : '-'
+  return typeof value === 'number' && Number.isFinite(value) ? `${value.toFixed(2)}:1` : '-'
 }

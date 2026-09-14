@@ -272,7 +272,7 @@ def analyze_mean_reversion_entity(
         },
         "evidence": evidence,
         "opportunity": opportunity,
-        "chart_projection": _chart_projection(facts, targets),
+        "chart_projection": _chart_projection(facts, targets, opportunity),
         "diagnostics": {
             "facts_version": facts.get("version"),
             "policy_version": decision.get("policy_version"),
@@ -429,9 +429,9 @@ def _evidence(
 
 def _chart_projection(
     facts: Mapping[str, object], targets: Sequence[Mapping[str, object]],
+    opportunity: Mapping[str, object],
 ) -> list[dict[str, object]]:
     chart = _mapping(facts.get("chart"))
-    confirmation = _mapping(facts.get("confirmation"))
     projections = [{
         "projection_id": "mr:center", "kind": "series-line",
         "role": "moving-center", "label": "EMA20运动中心",
@@ -444,11 +444,11 @@ def _chart_projection(
     }, {
         "projection_id": "mr:confirmation", "kind": "price-line",
         "role": "confirmation", "label": "确认位",
-        "price": confirmation.get("boundary_price"),
+        "price": opportunity.get("confirmation_price"),
     }, {
         "projection_id": "mr:invalidation", "kind": "price-line",
         "role": "invalidation", "label": "失效位",
-        "price": facts.get("invalidation_price"),
+        "price": opportunity.get("invalidation_price"),
     }]
     projections.extend({
         "projection_id": f"mr:target:{target.get('label')}",
@@ -467,16 +467,16 @@ def _conclusion_sections(
     price_volume = _mapping(facts.get("price_volume"))
     return [
         {"code": "regime", "title": "母趋势与中心", "text": (
-            f"母趋势{facts.get('parent_trend')}；运动中心{center.get('price')}，"
+            f"母趋势{ {'up': '上涨', 'down': '下跌', 'sideways': '震荡'}.get(str(facts.get('parent_trend')), '待确认')}；运动中心{center.get('price')}，"
             f"稳定性{'通过' if center.get('stable') else '不足'}。"
         ), "evidence_refs": ["mr:center"]},
         {"code": "deviation", "title": "偏离与动能", "text": (
             f"最近低点偏离{facts.get('recent_low_deviation_atr')} ATR；"
             f"负动能{'衰减' if momentum.get('negative_decelerating') else '未确认衰减'}，"
             f"衰竭证据{exhaustion.get('signal_count', 0)}项。"
-        ), "evidence_refs": ["mr:deviation", "mr:exhaustion"]},
+        ), "evidence_refs": ["mr:deviation-band", "mr:deviation", "mr:exhaustion"]},
         {"code": "price-volume", "title": "量价", "text": (
-            f"量价路径：{price_volume.get('path', 'neutral')}。"
+            f"量价路径：{_price_volume_label(str(price_volume.get('path', 'neutral')))}。"
         ), "evidence_refs": ["mr:price-volume"]},
         {"code": "execution", "title": "确认、失效与空间", "text": (
             f"确认位{opportunity.get('confirmation_price')}，"
@@ -484,6 +484,18 @@ def _conclusion_sections(
             f"压力盈亏比{opportunity.get('stressed_risk_reward')}。"
         ), "evidence_refs": ["mr:confirmation", "mr:invalidation"]},
     ]
+
+
+def _price_volume_label(path: str) -> str:
+    return {
+        "neutral": "暂无明确量价信号",
+        "volume-backed-reclaim": "放量收复确认位",
+        "capitulation-absorption": "集中抛售后承接",
+        "shrinking-volume-stabilization": "缩量企稳",
+        "shrinking-volume-rebound": "缩量反弹",
+        "expanding-volume-decline": "放量下跌",
+        "volume-backed-structural-break": "放量破坏结构",
+    }.get(path, "量价路径待确认")
 
 
 def _summary(

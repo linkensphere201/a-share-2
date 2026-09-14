@@ -85,7 +85,6 @@ function projectDailyItems(
 ): { items: GeneratedAnalysisItem[]; references: DailyConclusionReferences } {
   const items: GeneratedAnalysisItem[] = []
   const references: DailyConclusionReferences = {}
-  const atr = numberValue(source.metrics.atr14)
   const priceSpace = recordValue(source.metrics.price_space)
   const envelopes = recordValue(source.metrics.descending_envelopes)
   const envelope = selectEnvelope(envelopes)
@@ -148,10 +147,8 @@ function projectDailyItems(
     const confirmation = numberValue(envelope.value.confirmation_price)
       ?? numberValue(priceSpace?.trigger_entry_price)
       ?? numberValue(priceSpace?.entry_price)
-      ?? (boundary !== undefined && atr !== undefined ? boundary + atr * .2 : undefined)
     const invalidation = numberValue(priceSpace?.invalidation_price)
       ?? numberValue(envelope.value.invalidation_price)
-      ?? (boundary !== undefined && atr !== undefined ? boundary - atr * .25 : undefined)
     if (confirmation !== undefined) {
       references.confirmationItemId = `${PREFIX}:confirmation`
       items.push(levelItem(references.confirmationItemId, confirmation, '确认价'))

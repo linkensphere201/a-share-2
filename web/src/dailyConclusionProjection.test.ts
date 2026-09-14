@@ -32,6 +32,18 @@ const forestry: DailyConclusionSource = {
 }
 
 describe('daily conclusion projection', () => {
+  it('does not invent confirmation or invalidation from ATR', () => {
+    const result = mergeDailyConclusionAnalysis(null, {
+      runId: 'missing-boundaries', effectiveDate: '2026-09-10', stateCodes: [],
+      metrics: { atr14: 5, descending_envelopes: { '6m': {
+        start_date: '2026-01-01', start_price: 20, end_date: '2026-09-10',
+        end_price: 15, boundary: 15,
+      } } },
+    })
+    expect(result.references.boundaryItemId).toBeDefined()
+    expect(result.references.confirmationItemId).toBeUndefined()
+    expect(result.references.invalidationItemId).toBeUndefined()
+  })
   it('renders canonical current and previous lines for a reanchored boundary', () => {
     const source: DailyConclusionSource = {
       runId: 'forestry-v5', effectiveDate: '2026-09-10', stateCodes: [],

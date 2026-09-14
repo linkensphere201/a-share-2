@@ -44,9 +44,10 @@ export function projectMeanReversion(
   const timeScale = chart.timeScale()
   const coordinates = (points: Array<{ date: string; price: number }> | undefined) => (
     (points ?? []).flatMap(point => {
+      if (!Number.isFinite(point.price)) return []
       const x = timeScale.timeToCoordinate(point.date as Time)
       const y = priceSeries.priceToCoordinate(point.price)
-      return x === null || y === null ? [] : [{ x, y }]
+      return x === null || y === null || !Number.isFinite(x) || !Number.isFinite(y) ? [] : [{ x, y }]
     })
   )
   projections.forEach(projection => {
@@ -70,9 +71,9 @@ export function projectMeanReversion(
       })
       return
     }
-    if (typeof projection.price !== 'number') return
+    if (typeof projection.price !== 'number' || !Number.isFinite(projection.price)) return
     const y = priceSeries.priceToCoordinate(projection.price)
-    if (y !== null) levels.push({
+    if (y !== null && Number.isFinite(y)) levels.push({
       id: projection.projection_id,
       role: projection.role,
       label: projection.label,
