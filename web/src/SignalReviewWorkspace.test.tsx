@@ -402,14 +402,12 @@ describe('SignalReviewWorkspace', () => {
     const user = userEvent.setup()
     render(<SignalReviewWorkspace theme={themes[0]} onClose={() => undefined}/>)
 
-    await user.click(await screen.findByRole('button', { name: /均值回归/ }))
+    expect(await screen.findByLabelText('均值回归前排')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /^均值回归$/ })).toBeNull()
     expect(screen.queryByText('BK002.DC')).toBeNull()
-    const filter = screen.getByLabelText('均值回归结果筛选')
-    await user.click(filter.querySelectorAll('button')[2])
-    expect((await screen.findAllByText('BK002.DC')).length).toBe(2)
-    await user.click((await screen.findAllByText('BK001.DC'))[0].closest('button')!)
+    await user.click(await screen.findByRole('button', { name: /1\. BK001.DC/ }))
     expect(screen.getByTestId('signal-chart').dataset.systemProjections).toBe('1')
-    expect(screen.getByText('收缩回踩后重新站上运动中心')).toBeTruthy()
+    expect(screen.getAllByText(/收缩回踩后重新站上运动中心/).length).toBeGreaterThan(0)
     expect(screen.getByText('3.00:1')).toBeTruthy()
   })
 
@@ -446,7 +444,7 @@ describe('SignalReviewWorkspace', () => {
     await user.click(screen.getByRole('button', { name: /机会评分/ }))
     expect(await screen.findByText('机会板块')).toBeTruthy()
     expect(screen.queryByText('前导板块')).toBeNull()
-    expect(screen.getByText('趋势突破')).toBeTruthy()
+    expect(screen.getByLabelText('趋势体系前排')).toBeTruthy()
   })
 
   it('shows the leading radar as an independent filtered system', async () => {

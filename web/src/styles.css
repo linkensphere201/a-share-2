@@ -185,6 +185,18 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .signal-runs, .signal-results, .signal-inspector { min-width: 0; min-height: 0; border-right: 1px solid var(--theme-border); background: var(--theme-surface); }
 .signal-runs { display: grid; grid-template-rows: 42px minmax(0, 1fr); }
 .signal-results { display: flex; flex-direction: column; }
+.parallel-review-leaders { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); flex: 0 1 320px; min-height: 150px; border-bottom: 1px solid var(--theme-border); }
+.parallel-review-leaders > section { display: flex; flex-direction: column; min-width: 0; min-height: 0; border-right: 1px solid var(--theme-border); }
+.parallel-review-leaders header, .parallel-review-conclusions header { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 5px; padding: 8px; font-size: 12px; font-weight: 400; color: var(--theme-text-strong); }
+.parallel-review-rows { overflow: auto; min-height: 0; }
+.parallel-review-rows > button { display: grid; grid-template-columns: minmax(0, 1fr) 36px; width: 100%; padding: 8px; border: 0; border-bottom: 1px solid var(--theme-border); background: transparent; text-align: left; color: var(--theme-text); }
+.parallel-review-name { font-size: 12px; overflow-wrap: anywhere; }
+.parallel-review-rows > button small { grid-column: 1 / -1; }
+.parallel-review-leaders p, .parallel-review-conclusions p { padding: 8px; color: var(--theme-muted); font-size: 12px; }
+.parallel-review-conclusions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.parallel-review-conclusions > section { min-width: 0; border-right: 1px solid var(--theme-border); overflow-wrap: anywhere; }
+.parallel-review-conclusions header label { display: inline-flex; gap: 4px; align-items: center; }
+@media (max-width: 800px) { .parallel-review-conclusions { grid-template-columns: minmax(0, 1fr); } }
 .signal-results > .signal-scroll { flex: 1 1 auto; }
 .signal-results > header, .signal-view-switch, .signal-hard-event-strip, .signal-filters, .signal-result-head { flex: 0 0 auto; }
 .signal-results > header { min-height: 42px; }
