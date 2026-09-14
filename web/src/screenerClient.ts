@@ -1,4 +1,5 @@
-export type ScreenerState = 'critical-breakout' | 'breakout-retest' | 'broken-out'
+export type ScreenerStrategyId = 'major-descending-breakout' | 'volume-accumulation-20d'
+export type ScreenerState = 'critical-breakout' | 'breakout-retest' | 'broken-out' | 'accumulating'
 export type ScreenerPeriod = '3m' | '6m' | '1y'
 
 export type ScreenerRun = {
@@ -6,7 +7,13 @@ export type ScreenerRun = {
   strategy_id: string
   strategy_version: string
   as_of_date: string
-  parameters: { periods: ScreenerPeriod[]; states: ScreenerState[]; max_results: number }
+  parameters: {
+    periods?: ScreenerPeriod[]
+    states?: ScreenerState[]
+    window?: number
+    baseline_window?: number
+    max_results: number
+  }
   status: 'running' | 'succeeded' | 'failed'
   universe_count: number
   scanned_count: number
@@ -28,21 +35,38 @@ export type ScreenerCandidate = {
   line_code: string
   analysis_run_id: string
   evidence: {
-    period: ScreenerPeriod
+    period?: ScreenerPeriod
     as_of_date: string
     latest_close?: number
-    projected_price: number
-    distance_percent: number
+    projected_price?: number
+    distance_percent?: number
     invalidation_price?: number | null
     first_target_price?: number | null
     major_target_price?: number | null
     scenario_item_id?: string | null
     first_risk_reward?: number | null
     major_risk_reward?: number | null
-    first_date: string
-    second_date: string
-    small_14: { return_percent: number; recent_half_percent: number }
-    medium_28: { return_percent: number; recent_half_percent: number }
+    first_date?: string
+    second_date?: string
+    small_14?: { return_percent: number; recent_half_percent: number }
+    medium_28?: { return_percent: number; recent_half_percent: number }
+    window?: number
+    window_start_date?: string
+    total_volume_ratio?: number
+    median_volume_ratio?: number
+    elevated_sessions?: number
+    supported_blocks?: number
+    pile_mode?: 'distributed' | 'clustered'
+    cluster_sessions?: number
+    cluster_peak_ratio?: number
+    cluster_average_ratio?: number
+    cluster_age_sessions?: number
+    dominant_session_share?: number
+    return_20d_percent?: number
+    close_range_20d_percent?: number
+    daily_volatility_percent?: number
+    up_down_volume_ratio?: number
+    limit_up_count?: number
   }
 }
 
@@ -77,6 +101,7 @@ export async function listScreenerCandidates(runId: string, signal?: AbortSignal
 }
 
 export async function startScreenerRun(input: {
+  strategy_id: ScreenerStrategyId
   periods: ScreenerPeriod[]
   states: ScreenerState[]
   max_results: number

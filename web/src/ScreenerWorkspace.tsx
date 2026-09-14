@@ -8,6 +8,7 @@ import { logError, logInfo } from './eventLogger'
 import {
   deleteScreenerRun, listScreenerCandidates, listScreenerRuns, loadScreenerRun, startScreenerRun,
   type ScreenerCandidate, type ScreenerPeriod, type ScreenerRun, type ScreenerState,
+  type ScreenerStrategyId,
 } from './screenerClient'
 import { loadExactTrendAnalysis, type TrendAnalysisRun } from './trendAnalysisClient'
 import {
@@ -20,7 +21,13 @@ import type { ThemeDefinition } from './themeStore'
 const periodLabels: Record<ScreenerPeriod, string> = { '3m': '3个月', '6m': '半年', '1y': '1年' }
 const stateLabels: Record<ScreenerState, string> = {
   'critical-breakout': '临界突破', 'breakout-retest': '突破回踩', 'broken-out': '已突破',
+  accumulating: '堆量蓄势',
 }
+const strategyLabels: Record<ScreenerStrategyId, string> = {
+  'major-descending-breakout': '大斜边突破',
+  'volume-accumulation-20d': '20日堆量蓄势',
+}
+const trendStates: ScreenerState[] = ['critical-breakout', 'breakout-retest', 'broken-out']
 const selectedRunKey = 'stock-harness.screener.selected-run.v1'
 const selectedCandidateKey = 'stock-harness.screener.selected-candidate.v1'
 type ResultStateFilter = ScreenerState | 'all'
@@ -45,6 +52,7 @@ export function ScreenerWorkspace({
   const [candidates, setCandidates] = useState<ScreenerCandidate[]>([])
   const [selected, setSelected] = useState<ScreenerCandidate>()
   const [analysis, setAnalysis] = useState<TrendAnalysisRun | null>(null)
+  const [strategyId, setStrategyId] = useState<ScreenerStrategyId>('major-descending-breakout')
   const [periods, setPeriods] = useState<ScreenerPeriod[]>(['6m', '1y'])
   const [states, setStates] = useState<ScreenerState[]>(['critical-breakout', 'breakout-retest', 'broken-out'])
   const [maxResults, setMaxResults] = useState(200)
@@ -57,7 +65,7 @@ export function ScreenerWorkspace({
     ? candidates
     : candidates.filter(item => item.state === resultStateFilter), [candidates, resultStateFilter])
   const resultStateCounts = useMemo(() => Object.fromEntries(
-    (['critical-breakout', 'breakout-retest', 'broken-out'] as ScreenerState[]).map(state => [
+    ([...trendStates, 'accumulating'] as ScreenerState[]).map(state => [
       state,
       candidates.filter(item => item.state === state).length,
     ]),
@@ -91,6 +99,8 @@ export function ScreenerWorkspace({
   useEffect(() => {
     if (selectedRun) window.localStorage.setItem(selectedRunKey, selectedRun.run_id)
   }, [selectedRun?.run_id])
+
+  useEffect(() => { setResultStateFilter('all') }, [selectedRun?.strategy_id])
 
   useEffect(() => {
     if (selected) window.localStorage.setItem(selectedCandidateKey, selected.symbol)
@@ -139,14 +149,14 @@ export function ScreenerWorkspace({
   const start = async () => {
     setError('')
     try {
-      const run = await startScreenerRun({ periods, states, max_results: maxResults })
+      const run = await startScreenerRun({ strategy_id: strategyId, periods, states, max_results: maxResults })
       setRuns(values => [run, ...values].slice(0, 10))
       setSelectedRun(run)
-      logInfo('screener', '大斜边选股任务已启动', { runId: run.run_id })
+      logInfo('screener', '选股任务已启动', { runId: run.run_id, strategyId })
     } catch (value) {
       const message = value instanceof Error ? value.message : String(value)
       setError(message)
-      logError('screener', '大斜边选股任务启动失败', { error: message })
+      logError('screener', '选股任务启动失败', { error: message, strategyId })
     }
   }
 
@@ -187,15 +197,21 @@ export function ScreenerWorkspace({
   return <main className="screener-workspace">
     <header className="screener-toolbar">
       <button className="icon-button" title="返回工作台" aria-label="返回工作台" onClick={onClose}><ArrowLeft size={16}/></button>
-      <span className="screener-title"><Filter size={17}/>选股器 <small>大斜边突破一期</small></span>
-      <fieldset><legend>周期</legend>{(['6m', '1y'] as ScreenerPeriod[]).map(item =>
-        <label key={item}><input type="checkbox" checked={periods.includes(item)} onChange={() => toggle(item, periods, setPeriods)}/>{periodLabels[item]}</label>)}</fieldset>
-      <fieldset><legend>状态</legend>{(['critical-breakout', 'breakout-retest', 'broken-out'] as ScreenerState[]).map(item =>
-        <label key={item}><input type="checkbox" checked={states.includes(item)} onChange={() => toggle(item, states, setStates)}/>{stateLabels[item]}</label>)}</fieldset>
+      <span className="screener-title"><Filter size={17}/>选股器 <small>{strategyLabels[strategyId]}</small></span>
+      <label className="screener-limit">策略<select value={strategyId} onChange={event => {
+        setStrategyId(event.target.value as ScreenerStrategyId)
+        setResultStateFilter('all')
+      }}>
+        {Object.entries(strategyLabels).map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+      </select></label>
+      {strategyId === 'major-descending-breakout' && <fieldset><legend>周期</legend>{(['6m', '1y'] as ScreenerPeriod[]).map(item =>
+        <label key={item}><input type="checkbox" checked={periods.includes(item)} onChange={() => toggle(item, periods, setPeriods)}/>{periodLabels[item]}</label>)}</fieldset>}
+      {strategyId === 'major-descending-breakout' && <fieldset><legend>状态</legend>{trendStates.map(item =>
+        <label key={item}><input type="checkbox" checked={states.includes(item)} onChange={() => toggle(item, states, setStates)}/>{stateLabels[item]}</label>)}</fieldset>}
       <label className="screener-limit">上限<select value={maxResults} onChange={event => setMaxResults(Number(event.target.value))}>
         {[50, 100, 200, 500].map(value => <option key={value}>{value}</option>)}
       </select></label>
-      <button className="primary-button" disabled={!periods.length || !states.length || selectedRun?.status === 'running'} onClick={start}>
+      <button className="primary-button" disabled={(strategyId === 'major-descending-breakout' && (!periods.length || !states.length)) || selectedRun?.status === 'running'} onClick={start}>
         {selectedRun?.status === 'running' ? <RefreshCw size={14} className="spin"/> : <Play size={14}/>}开始选股
       </button>
     </header>
@@ -208,7 +224,7 @@ export function ScreenerWorkspace({
           event.preventDefault()
           setContextMenu({ kind: 'run', ...menuPosition(event.clientX, event.clientY), run })
         }}>
-          <span>{formatRunDate(run.as_of_date)}</span><small>{run.status === 'running' ? `${run.scanned_count}/${run.universe_count}` : run.status === 'failed' ? '失败' : `${run.candidate_count} 个标的`}</small>
+          <span>{formatRunDate(run.as_of_date)}</span><small>{strategyLabel(run.strategy_id)} · {run.status === 'running' ? `${run.scanned_count}/${run.universe_count}` : run.status === 'failed' ? '失败' : `${run.candidate_count} 个标的`}</small>
           <i className={run.status}/>
         </button>)}</div>
       </aside>
@@ -217,7 +233,7 @@ export function ScreenerWorkspace({
         {selectedRun?.status === 'running' && <div className="screener-progress"><i style={{ width: `${progress}%` }}/></div>}
         <div className="screener-quick-filters" role="group" aria-label="结果快速过滤">
           <button className={resultStateFilter === 'all' ? 'active' : ''} aria-label="快速过滤：全部" onClick={() => setResultStateFilter('all')}>全部 <small>{candidates.length}</small></button>
-          {(['critical-breakout', 'breakout-retest', 'broken-out'] as ScreenerState[]).map(state => <button
+          {(selectedRun?.strategy_id === 'volume-accumulation-20d' ? ['accumulating'] as ScreenerState[] : trendStates).map(state => <button
             key={state}
             className={resultStateFilter === state ? 'active' : ''}
             aria-label={`快速过滤：${stateLabels[state]}`}
@@ -230,23 +246,35 @@ export function ScreenerWorkspace({
           setSelected(item)
           setContextMenu({ kind: 'candidate', ...menuPosition(event.clientX, event.clientY), candidate: item, selectingTarget: false })
         }}>
-          <span>{item.rank}</span><span><span className="instrument-name-line"><b>{item.name}</b><MarketBoardBadge instrument={item}/></span><small>{item.symbol}</small></span><span><b>{periodLabels[item.evidence.period]}</b><small>{stateLabels[item.state]}</small></span><span>{item.score.toFixed(1)}</span>
+          <span>{item.rank}</span><span><span className="instrument-name-line"><b>{item.name}</b><MarketBoardBadge instrument={item}/></span><small>{item.symbol}</small></span><span><b>{item.evidence.period ? periodLabels[item.evidence.period] : '20日'}</b><small>{stateLabels[item.state]}</small></span><span>{item.score.toFixed(1)}</span>
         </button>)}</div>
       </section>
       <section className="screener-chart-pane">
-        <header>{selected ? <><span className="instrument-name-line"><span>{selected.name}</span><MarketBoardBadge instrument={selected}/></span><small>{selected.line_code} · {periodLabels[selected.evidence.period]} · {stateLabels[selected.state]}</small></> : <span>个股 K 线</span>}</header>
+        <header>{selected ? <><span className="instrument-name-line"><span>{selected.name}</span><MarketBoardBadge instrument={selected}/></span><small>{selected.line_code} · {selected.evidence.period ? periodLabels[selected.evidence.period] : '20日'} · {stateLabels[selected.state]}</small></> : <span>个股 K 线</span>}</header>
         <div className="screener-chart-body">{selected && analysis
           ? <ScreenerChart key={selected.analysis_run_id} candidate={selected} analysis={analysis} asOfDate={selectedRun?.as_of_date} theme={theme}/>
           : <div className="screener-empty">选择一条结果查看 K 线与形态分析</div>}</div>
-        {selected && <footer className="screener-evidence">
-          <span><small>边界</small>{selected.evidence.projected_price.toFixed(2)}</span>
+        {selected && selected.state === 'accumulating' && <footer className="screener-evidence">
+          <span><small>堆量类型</small>{selected.evidence.pile_mode === 'clustered' ? '局部连续' : '持续放量'}</span>
+          <span><small>20日量比</small>{selected.evidence.total_volume_ratio?.toFixed(2)}x</span>
+          <span><small>中位量比</small>{selected.evidence.median_volume_ratio?.toFixed(2)}x</span>
+          <span><small>堆量日</small>{selected.evidence.elevated_sessions ?? 0}/20</span>
+          <span><small>覆盖分段</small>{selected.evidence.supported_blocks ?? 0}/4</span>
+          <span><small>连续堆量</small>{selected.evidence.cluster_sessions ?? 0}日</span>
+          <span><small>20日涨跌</small>{signed(selected.evidence.return_20d_percent ?? 0)}%</span>
+          <span><small>20日振幅</small>{selected.evidence.close_range_20d_percent?.toFixed(2)}%</span>
+          <span><small>涨跌量比</small>{selected.evidence.up_down_volume_ratio?.toFixed(2)}</span>
+          <span><small>涨停</small>{selected.evidence.limit_up_count ?? 0}</span>
+        </footer>}
+        {selected && selected.state !== 'accumulating' && <footer className="screener-evidence">
+          <span><small>边界</small>{selected.evidence.projected_price?.toFixed(2)}</span>
           <span><small>收盘</small>{latestClose(selected).toFixed(2)}</span>
-          <span><small>距斜边</small>{signed(selected.evidence.distance_percent)}%</span>
+          <span><small>距斜边</small>{signed(selected.evidence.distance_percent ?? 0)}%</span>
           <span><small>失效位</small>{selected.evidence.invalidation_price?.toFixed(2) ?? '—'}</span>
           <span><small>目标位</small>{selected.evidence.first_target_price?.toFixed(2) ?? '—'}</span>
           <span><small>盈亏比</small>{selected.evidence.first_risk_reward?.toFixed(2) ?? '—'}</span>
-          <span><small>小周期 14</small>{signed(selected.evidence.small_14.return_percent)}%</span>
-          <span><small>中周期 28</small>{signed(selected.evidence.medium_28.return_percent)}%</span>
+          <span><small>小周期 14</small>{signed(selected.evidence.small_14?.return_percent ?? 0)}%</span>
+          <span><small>中周期 28</small>{signed(selected.evidence.medium_28?.return_percent ?? 0)}%</span>
         </footer>}
       </section>
     </section>
@@ -358,9 +386,13 @@ const ScreenerChart = memo(function ScreenerChart({
 })
 
 function formatRunDate(value: string) { return value.replaceAll('-', '').slice(4) + ' 选股结果' }
+function strategyLabel(value: string) {
+  return strategyLabels[value as ScreenerStrategyId] ?? value
+}
 function signed(value: number) { return `${value > 0 ? '+' : ''}${value.toFixed(2)}` }
 function latestClose(value: ScreenerCandidate) {
-  return value.evidence.projected_price * (1 + value.evidence.distance_percent / 100)
+  if (value.evidence.latest_close != null) return value.evidence.latest_close
+  return (value.evidence.projected_price ?? 0) * (1 + (value.evidence.distance_percent ?? 0) / 100)
 }
 
 function menuPosition(x: number, y: number) {

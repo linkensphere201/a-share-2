@@ -11,6 +11,57 @@ from stock_harness.sqlite_mapping import _date_from_key, _date_key
 
 
 class SQLiteScreenerStoreMixin:
+    def _ensure_screener_candidate_states(self) -> None:
+        """Extend persisted screener states while retaining immutable old runs."""
+        with self._lock, self._writer_lock:
+            row = self._connection.execute(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' "
+                "AND name = 'screener_candidates'"
+            ).fetchone()
+            if row is None or "'accumulating'" in str(row[0]):
+                return
+            self._connection.execute("PRAGMA foreign_keys = OFF")
+            try:
+                self._connection.executescript(
+                    """
+                    BEGIN IMMEDIATE;
+                    CREATE TABLE screener_candidates_v2 (
+                        run_id TEXT NOT NULL,
+                        rank INTEGER NOT NULL CHECK (rank > 0),
+                        instrument_id INTEGER NOT NULL,
+                        state TEXT NOT NULL CHECK (
+                            state IN (
+                                'critical-breakout', 'breakout-retest',
+                                'broken-out', 'accumulating'
+                            )
+                        ),
+                        score REAL NOT NULL,
+                        line_item_id TEXT NOT NULL,
+                        line_code TEXT NOT NULL,
+                        analysis_run_id TEXT NOT NULL,
+                        evidence_json TEXT NOT NULL,
+                        PRIMARY KEY (run_id, instrument_id),
+                        UNIQUE (run_id, rank),
+                        FOREIGN KEY (run_id) REFERENCES screener_runs(run_id) ON DELETE CASCADE,
+                        FOREIGN KEY (instrument_id) REFERENCES instruments(instrument_id),
+                        FOREIGN KEY (analysis_run_id) REFERENCES generated_analysis_runs(run_id)
+                    ) WITHOUT ROWID;
+                    INSERT INTO screener_candidates_v2
+                    SELECT * FROM screener_candidates;
+                    DROP TABLE screener_candidates;
+                    ALTER TABLE screener_candidates_v2 RENAME TO screener_candidates;
+                    CREATE INDEX screener_candidates_rank
+                    ON screener_candidates(run_id, rank);
+                    COMMIT;
+                    """
+                )
+            except Exception:
+                if self._connection.in_transaction:
+                    self._connection.execute("ROLLBACK")
+                raise
+            finally:
+                self._connection.execute("PRAGMA foreign_keys = ON")
+
     def create_screener_run(
         self,
         strategy_id: str,
@@ -161,19 +212,24 @@ class SQLiteScreenerStoreMixin:
         return _run_row(row) if row else None
 
     def get_latest_succeeded_screener_run(
-        self, on_or_before: date,
+        self, on_or_before: date, strategy_id: str | None = None,
     ) -> dict[str, object] | None:
+        strategy_clause = " AND strategy_id = ?" if strategy_id else ""
+        parameters: tuple[object, ...] = (
+            (_date_key(on_or_before), strategy_id)
+            if strategy_id else (_date_key(on_or_before),)
+        )
         with self._lock:
             row = self._connection.execute(
-                """
+                f"""
                 SELECT run_id, strategy_id, strategy_version, as_of_date,
                        parameters_json, status, universe_count, scanned_count,
                        candidate_count, error, started_at_ms, completed_at_ms
                 FROM screener_runs
-                WHERE status = 'succeeded' AND as_of_date <= ?
+                WHERE status = 'succeeded' AND as_of_date <= ?{strategy_clause}
                 ORDER BY as_of_date DESC, completed_at_ms DESC, run_id DESC
                 LIMIT 1
-                """, (_date_key(on_or_before),),
+                """, parameters,
             ).fetchone()
         return _run_row(row) if row else None
 
@@ -268,6 +324,49 @@ class SQLiteScreenerStoreMixin:
                 (_date_key(start_date), _date_key(end_date)),
             ).fetchall()
         return [str(row[0]) for row in rows]
+
+    def list_stock_limit_up_dates(
+        self, symbol: str, start_date: date, end_date: date,
+    ) -> set[date]:
+        """Read exact upper-limit touches, with board-aware return fallback."""
+        identity = self._canonical_instrument_identity(symbol)
+        if identity is None:
+            return set()
+        _, instrument_id = identity
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT current.trade_date, current.high, current.close,
+                       previous.close, limits.up_limit
+                FROM daily_bars AS current
+                LEFT JOIN daily_bars AS previous
+                  ON previous.instrument_id = current.instrument_id
+                 AND previous.trade_date = (
+                    SELECT max(prior.trade_date) FROM daily_bars AS prior
+                    WHERE prior.instrument_id = current.instrument_id
+                      AND prior.trade_date < current.trade_date
+                 )
+                LEFT JOIN stock_daily_limits AS limits
+                  ON limits.instrument_id = current.instrument_id
+                 AND limits.trade_date = current.trade_date
+                WHERE current.instrument_id = ?
+                  AND current.trade_date BETWEEN ? AND ?
+                ORDER BY current.trade_date
+                """,
+                (instrument_id, _date_key(start_date), _date_key(end_date)),
+            ).fetchall()
+        threshold = 1.295 if symbol.startswith(("8", "4", "92")) else (
+            1.195 if symbol.startswith(("300", "301", "688", "689")) else 1.095
+        )
+        return {
+            _date_from_key(int(row[0])) for row in rows
+            if (
+                row[4] is not None and float(row[1]) >= float(row[4]) - 0.005
+            ) or (
+                row[4] is None and row[3] is not None
+                and float(row[1]) / float(row[3]) >= threshold
+            )
+        }
 
 
 def _run_row(row) -> dict[str, object]:

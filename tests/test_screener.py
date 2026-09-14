@@ -1,4 +1,7 @@
 from datetime import date, timedelta
+import time
+import sqlite3
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
@@ -7,6 +10,7 @@ from stock_harness.major_descending_lines import MajorLinePeriod, MajorLineState
 from stock_harness.models import AdjustmentFactor, DailyBar, Instrument, InstrumentKind
 from stock_harness.screener import STRATEGY_VERSION, ScreenerService
 from stock_harness.sqlite_store import SQLiteMarketDataStore
+from stock_harness.sqlite_schema import SCHEMA
 
 
 def _store_with_major_edge() -> tuple[SQLiteMarketDataStore, list[date]]:
@@ -116,6 +120,100 @@ def test_new_run_rejects_legacy_quarter_period():
     store.close()
 
     assert response.status_code == 422
+
+
+def test_screener_lists_and_accepts_volume_accumulation_strategy():
+    store, _ = _store_with_major_edge()
+    with TestClient(create_app(store)) as client:
+        strategies = client.get("/api/screener/strategies")
+        response = client.post("/api/screener/runs", json={
+            "strategy_id": "volume-accumulation-20d",
+            "max_results": 10,
+        })
+        run_id = response.json()["run_id"]
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            current = client.get(f"/api/screener/runs/{run_id}").json()
+            if current["status"] != "running":
+                break
+            time.sleep(0.01)
+    store.close()
+
+    assert strategies.status_code == 200
+    assert {item["strategy_id"] for item in strategies.json()["items"]} >= {
+        "major-descending-breakout", "volume-accumulation-20d",
+    }
+    assert response.status_code == 202
+    assert response.json()["strategy_id"] == "volume-accumulation-20d"
+
+
+def test_existing_screener_schema_is_extended_without_losing_runs(tmp_path: Path):
+    database = tmp_path / "legacy.sqlite"
+    legacy_schema = SCHEMA.replace(
+        "'critical-breakout', 'breakout-retest', 'broken-out', 'accumulating'",
+        "'critical-breakout', 'breakout-retest', 'broken-out'",
+    )
+    connection = sqlite3.connect(database)
+    connection.executescript(legacy_schema)
+    connection.close()
+
+    with SQLiteMarketDataStore(database) as store:
+        sql = store._connection.execute(
+            "SELECT sql FROM sqlite_master WHERE name = 'screener_candidates'"
+        ).fetchone()[0]
+
+    assert "'accumulating'" in sql
+
+
+def test_volume_accumulation_run_persists_independent_candidate():
+    store, days = _store_with_major_edge()
+    try:
+        replacement = []
+        for index, trade_date in enumerate(days[-40:]):
+            recent_index = index - 20
+            volume = 100 if index < 20 else [145, 160, 140, 155][recent_index % 4]
+            close = 10 + [0, 0.05, -0.02, 0.03][max(recent_index, 0) % 4]
+            replacement.append(DailyBar(
+                "000001.SZ", trade_date, close, close + 0.1,
+                close - 0.1, close, volume,
+            ))
+        store.upsert_daily_bars("tushare", replacement)
+
+        run = ScreenerService(store).run_sync(
+            [MajorLinePeriod.YEAR], list(MajorLineState), 10, days[-1],
+            "volume-accumulation-20d",
+        )
+        candidates = store.list_screener_candidates(str(run["run_id"]))
+
+        assert run["strategy_id"] == "volume-accumulation-20d"
+        assert run["strategy_version"] == "volume-accumulation-20d-v2"
+        assert candidates[0]["state"] == "accumulating"
+        assert candidates[0]["line_code"] == "VOL-ACC-20D"
+        assert candidates[0]["evidence"]["pile_mode"] == "distributed"
+    finally:
+        store.close()
+
+
+def test_latest_succeeded_run_can_be_selected_by_strategy():
+    store, days = _store_with_major_edge()
+    try:
+        major = store.create_screener_run(
+            "major-descending-breakout", "major-v1", days[-1], {},
+        )
+        store.complete_screener_run(str(major["run_id"]), [])
+        accumulation = store.create_screener_run(
+            "volume-accumulation-20d", "volume-v1", days[-1], {},
+        )
+        store.complete_screener_run(str(accumulation["run_id"]), [])
+
+        selected = store.get_latest_succeeded_screener_run(
+            days[-1], "major-descending-breakout",
+        )
+
+        assert selected is not None
+        assert selected["run_id"] == major["run_id"]
+    finally:
+        store.close()
 
 
 def test_v1_and_v2_runs_for_same_date_remain_distinct():

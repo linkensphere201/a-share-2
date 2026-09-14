@@ -84,8 +84,37 @@ describe('ScreenerWorkspace', () => {
 
     const request = fetchMock.mock.calls.find(call => call[1]?.method === 'POST')
     expect(JSON.parse(String(request?.[1]?.body))).toMatchObject({
+      strategy_id: 'major-descending-breakout',
       periods: ['6m', '1y'],
       states: ['critical-breakout', 'breakout-retest', 'broken-out'],
+      max_results: 200,
+    })
+  })
+
+  it('runs volume accumulation as an independent strategy', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.includes('/api/screener/runs?')) return response({ items: [] })
+      if (url === '/api/screener/runs' && init?.method === 'POST') return response({
+        ...run,
+        strategy_id: 'volume-accumulation-20d',
+        status: 'running',
+      }, 202)
+      throw new Error(`unexpected URL ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+    renderScreener()
+
+    await screen.findByText('0/10')
+    await user.selectOptions(screen.getByLabelText('策略'), 'volume-accumulation-20d')
+    expect(screen.queryByText('周期')).toBeNull()
+    expect(screen.queryByText('状态')).toBeNull()
+    await user.click(screen.getByRole('button', { name: '开始选股' }))
+
+    const request = fetchMock.mock.calls.find(call => call[1]?.method === 'POST')
+    expect(JSON.parse(String(request?.[1]?.body))).toMatchObject({
+      strategy_id: 'volume-accumulation-20d',
       max_results: 200,
     })
   })

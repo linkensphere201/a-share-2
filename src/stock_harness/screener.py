@@ -18,6 +18,13 @@ from stock_harness.major_descending_lines import (
 )
 from stock_harness.pattern_analysis import PatternAnalysisRequest, PatternAnalysisService
 from stock_harness.sqlite_store import SQLiteMarketDataStore
+from stock_harness.volume_accumulation import (
+    STATE as ACCUMULATION_STATE,
+    STRATEGY_ID as ACCUMULATION_STRATEGY_ID,
+    STRATEGY_VERSION as ACCUMULATION_STRATEGY_VERSION,
+    VolumeAccumulationSignal,
+    detect_volume_accumulation,
+)
 
 
 LOGGER = logging.getLogger(__name__)
@@ -56,6 +63,14 @@ class ScreenerService:
             "periods": [MajorLinePeriod.HALF_YEAR.value, MajorLinePeriod.YEAR.value],
             "states": [item.value for item in SCREENABLE_STATES],
             "final_bars_only": True,
+        }, {
+            "strategy_id": ACCUMULATION_STRATEGY_ID,
+            "name": "20日堆量蓄势",
+            "version": ACCUMULATION_STRATEGY_VERSION,
+            "window": 20,
+            "baseline_window": 20,
+            "states": [ACCUMULATION_STATE],
+            "final_bars_only": True,
         }]
 
     def start_run(
@@ -64,6 +79,7 @@ class ScreenerService:
         states: Sequence[MajorLineState],
         max_results: int,
         as_of_date: date | None = None,
+        strategy_id: str = STRATEGY_ID,
     ) -> dict[str, object]:
         with self._lock:
             if self._thread is not None and self._thread.is_alive():
@@ -72,12 +88,12 @@ class ScreenerService:
             if cutoff is None:
                 raise ValueError("no completed stock daily bars are available")
             run = self._store.create_screener_run(
-                STRATEGY_ID, STRATEGY_VERSION, cutoff,
-                _parameters(periods, states, max_results),
+                strategy_id, _strategy_version(strategy_id), cutoff,
+                _parameters(strategy_id, periods, states, max_results),
             )
             self._thread = threading.Thread(
                 target=self._run_guarded,
-                args=(str(run["run_id"]), cutoff, tuple(periods), tuple(states), max_results),
+                args=(str(run["run_id"]), cutoff, tuple(periods), tuple(states), max_results, strategy_id),
                 name="stock-harness-screener", daemon=True,
             )
             self._thread.start()
@@ -89,13 +105,17 @@ class ScreenerService:
         states: Sequence[MajorLineState],
         max_results: int,
         as_of_date: date,
+        strategy_id: str = STRATEGY_ID,
     ) -> dict[str, object]:
         run = self._store.create_screener_run(
-            STRATEGY_ID, STRATEGY_VERSION, as_of_date,
-            _parameters(periods, states, max_results),
+            strategy_id, _strategy_version(strategy_id), as_of_date,
+            _parameters(strategy_id, periods, states, max_results),
         )
         try:
-            self._execute(str(run["run_id"]), as_of_date, periods, states, max_results)
+            self._execute(
+                str(run["run_id"]), as_of_date, periods, states,
+                max_results, strategy_id,
+            )
         except Exception as error:
             self._store.fail_screener_run(str(run["run_id"]), str(error))
             raise
@@ -103,15 +123,26 @@ class ScreenerService:
 
     def _run_guarded(
         self, run_id: str, cutoff: date, periods: Sequence[MajorLinePeriod],
-        states: Sequence[MajorLineState], max_results: int,
+        states: Sequence[MajorLineState], max_results: int, strategy_id: str,
     ) -> None:
         try:
-            self._execute(run_id, cutoff, periods, states, max_results)
+            self._execute(run_id, cutoff, periods, states, max_results, strategy_id)
         except Exception as error:
             self._store.fail_screener_run(run_id, str(error))
             LOGGER.exception("screener_run_failed run_id=%s", run_id)
 
     def _execute(
+        self, run_id: str, cutoff: date, periods: Sequence[MajorLinePeriod],
+        states: Sequence[MajorLineState], max_results: int, strategy_id: str,
+    ) -> None:
+        if strategy_id == ACCUMULATION_STRATEGY_ID:
+            self._execute_volume_accumulation(run_id, cutoff, max_results)
+            return
+        if strategy_id != STRATEGY_ID:
+            raise ValueError(f"unknown screener strategy: {strategy_id}")
+        self._execute_major_descending(run_id, cutoff, periods, states, max_results)
+
+    def _execute_major_descending(
         self, run_id: str, cutoff: date, periods: Sequence[MajorLinePeriod],
         states: Sequence[MajorLineState], max_results: int,
     ) -> None:
@@ -204,8 +235,95 @@ class ScreenerService:
             diagnostics.rejected_confirmation,
         )
 
+    def _execute_volume_accumulation(
+        self, run_id: str, cutoff: date, max_results: int,
+    ) -> None:
+        started = time.perf_counter()
+        universe = self._store.list_active_stock_symbols_for_screening()
+        matches: list[tuple[dict[str, str], VolumeAccumulationSignal]] = []
+        self._store.update_screener_progress(
+            run_id, universe_count=len(universe), scanned_count=0,
+        )
+        LOGGER.info(
+            "screener_accumulation_started run_id=%s as_of=%s universe=%s",
+            run_id, cutoff, len(universe),
+        )
+        horizons = AnalysisHorizons(20, 40, 60)
+        for index, instrument in enumerate(universe, 1):
+            try:
+                analysis_input = self._inputs.build(
+                    instrument["symbol"], cutoff, AnalysisTimeframe.DAILY,
+                    AnalysisInputMode.FINAL, horizons,
+                )
+                recent = analysis_input.bars[-20:]
+                if len(recent) == 20:
+                    limit_dates = self._store.list_stock_limit_up_dates(
+                        instrument["symbol"], recent[0].period_start, recent[-1].period_end,
+                    )
+                    signal = detect_volume_accumulation(
+                        analysis_input.bars,
+                        limit_up_dates=frozenset(item.isoformat() for item in limit_dates),
+                    )
+                    if signal is not None:
+                        matches.append((instrument, signal))
+            except (ValueError, LookupError) as error:
+                LOGGER.debug(
+                    "screener_symbol_skipped run_id=%s symbol=%s reason=%s",
+                    run_id, instrument["symbol"], error,
+                )
+            if index % 100 == 0 or index == len(universe):
+                self._store.update_screener_progress(
+                    run_id, universe_count=len(universe), scanned_count=index,
+                )
+                if index % 500 == 0 or index == len(universe):
+                    LOGGER.info(
+                        "screener_accumulation_progress run_id=%s scanned=%s universe=%s matches=%s",
+                        run_id, index, len(universe), len(matches),
+                    )
+        matches.sort(key=lambda item: item[1].score, reverse=True)
+        retained: list[dict[str, object]] = []
+        for instrument, signal in matches[:max_results]:
+            analysis = self._analysis.analyze(PatternAnalysisRequest(
+                symbol=instrument["symbol"], timeframes=(AnalysisTimeframe.DAILY,),
+                horizons=DEFAULT_HORIZONS, config_version=CONFIG_VERSION,
+                include_preview=False, as_of_date=cutoff,
+            ))[0]
+            representative = next(
+                (item for item in analysis["items"] if item.get("item_type") == "line"),
+                None,
+            )
+            item_id = str(representative["item_id"]) if representative else ""
+            retained.append({
+                "symbol": instrument["symbol"],
+                "state": ACCUMULATION_STATE,
+                "score": signal.score,
+                "line_item_id": item_id,
+                "line_code": "VOL-ACC-20D",
+                "analysis_run_id": analysis["run_id"],
+                "evidence": signal.evidence,
+            })
+        self._store.complete_screener_run(run_id, retained, retention=10)
+        LOGGER.info(
+            "screener_accumulation_completed run_id=%s as_of=%s universe=%s matches=%s retained=%s duration_ms=%.1f",
+            run_id, cutoff, len(universe), len(matches), len(retained),
+            (time.perf_counter() - started) * 1000,
+        )
 
-def _parameters(periods, states, max_results: int) -> dict[str, object]:
+
+def _strategy_version(strategy_id: str) -> str:
+    if strategy_id == STRATEGY_ID:
+        return STRATEGY_VERSION
+    if strategy_id == ACCUMULATION_STRATEGY_ID:
+        return ACCUMULATION_STRATEGY_VERSION
+    raise ValueError(f"unknown screener strategy: {strategy_id}")
+
+
+def _parameters(strategy_id, periods, states, max_results: int) -> dict[str, object]:
+    if strategy_id == ACCUMULATION_STRATEGY_ID:
+        return {
+            "window": 20, "baseline_window": 20,
+            "max_results": max_results, "final_bars_only": True,
+        }
     return {
         "periods": [item.value for item in periods],
         "states": [item.value for item in states],

@@ -211,6 +211,7 @@ def create_analysis_router() -> APIRouter:
                 [MajorLineState(item) for item in payload.states],
                 payload.max_results,
                 payload.as_of_date,
+                payload.strategy_id,
             )
         except ScreenerBusyError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error

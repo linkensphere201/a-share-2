@@ -147,6 +147,7 @@ class SQLiteMarketDataStore(
         self._ensure_market_snapshot_metrics()
         self._ensure_generated_analysis_target_settings()
         self._ensure_generated_analysis_scenario_type()
+        self._ensure_screener_candidate_states()
         self._ensure_active_market_value_diagnostics()
         self._ensure_signal_observation_columns()
         self.ensure_board_theme_registry()
