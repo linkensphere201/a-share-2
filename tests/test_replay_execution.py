@@ -6,6 +6,7 @@ import pytest
 from stock_harness.models import StoredDailyBar
 from stock_harness.replay import ExitPlan, FrozenSignal, evaluate_frozen_signal, summarize_evaluations
 from stock_harness.replay.signals import signal_from_analysis_result
+from stock_harness.replay.execution import evaluate_trade, summarize_trades
 
 
 def signal(**kwargs):
@@ -25,7 +26,7 @@ def bar(day, open=10, high=11, low=9.5, close=10.5):
 
 
 def trade(value, bars, basis="reference_close"):
-    return evaluate_frozen_signal(value, bars)[basis]["trade"]
+    return evaluate_trade(value, bars, bars[0].open if basis == "next_open" else value.reference_close)
 
 
 def test_target_exit_is_frozen_even_when_price_crashes_later():
@@ -72,10 +73,10 @@ def test_time_exit_and_costs_and_open_positions():
 
 def test_short_and_missing_boundaries_and_summary():
     value = signal(direction="short", exit_plan=ExitPlan("short-v1", 11, 8))
-    evaluation = evaluate_frozen_signal(value, [bar(1, high=10.5, low=8)])
-    assert evaluation["reference_close"]["trade"]["net_return"] == .2
-    empty = evaluate_frozen_signal(signal(exit_plan=None), [bar(1)])
-    summary = summarize_evaluations([evaluation, empty])["trade"]
+    evaluation = trade(value, [bar(1, high=10.5, low=8)])
+    assert evaluation["net_return"] == .2
+    empty = trade(signal(exit_plan=None), [bar(1)])
+    summary = summarize_trades([evaluation, empty])
     assert summary["closed_count"] == 1
     assert summary["win_rate"] == 1
     assert summary["status_counts"]["not-configured"] == 1
@@ -90,4 +91,4 @@ def test_complete_results_use_one_execution_contract(system):
             "selected_target_price": 12,
         },
     }, date(2026, 1, 1), reference_close=10)
-    assert trade(value, [bar(1, high=12)])["net_return"] == .2
+    assert evaluate_frozen_signal(value, [bar(1, high=12)])["observation"]["status"] == "target-reached"

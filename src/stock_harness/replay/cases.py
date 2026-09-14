@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 
 
-CASE_LIBRARY_VERSION = "replay-case-library-v1"
+CASE_LIBRARY_VERSION = "replay-case-library-v2"
 
 
 def select_replay_cases(
@@ -23,6 +23,12 @@ def select_replay_cases(
             else _mapping(evaluation.get("reference_close"))
         )
         event = str(outcome.get("first_boundary_event") or "")
+        observation = _mapping(evaluation.get("observation"))
+        if observation:
+            event = {"target-reached": "target-first", "invalidated": "invalidation-first"}.get(
+                observation.get("status"), "",
+            )
+            outcome = {"first_boundary_event_session": observation.get("event_session")}
         label = "success" if event == "target-first" else "failure" if event == "invalidation-first" else None
         if label is None:
             continue
@@ -37,6 +43,7 @@ def select_replay_cases(
             "setup_family": signal.get("setup_family"),
             "signal_date": signal.get("signal_date"),
             "entry_price": signal.get("reference_close"),
+            "price_role": "signal-reference-not-trade-entry",
             "target_price": signal.get("selected_target_price"),
             "invalidation_price": signal.get("invalidation_price"),
             "score": signal.get("score"),

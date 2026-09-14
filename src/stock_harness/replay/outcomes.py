@@ -7,7 +7,7 @@ from collections.abc import Mapping, Sequence
 from statistics import fmean, median
 
 from stock_harness.models import StoredDailyBar
-from stock_harness.replay.execution import evaluate_trade, summarize_trades
+from stock_harness.replay.observations import evaluate_observation, summarize_observations
 from stock_harness.replay.contracts import (
     DEFAULT_EVALUATION_HORIZONS,
     EVALUATION_CONTRACT_VERSION,
@@ -35,7 +35,8 @@ def evaluate_frozen_signal(
     )
     return {
         "contract_version": EVALUATION_CONTRACT_VERSION,
-        "primary_metric": "trade.net_return",
+        "primary_metric": "observation",
+        "observation": evaluate_observation(signal, bars),
         "horizon_role": "selection-diagnostic-not-realized-pnl",
         "signal": signal.to_dict(),
         "available_future_sessions": len(bars),
@@ -116,13 +117,8 @@ def summarize_evaluations(
     ]
     return {
         "contract_version": EVALUATION_CONTRACT_VERSION,
-        "primary_metric": "trade.mean_net_return",
-        "trade": summarize_trades([
-            value.get("trade", {"status": "legacy-not-evaluated"})
-            if isinstance((value := evaluation.get(basis)), Mapping)
-            else {"status": "no-entry-data"}
-            for evaluation in evaluations
-        ]),
+        "primary_metric": "observation",
+        "observation": summarize_observations(evaluations),
         "basis": basis,
         "signal_count": len(evaluations),
         "horizons": horizon_metrics,
@@ -196,7 +192,6 @@ def _basis_outcomes(
         }
     return {
         "basis": basis,
-        "trade": evaluate_trade(signal, bars, entry),
         "entry_price": _round(entry),
         "risk_per_unit": _round(risk),
         "first_boundary_event": first_event,

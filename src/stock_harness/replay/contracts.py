@@ -8,7 +8,7 @@ from datetime import date
 from typing import Literal, Mapping
 
 
-EVALUATION_CONTRACT_VERSION = "analysis-outcome-evaluation-v2"
+EVALUATION_CONTRACT_VERSION = "analysis-outcome-evaluation-v3"
 DEFAULT_EVALUATION_HORIZONS = (10, 60, 120)
 Direction = Literal["long", "short"]
 
@@ -55,6 +55,8 @@ class FrozenSignal:
     selected_target_price: float | None = None
     metadata: Mapping[str, object] = field(default_factory=dict)
     exit_plan: ExitPlan | None = None
+    observation_sessions: int | None = None
+    observation_id: str | None = None
 
     def resolved_exit_plan(self) -> ExitPlan | None:
         if self.exit_plan is not None:
@@ -69,6 +71,10 @@ class FrozenSignal:
         )
 
     def validate(self) -> None:
+        if self.observation_sessions is not None and (
+            type(self.observation_sessions) is not int or self.observation_sessions <= 0
+        ):
+            raise ValueError("observation sessions must be a positive integer")
         if (plan := self.resolved_exit_plan()) is not None:
             plan.validate()
         if not self.system_id or not self.system_version:
@@ -96,4 +102,6 @@ class FrozenSignal:
             "selected_target_price": self.selected_target_price,
             "metadata": dict(self.metadata),
             "exit_plan": asdict(plan) if (plan := self.resolved_exit_plan()) else None,
+            "observation_sessions": self.observation_sessions,
+            "observation_id": self.observation_id,
         }

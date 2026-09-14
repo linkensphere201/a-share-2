@@ -13,6 +13,7 @@ from stock_harness.replay.outcomes import (
     summarize_evaluations,
     summarize_evaluations_by,
 )
+from stock_harness.replay.observations import observation_events
 
 
 class ReplaySystemAdapter(Protocol):
@@ -42,6 +43,7 @@ class AnalysisReplayEngine:
                 signal,
                 self._future_data.future_bars(signal, max(
                     max(self._horizons),
+                    signal.observation_sessions or 0,
                     (plan.maximum_holding_sessions or 0)
                     if (plan := signal.resolved_exit_plan()) else 0,
                 )),
@@ -66,5 +68,6 @@ class AnalysisReplayEngine:
             "cutoffs": [value.isoformat() for value in cutoffs],
             "signals": [signal.to_dict() for signal in signals],
             "evaluations": evaluations,
+            "observation_events": observation_events(evaluations),
             "summaries": summaries,
         }
