@@ -18,7 +18,9 @@ class SQLiteScreenerStoreMixin:
                 "SELECT sql FROM sqlite_master WHERE type = 'table' "
                 "AND name = 'screener_candidates'"
             ).fetchone()
-            if row is None or "'accumulating'" in str(row[0]):
+            if row is None or all(f"'{state}'" in str(row[0]) for state in (
+                "accumulating", "pullback-observation", "pullback-confirmed",
+            )):
                 return
             self._connection.execute("PRAGMA foreign_keys = OFF")
             try:
@@ -32,7 +34,8 @@ class SQLiteScreenerStoreMixin:
                         state TEXT NOT NULL CHECK (
                             state IN (
                                 'critical-breakout', 'breakout-retest',
-                                'broken-out', 'accumulating'
+                                'broken-out', 'accumulating',
+                                'pullback-observation', 'pullback-confirmed'
                             )
                         ),
                         score REAL NOT NULL,

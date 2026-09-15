@@ -31,6 +31,8 @@ LOGGER = logging.getLogger(__name__)
 STRATEGY_ID = "major-descending-breakout"
 STRATEGY_VERSION = "major-descending-breakout-v5"
 CONFIG_VERSION = "screener-major-descending-v5"
+PULLBACK_STRATEGY_ID = "strong-first-pullback"
+PULLBACK_STRATEGY_VERSION = "strong-first-pullback-v1"
 DEFAULT_HORIZONS = AnalysisHorizons(60, 120, 250)
 SCREENABLE_STATES = (
     MajorLineState.CRITICAL_BREAKOUT,
@@ -68,6 +70,12 @@ class ScreenerService:
             "window": 20,
             "context_window": 80,
             "states": [ACCUMULATION_STATE],
+            "final_bars_only": True,
+        }, {
+            "strategy_id": PULLBACK_STRATEGY_ID,
+            "name": "强势股首次回踩",
+            "version": PULLBACK_STRATEGY_VERSION,
+            "states": ["pullback-observation", "pullback-confirmed"],
             "final_bars_only": True,
         }]
 
@@ -133,6 +141,9 @@ class ScreenerService:
         self, run_id: str, cutoff: date, periods: Sequence[MajorLinePeriod],
         states: Sequence[MajorLineState], max_results: int, strategy_id: str,
     ) -> None:
+        if strategy_id == PULLBACK_STRATEGY_ID:
+            self._execute_first_pullback(run_id, cutoff, max_results)
+            return
         if strategy_id == ACCUMULATION_STRATEGY_ID:
             self._execute_volume_accumulation(run_id, cutoff, max_results)
             return
@@ -226,6 +237,49 @@ class ScreenerService:
             run_id, cutoff, len(universe), len(candidates), len(retained),
             (time.perf_counter() - started) * 1000,
         )
+
+    def _execute_first_pullback(self, run_id: str, cutoff: date, max_results: int) -> None:
+        started = time.perf_counter()
+        universe = self._store.list_active_stock_symbols_for_screening()
+        candidates = []
+        self._store.update_screener_progress(run_id, universe_count=len(universe), scanned_count=0)
+        for index, instrument in enumerate(universe, 1):
+            try:
+                analysis = self._analysis.analyze(PatternAnalysisRequest(
+                    symbol=instrument["symbol"], timeframes=(AnalysisTimeframe.DAILY,),
+                    horizons=DEFAULT_HORIZONS, config_version=PULLBACK_STRATEGY_VERSION,
+                    include_preview=False, as_of_date=cutoff,
+                ))[0]
+                if analysis["status"] != "succeeded":
+                    raise RuntimeError(f"pattern analysis failed: {instrument['symbol']}")
+                for item in analysis["items"]:
+                    evidence = item["payload"]
+                    if (item["item_type"] != "zone"
+                        or evidence.get("kind") != "first-pullback-range"
+                        or not evidence.get("screen_eligible")
+                        or evidence.get("stage") not in {"pullback-observation", "pullback-confirmed"}
+                        or evidence.get("as_of_date") != cutoff.isoformat()):
+                        continue
+                    candidates.append({
+                        "symbol": instrument["symbol"], "state": evidence["stage"],
+                        "score": evidence["score"], "line_item_id": item["item_id"],
+                        "line_code": "FIRST-PULLBACK", "analysis_run_id": analysis["run_id"],
+                        "evidence": evidence,
+                    })
+            except (ValueError, LookupError) as error:
+                LOGGER.debug("screener_symbol_skipped run_id=%s symbol=%s reason=%s",
+                             run_id, instrument["symbol"], error)
+            if index % 10 == 0 or index == len(universe):
+                self._store.update_screener_progress(run_id, universe_count=len(universe), scanned_count=index)
+            if index % 100 == 0 or index == len(universe):
+                LOGGER.info("screener_first_pullback_progress run_id=%s scanned=%s universe=%s matches=%s",
+                            run_id, index, len(universe), len(candidates))
+        candidates.sort(key=lambda item: (
+            item["state"] != "pullback-confirmed", -item["score"], item["symbol"],
+        ))
+        self._store.complete_screener_run(run_id, candidates[:max_results], retention=10)
+        LOGGER.info("screener_first_pullback_completed run_id=%s matches=%s duration_ms=%.1f",
+                    run_id, len(candidates), (time.perf_counter() - started) * 1000)
 
     def _execute_volume_accumulation(
         self, run_id: str, cutoff: date, max_results: int,
@@ -325,6 +379,8 @@ class ScreenerService:
 
 
 def _strategy_version(strategy_id: str) -> str:
+    if strategy_id == PULLBACK_STRATEGY_ID:
+        return PULLBACK_STRATEGY_VERSION
     if strategy_id == STRATEGY_ID:
         return STRATEGY_VERSION
     if strategy_id == ACCUMULATION_STRATEGY_ID:
@@ -333,6 +389,10 @@ def _strategy_version(strategy_id: str) -> str:
 
 
 def _parameters(strategy_id, periods, states, max_results: int) -> dict[str, object]:
+    if strategy_id == PULLBACK_STRATEGY_ID:
+        return {"max_results": max_results, "final_bars_only": True,
+                "states": ["pullback-observation", "pullback-confirmed"],
+                "analysis_config": PULLBACK_STRATEGY_VERSION}
     if strategy_id == ACCUMULATION_STRATEGY_ID:
         return {
             "window": 20, "context_window": 80,

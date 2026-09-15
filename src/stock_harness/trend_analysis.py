@@ -12,6 +12,7 @@ import time
 from typing import Sequence
 
 from stock_harness.accumulation_pattern import ANALYSIS_LOOKBACK, detect_accumulation_pattern
+from stock_harness.first_pullback_pattern import detect_first_pullback
 from stock_harness.analysis_inputs import (
     AnalysisHorizons,
     AnalysisInput,
@@ -58,7 +59,7 @@ from stock_harness.trend_context import (
 )
 
 
-ALGORITHM_VERSION = "trend-causal-replay-v33"
+ALGORITHM_VERSION = "trend-causal-replay-v34"
 LOGGER = logging.getLogger(__name__)
 
 
@@ -658,6 +659,13 @@ def _generated_items(
         },
     )]
     if analysis_input.timeframe is AnalysisTimeframe.DAILY:
+        if analysis_input.instrument.kind == "stock":
+            pullback = detect_first_pullback(analysis_input.bars)
+            if pullback is not None:
+                items.append(GeneratedAnalysisItem(
+                    item_id=f"first-pullback-{pullback['launch_date']}",
+                    item_type=GeneratedItemType.ZONE, payload=pullback,
+                ))
         accumulation = detect_accumulation_pattern(
             analysis_input.bars,
             limit_up_dates=None if limit_up_dates is None else frozenset(limit_up_dates),

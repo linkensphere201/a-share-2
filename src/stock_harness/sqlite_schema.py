@@ -826,7 +826,7 @@ CREATE TABLE IF NOT EXISTS screener_candidates (
     rank INTEGER NOT NULL CHECK (rank > 0),
     instrument_id INTEGER NOT NULL,
     state TEXT NOT NULL CHECK (
-        state IN ('critical-breakout', 'breakout-retest', 'broken-out', 'accumulating')
+        state IN ('critical-breakout', 'breakout-retest', 'broken-out', 'accumulating', 'pullback-observation', 'pullback-confirmed')
     ),
     score REAL NOT NULL,
     line_item_id TEXT NOT NULL,
