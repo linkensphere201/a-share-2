@@ -175,6 +175,19 @@ describe('provisional daily bars', () => {
     }))
     expect(latestReadout(bars, 13)?.ma20).toBe(7)
   })
+
+  it('includes MA240 once a full long-term window is available', () => {
+    const bars = Array.from({ length: 240 }, (_, index) => ({
+      trade_date: `day-${index + 1}`,
+      open: index + 1,
+      high: index + 2,
+      low: index + .5,
+      close: index + 1,
+      volume: 100,
+      source: 'test',
+    }))
+    expect(latestReadout(bars)?.ma240).toBe(120.5)
+  })
 })
 
 describe('chart level of detail', () => {

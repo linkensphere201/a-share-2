@@ -195,6 +195,23 @@ describe('generated analysis overlay projection', () => {
       .toEqual(['key-level'])
   })
 
+  it('bounds an accumulation range to its platform dates', () => {
+    const withAccumulation: TrendAnalysisRun = {
+      ...run,
+      items: [...run.items, {
+        item_id: 'accumulation', item_type: 'zone', payload: {
+          kind: 'accumulation-range', start_date: '2026-08-01', end_date: '2026-08-18',
+          lower: 10.2, upper: 10.8, score: 82,
+        },
+      }],
+    }
+
+    expect(projectGeneratedZones(withAccumulation, chart, series, host, true, true))
+      .toContainEqual(expect.objectContaining({
+        id: 'accumulation', kind: 'accumulation-range', x: 20, width: 60,
+      }))
+  })
+
   it('projects persisted pattern pivots and neckline with visibility isolation', () => {
     const patterns = projectGeneratedPatterns(run, chart, series, true)
 

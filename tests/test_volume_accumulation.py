@@ -1,18 +1,24 @@
 from datetime import date, timedelta
 
 from stock_harness.analysis_inputs import AnalysisBar
+from stock_harness.accumulation_pattern import detect_accumulation_pattern
 from stock_harness.volume_accumulation import detect_volume_accumulation
 
 
-def _bars(*, recent_volumes: list[int], recent_closes: list[float]) -> list[AnalysisBar]:
+def _bars(*, break_platform: bool = False) -> list[AnalysisBar]:
     start = date(2026, 1, 1)
-    volumes = [100] * 20 + recent_volumes
-    closes = [10.0] * 20 + recent_closes
+    decline = [16.0 - index * .09 for index in range(60)]
+    lift = [10.6, 10.55, 10.5, 10.48, 10.5, 11.05, 11.1, 11.12, 11.15, 11.18]
+    platform = [11.2, 11.3, 11.15, 11.28, 11.18, 11.32, 11.22, 11.35, 11.25, 11.38]
+    if break_platform:
+        platform[-1] = 9.8
+    closes = decline + lift + platform
+    volumes = [100] * 70 + [150, 105, 155, 100, 160, 105, 165, 100, 170, 105]
     return [
         AnalysisBar(
             period_start=start + timedelta(days=index),
             period_end=start + timedelta(days=index),
-            open=close,
+            open=close * (0.995 if index % 2 == 0 else 1.005),
             high=close * 1.01,
             low=close * 0.99,
             close=close,
@@ -26,57 +32,52 @@ def _bars(*, recent_volumes: list[int], recent_closes: list[float]) -> list[Anal
     ]
 
 
-def test_detects_distributed_volume_pile_with_compressed_price() -> None:
-    bars = _bars(
-        recent_volumes=[145, 160, 140, 155] * 5,
-        recent_closes=[10.0, 10.1, 10.0, 10.08] * 5,
-    )
+def test_detects_decline_lift_and_demand_led_platform() -> None:
+    bars = _bars()
+
+    pattern = detect_accumulation_pattern(bars)
+
+    assert pattern is not None
+    assert pattern.start_date == bars[-10].period_start.isoformat()
+    assert pattern.evidence["downward_ma_stack"] is True
+    assert 4 <= pattern.evidence["bottom_lift_percent"] <= 12
+    assert pattern.evidence["small_body_sessions"] == 10
+    assert pattern.evidence["up_down_volume_ratio"] > 1
+
+
+def test_screener_adapter_uses_the_shared_pattern_contract() -> None:
+    bars = _bars()
 
     signal = detect_volume_accumulation(bars)
 
     assert signal is not None
-    assert signal.evidence["elevated_sessions"] == 20
-    assert signal.evidence["supported_blocks"] == 4
-    assert signal.evidence["limit_up_count"] == 0
+    assert signal.evidence["algorithm_version"] == "decline-platform-accumulation-v1"
+    assert signal.evidence["range_lower"] < signal.evidence["range_upper"]
 
 
-def test_rejects_single_day_volume_spike() -> None:
-    bars = _bars(
-        recent_volumes=[100] * 19 + [1200],
-        recent_closes=[10.0] * 20,
-    )
+def test_limit_up_is_visible_evidence_not_a_rejection() -> None:
+    bars = _bars()
+    limit_date = bars[-3].period_end.isoformat()
 
-    assert detect_volume_accumulation(bars) is None
-
-
-def test_detects_recent_local_volume_cluster_without_full_window_expansion() -> None:
-    bars = _bars(
-        recent_volumes=[80] * 10 + [80, 80, 240, 190, 150, 85, 80, 75, 80, 75],
-        recent_closes=[10.0, 10.05, 9.95, 10.0, 10.05] * 4,
-    )
-
-    signal = detect_volume_accumulation(bars)
+    signal = detect_volume_accumulation(bars, limit_up_dates=frozenset({limit_date}))
 
     assert signal is not None
-    assert signal.evidence["pile_mode"] == "clustered"
-    assert signal.evidence["cluster_sessions"] >= 2
+    assert signal.evidence["limit_up_count"] == 1
+    assert signal.evidence["limit_up_policy"] == "accepted-not-required"
 
 
-def test_rejects_recent_limit_up_even_when_other_features_pass() -> None:
-    bars = _bars(
-        recent_volumes=[150] * 20,
-        recent_closes=[10.0] * 20,
-    )
+def test_rejects_a_platform_that_breaks_the_raised_bottom() -> None:
+    assert detect_accumulation_pattern(_bars(break_platform=True)) is None
 
-    assert detect_volume_accumulation(
-        bars, limit_up_dates=frozenset({bars[-3].period_end.isoformat()}),
-    ) is None
-
-
-def test_rejects_large_directional_move_instead_of_small_rises_and_falls() -> None:
-    bars = _bars(
-        recent_volumes=[150] * 20,
-        recent_closes=[10 + index * 0.08 for index in range(20)],
-    )
-
-    assert detect_volume_accumulation(bars) is None
+def test_rejects_history_without_a_medium_term_decline() -> None:
+    bars = _bars()
+    flat = [
+        AnalysisBar(
+            period_start=item.period_start, period_end=item.period_end,
+            open=11, high=11.1, low=10.9, close=11, volume=item.volume,
+            sources=item.sources, contains_provisional=False,
+            period_complete=True, observed_at_ms=0,
+        )
+        for item in bars[:60]
+    ]
+    assert detect_accumulation_pattern([*flat, *bars[60:]]) is None

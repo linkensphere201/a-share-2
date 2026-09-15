@@ -169,13 +169,17 @@ def test_volume_accumulation_run_persists_independent_candidate():
     store, days = _store_with_major_edge()
     try:
         replacement = []
-        for index, trade_date in enumerate(days[-40:]):
-            recent_index = index - 20
-            volume = 100 if index < 20 else [145, 160, 140, 155][recent_index % 4]
-            close = 10 + [0, 0.05, -0.02, 0.03][max(recent_index, 0) % 4]
+        closes = (
+            [16.0 - index * .09 for index in range(60)]
+            + [10.6, 10.55, 10.5, 10.48, 10.5, 11.05, 11.1, 11.12, 11.15, 11.18]
+            + [11.2, 11.3, 11.15, 11.28, 11.18, 11.32, 11.22, 11.35, 11.25, 11.38]
+        )
+        volumes = [100] * 70 + [150, 105, 155, 100, 160, 105, 165, 100, 170, 105]
+        for index, (trade_date, close, volume) in enumerate(zip(days[-80:], closes, volumes)):
+            open_price = close * (0.995 if index % 2 == 0 else 1.005)
             replacement.append(DailyBar(
-                "000001.SZ", trade_date, close, close + 0.1,
-                close - 0.1, close, volume,
+                "000001.SZ", trade_date, open_price, close * 1.01,
+                close * .99, close, volume,
             ))
         store.upsert_daily_bars("tushare", replacement)
 
@@ -186,10 +190,17 @@ def test_volume_accumulation_run_persists_independent_candidate():
         candidates = store.list_screener_candidates(str(run["run_id"]))
 
         assert run["strategy_id"] == "volume-accumulation-20d"
-        assert run["strategy_version"] == "volume-accumulation-20d-v3"
+        assert run["strategy_version"] == "volume-accumulation-20d-v4"
         assert candidates[0]["state"] == "accumulating"
         assert candidates[0]["line_code"] == "VOL-ACC-20D"
-        assert candidates[0]["evidence"]["pile_mode"] == "distributed"
+        assert candidates[0]["evidence"]["algorithm_version"] == "decline-platform-accumulation-v1"
+        linked = store.get_generated_analysis_run(candidates[0]["analysis_run_id"])
+        assert linked is not None
+        assert any(
+            item["item_type"] == "zone"
+            and item["payload"].get("kind") == "accumulation-range"
+            for item in linked["items"]
+        )
     finally:
         store.close()
 
@@ -216,47 +227,7 @@ def test_latest_succeeded_run_can_be_selected_by_strategy():
         store.close()
 
 
-def test_exclusion_pool_is_deduplicated_and_fifo_bounded():
-    store = SQLiteMarketDataStore(":memory:")
-    start = date(2026, 1, 1)
-    instruments = [
-        Instrument(f"{600000 + index}.SH", f"Stock {index}", InstrumentKind.STOCK, "SH")
-        for index in range(101)
-    ]
-    store.upsert_instruments(instruments)
-    try:
-        store.record_screener_exclusions("volume-accumulation-20d", [{
-            "symbol": item.symbol,
-            "event_date": start + timedelta(days=index),
-            "reason_code": "large-drop",
-            "reason_text": "单日收盘下跌 7.00%",
-            "evidence": {"change_percent": -7.0},
-        } for index, item in enumerate(instruments)], limit=100)
-
-        pool = store.list_screener_exclusion_pool("volume-accumulation-20d")
-
-        assert len(pool) == 100
-        assert instruments[0].symbol not in {item["symbol"] for item in pool}
-        assert pool[0]["symbol"] == instruments[-1].symbol
-        assert pool[0]["reason_text"] == "单日收盘下跌 7.00%"
-
-        store.record_screener_exclusions("volume-accumulation-20d", [{
-            "symbol": instruments[0].symbol,
-            "event_date": start,
-            "reason_code": "large-drop",
-            "reason_text": "单日收盘下跌 7.00%",
-            "evidence": {"change_percent": -7.0},
-        }], limit=100)
-        assert instruments[0].symbol not in {
-            item["symbol"] for item in store.list_screener_exclusion_pool(
-                "volume-accumulation-20d"
-            )
-        }
-    finally:
-        store.close()
-
-
-def test_volume_accumulation_run_records_large_drop_and_excludes_symbol():
+def test_large_drop_without_required_structure_is_not_an_accumulation_candidate():
     store, days = _store_with_major_edge()
     try:
         closes = [10.0] * 20
@@ -275,29 +246,18 @@ def test_volume_accumulation_run_records_large_drop_and_excludes_symbol():
             [MajorLinePeriod.YEAR], list(MajorLineState), 10, days[-1],
             "volume-accumulation-20d",
         )
-        pool = store.list_screener_exclusion_pool("volume-accumulation-20d")
-
         assert run["candidate_count"] == 0
-        assert pool[0]["symbol"] == "000001.SZ"
-        assert pool[0]["reason_code"] == "large-drop"
-        assert pool[0]["evidence"]["change_percent"] == -8.0
     finally:
         store.close()
 
 
-def test_screener_exclusion_pool_api_returns_reason():
+def test_screener_exclusion_pool_api_is_removed():
     store, days = _store_with_major_edge()
-    store.record_screener_exclusions("volume-accumulation-20d", [{
-        "symbol": "000001.SZ", "event_date": days[-1],
-        "reason_code": "limit-up", "reason_text": "最近20日触及涨停",
-        "evidence": {"event_date": days[-1].isoformat()},
-    }])
     with TestClient(create_app(store)) as client:
         response = client.get("/api/screener/exclusion-pool")
     store.close()
 
-    assert response.status_code == 200
-    assert response.json()["items"][0]["reason_text"] == "最近20日触及涨停"
+    assert response.status_code == 404
 
 
 def test_v1_and_v2_runs_for_same_date_remain_distinct():

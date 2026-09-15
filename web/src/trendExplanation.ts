@@ -94,6 +94,7 @@ function trendSpeedLabel(value: string): string {
 function explainZone(item: AnalysisItem, allItems: AnalysisItem[]): TrendExplanationItem {
   const payload = item.payload
   const volume = payload.kind === 'estimated-volume-at-price'
+  const accumulation = payload.kind === 'accumulation-range'
   const observations = numberValue(payload.observation_count)
   const share = numberValue(payload.estimated_share)
   const roleReversal = payload.role_reversal === true ? '；存在支撑/压力角色转换' : ''
@@ -101,12 +102,22 @@ function explainZone(item: AnalysisItem, allItems: AnalysisItem[]): TrendExplana
   const stateText = state ? `；${structuralStateLabel(state)}` : ''
   return {
     analysisItemId: item.item_id,
-    title: `${volume ? '成交密集区' : '关键位'} ${formatPrice(payload.lower)}–${formatPrice(payload.upper)}`,
-    detail: volume
+    title: `${accumulation ? '吸筹区间' : volume ? '成交密集区' : '关键位'} ${formatPrice(payload.lower)}–${formatPrice(payload.upper)}`,
+    detail: accumulation
+      ? `${stringValue(payload.start_date) ?? '-'} 至 ${stringValue(payload.end_date) ?? '-'}；前期跌幅 ${formatPercent(payload.decline_return_percent)}，底部抬升 ${formatPercent(payload.bottom_lift_percent)}，红绿量比 ${formatRatio(payload.up_down_volume_ratio)}。这是量价代理，不代表已确认主力持仓。`
+      : volume
       ? `基于日线成交量区间估算${share !== undefined ? `，估算占比 ${(share * 100).toFixed(1)}%` : ''}${stateText}。`
       : `${observations !== undefined ? `${observations} 次历史观察` : '历史价格聚类'}${roleReversal}${stateText}。`,
     score: numberValue(payload.score),
   }
+}
+
+function formatPercent(value: unknown): string {
+  return typeof value === 'number' ? `${value.toFixed(2)}%` : '-'
+}
+
+function formatRatio(value: unknown): string {
+  return typeof value === 'number' ? value.toFixed(2) : '-'
 }
 
 function explainPattern(item: AnalysisItem, allItems: AnalysisItem[]): TrendExplanationItem {

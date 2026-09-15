@@ -334,7 +334,7 @@ export function GeneratedAnalysisOverlay({
           <rect
             key={item.id}
             className={`generated-price-zone ${item.kind}${highlightedItemId === item.id ? ' highlighted' : ''}`}
-            x={0}
+            x={item.x}
             y={item.y}
             width={item.width}
             height={item.height}
@@ -589,6 +589,7 @@ export function ChartReadout({ value, instrumentName, futures, middleAveragePeri
       {value.ma5 !== undefined && <span className="ma5-value">MA5 {formatPrice(value.ma5)}</span>}
       {value.ma20 !== undefined && <span className="ma20-value">MA{middleAveragePeriod} {formatPrice(value.ma20)}</span>}
       {value.ma60 !== undefined && <span className="ma60-value">MA60 {formatPrice(value.ma60)}</span>}
+      {value.ma240 !== undefined && <span className="ma240-value">MA240 {formatPrice(value.ma240)}</span>}
     </div>
   )
 }

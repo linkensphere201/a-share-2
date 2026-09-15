@@ -12,6 +12,7 @@ export type ScreenerRun = {
     states?: ScreenerState[]
     window?: number
     baseline_window?: number
+    context_window?: number
     max_results: number
   }
   status: 'running' | 'succeeded' | 'failed'
@@ -58,15 +59,14 @@ export type ScreenerCandidate = {
     medium_28?: { return_percent: number; recent_half_percent: number }
     window?: number
     window_start_date?: string
-    total_volume_ratio?: number
-    median_volume_ratio?: number
-    elevated_sessions?: number
-    supported_blocks?: number
-    pile_mode?: 'distributed' | 'clustered'
-    cluster_sessions?: number
-    cluster_peak_ratio?: number
-    cluster_average_ratio?: number
-    cluster_age_sessions?: number
+    decline_return_percent?: number
+    ma20_decline_percent?: number
+    ma_divergence_percent?: number
+    bottom_lift_percent?: number
+    platform_range_percent?: number
+    platform_return_percent?: number
+    small_body_sessions?: number
+    platform_volume_ratio?: number
     dominant_session_share?: number
     return_20d_percent?: number
     close_range_20d_percent?: number
@@ -74,20 +74,6 @@ export type ScreenerCandidate = {
     up_down_volume_ratio?: number
     limit_up_count?: number
   }
-}
-
-export type ScreenerExclusionPoolEntry = {
-  entry_id: number
-  strategy_id: ScreenerStrategyId
-  symbol: string
-  name: string
-  exchange: string
-  kind: 'stock'
-  event_date: string
-  reason_code: 'limit-up' | 'large-drop'
-  reason_text: string
-  evidence: { change_percent?: number; threshold_percent?: number; event_date?: string }
-  entered_at_ms: number
 }
 
 async function json<T>(response: Response): Promise<T> {
@@ -117,13 +103,6 @@ export async function listScreenerCandidates(runId: string, signal?: AbortSignal
   const payload = await json<{ items: ScreenerCandidate[] }>(
     await fetch(`/api/screener/runs/${encodeURIComponent(runId)}/candidates`, { signal }),
   )
-  return payload.items
-}
-
-export async function listScreenerExclusionPool(signal?: AbortSignal): Promise<ScreenerExclusionPoolEntry[]> {
-  const payload = await json<{ items: ScreenerExclusionPoolEntry[] }>(await fetch(
-    '/api/screener/exclusion-pool?strategy_id=volume-accumulation-20d&limit=100', { signal },
-  ))
   return payload.items
 }
 

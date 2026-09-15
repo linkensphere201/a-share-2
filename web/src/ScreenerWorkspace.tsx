@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useState } from 'react'
-import { ArrowLeft, ChevronLeft, ChevronRight, Filter, ListPlus, Play, RefreshCw, ShieldX, Trash2, X } from 'lucide-react'
+import { ArrowLeft, ChevronLeft, ChevronRight, Filter, ListPlus, Play, RefreshCw, Trash2, X } from 'lucide-react'
 import { ChartCanvas } from './ChartCanvas'
 import { MarketBoardBadge } from './MarketBoardBadge'
 import { fetchInstrumentBoardMemberships, type InstrumentBoardMembership } from './boardTags'
@@ -7,10 +7,10 @@ import { TradingSystemControls } from './TradingSystemControls'
 import { TrendExplanationPanel } from './TrendExplanationPanel'
 import { logError, logInfo } from './eventLogger'
 import {
-  deleteScreenerRun, listScreenerCandidates, listScreenerExclusionPool, listScreenerRuns,
+  deleteScreenerRun, listScreenerCandidates, listScreenerRuns,
   loadScreenerRun, startScreenerRun,
   type ScreenerCandidate, type ScreenerPeriod, type ScreenerRun, type ScreenerState,
-  type ScreenerExclusionPoolEntry, type ScreenerStrategyId,
+  type ScreenerStrategyId,
 } from './screenerClient'
 import { loadExactTrendAnalysis, type TrendAnalysisRun } from './trendAnalysisClient'
 import {
@@ -68,9 +68,6 @@ export function ScreenerWorkspace({
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [contextMenu, setContextMenu] = useState<ScreenerContextMenu>()
-  const [exclusionPoolOpen, setExclusionPoolOpen] = useState(false)
-  const [exclusionPool, setExclusionPool] = useState<ScreenerExclusionPoolEntry[]>([])
-  const [exclusionPoolLoading, setExclusionPoolLoading] = useState(false)
 
   const stateCandidates = useMemo(() => resultStateFilter === 'all'
     ? candidates
@@ -157,17 +154,6 @@ export function ScreenerWorkspace({
       }).catch(() => { if (!controller.signal.aborted) setBoardStatus('error') })
     return () => controller.abort()
   }, [candidates, boardRetry])
-
-  useEffect(() => {
-    if (!exclusionPoolOpen) return
-    const controller = new AbortController()
-    setExclusionPoolLoading(true)
-    listScreenerExclusionPool(controller.signal)
-      .then(setExclusionPool)
-      .catch(value => { if ((value as Error).name !== 'AbortError') setError(String(value)) })
-      .finally(() => setExclusionPoolLoading(false))
-    return () => controller.abort()
-  }, [exclusionPoolOpen, selectedRun?.run_id, selectedRun?.status])
 
   useEffect(() => {
     if (selected) window.localStorage.setItem(selectedCandidateKey, selected.symbol)
@@ -278,9 +264,6 @@ export function ScreenerWorkspace({
       <label className="screener-limit">上限<select value={maxResults} onChange={event => setMaxResults(Number(event.target.value))}>
         {[50, 100, 200, 500].map(value => <option key={value}>{value}</option>)}
       </select></label>
-      {strategyId === 'volume-accumulation-20d' && <button className="command-button" onClick={() => setExclusionPoolOpen(true)}>
-        <ShieldX size={14}/>剔除池 <small>{exclusionPool.length}/100</small>
-      </button>}
       <button className="primary-button" disabled={(strategyId === 'major-descending-breakout' && (!periods.length || !states.length)) || selectedRun?.status === 'running'} onClick={start}>
         {selectedRun?.status === 'running' ? <RefreshCw size={14} className="spin"/> : <Play size={14}/>}开始选股
       </button>
@@ -352,16 +335,15 @@ export function ScreenerWorkspace({
           ? <ScreenerChart key={selected.analysis_run_id} candidate={selected} analysis={analysis} asOfDate={selectedRun?.as_of_date} theme={theme}/>
           : <div className="screener-empty">选择一条结果查看 K 线与形态分析</div>}</div>
         {selected && selected.state === 'accumulating' && <footer className="screener-evidence">
-          <span><small>堆量类型</small>{selected.evidence.pile_mode === 'clustered' ? '局部连续' : '持续放量'}</span>
-          <span><small>20日量比</small>{selected.evidence.total_volume_ratio?.toFixed(2)}x</span>
-          <span><small>中位量比</small>{selected.evidence.median_volume_ratio?.toFixed(2)}x</span>
-          <span><small>堆量日</small>{selected.evidence.elevated_sessions ?? 0}/20</span>
-          <span><small>覆盖分段</small>{selected.evidence.supported_blocks ?? 0}/4</span>
-          <span><small>连续堆量</small>{selected.evidence.cluster_sessions ?? 0}日</span>
-          <span><small>20日涨跌</small>{signed(selected.evidence.return_20d_percent ?? 0)}%</span>
-          <span><small>20日振幅</small>{selected.evidence.close_range_20d_percent?.toFixed(2)}%</span>
-          <span><small>涨跌量比</small>{selected.evidence.up_down_volume_ratio?.toFixed(2)}</span>
-          <span><small>涨停</small>{selected.evidence.limit_up_count ?? 0}</span>
+          <span><small>前期阴跌</small>{signed(selected.evidence.decline_return_percent ?? 0)}%</span>
+          <span><small>均线发散</small>{selected.evidence.ma_divergence_percent?.toFixed(2)}%</span>
+          <span><small>底部抬升</small>{signed(selected.evidence.bottom_lift_percent ?? 0)}%</span>
+          <span><small>平台振幅</small>{selected.evidence.platform_range_percent?.toFixed(2)}%</span>
+          <span><small>平台涨跌</small>{signed(selected.evidence.platform_return_percent ?? 0)}%</span>
+          <span><small>小实体 K 线</small>{selected.evidence.small_body_sessions ?? 0}/10</span>
+          <span><small>温和放量</small>{selected.evidence.platform_volume_ratio?.toFixed(2)}x</span>
+          <span><small>红绿量比</small>{selected.evidence.up_down_volume_ratio?.toFixed(2)}</span>
+          <span><small>期间涨停</small>{selected.evidence.limit_up_count ?? 0} 次（允许）</span>
         </footer>}
         {selected && selected.state !== 'accumulating' && <footer className="screener-evidence">
           <span><small>边界</small>{selected.evidence.projected_price?.toFixed(2)}</span>
@@ -399,23 +381,6 @@ export function ScreenerWorkspace({
           </button>)}
         </>}
       </div>
-    </div>}
-    {exclusionPoolOpen && <div className="screener-pool-layer" onPointerDown={event => {
-      if (event.target === event.currentTarget) setExclusionPoolOpen(false)
-    }}>
-      <section className="screener-pool-panel" role="dialog" aria-label="20日堆量蓄势剔除池">
-        <header><span><ShieldX size={16}/>20日堆量蓄势剔除池</span><small>{exclusionPool.length}/100 · 先进先出</small><button className="icon-button" title="关闭剔除池" aria-label="关闭剔除池" onClick={() => setExclusionPoolOpen(false)}><X size={15}/></button></header>
-        <div className="screener-pool-head"><span>#</span><span>标的</span><span>进池日期</span><span>进池理由</span></div>
-        <div className="screener-pool-list">
-          {exclusionPoolLoading && <div className="screener-empty compact"><RefreshCw size={15} className="spin"/>加载剔除池</div>}
-          {!exclusionPoolLoading && exclusionPool.length === 0 && <div className="screener-empty compact">剔除池为空</div>}
-          {!exclusionPoolLoading && exclusionPool.map((item, index) => <div key={item.entry_id}>
-            <span>{index + 1}</span>
-            <span><span className="instrument-name-line"><b>{item.name}</b><MarketBoardBadge instrument={item}/></span><small>{item.symbol}</small></span>
-            <span>{item.event_date}</span><span>{item.reason_text}</span>
-          </div>)}
-        </div>
-      </section>
     </div>}
   </main>
 }

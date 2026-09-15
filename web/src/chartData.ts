@@ -21,7 +21,7 @@ export type DailyBar = {
   provider_time?: string
 }
 
-export type Readout = DailyBar & { changePercent?: number; ma5?: number; ma20?: number; ma60?: number }
+export type Readout = DailyBar & { changePercent?: number; ma5?: number; ma20?: number; ma60?: number; ma240?: number }
 export type RenderBar = DailyBar & { period_start: string }
 
 export type RangeMeasurement = {
@@ -361,6 +361,7 @@ export function latestReadout(bars: DailyBar[], middleAveragePeriod = 20): Reado
     ma5: latestAverage(bars, 5),
     ma20: latestAverage(bars, middleAveragePeriod),
     ma60: latestAverage(bars, 60),
+    ma240: latestAverage(bars, 240),
   }
 }
 

@@ -11,6 +11,7 @@ import threading
 import time
 from typing import Sequence
 
+from stock_harness.accumulation_pattern import detect_accumulation_pattern
 from stock_harness.analysis_inputs import (
     AnalysisHorizons,
     AnalysisInput,
@@ -57,7 +58,7 @@ from stock_harness.trend_context import (
 )
 
 
-ALGORITHM_VERSION = "trend-causal-replay-v29"
+ALGORITHM_VERSION = "trend-causal-replay-v30"
 LOGGER = logging.getLogger(__name__)
 
 
@@ -641,6 +642,29 @@ def _generated_items(
             }),
         },
     )]
+    if analysis_input.timeframe is AnalysisTimeframe.DAILY:
+        accumulation = detect_accumulation_pattern(analysis_input.bars)
+        if accumulation is not None:
+            items.append(GeneratedAnalysisItem(
+                item_id=f"accumulation-range-{accumulation.start_date}",
+                item_type=GeneratedItemType.ZONE,
+                payload={
+                    "kind": "accumulation-range",
+                    "display_name": "吸筹区间",
+                    "start_date": accumulation.start_date,
+                    "end_date": accumulation.end_date,
+                    "lower": accumulation.lower,
+                    "upper": accumulation.upper,
+                    "center": (accumulation.lower + accumulation.upper) / 2,
+                    "score": accumulation.score,
+                    "method": "decline-lift-platform-price-volume",
+                    "uncertainty": (
+                        "Price-volume accumulation proxy; it does not identify actual "
+                        "institutional positions or intent."
+                    ),
+                    **accumulation.evidence,
+                },
+            ))
     for line in detect_major_descending_lines(
         analysis_input.bars, include_candidates=True,
     ):

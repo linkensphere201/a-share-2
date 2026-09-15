@@ -323,6 +323,7 @@ export function ChartCanvas({
   const ma5Ref = useRef<ISeriesApi<'Line'> | null>(null)
   const ma20Ref = useRef<ISeriesApi<'Line'> | null>(null)
   const ma60Ref = useRef<ISeriesApi<'Line'> | null>(null)
+  const ma240Ref = useRef<ISeriesApi<'Line'> | null>(null)
   const macdDifRef = useRef<ISeriesApi<'Line'> | null>(null)
   const macdDeaRef = useRef<ISeriesApi<'Line'> | null>(null)
   const macdHistogramRef = useRef<ISeriesApi<'Histogram'> | null>(null)
@@ -465,6 +466,7 @@ export function ChartCanvas({
     ma5: movingAverage(bars, 5),
     ma20: movingAverage(bars, middleAveragePeriod),
     ma60: movingAverage(bars, 60),
+    ma240: movingAverage(bars, 240),
   }), [bars, middleAveragePeriod])
   const priceGaps = useMemo(() => detectPriceGaps(bars), [bars])
   const macd = useMemo(() => calculateMacd(bars), [bars])
@@ -593,6 +595,7 @@ export function ChartCanvas({
     const ma5 = chart.addSeries(LineSeries, { color: '#e5b85c', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, ...compactCrosshairMarkerOptions })
     const ma20 = chart.addSeries(LineSeries, { color: '#57a7d9', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, ...compactCrosshairMarkerOptions })
     const ma60 = chart.addSeries(LineSeries, { color: '#b984cc', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, ...compactCrosshairMarkerOptions })
+    const ma240 = chart.addSeries(LineSeries, { color: '#35b6a8', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, ...compactCrosshairMarkerOptions })
     const extremaForLogicalRange = (logical?: NumericRange | null) => {
       const rendered = renderedBarListRef.current
       if (!logical || rendered.length === 0) return fullPriceExtremaRef.current
@@ -771,6 +774,7 @@ export function ChartCanvas({
         ma5: valueAt(ma5, param),
         ma20: valueAt(ma20, param),
         ma60: valueAt(ma60, param),
+        ma240: valueAt(ma240, param),
       })
     })
 
@@ -847,6 +851,7 @@ export function ChartCanvas({
     ma5Ref.current = ma5
     ma20Ref.current = ma20
     ma60Ref.current = ma60
+    ma240Ref.current = ma240
     return () => {
       window.cancelAnimationFrame(lodFrame)
       window.clearTimeout(visibleRangeTimer)
@@ -863,6 +868,10 @@ export function ChartCanvas({
       chartRef.current = null
       closeLineRef.current = null
       settlementLineRef.current = null
+      ma5Ref.current = null
+      ma20Ref.current = null
+      ma60Ref.current = null
+      ma240Ref.current = null
     }
   }, [])
 
@@ -1052,6 +1061,7 @@ export function ChartCanvas({
       ma5Ref.current?.setData(averages.ma5.filter(item => times.has(String(item.time))))
       ma20Ref.current?.setData(averages.ma20.filter(item => times.has(String(item.time))))
       ma60Ref.current?.setData(averages.ma60.filter(item => times.has(String(item.time))))
+      ma240Ref.current?.setData(averages.ma240.filter(item => times.has(String(item.time))))
       applyMacdSeries(
         macd,
         times,

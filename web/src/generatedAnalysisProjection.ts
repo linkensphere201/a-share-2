@@ -26,7 +26,8 @@ export type GeneratedTrendLineGeometry = {
 
 export type GeneratedZoneGeometry = {
   id: string
-  kind: 'key-level' | 'estimated-volume-at-price'
+  kind: 'key-level' | 'estimated-volume-at-price' | 'accumulation-range'
+  x: number
   y: number
   height: number
   width: number
@@ -188,7 +189,7 @@ export function selectCoreZoneItems(items: AnalysisItem[]): AnalysisItem[] {
   for (const item of items) {
     if (item.item_type !== 'zone') continue
     const kind = item.payload.kind
-    if (kind !== 'key-level' && kind !== 'estimated-volume-at-price') continue
+    if (kind !== 'key-level' && kind !== 'estimated-volume-at-price' && kind !== 'accumulation-range') continue
     if (typeof item.payload.ai_reference_code === 'string') {
       aiReferences.push(item)
       continue
@@ -319,9 +320,9 @@ export function projectGeneratedZones(
     const kind = item.payload.kind
     const lower = item.payload.lower
     const upper = item.payload.upper
-    if ((kind !== 'key-level' && kind !== 'estimated-volume-at-price')
+    if ((kind !== 'key-level' && kind !== 'estimated-volume-at-price' && kind !== 'accumulation-range')
       || typeof lower !== 'number' || typeof upper !== 'number') return []
-    if ((kind === 'key-level' && !showKeyLevels)
+    if (((kind === 'key-level' || kind === 'accumulation-range') && !showKeyLevels)
       || (kind === 'estimated-volume-at-price' && !showVolumeZones)) return []
     const lowerY = priceSeries.priceToCoordinate(lower)
     const upperY = priceSeries.priceToCoordinate(upper)
@@ -329,12 +330,22 @@ export function projectGeneratedZones(
     const top = Math.max(0, Math.min(lowerY, upperY))
     const bottom = Math.min(paneHeight, Math.max(lowerY, upperY))
     if (bottom < 0 || top > paneHeight) return []
+    const startX = kind === 'accumulation-range' && typeof item.payload.start_date === 'string'
+      ? chart.timeScale().timeToCoordinate(item.payload.start_date as Time)
+      : 0
+    const endX = kind === 'accumulation-range' && typeof item.payload.end_date === 'string'
+      ? chart.timeScale().timeToCoordinate(item.payload.end_date as Time)
+      : width
+    if (startX === null || endX === null) return []
+    const x = Math.max(0, Math.min(startX, endX))
+    const zoneWidth = Math.min(width, Math.max(startX, endX)) - x
     return [{
       id: item.item_id,
       kind: kind as GeneratedZoneGeometry['kind'],
+      x,
       y: top,
       height: Math.max(kind === 'key-level' ? 2 : 1, bottom - top),
-      width,
+      width: Math.max(2, zoneWidth),
       lower,
       upper,
       score: typeof item.payload.score === 'number' ? item.payload.score : 0,

@@ -843,28 +843,6 @@ CREATE TABLE IF NOT EXISTS screener_candidates (
 CREATE INDEX IF NOT EXISTS screener_candidates_rank
 ON screener_candidates(run_id, rank);
 
-CREATE TABLE IF NOT EXISTS screener_exclusion_pool (
-    entry_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    strategy_id TEXT NOT NULL,
-    instrument_id INTEGER NOT NULL,
-    event_date INTEGER NOT NULL,
-    reason_code TEXT NOT NULL CHECK (reason_code IN ('limit-up', 'large-drop')),
-    reason_text TEXT NOT NULL,
-    evidence_json TEXT NOT NULL,
-    entered_at_ms INTEGER NOT NULL,
-    UNIQUE (strategy_id, instrument_id),
-    FOREIGN KEY (instrument_id) REFERENCES instruments(instrument_id)
-);
-
-CREATE INDEX IF NOT EXISTS screener_exclusion_pool_fifo
-ON screener_exclusion_pool(strategy_id, event_date DESC, entered_at_ms DESC, entry_id DESC);
-
-CREATE TABLE IF NOT EXISTS screener_exclusion_sync_state (
-    strategy_id TEXT PRIMARY KEY,
-    processed_through_date INTEGER NOT NULL,
-    updated_at_ms INTEGER NOT NULL
-) WITHOUT ROWID;
-
 CREATE TABLE IF NOT EXISTS signal_review_runs (
     run_id TEXT PRIMARY KEY,
     signal_id TEXT NOT NULL,
