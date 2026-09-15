@@ -11,7 +11,7 @@ import threading
 import time
 from typing import Sequence
 
-from stock_harness.accumulation_pattern import detect_accumulation_pattern
+from stock_harness.accumulation_pattern import ANALYSIS_LOOKBACK, detect_accumulation_pattern
 from stock_harness.analysis_inputs import (
     AnalysisHorizons,
     AnalysisInput,
@@ -58,7 +58,7 @@ from stock_harness.trend_context import (
 )
 
 
-ALGORITHM_VERSION = "trend-causal-replay-v30"
+ALGORITHM_VERSION = "trend-causal-replay-v31"
 LOGGER = logging.getLogger(__name__)
 
 
@@ -110,7 +110,10 @@ class TrendAnalysisService:
             detector_input, as_of_date, timeframe, horizons
         )
         digest = _input_digest(analysis_input, context_payload)
-        generated = _generated_items(detector_input, horizons, pivot_config)
+        generated = _generated_items(
+            detector_input, horizons, pivot_config,
+            limit_up_dates=context_payload.get("accumulation_limit_up_dates"),
+        )
         generated.append(GeneratedAnalysisItem(
             item_id="market-board-context-evidence",
             item_type=GeneratedItemType.EVIDENCE,
@@ -269,7 +272,8 @@ class TrendAnalysisService:
             run_id = run.run_id
             if not run.reused:
                 items = _generated_items(
-                    detector_input, horizons, pivot_config
+                    detector_input, horizons, pivot_config,
+                    limit_up_dates=context_payload.get("accumulation_limit_up_dates"),
                 )
                 items.append(GeneratedAnalysisItem(
                     item_id="market-board-context-evidence",
@@ -353,9 +357,18 @@ class TrendAnalysisService:
                 related.append(series)
             if len(related) >= 5:
                 break
-        return build_trend_context_evidence(
+        payload = build_trend_context_evidence(
             subject, market, related, unavailable=unavailable
         )
+        limit_dates = None
+        if (timeframe is AnalysisTimeframe.DAILY and subject_input.bars
+                and subject_input.instrument.kind == "stock"):
+            recent = subject_input.bars[-ANALYSIS_LOOKBACK:]
+            limit_dates = [day.isoformat() for day in self._store.list_stock_limit_up_dates(
+                subject_input.symbol, recent[0].period_start, recent[-1].period_end,
+            )]
+        payload["accumulation_limit_up_dates"] = limit_dates
+        return payload
 
     def _load_context_series(
         self,
@@ -593,6 +606,8 @@ def _generated_items(
     analysis_input: AnalysisInput,
     horizons: AnalysisHorizons,
     base_config: DirectionalChangeConfig,
+    *,
+    limit_up_dates: list[str] | None = None,
 ) -> list[GeneratedAnalysisItem]:
     profiles = (
         (
@@ -643,7 +658,10 @@ def _generated_items(
         },
     )]
     if analysis_input.timeframe is AnalysisTimeframe.DAILY:
-        accumulation = detect_accumulation_pattern(analysis_input.bars)
+        accumulation = detect_accumulation_pattern(
+            analysis_input.bars,
+            limit_up_dates=None if limit_up_dates is None else frozenset(limit_up_dates),
+        )
         if accumulation is not None:
             items.append(GeneratedAnalysisItem(
                 item_id=f"accumulation-range-{accumulation.start_date}",

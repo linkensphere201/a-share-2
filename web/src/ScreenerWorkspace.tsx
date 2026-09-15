@@ -5,6 +5,7 @@ import { MarketBoardBadge } from './MarketBoardBadge'
 import { fetchInstrumentBoardMemberships, type InstrumentBoardMembership } from './boardTags'
 import { TradingSystemControls } from './TradingSystemControls'
 import { TrendExplanationPanel } from './TrendExplanationPanel'
+import { accumulationStageLabel } from './trendExplanation'
 import { logError, logInfo } from './eventLogger'
 import {
   deleteScreenerRun, listScreenerCandidates, listScreenerRuns,
@@ -326,24 +327,30 @@ export function ScreenerWorkspace({
           setSelected(item)
           setContextMenu({ kind: 'candidate', ...menuPosition(event.clientX, event.clientY), candidate: item, selectingTarget: false })
         }}>
-          <span>{item.rank}</span><span><span className="instrument-name-line"><b>{item.name}</b><MarketBoardBadge instrument={item}/></span><small>{item.symbol}</small></span><span><b>{item.evidence.period ? periodLabels[item.evidence.period] : '20日'}</b><small>{stateLabels[item.state]}</small></span><span>{item.score.toFixed(1)}</span>
+          <span>{item.rank}</span><span><span className="instrument-name-line"><b>{item.name}</b><MarketBoardBadge instrument={item}/></span><small>{item.symbol}</small></span><span><b>{candidatePeriodLabel(item)}</b><small>{item.evidence.stage ? accumulationStageLabel(item.evidence.stage) : stateLabels[item.state]}</small></span><span>{item.score.toFixed(1)}</span>
         </button>)}</div>
       </section>
       <section className="screener-chart-pane">
-        <header>{selected ? <><span className="instrument-name-line"><span>{selected.name}</span><MarketBoardBadge instrument={selected}/></span><small>{selected.line_code} · {selected.evidence.period ? periodLabels[selected.evidence.period] : '20日'} · {stateLabels[selected.state]}</small></> : <span>个股 K 线</span>}</header>
+        <header>{selected ? <><span className="instrument-name-line"><span>{selected.name}</span><MarketBoardBadge instrument={selected}/></span><small>{selected.line_code} · {candidatePeriodLabel(selected)} · {selected.evidence.stage ? accumulationStageLabel(selected.evidence.stage) : stateLabels[selected.state]}</small></> : <span>个股 K 线</span>}</header>
         <div className="screener-chart-body">{selected && analysis
           ? <ScreenerChart key={selected.analysis_run_id} candidate={selected} analysis={analysis} asOfDate={selectedRun?.as_of_date} theme={theme}/>
           : <div className="screener-empty">选择一条结果查看 K 线与形态分析</div>}</div>
         {selected && selected.state === 'accumulating' && <footer className="screener-evidence">
+          <span><small>形态阶段</small>{accumulationStageLabel(selected.evidence.stage)}</span>
           <span><small>前期阴跌</small>{signed(selected.evidence.decline_return_percent ?? 0)}%</span>
           <span><small>均线发散</small>{selected.evidence.ma_divergence_percent?.toFixed(2)}%</span>
           <span><small>底部抬升</small>{signed(selected.evidence.bottom_lift_percent ?? 0)}%</span>
           <span><small>平台振幅</small>{selected.evidence.platform_range_percent?.toFixed(2)}%</span>
           <span><small>平台涨跌</small>{signed(selected.evidence.platform_return_percent ?? 0)}%</span>
-          <span><small>小实体 K 线</small>{selected.evidence.small_body_sessions ?? 0}/10</span>
+          <span><small>小实体 K 线</small>{selected.evidence.small_body_sessions ?? 0}/{selected.evidence.platform_sessions ?? 10}</span>
+          <span><small>下跌减速</small>{selected.evidence.decline_slowing === undefined ? '--' : selected.evidence.decline_slowing ? '已确认' : '待确认'}</span>
           <span><small>温和放量</small>{selected.evidence.platform_volume_ratio?.toFixed(2)}x</span>
-          <span><small>红绿量比</small>{selected.evidence.up_down_volume_ratio?.toFixed(2)}</span>
-          <span><small>期间涨停</small>{selected.evidence.limit_up_count ?? 0} 次（允许）</span>
+          <span><small>红绿均量比</small>{selected.evidence.average_up_down_volume_ratio?.toFixed(2) ?? '--'}</span>
+          <span><small>去最大量日</small>{selected.evidence.robust_up_down_volume_ratio?.toFixed(2) ?? '--'}</span>
+          <span><small>期间涨停</small>{selected.evidence.limit_up_count ?? '--'} 次（允许）</span>
+          <span><small>结构失效位</small>{selected.evidence.invalidation_price?.toFixed(2) ?? '--'}</span>
+          {selected.evidence.score_components && <span><small>下跌 / 抬升 / 平台 / 承接</small>{Object.values(selected.evidence.score_components).map(value => value.toFixed(1)).join(' / ')}</span>}
+          {selected.evidence.missing_evidence?.includes('turnover-unavailable') && <span><small>辅助证据</small>换手率暂缺</span>}
         </footer>}
         {selected && selected.state !== 'accumulating' && <footer className="screener-evidence">
           <span><small>边界</small>{selected.evidence.projected_price?.toFixed(2)}</span>
@@ -465,6 +472,10 @@ const ScreenerChart = memo(function ScreenerChart({
 })
 
 function formatRunDate(value: string) { return value.replaceAll('-', '').slice(4) + ' 选股结果' }
+function candidatePeriodLabel(value: ScreenerCandidate) {
+  return value.evidence.period ? periodLabels[value.evidence.period]
+    : `${value.evidence.platform_sessions ?? 20}日`
+}
 function strategyLabel(value: string) {
   return strategyLabels[value as ScreenerStrategyId] ?? value
 }

@@ -3,32 +3,44 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from math import isfinite
 from statistics import fmean
-from typing import Sequence
+from typing import Mapping, Sequence
 
 from stock_harness.analysis_inputs import AnalysisBar
 
 
-ALGORITHM_VERSION = "decline-platform-accumulation-v1"
+ALGORITHM_VERSION = "decline-platform-accumulation-v2"
+ANALYSIS_LOOKBACK = 135
 
 
 @dataclass(frozen=True, slots=True)
 class AccumulationPatternConfig:
-    decline_window: int = 60
+    decline_windows: tuple[int, ...] = (60, 80, 100)
     lift_window: int = 10
-    platform_window: int = 10
+    min_platform_window: int = 8
+    max_platform_window: int = 20
+    followup_window: int = 5
     min_decline_percent: float = 10.0
-    min_ma20_decline_percent: float = 4.0
-    min_ma_divergence_percent: float = 2.0
-    min_bottom_lift_percent: float = 4.0
-    max_bottom_lift_percent: float = 12.0
-    max_platform_range_percent: float = 14.0
-    max_platform_return_percent: float = 10.0
-    max_small_body_percent: float = 3.0
-    min_small_body_sessions: int = 7
-    min_up_down_volume_ratio: float = 1.10
-    min_platform_volume_ratio: float = 1.10
-    max_dominant_session_share: float = 0.30
+    min_deceleration: float = 0.25
+    min_quality_score: float = 60.0
+    invalidation_atr: float = 0.5
+    breakout_atr: float = 0.5
+
+    def __post_init__(self) -> None:
+        if (not self.decline_windows or min(self.decline_windows) < 60
+                or max(self.decline_windows) > 100 or self.lift_window != 10
+                or not 8 <= self.min_platform_window <= self.max_platform_window <= 20
+                or not 0 <= self.followup_window <= 5):
+            raise ValueError("unsupported accumulation search windows")
+        if not all(isfinite(value) for value in (
+            self.min_decline_percent, self.min_deceleration, self.min_quality_score,
+            self.invalidation_atr, self.breakout_atr,
+        )) or not (0 < self.min_decline_percent < 100
+                   and 0 <= self.min_deceleration <= 1
+                   and 0 <= self.min_quality_score <= 100
+                   and self.invalidation_atr > 0 and self.breakout_atr > 0):
+            raise ValueError("invalid accumulation thresholds")
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,111 +51,363 @@ class AccumulationPattern:
     lower: float
     upper: float
     evidence: dict[str, object]
+    stage: str = "accumulation"
 
 
 def detect_accumulation_pattern(
     bars: Sequence[AnalysisBar],
     *,
     limit_up_dates: frozenset[str] | None = None,
+    turnover_by_date: Mapping[str, float] | None = None,
     config: AccumulationPatternConfig = AccumulationPatternConfig(),
 ) -> AccumulationPattern | None:
-    """Return a range only when decline, lift, platform, and demand all agree."""
-    required = config.decline_window + config.lift_window + config.platform_window
-    if len(bars) < required:
+    """Detect a bounded daily setup and replay only its observed follow-up bars."""
+    history = list(bars[-ANALYSIS_LOOKBACK:])
+    if len(history) < min(config.decline_windows) + config.lift_window + config.min_platform_window:
         return None
-    decline = list(bars[-required:-(config.lift_window + config.platform_window)])
-    lift = list(bars[-(config.lift_window + config.platform_window):-config.platform_window])
-    platform = list(bars[-config.platform_window:])
+    if any(
+        not all(isfinite(v) and v > 0 for v in (b.open, b.high, b.low, b.close))
+        or not isfinite(b.volume) or b.volume < 0
+        or b.low > min(b.open, b.close) or b.high < max(b.open, b.close)
+        or b.contains_provisional or not b.period_complete
+        or b.period_start != b.period_end or b.contains_roll_event
+        for b in history
+    ) or any(a.period_end >= b.period_end for a, b in zip(history, history[1:])):
+        return None
 
+    # Search recent endpoints so a breakout cannot erase its preceding base.
+    candidates: list[tuple[int, AccumulationPattern]] = []
+    for lag in range(config.followup_window + 1):
+        end = len(history) - lag
+        for width in range(config.min_platform_window, config.max_platform_window + 1):
+            for decline_width in config.decline_windows:
+                start = end - width - config.lift_window - decline_width
+                if start < 0:
+                    continue
+                candidate = _candidate(
+                    history[start:end], decline_width, config,
+                    limit_up_dates, turnover_by_date,
+                )
+                if candidate is not None:
+                    candidates.append((end, candidate))
+    if not candidates:
+        return None
+    formed = [(end, p) for end, p in candidates if p.stage == "accumulation"]
+    # Prefer the most recent established base, then a well-supported longer range.
+    end, selected = max(
+        formed or candidates,
+        key=lambda pair: (pair[0], pair[1].score + float(pair[1].evidence["platform_sessions"]) * .15),
+    )
+    return _follow_up(selected, history[end:], history[-1], limit_up_dates, config)
+
+
+def _quantile(values: Sequence[float], fraction: float) -> float:
+    ordered = sorted(values)
+    position = (len(ordered) - 1) * fraction
+    low = int(position)
+    high = min(low + 1, len(ordered) - 1)
+    return ordered[low] + (ordered[high] - ordered[low]) * (position - low)
+
+
+def _unit(value: float) -> float:
+    return max(0.0, min(1.0, value))
+
+
+def _slope(values: Sequence[float]) -> float:
+    middle = (len(values) - 1) / 2
+    return sum((i - middle) * v for i, v in enumerate(values)) / max(
+        sum((i - middle) ** 2 for i in range(len(values))), 1,
+    )
+
+
+def _ma(values: Sequence[AnalysisBar], width: int, offset: int = 0) -> float:
+    end = len(values) - offset
+    return fmean(b.close for b in values[end - width:end])
+
+
+def _ratio(numerator: float, denominator: float) -> float:
+    # Bounded evidence keeps all-up / all-down samples finite and serializable.
+    return min(10.0, numerator / denominator) if denominator > 0 else (10.0 if numerator > 0 else 0.0)
+
+
+def _demand(platform: Sequence[AnalysisBar], baseline: Sequence[AnalysisBar]) -> dict[str, object]:
+    up = [b.volume for b in platform if b.close > b.open]
+    down = [b.volume for b in platform if b.close < b.open]
+    total = sum(b.volume for b in platform)
+    prior = fmean(b.volume for b in baseline)
+    ratio = _ratio(sum(up), sum(down))
+    average_ratio = _ratio(fmean(up) if up else 0, fmean(down) if down else 0)
+    dominant = max(range(len(platform)), key=lambda i: platform[i].volume)
+    reduced = [b for i, b in enumerate(platform) if i != dominant]
+    robust_ratio = _ratio(
+        sum(b.volume for b in reduced if b.close > b.open),
+        sum(b.volume for b in reduced if b.close < b.open),
+    )
+    expansion = fmean(b.volume for b in platform) / max(prior, 1)
+    close_location = sum(
+        b.volume * (b.close - b.low) / max(b.high - b.low, b.close * 1e-8)
+        for b in platform
+    ) / max(total, 1)
+    down_days = [b.volume for a, b in zip(platform, platform[1:]) if b.close < a.close]
+    repair_days = [b.volume for a, b in zip(platform, platform[1:]) if b.close > a.close]
+    repair_ratio = _ratio(
+        fmean(repair_days) if repair_days else 0,
+        fmean(down_days) if down_days else 0,
+    )
+    persistence = sum(b.close > b.open and b.volume >= prior for b in platform) / len(platform)
+    share = max(b.volume for b in platform) / max(total, 1)
+    moderate = _unit((expansion - .8) / .5) * _unit((3.5 - expansion) / 1.5)
+    quality = (
+        .20 * _unit((average_ratio - .8) / .8)
+        + .15 * _unit((robust_ratio - .8) / .8)
+        + .15 * _unit((close_location - .35) / .35)
+        + .15 * _unit((repair_ratio - .8) / .8)
+        + .15 * _unit(persistence / .4)
+        + .20 * moderate
+    ) * _unit((.5 - share) / .2)
+    return {
+        "up_volume": sum(up), "down_volume": sum(down),
+        "up_down_volume_ratio": ratio, "average_up_down_volume_ratio": average_ratio,
+        "robust_up_down_volume_ratio": robust_ratio, "platform_volume_ratio": expansion,
+        "dominant_session_share": share, "volume_weighted_close_location": close_location,
+        "repair_pullback_volume_ratio": repair_ratio, "demand_persistence": persistence,
+        "demand_quality": quality,
+    }
+
+
+def _candidate(
+    bars: Sequence[AnalysisBar],
+    decline_width: int,
+    config: AccumulationPatternConfig,
+    limit_up_dates: frozenset[str] | None,
+    turnover_by_date: Mapping[str, float] | None,
+) -> AccumulationPattern | None:
+    decline = bars[:decline_width]
+    lift = bars[decline_width:decline_width + config.lift_window]
+    platform = bars[decline_width + config.lift_window:]
     decline_return = (decline[-1].close / decline[0].close - 1) * 100
-    early_ma20 = fmean(item.close for item in decline[:20])
-    ma20 = fmean(item.close for item in decline[-20:])
-    ma40 = fmean(item.close for item in decline[-40:])
-    ma60 = fmean(item.close for item in decline[-60:])
-    ma20_decline = (ma20 / early_ma20 - 1) * 100
-    ma_divergence = (ma60 / ma20 - 1) * 100
-    downward_stack = ma20 < ma40 < ma60
-
-    half = max(1, config.lift_window // 2)
-    early_bottom = fmean(item.low for item in lift[:half])
-    late_bottom = fmean(item.low for item in lift[-half:])
-    bottom_lift = (late_bottom / early_bottom - 1) * 100
-    support_held = min(item.low for item in platform) >= min(item.low for item in lift) * 1.02
-
-    lower = min(item.low for item in platform)
-    upper = max(item.high for item in platform)
-    platform_range = (upper / lower - 1) * 100
-    platform_return = (platform[-1].close / platform[0].close - 1) * 100
-    small_body_sessions = sum(
-        abs(item.close / item.open - 1) * 100 <= config.max_small_body_percent
-        for item in platform if item.open > 0
-    )
-    up_volume = sum(item.volume for item in platform if item.close >= item.open)
-    down_volume = sum(item.volume for item in platform if item.close < item.open)
-    up_down_ratio = up_volume / max(down_volume, 1)
-    platform_volume = fmean(item.volume for item in platform)
-    prior_volume = fmean(item.volume for item in [*decline[-10:], *lift])
-    platform_volume_ratio = platform_volume / max(prior_volume, 1)
-    dominant_share = max(item.volume for item in platform) / max(
-        sum(item.volume for item in platform), 1,
-    )
-    limit_up_count = None if limit_up_dates is None else sum(
-        item.period_end.isoformat() in limit_up_dates for item in [*lift, *platform]
-    )
-
-    if not (
-        decline_return <= -config.min_decline_percent
-        and ma20_decline <= -config.min_ma20_decline_percent
-        and downward_stack
-        and ma_divergence >= config.min_ma_divergence_percent
-        and config.min_bottom_lift_percent <= bottom_lift <= config.max_bottom_lift_percent
-        and support_held
-        and platform_range <= config.max_platform_range_percent
-        and abs(platform_return) <= config.max_platform_return_percent
-        and small_body_sessions >= config.min_small_body_sessions
-        and up_down_ratio >= config.min_up_down_volume_ratio
-        and platform_volume_ratio >= config.min_platform_volume_ratio
-        and dominant_share <= config.max_dominant_session_share
-    ):
+    ma20, ma40, ma60 = (_ma(decline, w) for w in (20, 40, 60))
+    divergence = (ma60 / ma20 - 1) * 100
+    earlier_slope = (_ma(decline, 20) - _ma(decline, 20, 20)) / 20
+    decline_steps = [decline[i + 10].close - decline[i].close for i in range(0, len(decline) - 10, 10)]
+    sustained = sum(step < 0 for step in decline_steps) / len(decline_steps)
+    if (decline_return > -config.min_decline_percent or not ma20 < ma40 < ma60
+            or earlier_slope >= 0 or sustained < .6):
+        return None
+    recent_slope = (_ma(bars, 20) - _ma(bars, 20, 10)) / 10
+    deceleration = 1 - max(0, -recent_slope) / abs(earlier_slope)
+    short_slope = (_ma(bars, 5) - _ma(bars, 5, 5)) / 5
+    recent_divergence = (_ma(bars, 60) / _ma(bars, 20) - 1) * 100
+    tr = [
+        max(b.high - b.low, abs(b.high - a.close), abs(b.low - a.close))
+        for a, b in zip(bars, bars[1:])
+    ]
+    atr = fmean(tr[-(len(platform) + 10):])
+    if atr <= 0:
         return None
 
-    decline_score = min(25.0, 10 + abs(decline_return) * .45 + abs(ma20_decline) * .35)
-    lift_score = max(0.0, 25 - abs(bottom_lift - 7.0) * 2.5)
-    platform_score = max(0.0, 25 - platform_range * .8 + small_body_sessions * 1.2)
-    demand_score = min(
-        25.0,
-        8 + max(0.0, up_down_ratio - 1) * 6
-        + max(0.0, platform_volume_ratio - 1) * 12,
+    early_bottom = _quantile([b.low for b in lift[:5]], .3)
+    late_bottom = _quantile([b.low for b in lift[5:]], .3)
+    bottom_lift = (late_bottom / early_bottom - 1) * 100
+    lift_atr = (late_bottom - early_bottom) / atr
+    lower = _quantile([b.low for b in platform], .2)
+    upper = _quantile([b.high for b in platform], .8)
+    extreme_low, extreme_high = min(b.low for b in platform), max(b.high for b in platform)
+    half = len(platform) // 2
+    centers = [(b.open + b.close) / 2 for b in platform]
+    center_move_atr = _slope(centers) * (len(platform) - 1) / atr
+    contraction = fmean(tr[-len(platform) + half:]) / max(
+        fmean(tr[-len(platform):-len(platform) + half]), 1e-8,
     )
-    score = round(min(100.0, decline_score + lift_score + platform_score + demand_score), 2)
-    evidence = {
+    small = sum(abs(b.close - b.open) <= max(b.close * .015, atr * .6) for b in platform)
+    support_held = (
+        _quantile([b.low for b in platform[half:]], .3)
+        >= _quantile([b.low for b in platform[:half]], .3) - .3 * atr
+        and min(b.close for b in platform) >= early_bottom
+        and platform[-1].close >= lower - config.invalidation_atr * atr
+    )
+    if (not support_held or bottom_lift <= 0 or lift_atr < .3
+            or center_move_atr < -.5 or center_move_atr > 2
+            or (upper - lower) / atr > 4 or small / len(platform) < .65
+            or contraction > 1.5):
+        return None
+
+    demand = _demand(platform, bars[decline_width - 10:decline_width + 10])
+    decline_quality = (
+        .35 * _unit(abs(decline_return) / 25) + .2 * sustained
+        + .45 * _unit(deceleration)
+    )
+    percent_preference = _unit(1 - max(5 - bottom_lift, bottom_lift - 10, 0) / 10)
+    lift_quality = .45 * percent_preference + .55 * _unit(lift_atr / 2)
+    platform_quality = (
+        .35 * _unit(1 - abs(center_move_atr) / 3)
+        + .35 * small / len(platform) + .3 * _unit(1.5 - contraction)
+    )
+    scores = {
+        "decline": round(20 * decline_quality, 2),
+        "lift": round(20 * lift_quality, 2),
+        "platform": round(25 * platform_quality, 2),
+        "demand": round(35 * float(demand["demand_quality"]), 2),
+    }
+    score = round(sum(scores.values()), 2)
+    slowing = (
+        deceleration >= config.min_deceleration
+        and short_slope >= -.03 * atr
+        and recent_divergence < divergence
+    )
+    established = (
+        slowing and score >= config.min_quality_score
+        and float(demand["up_down_volume_ratio"]) > 1
+        and float(demand["average_up_down_volume_ratio"]) > 1
+        and float(demand["robust_up_down_volume_ratio"]) >= 1
+        and float(demand["demand_persistence"]) >= .25
+        and float(demand["dominant_session_share"]) <= .35
+        and 1 <= float(demand["platform_volume_ratio"]) <= 3
+    )
+    missing = []
+    turnover_ratio = None
+    if turnover_by_date is not None:
+        values = [turnover_by_date.get(b.period_end.isoformat()) for b in bars[-(len(platform) + 20):]]
+        if all(v is not None and isfinite(v) and v > 0 for v in values):
+            turnover_ratio = fmean(values[-len(platform):]) / fmean(values[:-len(platform)])
+    if turnover_ratio is None:
+        missing.append("turnover-unavailable")
+    if limit_up_dates is None:
+        missing.append("limit-up-dates-unavailable")
+    evidence: dict[str, object] = {
         "algorithm_version": ALGORITHM_VERSION,
         "as_of_date": platform[-1].period_end.isoformat(),
         "decline_start_date": decline[0].period_start.isoformat(),
         "decline_end_date": decline[-1].period_end.isoformat(),
-        "decline_return_percent": round(decline_return, 4),
-        "ma20_decline_percent": round(ma20_decline, 4),
-        "ma_divergence_percent": round(ma_divergence, 4),
-        "downward_ma_stack": downward_stack,
-        "bottom_lift_percent": round(bottom_lift, 4),
-        "support_held": support_held,
-        "platform_range_percent": round(platform_range, 4),
-        "platform_return_percent": round(platform_return, 4),
-        "small_body_sessions": small_body_sessions,
-        "up_volume": up_volume,
-        "down_volume": down_volume,
-        "up_down_volume_ratio": round(up_down_ratio, 4),
-        "platform_volume_ratio": round(platform_volume_ratio, 4),
-        "dominant_session_share": round(dominant_share, 4),
-        "limit_up_count": limit_up_count,
+        "decline_return_percent": decline_return,
+        "ma20_decline_percent": (ma20 / fmean(b.close for b in decline[:20]) - 1) * 100,
+        "ma_divergence_percent": divergence, "downward_ma_stack": True,
+        "recent_ma_divergence_percent": recent_divergence,
+        "prior_ma20_slope": earlier_slope, "recent_ma20_slope": recent_slope,
+        "ma5_slope": short_slope, "deceleration": deceleration, "decline_slowing": slowing,
+        "sustained_decline_fraction": sustained,
+        "bottom_lift_percent": bottom_lift, "bottom_lift_atr": lift_atr,
+        "support_held": support_held, "atr": atr,
+        "platform_sessions": len(platform),
+        "platform_range_percent": (upper / lower - 1) * 100,
+        "platform_return_percent": (platform[-1].close / platform[0].close - 1) * 100,
+        "platform_center_move_atr": center_move_atr, "volatility_contraction": contraction,
+        "small_body_sessions": small, "extreme_low": extreme_low, "extreme_high": extreme_high,
+        "invalidation_price": lower - config.invalidation_atr * atr,
+        "breakout_price": upper + config.breakout_atr * atr,
+        "first_target_price": upper + (upper - lower),
+        "score_components": scores, "missing_evidence": missing,
+        "evidence_completeness": (4 - len(missing)) / 4,
+        "turnover_ratio": turnover_ratio,
+        "limit_up_count": None if limit_up_dates is None else sum(
+            b.period_end.isoformat() in limit_up_dates for b in [*lift, *platform]
+        ),
         "limit_up_policy": "accepted-not-required",
+        "platform_average_volume": fmean(b.volume for b in platform),
+        "platform_limit_up_dates": [] if limit_up_dates is None else [
+            b.period_end.isoformat() for b in platform if b.period_end.isoformat() in limit_up_dates
+        ],
         "config": asdict(config),
+        **demand,
     }
+    # A weakly established base remains inspectable but cannot enter the screener.
+    reasons = []
+    if not slowing:
+        reasons.append("decline-not-decelerating")
+    if not established:
+        reasons.append("accumulation-quality-insufficient")
+    evidence["reasons"] = reasons
+    evidence["limit_up_events"] = _limit_events([*lift, *platform], limit_up_dates, lower, atr)
     return AccumulationPattern(
-        score=score,
-        start_date=platform[0].period_start.isoformat(),
-        end_date=platform[-1].period_end.isoformat(),
-        lower=lower,
-        upper=upper,
-        evidence=evidence,
+        score, platform[0].period_start.isoformat(), platform[-1].period_end.isoformat(),
+        lower, upper, evidence, "accumulation" if established else "stabilizing",
+    )
+
+
+def _limit_events(
+    bars: Sequence[AnalysisBar], dates: frozenset[str] | None, lower: float, atr: float,
+) -> list[dict[str, object]]:
+    if dates is None:
+        return []
+    events = []
+    for index, bar in enumerate(bars):
+        day = bar.period_end.isoformat()
+        if day not in dates:
+            continue
+        follow = bars[index + 1:index + 6]
+        held = all(b.close >= max(lower - .5 * atr, bar.low - .5 * atr) for b in follow)
+        normalized = bool(follow) and fmean(b.volume for b in follow[-3:]) <= bar.volume * 1.1
+        state = "failed" if not held else (
+            "digested" if len(follow) >= 2 and normalized else "pending"
+        )
+        events.append({
+            "date": day, "observed_sessions": len(follow), "state": state,
+            "support_price": max(lower - .5 * atr, bar.low - .5 * atr),
+            "event_volume": bar.volume, "followup_volumes": [b.volume for b in follow],
+        })
+    return events
+
+
+def _follow_up(
+    pattern: AccumulationPattern,
+    follow: Sequence[AnalysisBar],
+    latest: AnalysisBar,
+    limit_dates: frozenset[str] | None,
+    config: AccumulationPatternConfig,
+) -> AccumulationPattern:
+    evidence = dict(pattern.evidence)
+    stage = pattern.stage
+    transition_date = None
+    atr = float(evidence["atr"])
+    breakout_seen = False
+    for index, bar in enumerate(follow):
+        if bar.close < float(evidence["invalidation_price"]):
+            stage, transition_date = "invalidated", bar.period_end.isoformat()
+            break
+        if stage == "stabilizing":
+            continue
+        above = bar.close > float(evidence["breakout_price"])
+        persistent = index > 0 and follow[index - 1].close > float(evidence["breakout_price"])
+        if above and (bar.volume >= float(evidence["platform_average_volume"]) * 1.2 or persistent):
+            stage, transition_date = "breakout", bar.period_end.isoformat()
+            breakout_seen = True
+        elif breakout_seen and bar.close < pattern.upper:
+            stage, transition_date = "invalidated", bar.period_end.isoformat()
+            evidence["reasons"] = [*evidence["reasons"], "failed-breakout"]
+            break
+
+    events = [dict(event) for event in evidence["limit_up_events"]]
+    # Extend existing event evidence using only newly observed sessions.
+    for event in events:
+        available = max(0, 5 - int(event["observed_sessions"]))
+        extra = follow[:available]
+        if extra:
+            event["observed_sessions"] = int(event["observed_sessions"]) + len(extra)
+            volumes = [*event["followup_volumes"], *(b.volume for b in extra)]
+            event["followup_volumes"] = volumes
+            if any(b.close < float(event["support_price"]) for b in extra):
+                event["state"] = "failed"
+            elif event["state"] == "pending" and int(event["observed_sessions"]) >= 2:
+                if fmean(volumes[-3:]) <= float(event["event_volume"]) * 1.1:
+                    event["state"] = "digested"
+    events.extend(_limit_events(follow, limit_dates, pattern.lower, atr))
+    if stage == "accumulation" and any(e["state"] == "failed" for e in events):
+        stage = "stabilizing"
+        evidence["reasons"] = [*evidence["reasons"], "limit-up-digestion-failed"]
+    elif stage == "accumulation" and any(e["state"] == "pending" for e in events):
+        stage = "pending-digestion"
+    if follow and stage in {"accumulation", "pending-digestion"}:
+        stage = "stabilizing"
+        evidence["reasons"] = [*evidence["reasons"], "recent-platform-unconfirmed"]
+    evidence.update({
+        "stage": stage, "as_of_date": latest.period_end.isoformat(),
+        "transition_date": transition_date, "limit_up_events": events,
+        "limit_up_count": None if limit_dates is None else int(evidence["limit_up_count"]) + sum(
+            b.period_end.isoformat() in limit_dates for b in follow
+        ),
+        "followup_sessions": len(follow),
+    })
+    return AccumulationPattern(
+        pattern.score, pattern.start_date, pattern.end_date,
+        pattern.lower, pattern.upper, evidence, stage,
     )

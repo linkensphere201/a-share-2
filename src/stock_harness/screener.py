@@ -18,6 +18,7 @@ from stock_harness.major_descending_lines import (
 )
 from stock_harness.pattern_analysis import PatternAnalysisRequest, PatternAnalysisService
 from stock_harness.sqlite_store import SQLiteMarketDataStore
+from stock_harness.accumulation_pattern import ANALYSIS_LOOKBACK
 from stock_harness.volume_accumulation import (
     STATE as ACCUMULATION_STATE,
     STRATEGY_ID as ACCUMULATION_STRATEGY_ID,
@@ -246,15 +247,15 @@ class ScreenerService:
             "screener_accumulation_started run_id=%s as_of=%s universe=%s",
             run_id, cutoff, len(universe),
         )
-        horizons = AnalysisHorizons(20, 60, 100)
+        horizons = AnalysisHorizons(20, 60, ANALYSIS_LOOKBACK)
         for index, instrument in enumerate(universe, 1):
             try:
                 analysis_input = self._inputs.build(
                     instrument["symbol"], cutoff, AnalysisTimeframe.DAILY,
                     AnalysisInputMode.FINAL, horizons,
                 )
-                recent = analysis_input.bars[-20:]
-                if len(recent) == 20:
+                recent = analysis_input.bars[-ANALYSIS_LOOKBACK:]
+                if recent:
                     limit_dates = self._store.list_stock_limit_up_dates(
                         instrument["symbol"], recent[0].period_start, recent[-1].period_end,
                     )
@@ -287,7 +288,9 @@ class ScreenerService:
                 include_preview=False, as_of_date=cutoff,
             ))[0]
             representative = next(
-                (item for item in analysis["items"] if item.get("item_type") == "line"),
+                (item for item in analysis["items"]
+                 if item.get("item_type") == "zone"
+                 and item.get("payload", {}).get("kind") == "accumulation-range"),
                 None,
             )
             item_id = str(representative["item_id"]) if representative else ""

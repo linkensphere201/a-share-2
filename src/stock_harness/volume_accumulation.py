@@ -13,7 +13,7 @@ from stock_harness.analysis_inputs import AnalysisBar
 
 
 STRATEGY_ID = "volume-accumulation-20d"
-STRATEGY_VERSION = "volume-accumulation-20d-v4"
+STRATEGY_VERSION = "volume-accumulation-20d-v5"
 STATE = "accumulating"
 VolumeAccumulationConfig = AccumulationPatternConfig
 
@@ -27,18 +27,18 @@ class VolumeAccumulationSignal:
 def detect_volume_accumulation(
     bars: Sequence[AnalysisBar],
     *,
-    limit_up_dates: frozenset[str] = frozenset(),
+    limit_up_dates: frozenset[str] | None = None,
     config: AccumulationPatternConfig = AccumulationPatternConfig(),
 ) -> VolumeAccumulationSignal | None:
     """Adapt the shared accumulation pattern into the screener result contract."""
     pattern = detect_accumulation_pattern(
         bars, limit_up_dates=limit_up_dates, config=config,
     )
-    if pattern is None:
+    if pattern is None or pattern.stage not in {"accumulation", "pending-digestion"}:
         return None
     return VolumeAccumulationSignal(score=pattern.score, evidence={
         "contract_version": STRATEGY_VERSION,
-        "window": config.lift_window + config.platform_window,
+        "window": pattern.evidence["platform_sessions"],
         "window_start_date": pattern.start_date,
         "latest_close": bars[-1].close,
         "range_lower": pattern.lower,

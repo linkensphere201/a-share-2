@@ -91,6 +91,13 @@ function trendSpeedLabel(value: string): string {
   } as Record<string, string>)[value] ?? value
 }
 
+export function accumulationStageLabel(value: unknown): string {
+  return ({
+    stabilizing: '止跌观察', accumulation: '蓄势区间形成',
+    'pending-digestion': '待涨停消化', breakout: '突破确认', invalidated: '结构失效',
+  } as Record<string, string>)[String(value)] ?? '吸筹区间'
+}
+
 function explainZone(item: AnalysisItem, allItems: AnalysisItem[]): TrendExplanationItem {
   const payload = item.payload
   const volume = payload.kind === 'estimated-volume-at-price'
@@ -104,7 +111,7 @@ function explainZone(item: AnalysisItem, allItems: AnalysisItem[]): TrendExplana
     analysisItemId: item.item_id,
     title: `${accumulation ? '吸筹区间' : volume ? '成交密集区' : '关键位'} ${formatPrice(payload.lower)}–${formatPrice(payload.upper)}`,
     detail: accumulation
-      ? `${stringValue(payload.start_date) ?? '-'} 至 ${stringValue(payload.end_date) ?? '-'}；前期跌幅 ${formatPercent(payload.decline_return_percent)}，底部抬升 ${formatPercent(payload.bottom_lift_percent)}，红绿量比 ${formatRatio(payload.up_down_volume_ratio)}。这是量价代理，不代表已确认主力持仓。`
+      ? `${accumulationStageLabel(payload.stage)}；${stringValue(payload.start_date) ?? '-'} 至 ${stringValue(payload.end_date) ?? '-'}（${numberValue(payload.platform_sessions) ?? '-'}日）；前期跌幅 ${formatPercent(payload.decline_return_percent)}，底部抬升 ${formatPercent(payload.bottom_lift_percent)}（${formatRatio(payload.bottom_lift_atr)} ATR），${payload.decline_slowing === true ? '下跌已减速' : '下跌减速未确认'}；红绿均量比 ${formatRatio(payload.average_up_down_volume_ratio)}，去最大量日后 ${formatRatio(payload.robust_up_down_volume_ratio)}；失效位 ${formatPrice(payload.invalidation_price)}。这是量价代理，不代表已确认主力持仓。`
       : volume
       ? `基于日线成交量区间估算${share !== undefined ? `，估算占比 ${(share * 100).toFixed(1)}%` : ''}${stateText}。`
       : `${observations !== undefined ? `${observations} 次历史观察` : '历史价格聚类'}${roleReversal}${stateText}。`,

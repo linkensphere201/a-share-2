@@ -35,6 +35,7 @@ export type GeneratedZoneGeometry = {
   upper: number
   score: number
   estimatedShare?: number
+  stage?: string
 }
 
 export type GeneratedPatternGeometry = {
@@ -352,6 +353,7 @@ export function projectGeneratedZones(
       estimatedShare: typeof item.payload.estimated_share === 'number'
         ? item.payload.estimated_share
         : undefined,
+      stage: typeof item.payload.stage === 'string' ? item.payload.stage : undefined,
     }]
   })
 }

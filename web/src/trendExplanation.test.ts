@@ -9,6 +9,28 @@ const basePattern = {
 }
 
 describe('trend explanation', () => {
+  it('shows accumulation lifecycle and robust demand rather than an unconditional confirmation', () => {
+    const run: TrendAnalysisRun = {
+      run_id: 'base', as_of_date: '2026-09-14', completion_state: 'complete',
+      stale: false, stale_reasons: [], warnings: [], items: [{
+        item_id: 'base-zone', item_type: 'zone', payload: {
+          kind: 'accumulation-range', lower: 10, upper: 11, score: 72,
+          stage: 'pending-digestion', platform_sessions: 14, decline_slowing: true,
+          average_up_down_volume_ratio: 1.5, robust_up_down_volume_ratio: 1.3,
+          invalidation_price: 9.8, bottom_lift_atr: 2,
+        },
+      }],
+    }
+    const result = buildTrendExplanation(run)!
+    const explanation = result.sections.flatMap(section => section.items)
+      .find(item => item.analysisItemId === 'base-zone')!
+    expect(explanation.detail).toContain('待涨停消化')
+    expect(explanation.detail).toContain('14日')
+    expect(explanation.detail).toContain('下跌已减速')
+    expect(explanation.detail).toContain('去最大量日后 1.30')
+    expect(explanation.detail).toContain('失效位 9.80')
+  })
+
   it('summarizes only the same core candidates used by the chart overlay', () => {
     const run: TrendAnalysisRun = {
       run_id: 'run', as_of_date: '2026-08-21', completion_state: 'complete',

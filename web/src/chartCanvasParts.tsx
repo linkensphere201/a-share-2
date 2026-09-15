@@ -333,7 +333,7 @@ export function GeneratedAnalysisOverlay({
         {zones.map(item => (
           <rect
             key={item.id}
-            className={`generated-price-zone ${item.kind}${highlightedItemId === item.id ? ' highlighted' : ''}`}
+            className={`generated-price-zone ${item.kind} ${item.stage ?? ''}${highlightedItemId === item.id ? ' highlighted' : ''}`}
             x={item.x}
             y={item.y}
             width={item.width}
@@ -341,6 +341,8 @@ export function GeneratedAnalysisOverlay({
           >
             <title>{item.kind === 'key-level'
               ? `关键位 ${formatPrice(item.lower)}-${formatPrice(item.upper)} · 评分 ${item.score.toFixed(2)}`
+              : item.kind === 'accumulation-range'
+              ? `蓄势区间 ${formatPrice(item.lower)}-${formatPrice(item.upper)} · 评分 ${item.score.toFixed(1)}`
               : `日线估算成交密集区 ${formatPrice(item.lower)}-${formatPrice(item.upper)} · 占比 ${((item.estimatedShare ?? 0) * 100).toFixed(1)}%`}</title>
           </rect>
         ))}

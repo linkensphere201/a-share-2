@@ -67,6 +67,14 @@ export type ScreenerCandidate = {
     platform_return_percent?: number
     small_body_sessions?: number
     platform_volume_ratio?: number
+    stage?: string
+    platform_sessions?: number
+    bottom_lift_atr?: number
+    decline_slowing?: boolean
+    average_up_down_volume_ratio?: number
+    robust_up_down_volume_ratio?: number
+    score_components?: { decline: number; lift: number; platform: number; demand: number }
+    missing_evidence?: string[]
     dominant_session_share?: number
     return_20d_percent?: number
     close_range_20d_percent?: number
