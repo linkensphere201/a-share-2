@@ -22,8 +22,7 @@ class SQLiteSignalReviewStoreMixin:
             rows = self._connection.execute(
                 """
                 WITH current AS (
-                    SELECT signal_id, definition_version, cadence,
-                           effective_date, parameters_json
+                    SELECT signal_id, definition_version, cadence, effective_date
                     FROM signal_review_runs WHERE run_id = ?
                 ), compatible AS (
                     SELECT prior.run_id, prior.effective_date, prior.revision,
@@ -37,7 +36,6 @@ class SQLiteSignalReviewStoreMixin:
                     WHERE prior.signal_id = current.signal_id
                       AND prior.definition_version = current.definition_version
                       AND prior.cadence = current.cadence
-                      AND prior.parameters_json = current.parameters_json
                       AND prior.status = 'succeeded'
                       AND prior.effective_date < current.effective_date
                       AND score.system_id = ?

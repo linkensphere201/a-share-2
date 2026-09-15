@@ -14,7 +14,7 @@ def test_score_history_survives_run_algorithm_upgrade_without_same_day_duplicati
         store, date(2026, 9, 10), 2, "run-v2",
     )
     older_algorithm = _complete_scored_run(
-        store, date(2026, 9, 11), 1, "run-v1",
+        store, date(2026, 9, 11), 1, "run-v1", parameters={"new-option": True},
     )
     current = store.create_signal_review_run(
         signal_id="daily-market-board-review",
@@ -50,13 +50,14 @@ def test_score_history_survives_run_algorithm_upgrade_without_same_day_duplicati
 
 def _complete_scored_run(
     store: SQLiteMarketDataStore, effective_date: date, expected_revision: int,
-    algorithm_version: str,
+    algorithm_version: str, *, parameters: dict[str, object] | None = None,
 ) -> dict[str, object]:
     run = store.create_signal_review_run(
         signal_id="daily-market-board-review",
         definition_version="definition-v1",
         algorithm_version=algorithm_version,
-        cadence="daily", effective_date=effective_date, parameters={},
+        cadence="daily", effective_date=effective_date,
+        parameters=parameters or {},
     )
     assert run["revision"] == expected_revision
     store.complete_signal_review_run(
