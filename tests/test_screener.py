@@ -4,6 +4,7 @@ import sqlite3
 import json
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from stock_harness.api import create_app
@@ -256,7 +257,8 @@ def test_existing_screener_schema_is_extended_without_losing_runs(tmp_path: Path
     assert "'accumulating'" in sql
 
 
-def test_volume_accumulation_run_persists_independent_candidate():
+@pytest.mark.parametrize("recognized", [False, True])
+def test_volume_accumulation_run_persists_independent_candidate(monkeypatch, recognized):
     store, days = _store_with_major_edge()
     try:
         replacement = []
@@ -273,6 +275,14 @@ def test_volume_accumulation_run_persists_independent_candidate():
                 close * .99, close, volume,
             ))
         store.upsert_daily_bars("tushare", replacement)
+
+        if recognized:
+            monkeypatch.setattr(store, "get_latest_succeeded_signal_review_run", lambda *args: {
+                "run_id": "weekly", "effective_date": days[-1],
+            })
+            monkeypatch.setattr(store, "list_signal_review_items", lambda *args: [
+                {"symbol": "000001.SZ", "profile": "recent", "active": True},
+            ])
 
         run = ScreenerService(store).run_sync(
             [MajorLinePeriod.YEAR], list(MajorLineState), 10, days[-1],
@@ -295,6 +305,10 @@ def test_volume_accumulation_run_persists_independent_candidate():
         zone = next(item for item in linked["items"]
                     if item["payload"].get("kind") == "accumulation-range")
         evidence = candidates[0]["evidence"]
+        if recognized:
+            assert evidence["recognition"]["source_date"] == days[-1].isoformat()
+            assert evidence["recognition"]["tags"] == ["recent"]
+            assert evidence["recognition_rank_bonus"] == 5.0
         assert candidates[0]["line_item_id"] == zone["item_id"]
         assert candidates[0]["score"] == zone["payload"]["score"]
         for field in ("stage", "score_components", "platform_sessions", "limit_up_events", "platform_style", "compact_platform"):

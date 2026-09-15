@@ -1,13 +1,17 @@
 from datetime import date
+import json
 from unittest.mock import Mock
+
+import pytest
 
 from stock_harness.screener_result_tags import attach_recognition_tags
 
 
-def test_tags_use_active_historical_profile_and_preserve_snapshot():
+@pytest.mark.parametrize("source_date", ["2026-09-07", date(2026, 9, 7)])
+def test_tags_use_active_historical_profile_and_preserve_snapshot(source_date):
     store = Mock()
     store.get_latest_succeeded_signal_review_run.return_value = {
-        "run_id": "weekly-1", "effective_date": "2026-09-07",
+        "run_id": "weekly-1", "effective_date": source_date,
     }
     store.list_signal_review_items.return_value = [
         {"symbol": "A", "profile": "historical", "active": True},
@@ -25,6 +29,7 @@ def test_tags_use_active_historical_profile_and_preserve_snapshot():
     assert result[0]["recognition"]["source_date"] == "2026-09-07"
     assert all("recognition" not in item for item in original)
     assert [item["rank"] for item in result] == [1, 2, 3]
+    assert json.loads(json.dumps(result)) == result
 
 
 def test_missing_source_is_unknown_not_negative():

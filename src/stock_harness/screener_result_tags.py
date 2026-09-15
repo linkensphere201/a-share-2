@@ -15,6 +15,9 @@ def attach_recognition_tags(
     source = store.get_latest_succeeded_signal_review_run(
         "weekly-board-recognition", date.fromisoformat(as_of_date),
     )
+    source_date = source["effective_date"] if source else None
+    if isinstance(source_date, date):
+        source_date = source_date.isoformat()
     recognized: dict[str, set[str]] = {}
     if source:
         for item in store.list_signal_review_items(str(source["run_id"])):
@@ -25,7 +28,7 @@ def attach_recognition_tags(
         "recognition": item.get("evidence", {}).get("recognition") or {
             "available": source is not None,
             "source_run_id": source["run_id"] if source else None,
-            "source_date": source["effective_date"] if source else None,
+            "source_date": source_date,
             "tags": sorted(recognized.get(str(item["symbol"]), set())),
         },
     } for item in candidates]
