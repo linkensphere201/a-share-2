@@ -69,6 +69,12 @@ export type ScreenerCandidate = {
     platform_volume_ratio?: number
     stage?: string
     pattern_type?: string
+    platform_style?: string
+    recognition_rank_bonus?: number
+    compact_platform?: {
+      qualified: boolean; score: number; reasons: string[]
+      last10?: { range_percent: number; small_body_fraction: number }
+    }
     demand_regime?: string
     gentle_retest?: boolean
     pullback_volume_ratio?: number

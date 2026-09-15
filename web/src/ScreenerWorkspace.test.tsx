@@ -24,6 +24,31 @@ afterEach(() => {
 })
 
 describe('ScreenerWorkspace', () => {
+  it('defaults V7 to compact platforms and shows dated recognition beside names', async () => {
+    const compact = { ...candidate, state: 'accumulating', evidence: {
+      ...candidate.evidence, platform_style: 'compact-platform', recognition_rank_bonus: 5,
+      compact_platform: { qualified: true, score: 83, reasons: [], last10: { range_percent: 3, small_body_fraction: .9 } },
+    }, recognition: { available: true, source_date: '2026-09-04', source_run_id: 'weekly', tags: ['recent', 'historical'] } }
+    const broad = { ...compact, symbol: '000002.SZ', name: '宽幅标的', rank: 2,
+      evidence: { ...compact.evidence, platform_style: 'broad-base' } }
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/candidates')) return response({ items: [compact, broad] })
+      if (url.includes('/api/analysis/')) return response(analysis)
+      return response({ items: [{ ...run, strategy_id: 'volume-accumulation-20d', strategy_version: 'volume-accumulation-20d-v7' }] })
+    }))
+    const user = userEvent.setup()
+    renderScreener()
+    await screen.findByText('测试标的', { selector: 'b' })
+    expect(screen.queryByText('宽幅标的')).toBeNull()
+    expect(screen.getByText('近期辨识度').getAttribute('title')).toContain('2026-09-04')
+    expect(screen.getByText('近期辨识度').getAttribute('title')).toContain('排序加分 5')
+    await user.click(screen.getByRole('button', { name: /^全部形态/ }))
+    expect(screen.getByText('宽幅标的')).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: /^紧凑平台/ }))
+    expect(screen.queryByText('宽幅标的')).toBeNull()
+  })
+
   it('keeps polling the active run while an older result is selected', async () => {
     const active = { ...run, run_id: 'active', as_of_date: '2026-09-02', status: 'running' }
     let completed = false
@@ -124,7 +149,7 @@ describe('ScreenerWorkspace', () => {
     expect(screen.getByRole('button', { name: 'PCB 2' })).toBeTruthy()
     await user.click(screen.getByRole('button', { name: '元件 2' }))
     expect(screen.getByText(/显示 3\/3/)).toBeTruthy()
-    await user.click(screen.getByRole('button', { name: /历史辨识度/ }))
+    await user.click(screen.getByRole('button', { name: /^历史辨识度/ }))
     expect(screen.getByText(/显示 2\/3/)).toBeTruthy()
     await user.click(screen.getByRole('button', { name: '快速过滤：已突破' }))
     expect(screen.getByText(/显示 1\/3/)).toBeTruthy()
@@ -168,7 +193,7 @@ describe('ScreenerWorkspace', () => {
     const user = userEvent.setup()
     renderScreener()
     await screen.findByText('000002.SZ')
-    await user.click(screen.getByRole('button', { name: /历史辨识度/ }))
+    await user.click(screen.getByRole('button', { name: /^历史辨识度/ }))
     expect(screen.queryByText('000002.SZ')).toBeNull()
     expect(screen.getByText(/显示 1\/2/)).toBeTruthy()
     await user.click(screen.getByRole('button', { name: '快速过滤：已突破' }))

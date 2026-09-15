@@ -2082,6 +2082,8 @@ input::placeholder, textarea::placeholder { color: var(--theme-muted); opacity: 
 .list-instrument-tags i { max-width: 104px; padding: 1px 5px; border-color: color-mix(in srgb, var(--theme-accent) 35%, var(--theme-border)); border-radius: 3px; font-size: 9px; line-height: 13px; }
 .instrument-name-line { min-width: 0; display: flex; align-items: center; gap: 5px; }
 .screener-results button .instrument-name-line { display: flex; align-items: center; gap: 5px; }
+.screener-results button .screener-tagged-name { flex-wrap: wrap; row-gap: 3px; }
+.recognition-name-tag { flex: 0 0 auto; max-width: 100%; padding: 1px 3px; color: var(--theme-accent); background: var(--theme-accent-soft); border: 1px solid var(--theme-border); border-radius: 2px; font-size: 8px; font-style: normal; line-height: 12px; }
 .instrument-name-line > strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .market-board-badge {
   width: 16px;

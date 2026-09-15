@@ -5,7 +5,7 @@ import { MarketBoardBadge } from './MarketBoardBadge'
 import { fetchInstrumentBoardMemberships, type InstrumentBoardMembership } from './boardTags'
 import { TradingSystemControls } from './TradingSystemControls'
 import { TrendExplanationPanel } from './TrendExplanationPanel'
-import { accumulationStageLabel, accumulationPatternLabel } from './trendExplanation'
+import { accumulationStageLabel, accumulationPatternLabel, accumulationStyleLabel } from './trendExplanation'
 import { useAnalysisOverlayVisibility, useAnalysisLayers } from './AnalysisOverlayToggle'
 import { logError, logInfo } from './eventLogger'
 import {
@@ -61,6 +61,10 @@ export function ScreenerWorkspace({
   const [states, setStates] = useState<ScreenerState[]>(['critical-breakout', 'breakout-retest', 'broken-out'])
   const [maxResults, setMaxResults] = useState(200)
   const [resultStateFilter, setResultStateFilter] = useState<ResultStateFilter>('all')
+  const [platformStyle, setPlatformStyle] = useState('all')
+  useEffect(() => {
+    setPlatformStyle(selectedRun?.strategy_version === 'volume-accumulation-20d-v7' ? 'compact-platform' : 'all')
+  }, [selectedRun?.run_id, selectedRun?.strategy_version])
   const [historicalOnly, setHistoricalOnly] = useState(false)
   const [boards, setBoards] = useState<Record<string, InstrumentBoardMembership[]>>({})
   const [boardFilter, setBoardFilter] = useState<string[]>([])
@@ -76,9 +80,10 @@ export function ScreenerWorkspace({
   const runningRunId = runs.find(run => run.status === 'running')?.run_id
   const hasRunningRun = runningRunId !== undefined
 
-  const stateCandidates = useMemo(() => resultStateFilter === 'all'
-    ? candidates
-    : candidates.filter(item => item.state === resultStateFilter), [candidates, resultStateFilter])
+  const stateCandidates = useMemo(() => candidates.filter(item =>
+    (resultStateFilter === 'all' || item.state === resultStateFilter)
+    && (platformStyle === 'all' || item.evidence.platform_style === platformStyle)),
+  [candidates, resultStateFilter, platformStyle])
   const historicalCandidates = useMemo(() => stateCandidates.filter(
     item => item.recognition?.tags.includes('historical'),
   ), [stateCandidates])
@@ -318,6 +323,13 @@ export function ScreenerWorkspace({
             onClick={() => setResultStateFilter(state)}
           >{stateLabels[state]} <small>{resultStateCounts[state]}</small></button>)}
         </div>
+        {candidates.some(item => item.evidence.platform_style) && <div className="screener-quick-filters" role="group" aria-label="平台类型过滤">
+          {['compact-platform', 'secondary-retest', 'broad-base', 'all'].map(style => <button key={style}
+            className={platformStyle === style ? 'active' : ''} aria-pressed={platformStyle === style}
+            onClick={() => setPlatformStyle(style)}>{style === 'all' ? '全部形态' : accumulationStyleLabel(style)}
+            <small>{candidates.filter(item => style === 'all' || item.evidence.platform_style === style).length}</small>
+          </button>)}
+        </div>}
         <div className="screener-quick-filters" role="group" aria-label="辨识度标签过滤">
           <button className={!historicalOnly ? 'active' : ''} aria-pressed={!historicalOnly} onClick={() => setHistoricalOnly(false)}>不限标签 <small>{stateCandidates.length}</small></button>
           <button className={historicalOnly ? 'active' : ''} aria-pressed={historicalOnly} disabled={!recognition?.available} onClick={() => setHistoricalOnly(true)}>历史辨识度 <small>{recognition?.available ? historicalCandidates.length : '—'}</small></button>
@@ -351,7 +363,11 @@ export function ScreenerWorkspace({
           setSelected(item)
           setContextMenu({ kind: 'candidate', ...menuPosition(event.clientX, event.clientY), candidate: item, selectingTarget: false })
         }}>
-          <span>{item.rank}</span><span><span className="instrument-name-line"><b>{item.name}</b><MarketBoardBadge instrument={item}/></span><small>{item.symbol}</small></span><span><b>{candidatePeriodLabel(item)}</b><small>{item.evidence.stage ? accumulationStageLabel(item.evidence.stage) : stateLabels[item.state]}</small></span><span>{item.score.toFixed(1)}</span>
+          <span>{item.rank}</span><span><span className="instrument-name-line screener-tagged-name"><b>{item.name}</b><MarketBoardBadge instrument={item}/>
+            {item.recognition?.tags.filter(tag => tag === 'recent' || tag === 'historical').map(tag => <i key={tag} className="recognition-name-tag"
+              title={`辨识度来源 ${item.recognition?.source_date ?? '--'} · ${item.evidence.recognition_rank_bonus ? `排序加分 ${item.evidence.recognition_rank_bonus}` : '历史轮次不改变原排名'}`}>
+              {tag === 'recent' ? '近期辨识度' : '历史辨识度'}</i>)}
+          </span><small>{item.symbol}</small></span><span><b>{candidatePeriodLabel(item)}</b><small>{item.evidence.platform_style ? accumulationStyleLabel(item.evidence.platform_style) : item.evidence.stage ? accumulationStageLabel(item.evidence.stage) : stateLabels[item.state]}</small></span><span>{item.score.toFixed(1)}</span>
         </button>)}</div>
       </section>
       <section className="screener-chart-pane">
@@ -361,6 +377,12 @@ export function ScreenerWorkspace({
           : <div className="screener-empty">选择一条结果查看 K 线与形态分析</div>}</div>
         {selected && selected.state === 'accumulating' && <footer className="screener-evidence">
           <span><small>形态阶段</small>{accumulationStageLabel(selected.evidence.stage)}</span>
+          {selected.evidence.compact_platform && <>
+            <span><small>平台分类 / 紧凑度</small>{accumulationStyleLabel(selected.evidence.platform_style)} / {selected.evidence.compact_platform.score.toFixed(1)}</span>
+            <span><small>近10日区间</small>{selected.evidence.compact_platform.last10?.range_percent.toFixed(2) ?? '--'}%</span>
+            <span><small>小实体占比</small>{((selected.evidence.compact_platform.last10?.small_body_fraction ?? 0) * 100).toFixed(0)}%</span>
+            <span><small>辨识度排序加分</small>+{selected.evidence.recognition_rank_bonus ?? 0}</span>
+          </>}
           <span><small>结构类型</small>{accumulationPatternLabel(selected.evidence.pattern_type)}{selected.evidence.gentle_retest ? ' · 温和回踩' : ''}</span>
           {selected.evidence.pattern_type === 'secondary-base' && <span><small>回踩 / 反弹均量</small>{selected.evidence.pullback_volume_ratio?.toFixed(2) ?? '--'}x</span>}
           <span><small>前期阴跌</small>{signed(selected.evidence.decline_return_percent ?? 0)}%</span>
