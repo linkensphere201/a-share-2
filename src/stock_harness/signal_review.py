@@ -88,7 +88,7 @@ WEEKLY_RECOGNITION_SIGNAL = "weekly-board-recognition"
 DEFINITION_VERSION = "weekly-board-recognition-v1"
 DAILY_MARKET_BOARD_SIGNAL = "daily-market-board-review"
 DAILY_DEFINITION_VERSION = "daily-market-board-review-v1"
-DAILY_REVIEW_ALGORITHM_VERSION = "daily-market-board-review-v8-retest-projection"
+DAILY_REVIEW_ALGORITHM_VERSION = "daily-market-board-review-v9-system-score-history"
 STOCK_OBSERVATION_SIGNAL = "stock-observation-pool"
 HISTORICAL_LIMIT = 5
 
@@ -364,19 +364,25 @@ class SignalReviewService:
             analyze_market_liquidity(turnover)
             if len(turnover) >= 25 else analyze_benchmark_volume_fallback(benchmark)
         )
-        score_context_runs = ([correction_run] if correction_run else []) + session_runs
         trend_prior, trend_recent = _score_history(
-            self._store, score_context_runs, TREND_BREAKOUT_SCORER,
+            self._store, self._store.list_compatible_prior_score_runs(
+                run_id, TREND_BREAKOUT_SCORER,
+                scorers.get(TREND_BREAKOUT_SCORER).version,
+            ), TREND_BREAKOUT_SCORER,
             scorers.get(TREND_BREAKOUT_SCORER).version,
         )
         hotspot_system = BoardHotspotSystem()
         hotspot_prior, hotspot_recent = _score_history(
-            self._store, score_context_runs, hotspot_system.system_id,
+            self._store, self._store.list_compatible_prior_score_runs(
+                run_id, hotspot_system.system_id, hotspot_system.version,
+            ), hotspot_system.system_id,
             hotspot_system.version,
         )
         leading_system = BoardHotspotLeadingSystem()
         leading_prior, leading_recent = _score_history(
-            self._store, score_context_runs, leading_system.system_id,
+            self._store, self._store.list_compatible_prior_score_runs(
+                run_id, leading_system.system_id, leading_system.version,
+            ), leading_system.system_id,
             leading_system.version,
         )
         observation_systems = _board_observation_system_registry()
@@ -445,7 +451,10 @@ class SignalReviewService:
             correction_items, recent_market_items,
         )
         market_prior, market_recent = _score_history(
-            self._store, score_context_runs, MARKET_REGIME_SCORER,
+            self._store, self._store.list_compatible_prior_score_runs(
+                run_id, MARKET_REGIME_SCORER,
+                scorers.get(MARKET_REGIME_SCORER).version,
+            ), MARKET_REGIME_SCORER,
             scorers.get(MARKET_REGIME_SCORER).version,
         )
         market_execution = analysis_systems.execute(
@@ -623,7 +632,10 @@ class SignalReviewService:
         assign_stock_presentation_layers(stock_pool)
         stock_m4_summary = self._run_stock_pool_analysis(run_id, cutoff, stock_pool)
         stock_prior, stock_recent = _score_history(
-            self._store, score_context_runs, STOCK_OPPORTUNITY_SCORER,
+            self._store, self._store.list_compatible_prior_score_runs(
+                run_id, STOCK_OPPORTUNITY_SCORER,
+                scorers.get(STOCK_OPPORTUNITY_SCORER).version,
+            ), STOCK_OPPORTUNITY_SCORER,
             scorers.get(STOCK_OPPORTUNITY_SCORER).version,
         )
         stock_execution = analysis_systems.execute(
@@ -658,7 +670,9 @@ class SignalReviewService:
             })
         mean_system = analysis_systems.get(MEAN_REVERSION_SYSTEM_ID)
         mean_prior, mean_recent = _mean_reversion_score_history(
-            self._store, score_context_runs, MEAN_REVERSION_SYSTEM_ID,
+            self._store, self._store.list_compatible_prior_score_runs(
+                run_id, MEAN_REVERSION_SYSTEM_ID, mean_system.definition.version,
+            ), MEAN_REVERSION_SYSTEM_ID,
             mean_system.definition.version,
         )
         mean_execution = analysis_systems.execute(MEAN_REVERSION_SYSTEM_ID, AnalysisSystemContext(
