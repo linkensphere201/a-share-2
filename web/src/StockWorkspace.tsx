@@ -9,7 +9,7 @@ import { logInfo, logWarning } from './eventLogger'
 import { LayoutManager } from './LayoutManager'
 import { MarketBoardBadge } from './MarketBoardBadge'
 import { ScreenerWorkspace, type ScreenerTargetList } from './ScreenerWorkspace'
-import type { ScreenerCandidate } from './screenerClient'
+import type { ListInstrument } from './AddToListMenu'
 import { RuntimeEventBar } from './RuntimeEventBar'
 import { subscribeDrawingStore } from './drawingStore'
 import { applyTheme, loadTheme, persistTheme, themes, type ThemeDefinition } from './themeStore'
@@ -492,14 +492,14 @@ export function StockWorkspace() {
       instrumentCount: item.content.instruments.length,
     })), [activeGroup.windows])
 
-  const addScreenerCandidateToList = useCallback((
+  const addResultToList = useCallback((
     windowId: string,
-    candidate: ScreenerCandidate,
+    candidate: ListInstrument,
   ): boolean => {
     const target = activeGroup.windows.find(item => item.id === windowId)
     if (target?.type !== 'instrument-list' || target.mode !== 'detached') return false
     if (target.content.instruments.some(item => item.symbol === candidate.symbol)) {
-      logInfo('screener', '选股标的已存在于目标列表', {
+      logInfo('workspace', '结果标的已存在于目标列表', {
         symbol: candidate.symbol, windowId,
       })
       return false
@@ -509,13 +509,13 @@ export function StockWorkspace() {
       name: candidate.name,
       kind: candidate.kind,
       exchange: candidate.exchange,
-      category: '个股',
+      category: candidate.kind === 'stock' ? '个股' : undefined,
       rows: 0,
     }
     updateActiveGroup(group => appendInstrumentToManualList(
       group, windowId, instrument,
     ).group)
-    logInfo('screener', '选股标的已添加到固定列表', {
+    logInfo('workspace', '结果标的已添加到固定列表', {
       symbol: candidate.symbol, windowId,
     })
     return true
@@ -672,12 +672,13 @@ export function StockWorkspace() {
       theme={theme}
       onClose={() => setScreenerOpen(false)}
       targetLists={screenerTargetLists}
-      onAddCandidateToList={addScreenerCandidateToList}
+      onAddCandidateToList={addResultToList}
     />
   }
   if (signalReviewOpen) {
     return <Suspense fallback={<main className="workspace-module-loading">正在加载复盘模块</main>}>
-      <SignalReviewWorkspace theme={theme} onClose={() => setSignalReviewOpen(false)}/>
+      <SignalReviewWorkspace theme={theme} onClose={() => setSignalReviewOpen(false)}
+        targetLists={screenerTargetLists} onAddInstrumentToList={addResultToList}/>
     </Suspense>
   }
   if (learningOpen) {

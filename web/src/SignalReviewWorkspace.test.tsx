@@ -30,6 +30,36 @@ afterEach(() => {
 })
 
 describe('SignalReviewWorkspace', () => {
+  it('adds the right-clicked result without opening its chart, and reports duplicates', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === '/api/signals/definitions') return response({ items: [definition] })
+      if (url.includes('/api/signals/runs?')) return response({ items: [run] })
+      if (url.endsWith('/items')) return response({ items })
+      if (url.includes('/scores?')) return response({ items: [] })
+      throw new Error(`unexpected URL ${url}`)
+    }))
+    const add = vi.fn().mockReturnValueOnce(true).mockReturnValueOnce(false)
+    const user = userEvent.setup()
+    render(<SignalReviewWorkspace theme={themes[0]} onClose={() => undefined}
+      targetLists={[{ id: 'watch', title: '候选观察', instrumentCount: 0 }]}
+      onAddInstrumentToList={add}/>)
+    const row = (await screen.findByText('000001.SZ')).closest('button')!
+    fireEvent.contextMenu(row, { clientX: 200, clientY: 120 })
+    expect(screen.queryByTestId('signal-chart')).toBeNull()
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(screen.queryByRole('menu')).toBeNull()
+    for (let index = 0; index < 2; index++) {
+      fireEvent.contextMenu(row, { clientX: 200, clientY: 120 })
+      await user.click(screen.getByRole('menuitem', { name: '添加到…' }))
+      await user.click(screen.getByRole('menuitem', { name: /候选观察/ }))
+      expect(screen.queryByRole('menu')).toBeNull()
+      expect(screen.getByRole('status').textContent).toContain(index ? '已在列表中' : '已将')
+    }
+    expect(add).toHaveBeenCalledWith('watch', expect.objectContaining({ symbol: '000001.SZ', kind: 'stock' }))
+    expect(screen.queryByTestId('signal-chart')).toBeNull()
+  })
+
   it('keeps simultaneous volume and descending-envelope anomalies visible', () => {
     expect(stateDetailLabels([
       'bullish-boundary-triggered', 'descending-envelope-3m-broken',

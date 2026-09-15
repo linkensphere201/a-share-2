@@ -1,11 +1,12 @@
 import {
-  useEffect, useMemo, useRef, useState, type CSSProperties,
+  useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from 'react'
 import { ArrowLeft, Boxes, Eye, Layers3, ListFilter, MessageSquare, Pin, PinOff, Play, Radar, RefreshCw, RotateCcw, Search } from 'lucide-react'
 import { ChartCanvas } from './ChartCanvas'
 import { AnalysisOverlayToggle, useAnalysisOverlayVisibility, useAnalysisLayers } from './AnalysisOverlayToggle'
 import { MarketBoardBadge } from './MarketBoardBadge'
+import { AddToListMenu, type AddToListMenuState, type ListInstrument, type TargetInstrumentList } from './AddToListMenu'
 import type { ThemeDefinition } from './themeStore'
 import {
   listBoardObservations, listSignalAttention, listSignalDefinitions, listSignalItems,
@@ -38,7 +39,11 @@ import {
   mergeDailyConclusionAnalysis,
 } from './dailyConclusionProjection'
 
-type Props = { theme: ThemeDefinition; onClose: () => void }
+type Props = {
+  theme: ThemeDefinition; onClose: () => void
+  targetLists?: TargetInstrumentList[]
+  onAddInstrumentToList?: (windowId: string, instrument: ListInstrument) => boolean
+}
 type ProfileFilter = 'all' | SignalProfile
 type ChangeFilter = 'all' | SignalChangeType
 type DailyView = 'results' | 'opportunities' | 'leading' | 'hotspots' | 'observations' | 'board-pool' | 'stock-pool'
@@ -69,7 +74,20 @@ const COLUMN_LIMITS: Record<SignalColumn, [number, number]> = {
   runs: [180, 340], results: [280, 560], chat: [280, 620],
 }
 
-export function SignalReviewWorkspace({ theme, onClose }: Props) {
+export function SignalReviewWorkspace({ theme, onClose, targetLists = [], onAddInstrumentToList }: Props) {
+  const [resultMenu, setResultMenu] = useState<AddToListMenuState>()
+  const [listNotice, setListNotice] = useState('')
+  useEffect(() => {
+    if (!listNotice) return
+    const timer = window.setTimeout(() => setListNotice(''), 5000)
+    return () => window.clearTimeout(timer)
+  }, [listNotice])
+  const openResultMenu = (event: MouseEvent, instrument: ListInstrument) => {
+    event.preventDefault()
+    if (!onAddInstrumentToList || !instrument.symbol) return
+    setRunContextMenu(undefined)
+    setResultMenu({ x: event.clientX, y: event.clientY, instrument })
+  }
   const [definitions, setDefinitions] = useState<SignalDefinition[]>([])
   const [selectedDefinition, setSelectedDefinition] = useState<SignalDefinition>()
   const [runs, setRuns] = useState<SignalRun[]>([])
@@ -88,6 +106,7 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
   const [selectedScenarioTarget, setSelectedScenarioTarget] = useState<string>()
   const [selectedEvidenceId, setSelectedEvidenceId] = useState<string>()
   const [dailyView, setDailyView] = useState<DailyView>('results')
+  useEffect(() => { setResultMenu(undefined); setListNotice('') }, [selectedRun?.run_id, dailyView])
   const [observationQuery, setObservationQuery] = useState('')
   const [observations, setObservations] = useState<BoardDailyObservation[]>([])
   const [observationTotal, setObservationTotal] = useState(0)
@@ -675,6 +694,7 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
           : activeRun ? `${phaseLabels[activeRun.phase] ?? activeRun.phase} ${activeProgress}%` : '运行本期信号'}</span>
       </button>
     </header>
+    {listNotice && <div className="signal-score-loading" role="status" style={{ bottom: 52, maxWidth: 'calc(100vw - 24px)', overflowWrap: 'anywhere' }}>{listNotice}</div>}
     {error && <button className="signal-error" onClick={() => setError('')}>{error}</button>}
     {scoreLoading?.runId === selectedRun?.run_id && scoreLoading && <div className="signal-score-loading" role="status">
       <RefreshCw size={12} className="spin"/>正在加载复盘评分
@@ -724,7 +744,7 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
               className={analysisScope === scope ? 'active' : ''} onClick={() => setAnalysisScope(scope)}>{analysisScopeLabel(scope)}</button>)}
           </div>}
           <ParallelReviewLeaders key={`${selectedRun?.run_id}:${dailyView}:${analysisScope}`}
-            {...parallelLeaders} selected={selectedAnalysisScore} onSelect={selectParallelScore}/>
+            {...parallelLeaders} selected={selectedAnalysisScore} onSelect={selectParallelScore} onContextMenu={openResultMenu}/>
         </>}
         {dailyView === 'hotspots' && <div className="signal-hotspot-filters" aria-label="热点阶段筛选">
           {hotspotMarket && <span className="signal-hotspot-market">{marketCapacityLabel(hotspotMarket.market_liquidity_capacity)} · {marketDirectionLabel(hotspotMarket.market_liquidity_direction)} · {hotspotMarket.radar_slot_limit ?? 1}席</span>}
@@ -747,7 +767,7 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
             {(['all', 'new', 'active', 'strengthened', 'weakened', 'manual-pinned', 'cooldown'] as PoolLifecycleFilter[]).map(value => <button key={value} className={poolLifecycle === value ? 'active' : ''} onClick={() => setPoolLifecycle(value)}>{poolLifecycleLabel(value)}</button>)}
           </div>
           <div className="signal-result-head pool"><span>评分</span><span>标的</span><span>状态</span><span>来源</span></div>
-          <div className="signal-scroll signal-pool-list">{displayedPoolItems.map(item => <button key={item.symbol} className={selectedPoolItem?.symbol === item.symbol ? 'active' : ''} onClick={() => {
+          <div className="signal-scroll signal-pool-list">{displayedPoolItems.map(item => <button key={item.symbol} onContextMenu={event => openResultMenu(event, item)} className={selectedPoolItem?.symbol === item.symbol ? 'active' : ''} onClick={() => {
             setSelectedPoolItem(item)
             setSelectedItem(undefined)
             setSelectedObservation(undefined)
@@ -765,7 +785,7 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
           <div className="signal-scroll">{viewEmptyExplanation && <SignalViewEmpty explanation={viewEmptyExplanation}/>} {displayedObservations.map(item => {
             const entry = attention.find(value => value.symbol === item.symbol)
             const score = scoreBySymbol.get(item.symbol)
-            return <button key={item.symbol} className={selectedObservation?.symbol === item.symbol ? 'active' : ''} onClick={() => { setSelectedObservation(item); setSelectedItem(undefined); setSelectedPoolItem(undefined) }}>
+            return <button key={item.symbol} onContextMenu={event => openResultMenu(event, { ...item, kind: 'board' })} className={selectedObservation?.symbol === item.symbol ? 'active' : ''} onClick={() => { setSelectedObservation(item); setSelectedItem(undefined); setSelectedPoolItem(undefined) }}>
               <ScoreBadge score={score}/>
               <span><span className="instrument-name-line"><b>{item.name}</b></span><small>{item.symbol}</small></span>
               <SignalStateCell
@@ -783,7 +803,7 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
             {(['all', 'added', 'retained', 'removed'] as ChangeFilter[]).map(value => <button key={value} className={change === value ? 'active' : ''} onClick={() => setChange(value)}>{value === 'all' ? '全部变化' : changeLabels[value]}</button>)}
           </div>
           <div className="signal-result-head"><span>评分</span><span>标的</span><span>{daily ? '状态' : '板块'}</span><span>变化</span></div>
-          <div className="signal-scroll">{selectedRun?.status === 'failed' && <div className="signal-empty compact error">{selectedRun.error}</div>}{filtered.map(item => <button key={item.item_id} className={`${selectedItem?.item_id === item.item_id ? 'active ' : ''}${item.active ? '' : 'inactive'}`} onClick={() => { setSelectedItem(item); setSelectedObservation(undefined); setSelectedPoolItem(undefined); setSelectedEvidenceId(undefined); setHighlightedEvidenceId(undefined) }}>
+          <div className="signal-scroll">{selectedRun?.status === 'failed' && <div className="signal-empty compact error">{selectedRun.error}</div>}{filtered.map(item => <button key={item.item_id} onContextMenu={event => openResultMenu(event, item)} className={`${selectedItem?.item_id === item.item_id ? 'active ' : ''}${item.active ? '' : 'inactive'}`} onClick={() => { setSelectedItem(item); setSelectedObservation(undefined); setSelectedPoolItem(undefined); setSelectedEvidenceId(undefined); setHighlightedEvidenceId(undefined) }}>
             <ScoreBadge score={item.payload.score_result} fallback={item.score * 100} rank={item.rank}/><span><span className="instrument-name-line"><b>{item.name}</b><MarketBoardBadge instrument={item}/></span><small>{item.symbol}</small></span>{daily
               ? <SignalStateCell states={item.payload.state_codes} fallback={profileLabels[item.profile]}/>
               : <span>{item.payload.board_count ?? 0}<small>{profileLabels[item.profile]}</small></span>}
@@ -851,6 +871,12 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
       {chatOpen && <div className="signal-column-resizer" role="separator" aria-orientation="vertical" aria-label="调整Codex对话栏宽度" title="左右拖动调整Codex对话栏宽度" onPointerDown={event => startColumnResize('chat', event)}/>}
       {chatOpen && selectedDefinition && <SignalChatPanel key={selectedDefinition.signal_id} signalId={selectedDefinition.signal_id} runs={runs} run={selectedRun} items={items} selectedItem={selectedItem} selectedPoolItem={selectedPoolItem} selectedScore={selectedAnalysisScore} onReferencePreview={previewReference} onReferenceActivate={activateReference} onClose={() => setChatOpen(false)}/>}
     </section>
+    {resultMenu && <AddToListMenu key={`${resultMenu.instrument.symbol}:${resultMenu.x}:${resultMenu.y}`} menu={resultMenu}
+      targets={targetLists} onClose={() => setResultMenu(undefined)} onAdd={(target, instrument) => {
+        const added = onAddInstrumentToList?.(target.id, instrument)
+        setListNotice(added ? `已将 ${instrument.name} 添加到 ${target.title}` : `${instrument.name} 已在列表中或目标列表不可写`)
+        setResultMenu(undefined)
+      }}/>}
     {runContextMenu && <div className="signal-context-layer" onPointerDown={event => {
       if (event.target === event.currentTarget) setRunContextMenu(undefined)
     }} onContextMenu={event => event.preventDefault()}>

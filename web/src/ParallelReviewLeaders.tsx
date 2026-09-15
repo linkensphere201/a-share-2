@@ -1,20 +1,22 @@
-import { useState } from 'react'
+import { useState, type MouseEvent } from 'react'
 import type { SignalScoreResult } from './signalReviewClient'
 import { MarketBoardBadge } from './MarketBoardBadge'
 
-export function ParallelReviewLeaders({ trend, mean, selected, onSelect }: {
+export function ParallelReviewLeaders({ trend, mean, selected, onSelect, onContextMenu }: {
   trend: SignalScoreResult[]; mean: SignalScoreResult[]; selected?: SignalScoreResult
   onSelect: (score: SignalScoreResult) => void
+  onContextMenu?: (event: MouseEvent, score: SignalScoreResult) => void
 }) {
   return <div className="parallel-review-leaders">
-    <LeaderColumn title="趋势体系前排" scores={trend} selected={selected} onSelect={onSelect}/>
-    <LeaderColumn title="均值回归前排" scores={mean} selected={selected} onSelect={onSelect}/>
+    <LeaderColumn title="趋势体系前排" scores={trend} selected={selected} onSelect={onSelect} onContextMenu={onContextMenu}/>
+    <LeaderColumn title="均值回归前排" scores={mean} selected={selected} onSelect={onSelect} onContextMenu={onContextMenu}/>
   </div>
 }
 
-function LeaderColumn({ title, scores, selected, onSelect }: {
+function LeaderColumn({ title, scores, selected, onSelect, onContextMenu }: {
   title: string; scores: SignalScoreResult[]; selected?: SignalScoreResult
   onSelect: (score: SignalScoreResult) => void
+  onContextMenu?: (event: MouseEvent, score: SignalScoreResult) => void
 }) {
   const [limit, setLimit] = useState(10)
   return <section aria-label={title}>
@@ -25,6 +27,7 @@ function LeaderColumn({ title, scores, selected, onSelect }: {
         key={`${score.entity_scope}:${score.entity_key}`}
         className={selected?.system_id === score.system_id && selected?.entity_key === score.entity_key ? 'active' : ''}
         onClick={() => onSelect(score)}
+        onContextMenu={event => onContextMenu?.(event, score)}
         title={score.summary}
       >
         <span className="parallel-review-name">{index + 1}. {score.name}<MarketBoardBadge instrument={score}/></span>
