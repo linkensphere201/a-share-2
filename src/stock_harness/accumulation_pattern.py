@@ -317,7 +317,10 @@ def _candidate(
     if not established:
         reasons.append("accumulation-quality-insufficient")
     evidence["reasons"] = reasons
-    evidence["limit_up_events"] = _limit_events([*lift, *platform], limit_up_dates, lower, atr)
+    evidence["limit_up_events"] = _limit_events(
+        [*lift, *platform], limit_up_dates, lower, atr,
+        platform_start=config.lift_window, buffer_atr=config.invalidation_atr,
+    )
     return AccumulationPattern(
         score, platform[0].period_start.isoformat(), platform[-1].period_end.isoformat(),
         lower, upper, evidence, "accumulation" if established else "stabilizing",
@@ -326,6 +329,7 @@ def _candidate(
 
 def _limit_events(
     bars: Sequence[AnalysisBar], dates: frozenset[str] | None, lower: float, atr: float,
+    *, platform_start: int = 0, buffer_atr: float = .5, followup: bool = False,
 ) -> list[dict[str, object]]:
     if dates is None:
         return []
@@ -335,14 +339,20 @@ def _limit_events(
         if day not in dates:
             continue
         follow = bars[index + 1:index + 6]
-        held = all(b.close >= max(lower - .5 * atr, bar.low - .5 * atr) for b in follow)
+        position = "lift" if index < platform_start else (
+            "followup" if followup else "platform-start" if index - platform_start < 3
+            else "platform-end" if index >= len(bars) - 3 else "platform-middle"
+        )
+        # A raised future platform must not retroactively invalidate an earlier lift event.
+        support = (bar.low if position == "lift" else max(lower, bar.low)) - buffer_atr * atr
+        held = all(b.close >= support for b in follow)
         normalized = bool(follow) and fmean(b.volume for b in follow[-3:]) <= bar.volume * 1.1
         state = "failed" if not held else (
             "digested" if len(follow) >= 2 and normalized else "pending"
         )
         events.append({
             "date": day, "observed_sessions": len(follow), "state": state,
-            "support_price": max(lower - .5 * atr, bar.low - .5 * atr),
+            "support_price": support, "position": position,
             "event_volume": bar.volume, "followup_volumes": [b.volume for b in follow],
         })
     return events
@@ -390,7 +400,10 @@ def _follow_up(
             elif event["state"] == "pending" and int(event["observed_sessions"]) >= 2:
                 if fmean(volumes[-3:]) <= float(event["event_volume"]) * 1.1:
                     event["state"] = "digested"
-    events.extend(_limit_events(follow, limit_dates, pattern.lower, atr))
+    events.extend(_limit_events(
+        follow, limit_dates, pattern.lower, atr,
+        buffer_atr=config.invalidation_atr, followup=True,
+    ))
     if stage == "accumulation" and any(e["state"] == "failed" for e in events):
         stage = "stabilizing"
         evidence["reasons"] = [*evidence["reasons"], "limit-up-digestion-failed"]

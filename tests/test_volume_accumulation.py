@@ -226,3 +226,15 @@ def test_platform_with_falling_price_center_cannot_be_accumulation() -> None:
         bars[i] = replace(bars[i], open=close * .995, close=close,
                           high=close * 1.01, low=close * .99)
     assert detect_volume_accumulation(bars) is None
+
+
+def test_early_lift_limit_up_uses_event_support_not_the_later_raised_platform() -> None:
+    bars = _bars()
+    pattern = detect_accumulation_pattern(
+        bars, limit_up_dates=frozenset({bars[-20].period_end.isoformat()}),
+    )
+    assert pattern is not None and pattern.stage == "accumulation"
+    event = pattern.evidence["limit_up_events"][0]
+    assert event["position"] == "lift"
+    assert event["state"] == "digested"
+    assert event["support_price"] < pattern.lower
