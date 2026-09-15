@@ -56,6 +56,41 @@ def test_detects_decline_lift_and_demand_led_platform() -> None:
     assert pattern.evidence["up_down_volume_ratio"] > 1
 
 
+@pytest.mark.parametrize("secondary", [False, True])
+def test_decline_cache_preserves_full_evidence_and_is_request_local(monkeypatch, secondary: bool) -> None:
+    from stock_harness import accumulation_pattern as module
+
+    bars = _secondary_bars() if secondary else _bars()
+    original_candidate = module._candidate
+    original_metrics = module._decline_metrics
+    calls = []
+
+    def metrics(decline, config):
+        calls.append((decline[0].period_end, decline[-1].period_end))
+        return original_metrics(decline, config)
+
+    monkeypatch.setattr(module, "_decline_metrics", metrics)
+    expected = module.detect_accumulation_pattern(bars)
+    assert expected is not None
+    assert calls and len(calls) == len(set(calls))
+    cached_count = len(calls)
+
+    def uncached_candidate(*args, **kwargs):
+        kwargs.pop("decline_cache", None)
+        return original_candidate(*args, **kwargs)
+
+    monkeypatch.setattr(module, "_candidate", uncached_candidate)
+    calls.clear()
+    assert module.detect_accumulation_pattern(bars) == expected
+    assert len(calls) > cached_count
+
+    monkeypatch.setattr(module, "_candidate", original_candidate)
+    calls.clear()
+    changed = [replace(b, open=11, close=11, high=11.1, low=10.9) for b in bars]
+    assert module.detect_accumulation_pattern(changed) is None
+    assert calls and len(calls) == len(set(calls))
+
+
 def test_screener_adapter_uses_the_shared_pattern_contract() -> None:
     bars = _bars()
 

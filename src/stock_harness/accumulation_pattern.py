@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, replace
+from datetime import date
 from math import isfinite
 from statistics import fmean, pstdev
 from typing import Mapping, Sequence
@@ -77,6 +78,11 @@ def detect_accumulation_pattern(
 
     # Search recent endpoints so a breakout cannot erase its preceding base.
     candidates: list[tuple[int, AccumulationPattern]] = []
+    decline_cache: dict[tuple[date, date], tuple[float, ...] | None] = {}
+    troughs = {
+        i for i in range(59, len(history) - 3)
+        if history[i].low == min(b.low for b in history[i - 3:i + 4])
+    }
     for lag in range(config.followup_window + 1):
         end = len(history) - lag
         for width in range(config.min_platform_window, config.max_platform_window + 1):
@@ -87,13 +93,14 @@ def detect_accumulation_pattern(
                 candidate = _candidate(
                     history[start:end], decline_width, config,
                     limit_up_dates, turnover_by_date,
+                    decline_cache=decline_cache,
                 )
                 if candidate is not None:
                     candidates.append((end, candidate))
             # Confirm the first low before searching its rebound and higher retest.
             platform_start = end - width
             for trough in range(max(59, platform_start - 46), platform_start - 15):
-                if history[trough].low != min(b.low for b in history[trough - 3:trough + 4]):
+                if trough not in troughs:
                     continue
                 recovery_sessions = platform_start - trough - 1
                 for decline_width in config.decline_windows:
@@ -104,6 +111,7 @@ def detect_accumulation_pattern(
                         history[start:end], decline_width, config,
                         limit_up_dates, turnover_by_date,
                         recovery_sessions=recovery_sessions,
+                        decline_cache=decline_cache,
                     )
                     if candidate is not None:
                         candidates.append((end, candidate))
@@ -254,6 +262,23 @@ def _demand(platform: Sequence[AnalysisBar], baseline: Sequence[AnalysisBar]) ->
     }
 
 
+def _decline_metrics(
+    decline: Sequence[AnalysisBar], config: AccumulationPatternConfig,
+) -> tuple[float, ...] | None:
+    decline_return = (decline[-1].close / decline[0].close - 1) * 100
+    if decline_return > -config.min_decline_percent:
+        return None
+    ma20, ma40, ma60 = (_ma(decline, w) for w in (20, 40, 60))
+    if not ma20 < ma40 < ma60:
+        return None
+    earlier_slope = (_ma(decline, 20) - _ma(decline, 20, 20)) / 20
+    decline_steps = [decline[i + 10].close - decline[i].close for i in range(0, len(decline) - 10, 10)]
+    sustained = sum(step < 0 for step in decline_steps) / len(decline_steps)
+    if earlier_slope >= 0 or sustained < .6:
+        return None
+    return decline_return, ma20, (ma60 / ma20 - 1) * 100, earlier_slope, sustained
+
+
 def _candidate(
     bars: Sequence[AnalysisBar],
     decline_width: int,
@@ -261,27 +286,31 @@ def _candidate(
     limit_up_dates: frozenset[str] | None,
     turnover_by_date: Mapping[str, float] | None,
     *, recovery_sessions: int | None = None,
+    decline_cache: dict[tuple[date, date], tuple[float, ...] | None] | None = None,
 ) -> AccumulationPattern | None:
     decline = bars[:decline_width]
     recovery_width = recovery_sessions if recovery_sessions is not None else config.lift_window
     lift = bars[decline_width:decline_width + recovery_width]
     platform = bars[decline_width + recovery_width:]
-    decline_return = (decline[-1].close / decline[0].close - 1) * 100
-    ma20, ma40, ma60 = (_ma(decline, w) for w in (20, 40, 60))
-    divergence = (ma60 / ma20 - 1) * 100
-    earlier_slope = (_ma(decline, 20) - _ma(decline, 20, 20)) / 20
-    decline_steps = [decline[i + 10].close - decline[i].close for i in range(0, len(decline) - 10, 10)]
-    sustained = sum(step < 0 for step in decline_steps) / len(decline_steps)
-    if (decline_return > -config.min_decline_percent or not ma20 < ma40 < ma60
-            or earlier_slope >= 0 or sustained < .6):
+    # Windows share decline intervals; cache rejections as well as accepted metrics.
+    key = (decline[0].period_end, decline[-1].period_end)
+    if decline_cache is None:
+        metrics = _decline_metrics(decline, config)
+    else:
+        if key not in decline_cache:
+            decline_cache[key] = _decline_metrics(decline, config)
+        metrics = decline_cache[key]
+    if metrics is None:
         return None
+    decline_return, ma20, divergence, earlier_slope, sustained = metrics
     recent_slope = (_ma(bars, 20) - _ma(bars, 20, 10)) / 10
     deceleration = 1 - max(0, -recent_slope) / abs(earlier_slope)
     short_slope = (_ma(bars, 5) - _ma(bars, 5, 5)) / 5
     recent_divergence = (_ma(bars, 60) / _ma(bars, 20) - 1) * 100
+    atr_bars = bars[-(len(platform) + 11):]
     tr = [
         max(b.high - b.low, abs(b.high - a.close), abs(b.low - a.close))
-        for a, b in zip(bars, bars[1:])
+        for a, b in zip(atr_bars, atr_bars[1:])
     ]
     atr = fmean(tr[-(len(platform) + 10):])
     if atr <= 0:

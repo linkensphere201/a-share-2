@@ -272,6 +272,11 @@ class ScreenerService:
                         "screener_accumulation_progress run_id=%s scanned=%s universe=%s matches=%s",
                         run_id, index, len(universe), len(matches),
                     )
+        scan_finished = time.perf_counter()
+        LOGGER.info(
+            "screener_accumulation_scan_completed run_id=%s matches=%s duration_ms=%.1f",
+            run_id, len(matches), (scan_finished - started) * 1000,
+        )
         recognition = attach_recognition_tags(
             self._store, [{"symbol": item[0]["symbol"]} for item in matches], cutoff.isoformat(),
         )
@@ -279,6 +284,11 @@ class ScreenerService:
             signal.evidence["recognition"] = tagged["recognition"]
             signal.evidence["recognition_rank_bonus"] = 5.0 if tagged["recognition"]["tags"] else 0.0
         matches.sort(key=lambda item: accumulation_rank_key(item[1]), reverse=True)
+        ranking_finished = time.perf_counter()
+        LOGGER.info(
+            "screener_accumulation_ranking_completed run_id=%s duration_ms=%.1f",
+            run_id, (ranking_finished - scan_finished) * 1000,
+        )
         retained: list[dict[str, object]] = []
         for instrument, signal in matches[:max_results]:
             analysis = self._analysis.analyze(PatternAnalysisRequest(
@@ -303,6 +313,10 @@ class ScreenerService:
                 "evidence": signal.evidence,
             })
         self._store.complete_screener_run(run_id, retained, retention=10)
+        LOGGER.info(
+            "screener_accumulation_analysis_completed run_id=%s retained=%s duration_ms=%.1f",
+            run_id, len(retained), (time.perf_counter() - ranking_finished) * 1000,
+        )
         LOGGER.info(
             "screener_accumulation_completed run_id=%s as_of=%s universe=%s matches=%s retained=%s duration_ms=%.1f",
             run_id, cutoff, len(universe), len(matches), len(retained),
