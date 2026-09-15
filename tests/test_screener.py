@@ -46,6 +46,36 @@ def _store_with_major_edge() -> tuple[SQLiteMarketDataStore, list[date]]:
     return store, days
 
 
+def test_latest_screening_date_uses_bounded_index_probes_and_only_active_stocks():
+    with SQLiteMarketDataStore(":memory:") as store:
+        store.upsert_instruments([
+            Instrument("000001.SZ", "Active", InstrumentKind.STOCK, "SZ"),
+            Instrument("000002.SZ", "Inactive", InstrumentKind.STOCK, "SZ", active=False),
+            Instrument("510300.SH", "ETF", InstrumentKind.ETF, "SH"),
+            Instrument("000003.SZ", "No bars", InstrumentKind.STOCK, "SZ"),
+        ])
+        assert store.get_latest_stock_daily_bar_date() is None
+        start = date(2000, 1, 1)
+        days = [start + timedelta(days=i) for i in range(6000)]
+        store.upsert_daily_bars("test", [
+            DailyBar("000001.SZ", day, 10, 11, 9, 10, 100) for day in days
+        ] + [DailyBar(symbol, date(2026, 9, 15), 10, 11, 9, 10, 100)
+             for symbol in ("000002.SZ", "510300.SH")])
+        instructions = 0
+
+        def bounded_work() -> int:
+            nonlocal instructions
+            instructions += 100
+            return int(instructions > 1000)
+
+        # Abort a full-history scan instead of relying on machine-sensitive timings.
+        store._connection.set_progress_handler(bounded_work, 100)
+        try:
+            assert store.get_latest_stock_daily_bar_date() == days[-1]
+        finally:
+            store._connection.set_progress_handler(None, 0)
+
+
 def test_screener_persists_candidate_and_exact_linked_analysis():
     store, days = _store_with_major_edge()
     try:

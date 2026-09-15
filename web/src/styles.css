@@ -132,6 +132,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .screener-chart-runtime.explanation-open > .chart-stage { width: calc(100% - 310px); }
 .screener-empty { height: 100%; display: grid; place-items: center; color: var(--theme-muted); font-size: 11px; }
 .screener-empty.compact { height: auto; min-height: 80px; padding: 16px; text-align: center; }
+.screener-starting { display: flex; align-items: center; gap: 8px; min-height: 50px; flex-shrink: 0; padding: 8px 12px; color: var(--theme-text-strong); background: var(--theme-accent-soft); font-size: 11px; }
+.screener-starting > span { display: grid; gap: 4px; }
+.screener-starting small { color: var(--theme-muted); font-size: 10px; }
 .screener-empty.error { color: #d98989; }
 .screener-evidence { display: grid; grid-template-columns: repeat(8, minmax(64px, 1fr)); gap: 1px; padding: 1px; border-top: 1px solid var(--theme-border); background: var(--theme-border); }
 .screener-evidence span { min-width: 0; display: grid; gap: 2px; padding: 7px 8px; background: var(--theme-surface); color: var(--theme-text-strong); font-size: 11px; overflow-wrap: anywhere; }

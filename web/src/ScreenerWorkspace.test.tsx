@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ReactNode } from 'react'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ScreenerWorkspace } from './ScreenerWorkspace'
 import { themes } from './themeStore'
@@ -24,6 +24,79 @@ afterEach(() => {
 })
 
 describe('ScreenerWorkspace', () => {
+  it('keeps polling the active run while an older result is selected', async () => {
+    const active = { ...run, run_id: 'active', as_of_date: '2026-09-02', status: 'running' }
+    let completed = false
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/active')) { completed = true; return response({ ...active, status: 'succeeded' }) }
+      if (url.includes('/candidates')) return response({ items: [] })
+      return response({ items: [{ ...active, status: completed ? 'succeeded' : 'running' }, run] })
+    }))
+    renderScreener()
+    fireEvent.click(await screen.findByRole('button', { name: /0901 选股结果/ }))
+    const start = screen.getByRole('button', { name: '开始选股' }) as HTMLButtonElement
+    expect(start.disabled).toBe(true)
+    await waitFor(() => expect(start.disabled).toBe(false), { timeout: 2500 })
+    expect(screen.getByRole('button', { name: /0901 选股结果/ }).className).toContain('active')
+  })
+
+  it('shows startup immediately, prevents duplicate posts, and replaces it with server progress', async () => {
+    let finish!: (value: Response) => void
+    const pending = new Promise<Response>(resolve => { finish = resolve })
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'POST') return pending
+      if (String(input).includes('/candidates')) return response({ items: [] })
+      return response({ items: [] })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    renderScreener()
+    await screen.findByText('暂无历史结果')
+    const start = screen.getByRole('button', { name: '开始选股' }) as HTMLButtonElement
+    fireEvent.click(start)
+    expect(screen.getByRole('status').textContent).toContain('正在创建选股任务')
+    expect(start.disabled).toBe(true)
+    fireEvent.click(start)
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(1)
+    await act(async () => { finish(await response({ ...run, status: 'running', scanned_count: 0, universe_count: 5000 }, 202)) })
+    await screen.findByText('大斜边突破 · 0/5000')
+    expect(screen.queryByRole('status')).toBeNull()
+    expect(start.disabled).toBe(true)
+  })
+
+  it('clears startup on failure and allows retry', async () => {
+    let fail!: (reason: Error) => void
+    const pending = new Promise<Response>((_, reject) => { fail = reject })
+    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'POST') return pending
+      return response({ items: [] })
+    }))
+    renderScreener()
+    await screen.findByText('暂无历史结果')
+    const start = screen.getByRole('button', { name: '开始选股' }) as HTMLButtonElement
+    fireEvent.click(start)
+    fail(new Error('启动失败，请重试'))
+    await screen.findByText('启动失败，请重试')
+    expect(screen.queryByRole('status')).toBeNull()
+    expect(start.disabled).toBe(false)
+  })
+
+  it('does not let a late initial history response erase the newly created run', async () => {
+    let finishHistory!: (value: Response) => void
+    const history = new Promise<Response>(resolve => { finishHistory = resolve })
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'POST') return response({ ...run, status: 'running' }, 202)
+      if (String(input).includes('/candidates')) return response({ items: [] })
+      return history
+    }))
+    renderScreener()
+    fireEvent.click(screen.getByRole('button', { name: '开始选股' }))
+    await screen.findByText('0901 选股结果')
+    await act(async () => { finishHistory(await response({ items: [] })) })
+    await waitFor(() => expect(screen.queryByRole('status')).toBeNull())
+    expect(screen.getByText('0901 选股结果')).toBeTruthy()
+  })
+
   it('unions selected boards and intersects state and historical filters without rescanning', async () => {
     const recognition = { available: true, source_date: '2026-08-31', source_run_id: 'weekly-1', tags: ['historical'] }
     const pcb = { board_symbol: 'PCB.DC', name: 'PCB', classification: 'concept' as const, source_system: 'eastmoney' }

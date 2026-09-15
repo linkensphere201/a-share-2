@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowLeft, ChevronLeft, ChevronRight, Filter, ListPlus, Play, RefreshCw, Trash2, X } from 'lucide-react'
 import { ChartCanvas } from './ChartCanvas'
 import { MarketBoardBadge } from './MarketBoardBadge'
@@ -69,6 +69,11 @@ export function ScreenerWorkspace({
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [contextMenu, setContextMenu] = useState<ScreenerContextMenu>()
+  const [startingStrategy, setStartingStrategy] = useState<ScreenerStrategyId | null>(null)
+  const startingRef = useRef(false)
+  const runListEpoch = useRef(0)
+  const runningRunId = runs.find(run => run.status === 'running')?.run_id
+  const hasRunningRun = runningRunId !== undefined
 
   const stateCandidates = useMemo(() => resultStateFilter === 'all'
     ? candidates
@@ -109,7 +114,9 @@ export function ScreenerWorkspace({
   ) as Record<ScreenerState, number>, [candidates])
 
   const refreshRuns = useCallback(async (preferredId?: string) => {
+    const epoch = runListEpoch.current
     const values = await listScreenerRuns()
+    if (epoch !== runListEpoch.current) return
     setRuns(values)
     setSelectedRun(current => values.find(item => item.run_id === (
       preferredId ?? current?.run_id ?? window.localStorage.getItem(selectedRunKey)
@@ -166,17 +173,22 @@ export function ScreenerWorkspace({
   }, [filteredCandidates, selected?.symbol])
 
   useEffect(() => {
-    if (!selectedRun || selectedRun.status !== 'running') return
-    const handle = window.setInterval(async () => {
+    if (!runningRunId) return
+    const controller = new AbortController()
+    let handle: number
+    const poll = async () => {
       try {
-        const current = await loadScreenerRun(selectedRun.run_id)
-        setSelectedRun(current)
+        const current = await loadScreenerRun(runningRunId, controller.signal)
+        if (controller.signal.aborted) return
+        setSelectedRun(selected => selected?.run_id === current.run_id ? current : selected)
         setRuns(values => values.map(item => item.run_id === current.run_id ? current : item))
-        if (current.status !== 'running') await refreshRuns(current.run_id)
-      } catch (value) { setError(String(value)) }
-    }, 1000)
-    return () => window.clearInterval(handle)
-  }, [selectedRun?.run_id, selectedRun?.status, refreshRuns])
+        if (current.status !== 'running') { await refreshRuns(); return }
+      } catch (value) { if (!controller.signal.aborted) setError(String(value)) }
+      if (!controller.signal.aborted) handle = window.setTimeout(poll, 1000)
+    }
+    handle = window.setTimeout(poll, 1000)
+    return () => { controller.abort(); window.clearTimeout(handle) }
+  }, [runningRunId, refreshRuns])
 
   useEffect(() => {
     if (!selected) { setAnalysis(null); return }
@@ -201,9 +213,13 @@ export function ScreenerWorkspace({
   }
 
   const start = async () => {
+    if (startingRef.current || hasRunningRun) return
+    startingRef.current = true
+    setStartingStrategy(strategyId)
     setError('')
     try {
       const run = await startScreenerRun({ strategy_id: strategyId, periods, states, max_results: maxResults })
+      runListEpoch.current++
       setRuns(values => [run, ...values].slice(0, 10))
       setSelectedRun(run)
       logInfo('screener', '选股任务已启动', { runId: run.run_id, strategyId })
@@ -211,6 +227,9 @@ export function ScreenerWorkspace({
       const message = value instanceof Error ? value.message : String(value)
       setError(message)
       logError('screener', '选股任务启动失败', { error: message, strategyId })
+    } finally {
+      startingRef.current = false
+      setStartingStrategy(null)
     }
   }
 
@@ -265,8 +284,8 @@ export function ScreenerWorkspace({
       <label className="screener-limit">上限<select value={maxResults} onChange={event => setMaxResults(Number(event.target.value))}>
         {[50, 100, 200, 500].map(value => <option key={value}>{value}</option>)}
       </select></label>
-      <button className="primary-button" disabled={(strategyId === 'major-descending-breakout' && (!periods.length || !states.length)) || selectedRun?.status === 'running'} onClick={start}>
-        {selectedRun?.status === 'running' ? <RefreshCw size={14} className="spin"/> : <Play size={14}/>}开始选股
+      <button className="primary-button" aria-busy={startingStrategy !== null} disabled={startingStrategy !== null || (strategyId === 'major-descending-breakout' && (!periods.length || !states.length)) || hasRunningRun} onClick={start}>
+        {startingStrategy !== null || hasRunningRun ? <RefreshCw size={14} className="spin"/> : <Play size={14}/>}开始选股
       </button>
     </header>
     {error && <div className="screener-error">{error}</div>}
@@ -274,7 +293,11 @@ export function ScreenerWorkspace({
     <section className="screener-grid">
       <aside className="screener-runs">
         <header>每轮选股结果 <span>{runs.length}/10</span></header>
-        <div className="screener-scroll">{runs.length === 0 && <div className="screener-empty compact">暂无历史结果</div>}{runs.map(run => <button key={run.run_id} className={selectedRun?.run_id === run.run_id ? 'active' : ''} onClick={() => setSelectedRun(run)} onContextMenu={event => {
+        <div className="screener-scroll">
+          {startingStrategy !== null && <div className="screener-starting" role="status">
+            <RefreshCw size={14} className="spin"/><span>正在创建选股任务<small>{strategyLabel(startingStrategy)}</small></span>
+          </div>}
+          {runs.length === 0 && startingStrategy === null && <div className="screener-empty compact">暂无历史结果</div>}{runs.map(run => <button key={run.run_id} className={selectedRun?.run_id === run.run_id ? 'active' : ''} onClick={() => setSelectedRun(run)} onContextMenu={event => {
           event.preventDefault()
           setContextMenu({ kind: 'run', ...menuPosition(event.clientX, event.clientY), run })
         }}>

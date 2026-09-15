@@ -301,8 +301,11 @@ class SQLiteScreenerStoreMixin:
         with self._lock:
             row = self._connection.execute(
                 """
-                SELECT max(bar.trade_date) FROM daily_bars AS bar
-                JOIN instruments AS instrument USING (instrument_id)
+                SELECT max((
+                    SELECT bar.trade_date FROM daily_bars AS bar
+                    WHERE bar.instrument_id = instrument.instrument_id
+                    ORDER BY bar.trade_date DESC LIMIT 1
+                )) FROM instruments AS instrument
                 WHERE instrument.kind = 'stock' AND instrument.active = 1
                 """
             ).fetchone()
