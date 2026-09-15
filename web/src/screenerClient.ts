@@ -68,6 +68,10 @@ export type ScreenerCandidate = {
     small_body_sessions?: number
     platform_volume_ratio?: number
     stage?: string
+    pattern_type?: string
+    demand_regime?: string
+    gentle_retest?: boolean
+    pullback_volume_ratio?: number
     platform_sessions?: number
     bottom_lift_atr?: number
     decline_slowing?: boolean

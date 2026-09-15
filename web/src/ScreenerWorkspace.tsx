@@ -5,7 +5,7 @@ import { MarketBoardBadge } from './MarketBoardBadge'
 import { fetchInstrumentBoardMemberships, type InstrumentBoardMembership } from './boardTags'
 import { TradingSystemControls } from './TradingSystemControls'
 import { TrendExplanationPanel } from './TrendExplanationPanel'
-import { accumulationStageLabel } from './trendExplanation'
+import { accumulationStageLabel, accumulationPatternLabel } from './trendExplanation'
 import { useAnalysisOverlayVisibility, useAnalysisLayers } from './AnalysisOverlayToggle'
 import { logError, logInfo } from './eventLogger'
 import {
@@ -361,6 +361,8 @@ export function ScreenerWorkspace({
           : <div className="screener-empty">选择一条结果查看 K 线与形态分析</div>}</div>
         {selected && selected.state === 'accumulating' && <footer className="screener-evidence">
           <span><small>形态阶段</small>{accumulationStageLabel(selected.evidence.stage)}</span>
+          <span><small>结构类型</small>{accumulationPatternLabel(selected.evidence.pattern_type)}{selected.evidence.gentle_retest ? ' · 温和回踩' : ''}</span>
+          {selected.evidence.pattern_type === 'secondary-base' && <span><small>回踩 / 反弹均量</small>{selected.evidence.pullback_volume_ratio?.toFixed(2) ?? '--'}x</span>}
           <span><small>前期阴跌</small>{signed(selected.evidence.decline_return_percent ?? 0)}%</span>
           <span><small>均线发散</small>{selected.evidence.ma_divergence_percent?.toFixed(2)}%</span>
           <span><small>底部抬升</small>{signed(selected.evidence.bottom_lift_percent ?? 0)}%</span>
@@ -368,7 +370,7 @@ export function ScreenerWorkspace({
           <span><small>平台涨跌</small>{signed(selected.evidence.platform_return_percent ?? 0)}%</span>
           <span><small>小实体 K 线</small>{selected.evidence.small_body_sessions ?? 0}/{selected.evidence.platform_sessions ?? 10}</span>
           <span><small>下跌减速</small>{selected.evidence.decline_slowing === undefined ? '--' : selected.evidence.decline_slowing ? '已确认' : '待确认'}</span>
-          <span><small>温和放量</small>{selected.evidence.platform_volume_ratio?.toFixed(2)}x</span>
+          <span><small>{selected.evidence.demand_regime === 'dry-up-retest' ? '缩量承接' : '温和放量'}</small>{selected.evidence.platform_volume_ratio?.toFixed(2)}x</span>
           <span><small>红绿均量比</small>{selected.evidence.average_up_down_volume_ratio?.toFixed(2) ?? '--'}</span>
           <span><small>去最大量日</small>{selected.evidence.robust_up_down_volume_ratio?.toFixed(2) ?? '--'}</span>
           <span><small>期间涨停</small>{selected.evidence.limit_up_count ?? '--'} 次（允许）</span>

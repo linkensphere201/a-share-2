@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildTrendExplanation } from './trendExplanation'
+import { accumulationPatternLabel, buildTrendExplanation } from './trendExplanation'
 import type { TrendAnalysisRun } from './trendAnalysisClient'
 
 const basePattern = {
@@ -9,6 +9,31 @@ const basePattern = {
 }
 
 describe('trend explanation', () => {
+  it('names secondary bases without relabelling legacy snapshots', () => {
+    expect(accumulationPatternLabel('secondary-base')).toBe('二次筑底')
+    expect(accumulationPatternLabel('decline-lift-platform')).toBe('阴跌筑底')
+    expect(accumulationPatternLabel(undefined)).toBe('吸筹区间')
+  })
+
+  it('explains shrinking-volume retests from saved evidence', () => {
+    const run: TrendAnalysisRun = {
+      run_id: 'secondary', as_of_date: '2026-09-10', completion_state: 'complete',
+      stale: false, stale_reasons: [], warnings: [], items: [{
+        item_id: 'secondary-zone', item_type: 'zone', payload: {
+          kind: 'accumulation-range', lower: 4.4, upper: 4.6, score: 80,
+          pattern_type: 'secondary-base', stage: 'accumulation',
+          demand_regime: 'dry-up-retest', pullback_volume_ratio: .48, gentle_retest: true,
+        },
+      }],
+    }
+    const item = buildTrendExplanation(run)!.sections.flatMap(section => section.items)
+      .find(item => item.analysisItemId === 'secondary-zone')!
+    expect(item.detail).toContain('二次筑底')
+    expect(item.detail).toContain('温和回踩')
+    expect(item.detail).toContain('缩量承接')
+    expect(item.detail).toContain('0.48x')
+  })
+
   it('shows accumulation lifecycle and robust demand rather than an unconditional confirmation', () => {
     const run: TrendAnalysisRun = {
       run_id: 'base', as_of_date: '2026-09-14', completion_state: 'complete',
