@@ -177,6 +177,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .signal-toolbar .primary-button { margin-left: auto; display: flex; align-items: center; gap: 6px; white-space: nowrap; }
 .signal-run-action { min-width: 148px; justify-content: center; }
 .signal-error { position: fixed; z-index: 60; top: 64px; right: 12px; max-width: 520px; padding: 8px 10px; color: #ffd5d5; border: 1px solid #8f4f4f; background: #3e2020; }
+.signal-score-loading { position: fixed; z-index: 59; bottom: 12px; right: 12px; display: flex; align-items: center; gap: 8px; padding: 6px 10px; border: 1px solid var(--theme-border); background: var(--theme-surface); color: var(--theme-text); font-size: 12px; }
 .signal-grid { min-height: 0; display: grid; grid-template-columns: var(--signal-runs-width, 225px) 5px minmax(520px, 1fr); }
 .signal-grid.chat-open { grid-template-columns: var(--signal-runs-width, 225px) 5px minmax(460px, 1fr) 5px var(--signal-chat-width, 340px); }
 .signal-grid.inspector-open { grid-template-columns: var(--signal-runs-width, 225px) 5px var(--signal-results-width, 360px) 5px minmax(540px, 1fr); }

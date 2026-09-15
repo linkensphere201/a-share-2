@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import logging
 import time
+from datetime import date
 from typing import Literal, cast
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response, status
+from fastapi.responses import JSONResponse
 
 from stock_harness.analysis_inputs import AnalysisHorizons, AnalysisTimeframe
 from stock_harness.analysis_results import AnalysisNamespace
@@ -110,16 +112,25 @@ def create_analysis_router() -> APIRouter:
         run_id: str, request: Request, system_id: str | None = None,
         limit: int = Query(default=5000, ge=1, le=5000),
         offset: int = Query(default=0, ge=0),
-    ) -> dict[str, object]:
+        projection: Literal["full", "workspace"] = "full",
+        universe: Literal["all", "boards", "stocks"] = "all",
+    ) -> Response:
         selected_store = store(request)
         if selected_store.get_signal_review_run(run_id) is None:
             raise HTTPException(status_code=404, detail="signal review run not found")
-        return {
-            "items": selected_store.list_signal_review_scores(
-                run_id, system_id=system_id, limit=limit, offset=offset,
-            ),
-            "total": selected_store.count_signal_review_scores(run_id, system_id),
-        }
+        items = selected_store.list_signal_review_scores(
+            run_id, system_id=system_id, limit=limit, offset=offset,
+            include_system_payload=projection == "full",
+            universe=universe,
+        )
+        # Payloads are already JSON values; only the store-added date needs encoding.
+        # Build the response in this worker rather than walking every nested value
+        # again on FastAPI's event loop.
+        return JSONResponse({
+            "items": [{**item, "effective_date": cast(date, item["effective_date"]).isoformat()}
+                      for item in items],
+            "total": selected_store.count_signal_review_scores(run_id, system_id, universe=universe),
+        })
 
     @router.get("/api/signals/runs/{run_id}/hotspot-waves")
     def list_hotspot_waves(

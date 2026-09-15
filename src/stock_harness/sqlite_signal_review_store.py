@@ -10,6 +10,16 @@ from uuid import uuid4
 from stock_harness.sqlite_mapping import _date_from_key, _date_key
 
 
+def _score_universe_clause(universe: str) -> str:
+    if universe == "all":
+        return ""
+    if universe == "boards":
+        return " AND score.entity_scope IN ('board', 'market')"
+    if universe == "stocks":
+        return " AND score.entity_scope = 'stock'"
+    raise ValueError("unknown score universe")
+
+
 class SQLiteSignalReviewStoreMixin:
     def list_compatible_prior_score_runs(
         self, run_id: str, system_id: str, scorer_version: str,
@@ -316,12 +326,18 @@ class SQLiteSignalReviewStoreMixin:
     def list_signal_review_scores(
         self, run_id: str, system_id: str | None = None,
         limit: int = 5000, offset: int = 0,
+        *, include_system_payload: bool = True,
+        universe: str = "all",
     ) -> list[dict[str, object]]:
         if not 1 <= limit <= 5000:
             raise ValueError("score limit must be between 1 and 5000")
         if offset < 0:
             raise ValueError("score offset must be non-negative")
+        universe_clause = _score_universe_clause(universe)
         system_clause = "AND score.system_id = ?" if system_id else ""
+        payload = "score.payload_json" if include_system_payload else (
+            "json_remove(score.payload_json, '$.system_payload')"
+        )
         parameters: tuple[object, ...] = (
             (run_id, system_id, limit, offset) if system_id
             else (run_id, limit, offset)
@@ -330,11 +346,11 @@ class SQLiteSignalReviewStoreMixin:
             rows = self._connection.execute(
                 f"""
                 SELECT instrument.symbol, instrument.name, instrument.kind,
-                       instrument.exchange, run.effective_date, score.payload_json
+                       instrument.exchange, run.effective_date, {payload}
                 FROM signal_review_scores AS score
                 JOIN instruments AS instrument USING (instrument_id)
                 JOIN signal_review_runs AS run USING (run_id)
-                WHERE score.run_id = ? {system_clause}
+                WHERE score.run_id = ? {system_clause} {universe_clause}
                 ORDER BY score.system_id, score.eligible DESC, score.rank,
                          instrument.symbol
                 LIMIT ? OFFSET ?
@@ -349,12 +365,14 @@ class SQLiteSignalReviewStoreMixin:
 
     def count_signal_review_scores(
         self, run_id: str, system_id: str | None = None,
+        *, universe: str = "all",
     ) -> int:
         clause = " AND system_id = ?" if system_id else ""
+        clause += _score_universe_clause(universe)
         parameters: tuple[object, ...] = (run_id, system_id) if system_id else (run_id,)
         with self._lock:
             return int(self._connection.execute(
-                f"SELECT count(*) FROM signal_review_scores WHERE run_id = ?{clause}",
+                f"SELECT count(*) FROM signal_review_scores AS score WHERE run_id = ?{clause}",
                 parameters,
             ).fetchone()[0])
 

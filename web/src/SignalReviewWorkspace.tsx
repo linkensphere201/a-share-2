@@ -102,6 +102,10 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
   const [selectedScoreSystem, setSelectedScoreSystem] = useState('trend-breakout')
   const [analysisScope, setAnalysisScope] = useState<AnalysisScope>('board')
   const [selectedAnalysisScore, setSelectedAnalysisScore] = useState<SignalScoreResult>()
+  const [scoreLoading, setScoreLoading] = useState<{ runId: string; loaded: number; total?: number }>()
+  const scoreUniverse = selectedDefinition?.cadence !== 'daily' ? 'all'
+    : dailyView === 'stock-pool' || (['results', 'opportunities'].includes(dailyView) && analysisScope === 'stock')
+      ? 'stocks' : 'boards'
   useEffect(() => { setSelectedAnalysisScore(undefined); setHighlightedSystemProjectionId(undefined) }, [selectedRun?.run_id, dailyView, analysisScope])
   const [highlightedSystemProjectionId, setHighlightedSystemProjectionId] = useState<string>()
   const [hotspotFilter, setHotspotFilter] = useState<HotspotFilter>('all')
@@ -173,12 +177,16 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
   useEffect(() => {
     if (!selectedRun || selectedRun.status !== 'succeeded') {
       setScores([])
+      setScoreLoading(undefined)
       return
     }
     const controller = new AbortController()
     const startedAt = performance.now()
     setScores([])
-    listSignalScores(selectedRun.run_id, controller.signal).then(value => {
+    setScoreLoading({ runId: selectedRun.run_id, loaded: 0 })
+    listSignalScores(selectedRun.run_id, controller.signal, (loaded, total) => {
+      if (!controller.signal.aborted) setScoreLoading({ runId: selectedRun.run_id, loaded, total })
+    }, scoreUniverse).then(value => {
       if (controller.signal.aborted) return
       setScores(value)
       reportSignalTiming('评分数据加载', startedAt, {
@@ -186,8 +194,9 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
       })
     })
       .catch(reason => { if (reason.name !== 'AbortError') setError(String(reason)) })
+      .finally(() => { if (!controller.signal.aborted) setScoreLoading(undefined) })
     return () => controller.abort()
-  }, [selectedRun?.run_id, selectedRun?.status])
+  }, [selectedRun?.run_id, selectedRun?.status, scoreUniverse])
 
   useEffect(() => {
     if (selectedRun?.status !== 'running' || !selectedDefinition) return
@@ -667,6 +676,10 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
       </button>
     </header>
     {error && <button className="signal-error" onClick={() => setError('')}>{error}</button>}
+    {scoreLoading?.runId === selectedRun?.run_id && scoreLoading && <div className="signal-score-loading" role="status">
+      <RefreshCw size={12} className="spin"/>正在加载复盘评分
+      {scoreLoading.total !== undefined && <span>{scoreLoading.loaded} / {scoreLoading.total}</span>}
+    </div>}
     <section className={`${inspected ? 'signal-grid inspector-open' : 'signal-grid'}${chatOpen ? ' chat-open' : ''}`} style={gridStyle}>
       <aside className="signal-runs">
         <header><span>历史轮次</span><small>{runs.length}</small></header>

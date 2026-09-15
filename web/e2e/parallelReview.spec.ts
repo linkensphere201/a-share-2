@@ -14,16 +14,26 @@ test('daily modules show both analytical leaders in the real workspace', async (
     summary: index ? '偏离收敛，缩量企稳。' : '关键边界突破，量价配合。',
     hard_events: [], history: [], components: {}, penalties: [], disqualifiers: [],
   }))
-  await page.route('**/api/signals/**', route => {
+  let releaseScores!: () => void
+  const scoresReady = new Promise<void>(resolve => { releaseScores = resolve })
+  await page.route('**/api/signals/**', async route => {
     const url = route.request().url()
+    if (url.includes('/scores?')) {
+      expect(url).toContain('projection=workspace')
+      expect(url).toContain('universe=boards')
+      await scoresReady
+    }
     const data = url.endsWith('/definitions') ? { items: [definition] }
       : url.includes('/runs?') ? { items: [run] }
-      : url.endsWith('/scores') ? { items: scores }
+      : url.includes('/scores?') ? { items: scores }
       : { items: [], total: 0 }
     return route.fulfill({ json: data })
   })
   await page.goto('/')
   await page.getByRole('button', { name: '信号复盘', exact: true }).click()
+  await expect(page.getByRole('status').filter({ hasText: '正在加载复盘评分' })).toBeVisible()
+  releaseScores()
+  await expect(page.getByRole('status').filter({ hasText: '正在加载复盘评分' })).toHaveCount(0)
   await expect(page.getByLabel('趋势体系前排')).toBeVisible()
   await expect(page.getByLabel('均值回归前排')).toBeVisible()
   await expect(page.getByRole('button', { name: '均值回归', exact: true })).toHaveCount(0)

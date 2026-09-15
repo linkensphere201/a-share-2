@@ -624,6 +624,24 @@ def test_daily_signal_persists_every_board_but_displays_attention_only() -> None
             f"/api/signals/runs/{run['run_id']}/scores",
             params={"system_id": "trend-breakout"},
         )
+        compact_response = client.get(
+            f"/api/signals/runs/{run['run_id']}/scores",
+            params={"system_id": "mean-reversion", "projection": "workspace", "limit": 1},
+        )
+        full_response = client.get(
+            f"/api/signals/runs/{run['run_id']}/scores",
+            params={"system_id": "mean-reversion", "limit": 1},
+        )
+        assert compact_response.status_code == 200
+        full = full_response.json()
+        compact = compact_response.json()
+        assert "system_payload" in full["items"][0]
+        assert "system_payload" not in compact["items"][0]
+        assert compact["items"] == [
+            {key: value for key, value in item.items() if key != "system_payload"}
+            for item in full["items"]
+        ]
+        assert compact["total"] == full["total"]
     assert score_response.status_code == 200
     assert score_response.json()["total"] == 2
 

@@ -75,7 +75,7 @@ describe('SignalReviewWorkspace', () => {
       if (url === '/api/signals/definitions') return response({ items: [definition] })
       if (url.includes('/api/signals/runs?')) return response({ items: [run] })
       if (url.endsWith('/items')) return response({ items })
-      if (url.endsWith('/scores')) return response({ items: [] })
+      if (url.includes('/scores?')) return response({ items: [] })
       throw new Error(`unexpected URL ${url}`)
     })
     vi.stubGlobal('fetch', fetchMock)
@@ -142,7 +142,7 @@ describe('SignalReviewWorkspace', () => {
       if (url === '/api/signals/definitions') return response({ items: [definition] })
       if (url.includes('/api/signals/runs?')) return response({ items: [newerRun, run] })
       if (url.endsWith('/items')) return response({ items })
-      if (url.endsWith('/scores')) return response({ items: [] })
+      if (url.includes('/scores?')) return response({ items: [] })
       if (url.includes('/api/signals/weekly-board-recognition/runs') && init?.method === 'POST') {
         expect(JSON.parse(String(init.body))).toEqual({ effective_date: '2026-09-04' })
         return response({ ...run, run_id: 'run-2', revision: 3 }, 202)
@@ -205,7 +205,7 @@ describe('SignalReviewWorkspace', () => {
       if (url === '/api/signals/definitions') return response({ items: [definition] })
       if (url.includes('/api/signals/runs?')) return response({ items: [run] })
       if (url.endsWith('/items')) return response({ items })
-      if (url.endsWith('/scores')) return response({ items: [] })
+      if (url.includes('/scores?')) return response({ items: [] })
       if (url === '/api/ai/codex/status') return response({
         codex: { available: true, authenticated: true, experimental: true },
         templates: [], signal_templates: [{ id: 'signal-challenge', version: 'v1', label: '反例质疑', instruction: 'test' }],
@@ -288,7 +288,7 @@ describe('SignalReviewWorkspace', () => {
       if (url === '/api/signals/definitions') return response({ items: [dailyDefinition] })
       if (url.includes('/api/signals/runs?')) return response({ items: [dailyRun] })
       if (url.endsWith('/items')) return response({ items: [] })
-      if (url.endsWith('/scores')) return response({ items: [] })
+      if (url.includes('/scores?')) return response({ items: [] })
       if (url.includes('/board-observations?')) return response({ items: [observation], total: 1 })
       if (url.endsWith('/attention') && init?.method !== 'PUT') return response({ items: pinned ? [{
         signal_id: dailyDefinition.signal_id, symbol: observation.symbol,
@@ -343,7 +343,7 @@ describe('SignalReviewWorkspace', () => {
       if (url.includes('/api/signals/runs?')) return response({ items: [dailyRun] })
       if (url === '/api/signals/runs/run-0') return response({ ...dailyRun, run_id: 'run-0', revision: 1 })
       if (url.endsWith('/items')) return response({ items: [] })
-      if (url.endsWith('/scores')) return response({ items: scores })
+      if (url.includes('/scores?')) return response({ items: scores })
       if (url.endsWith('/attention')) return response({ items: [] })
       if (url.includes('/board-observations?')) return response({ items: observations, total: 2 })
       throw new Error(`unexpected URL ${url}`)
@@ -401,7 +401,7 @@ describe('SignalReviewWorkspace', () => {
       if (url === '/api/signals/definitions') return response({ items: [dailyDefinition] })
       if (url.includes('/api/signals/runs?')) return response({ items: [dailyRun] })
       if (url.endsWith('/items')) return response({ items: [] })
-      if (url.endsWith('/scores')) return response({ items: [meanScore, noSetupScore] })
+      if (url.includes('/scores?')) return response({ items: [meanScore, noSetupScore] })
       if (url.endsWith('/attention')) return response({ items: [] })
       if (url.includes('/board-observations?')) return response({ items: [], total: 0 })
       throw new Error(`unexpected URL ${url}`)
@@ -442,7 +442,7 @@ describe('SignalReviewWorkspace', () => {
       if (url === '/api/signals/definitions') return response({ items: [dailyDefinition] })
       if (url.includes('/api/signals/runs?')) return response({ items: [dailyRun] })
       if (url.endsWith('/items')) return response({ items: [] })
-      if (url.endsWith('/scores')) return response({ items: [trend, leading] })
+      if (url.includes('/scores?')) return response({ items: [trend, leading] })
       if (url.endsWith('/attention')) return response({ items: [] })
       if (url.includes('/board-observations?')) return response({
         items: [dailyObservation('BK001.DC', '前导板块'), dailyObservation('BK002.DC', '机会板块')],
@@ -486,7 +486,7 @@ describe('SignalReviewWorkspace', () => {
       if (url === '/api/signals/definitions') return response({ items: [dailyDefinition] })
       if (url.includes('/api/signals/runs?')) return response({ items: [dailyRun] })
       if (url.endsWith('/items')) return response({ items: [] })
-      if (url.endsWith('/scores')) return response({ items: [leading] })
+      if (url.includes('/scores?')) return response({ items: [leading] })
       if (url.endsWith('/attention')) return response({ items: [] })
       if (url.includes('/board-observations?')) return response({ items: observations, total: 1 })
       throw new Error(`unexpected URL ${url}`)
@@ -518,7 +518,7 @@ describe('SignalReviewWorkspace', () => {
       if (url === '/api/signals/definitions') return response({ items: [dailyDefinition] })
       if (url.includes('/api/signals/runs?')) return response({ items: [dailyRun] })
       if (url.endsWith('/items')) return response({ items: [] })
-      if (url.endsWith('/scores')) return response({ items: [hotspot] })
+      if (url.includes('/scores?')) return response({ items: [hotspot] })
       if (url.endsWith('/attention')) return response({ items: [] })
       if (url.includes('/board-observations?')) return response({
         items: [dailyObservation('BK1340.DC', '印制电路板')], total: 1,
@@ -550,7 +550,7 @@ describe('SignalReviewWorkspace', () => {
       if (url === '/api/signals/definitions') return response({ items: [dailyDefinition] })
       if (url.includes('/api/signals/runs?')) return response({ items: [dailyRun] })
       if (url.endsWith('/items')) return response({ items: [] })
-      if (url.endsWith('/scores')) return response({ items: [hotspot] })
+      if (url.includes('/scores?')) return response({ items: [hotspot] })
       if (url.endsWith('/attention')) return response({ items: [] })
       if (url.includes('/board-observations?')) return response({
         items: [dailyObservation('BK001.DC', '点火候选')], total: 1,
@@ -591,7 +591,7 @@ describe('SignalReviewWorkspace', () => {
       if (url === '/api/signals/definitions') return response({ items: [dailyDefinition] })
       if (url.includes('/api/signals/runs?')) return response({ items: [dailyRun] })
       if (url.endsWith('/items')) return response({ items: [dailyItem] })
-      if (url.endsWith('/scores')) return response({ items: [] })
+      if (url.includes('/scores?')) return response({ items: [] })
       if (url.endsWith('/attention')) return response({ items: [] })
       if (url === '/api/analysis/runs/deep-1') return response({ run_id: 'deep-1', items: [{
         item_id: 'scenario-1', item_type: 'scenario', payload: {
@@ -672,7 +672,7 @@ describe('SignalReviewWorkspace', () => {
       if (url === '/api/signals/definitions') return response({ items: [dailyDefinition] })
       if (url.includes('/api/signals/runs?')) return response({ items: [dailyRun] })
       if (url.endsWith('/items')) return response({ items: [forestry] })
-      if (url.endsWith('/scores')) return response({ items: [] })
+      if (url.includes('/scores?')) return response({ items: [] })
       if (url.endsWith('/attention')) return response({ items: [] })
       if (url.includes('/board-observations?')) return response({ items: [], total: 0 })
       throw new Error(`unexpected URL ${url}`)
@@ -736,7 +736,7 @@ describe('SignalReviewWorkspace', () => {
       if (url === '/api/signals/definitions') return response({ items: [dailyDefinition] })
       if (url.includes('/api/signals/runs?')) return response({ items: [dailyRun] })
       if (url.endsWith('/items')) return response({ items: [] })
-      if (url.endsWith('/scores')) return response({ items: [] })
+      if (url.includes('/scores?')) return response({ items: [] })
       if (url.endsWith('/attention')) return response({ items: [] })
       if (url === '/api/observation-pools/runs/run-1/stock') return response(pool)
       if (url === '/api/analysis/runs/pool-m4-1') return response({

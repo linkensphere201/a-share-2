@@ -21,10 +21,13 @@ describe('signalReviewClient', () => {
     })
     vi.stubGlobal('fetch', fetchMock)
 
-    const result = await listSignalScores('run-1')
+    const progress = vi.fn()
+    const result = await listSignalScores('run-1', undefined, progress)
 
     expect(result).toHaveLength(5001)
     expect(result.at(-1)?.symbol).toBe('LAST')
     expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(fetchMock.mock.calls.every(([url]) => String(url).includes('projection=workspace'))).toBe(true)
+    expect(progress.mock.calls).toEqual([[5000, 5001], [5001, 5001]])
   })
 })

@@ -449,22 +449,31 @@ export async function listSignalItems(runId: string, signal?: AbortSignal): Prom
 
 export async function listSignalScores(
   runId: string, signal?: AbortSignal,
+  onProgress?: (loaded: number, total: number) => void,
+  universe: 'all' | 'boards' | 'stocks' = 'all',
 ): Promise<SignalScoreResult[]> {
   const pageSize = 5000
-  const base = `/api/signals/runs/${encodeURIComponent(runId)}/scores`
+  const base = `/api/signals/runs/${encodeURIComponent(runId)}/scores?projection=workspace&universe=${universe}`
   const first = await json<{ items: SignalScoreResult[]; total: number }>(
     await fetch(base, { signal }),
   )
+  signal?.throwIfAborted()
+  let loaded = first.items.length
+  onProgress?.(loaded, first.total)
   if (!Number.isFinite(first.total) || first.items.length >= first.total) return first.items
   const offsets = []
   for (let offset = first.items.length; offset < first.total; offset += pageSize) {
     offsets.push(offset)
   }
-  const pages = await Promise.all(offsets.map(async offset =>
-    json<{ items: SignalScoreResult[] }>(
-      await fetch(`${base}?limit=${pageSize}&offset=${offset}`, { signal }),
-    ),
-  ))
+  const pages = await Promise.all(offsets.map(async offset => {
+    const page = await json<{ items: SignalScoreResult[] }>(
+      await fetch(`${base}&limit=${pageSize}&offset=${offset}`, { signal }),
+    )
+    signal?.throwIfAborted()
+    loaded += page.items.length
+    onProgress?.(loaded, first.total)
+    return page
+  }))
   return first.items.concat(...pages.map(page => page.items))
 }
 
