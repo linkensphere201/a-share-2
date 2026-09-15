@@ -279,6 +279,7 @@ def _apply_leading_visibility(
             "capacity_compatible": capacity_fit["compatible"],
             "capacity_market_preferred": capacity_fit["market_compatible"],
             "capacity_fit_score": capacity_fit["fit_score"],
+            "capacity_fit_reasons": capacity_fit["reasons"],
             "market_admission_eligible": market_gate["eligible"],
             "market_admission_reasons": market_gate["reasons"],
             "leading_carry_confirmation": carry_confirmation,

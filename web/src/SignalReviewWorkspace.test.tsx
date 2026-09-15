@@ -502,6 +502,37 @@ describe('SignalReviewWorkspace', () => {
     expect(screen.getByText('平台临界')).toBeTruthy()
   })
 
+  it('shows stable visible hotspots under the default all filter', async () => {
+    const dailyDefinition = {
+      ...definition, signal_id: 'daily-market-board-review', name: '每日复盘',
+      cadence: 'daily', profiles: ['market', 'attention'],
+    }
+    const dailyRun = { ...run, signal_id: dailyDefinition.signal_id, cadence: 'daily' }
+    const hotspot = {
+      ...signalScore('BK1340.DC', 93, true, 1, []),
+      system_id: 'board-hotspot-emergence', hotspot_stage: 'hotspot-confirmed',
+      score_direction: 'stable', radar_visible: true, radar_slot_limit: 1,
+    }
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === '/api/signals/definitions') return response({ items: [dailyDefinition] })
+      if (url.includes('/api/signals/runs?')) return response({ items: [dailyRun] })
+      if (url.endsWith('/items')) return response({ items: [] })
+      if (url.endsWith('/scores')) return response({ items: [hotspot] })
+      if (url.endsWith('/attention')) return response({ items: [] })
+      if (url.includes('/board-observations?')) return response({
+        items: [dailyObservation('BK1340.DC', '印制电路板')], total: 1,
+      })
+      throw new Error(`unexpected URL ${url}`)
+    }))
+    const user = userEvent.setup()
+    render(<SignalReviewWorkspace theme={themes[0]} onClose={() => undefined}/>)
+
+    await user.click(await screen.findByRole('button', { name: /近期热点/ }))
+    expect(await screen.findByText('印制电路板')).toBeTruthy()
+    expect(screen.getByRole('button', { name: /全部有效/ }).className).toContain('active')
+  })
+
   it('explains why hotspot candidates did not enter a visible seat', async () => {
     const dailyDefinition = {
       ...definition, signal_id: 'daily-market-board-review', name: '每日复盘',

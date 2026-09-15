@@ -258,6 +258,8 @@ export type SignalScoreResult = {
   capacity_fit_score?: number
   visibility_score?: number
   capacity_fit_reasons?: string[]
+  market_admission_eligible?: boolean
+  market_admission_reasons?: string[]
   theme_registry_version?: string
   theme_name?: string
   theme_parent_id?: string | null

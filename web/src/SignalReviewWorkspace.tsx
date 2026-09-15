@@ -105,8 +105,8 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
   const [meanOverlayVisible, setMeanOverlayVisible] = useState(false)
   useEffect(() => { setSelectedAnalysisScore(undefined); setHighlightedSystemProjectionId(undefined) }, [selectedRun?.run_id, dailyView, analysisScope])
   const [highlightedSystemProjectionId, setHighlightedSystemProjectionId] = useState<string>()
-  const [hotspotFilter, setHotspotFilter] = useState<HotspotFilter>('rising')
-  const [leadingFilter, setLeadingFilter] = useState<LeadingFilter>('strengthening')
+  const [hotspotFilter, setHotspotFilter] = useState<HotspotFilter>('all')
+  const [leadingFilter, setLeadingFilter] = useState<LeadingFilter>('all')
   const [historySelection, setHistorySelection] = useState<{ symbol: string; entityKey?: string }>()
   const [exactAnalysis, setExactAnalysis] = useState<TrendAnalysisRun | null>(null)
   const [reviewTrendState, setReviewTrendState] = useState<TradingSystemWindowState>(createReviewTrendState)
@@ -932,6 +932,9 @@ function topFilterReasons(values: SignalScoreResult[], includeWindow = false): s
   values.forEach(item => {
     const reasons = [
       ...item.disqualifiers,
+      ...(item.capacity_fit_reasons ?? []),
+      ...(item.market_admission_reasons ?? []),
+      ...(item.capacity_compatible === false ? ['board-capacity-incompatible'] : []),
       ...(includeWindow ? item.hotspot_window_failure_reasons ?? [] : []),
     ]
     new Set(reasons).forEach(reason => counts.set(reason, (counts.get(reason) ?? 0) + 1))
@@ -958,6 +961,12 @@ function filterReasonLabel(value: string): string {
     'weak-leader': '板块龙头强度不足',
     'weak-breadth': '板块内部扩散不足',
     'weak-activity': '量能活跃度不足',
+    'board-capacity-incompatible': '板块容量或覆盖不符合席位要求',
+    'capacity-too-small-or-unknown': '板块成交容量过小或不可用',
+    'insufficient-capacity-coverage': '板块容量覆盖不足',
+    'insufficient-board-breadth': '板块有效成分数量不足',
+    'capacity-concentrated-in-one-member': '板块成交过度集中于单一成分',
+    'board-capacity-mismatches-market': '板块容量与当前市场环境不匹配',
   } as Record<string, string>)[value] ?? (/[\u4e00-\u9fff]/.test(value) ? value : '其他过滤条件')
 }
 

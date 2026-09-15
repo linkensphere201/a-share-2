@@ -650,6 +650,7 @@ def test_leading_radar_never_admits_a_one_day_leader_pulse() -> None:
     assert third["leading_state"] == "strengthening"
     assert third["market_admission_eligible"] is False
     assert "missing-persistent-leader" in third["market_admission_reasons"]
+    assert isinstance(third["capacity_fit_reasons"], list)
     assert third["leading_visible"] is False
 
 
