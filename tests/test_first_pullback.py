@@ -157,3 +157,43 @@ def test_recovery_without_confirmation_ends_first_pullback():
     result = detect_first_pullback(bars)
     assert result["stage"] == "completed"
     assert not result["screen_eligible"]
+
+
+def test_research_zone_does_not_change_existing_trade_scenarios():
+    from stock_harness.analysis_results import GeneratedAnalysisItem, GeneratedItemType
+    from stock_harness.structural_map import build_structural_map
+    for stage in ("pullback-confirmed", "invalidated", "expired"):
+        item = GeneratedAnalysisItem(item_id="first", item_type=GeneratedItemType.ZONE,
+                                     payload={**detect_first_pullback(sample()), "stage": stage})
+        assert build_structural_map([item], 11.85).boundaries == ()
+
+
+def test_legacy_candidate_rows_survive_state_migration(tmp_path, monkeypatch):
+    import stock_harness.sqlite_store as module
+    from test_screener import _store_with_major_edge
+    source, days = _store_with_major_edge()
+    with source:
+        run = ScreenerService(source).run_sync([], [], 10, days[-1])
+        # Populate the old-state table with a real saved analysis and evidence.
+        analysis = source._connection.execute('SELECT run_id FROM generated_analysis_runs LIMIT 1').fetchone()[0]
+        run = source.create_screener_run("volume-accumulation-20d", "old", days[-1], {})
+        source.complete_screener_run(run["run_id"], [{
+            "symbol": "000001.SZ", "state": "accumulating", "score": 75,
+            "analysis_run_id": analysis, "line_item_id": "old", "line_code": "OLD",
+            "evidence": {"original": True},
+        }])
+        expected = source.list_screener_candidates(run["run_id"])
+        database = tmp_path / "old-states.sqlite"
+        old_schema = module._SCHEMA.replace(", 'pullback-observation', 'pullback-confirmed'", "")
+        with monkeypatch.context() as patch:
+            patch.setattr(module, "_SCHEMA", old_schema)
+            patch.setattr(SQLiteMarketDataStore, "_ensure_screener_candidate_states", lambda self: None)
+            with SQLiteMarketDataStore(database) as old:
+                for table in ("instruments", "generated_analysis_runs", "screener_runs", "screener_candidates"):
+                    columns = [row[1] for row in source._connection.execute(f'PRAGMA table_info({table})')]
+                    rows = source._connection.execute(f'SELECT * FROM {table}').fetchall()
+                    old._connection.executemany(f'INSERT INTO {table} ({",".join(columns)}) VALUES ({",".join("?" for _ in columns)})', rows)
+                old._connection.commit()
+        with SQLiteMarketDataStore(database) as migrated:
+            assert migrated.list_screener_candidates(run["run_id"]) == expected
+            assert migrated._connection.execute('PRAGMA foreign_key_check').fetchall() == []

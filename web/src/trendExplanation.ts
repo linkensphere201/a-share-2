@@ -106,8 +106,21 @@ export function accumulationStyleLabel(value: unknown): string {
   return ({ 'compact-platform': '紧凑平台', 'secondary-retest': '二次筑底 / 回踩', 'broad-base': '宽幅蓄势' } as Record<string, string>)[String(value)] ?? '未分类'
 }
 
+export function firstPullbackStageLabel(value: unknown): string {
+  return ({ 'pullback-observation': '回踩观察', 'pullback-confirmed': '转强确认',
+    invalidated: '结构失效', expired: '已过期', completed: '首轮已结束',
+    disorderly: '量能待收敛', launching: '启动观察',
+  } as Record<string, string>)[String(value)] ?? '首次回踩'
+}
+
 function explainZone(item: AnalysisItem, allItems: AnalysisItem[]): TrendExplanationItem {
   const payload = item.payload
+  if (payload.kind === 'first-pullback-range') return {
+    analysisItemId: item.item_id,
+    title: `强势股首次回踩 · ${firstPullbackStageLabel(payload.stage)}`,
+    detail: `启动 ${stringValue(payload.launch_date) ?? '-'}；涨幅 ${formatPercent(payload.impulse_gain_percent)}，回踩幅度 ${formatPercent(payload.pullback_depth_percent)}；回踩/启动均量 ${formatRatio(payload.pullback_volume_ratio)}x；失效位 ${formatPrice(payload.invalidation_price)}，前高参考 ${formatPrice(payload.first_target_price)}，参考盈亏比 ${formatRatio(payload.first_risk_reward)}。${payload.screen_eligible === true ? '' : '当前不满足选股条件。'}仅日线量价结构，板块共振与分时承接尚未验证，不代表主力持仓或买入指令。`,
+    score: numberValue(payload.score),
+  }
   const volume = payload.kind === 'estimated-volume-at-price'
   const accumulation = payload.kind === 'accumulation-range'
   const observations = numberValue(payload.observation_count)

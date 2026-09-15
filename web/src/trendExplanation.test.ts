@@ -9,6 +9,19 @@ const basePattern = {
 }
 
 describe('trend explanation', () => {
+  it('explains first-pullback confirmation without inventing market or intraday permission', () => {
+    const run: TrendAnalysisRun = { run_id: 'first', as_of_date: '2026-09-14', completion_state: 'complete',
+      stale: false, stale_reasons: [], warnings: [], items: [{ item_id: 'pullback', item_type: 'zone', payload: {
+        kind: 'first-pullback-range', stage: 'pullback-confirmed', score: 80, lower: 10, upper: 11,
+        launch_date: '2026-09-01', pullback_volume_ratio: .55, invalidation_price: 9.8,
+        first_target_price: 12, first_risk_reward: 2, screen_eligible: false,
+      } }] }
+    const item = buildTrendExplanation(run)!.sections.flatMap(section => section.items).find(i => i.analysisItemId === 'pullback')!
+    expect(item.title).toContain('转强确认')
+    expect(item.detail).toContain('0.55x')
+    expect(item.detail).toContain('当前不满足选股条件')
+    expect(item.detail).toContain('板块共振与分时承接尚未验证')
+  })
   it('names secondary bases without relabelling legacy snapshots', () => {
     expect(accumulationPatternLabel('secondary-base')).toBe('二次筑底')
     expect(accumulationPatternLabel('decline-lift-platform')).toBe('阴跌筑底')

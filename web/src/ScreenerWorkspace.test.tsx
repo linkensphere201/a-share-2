@@ -24,6 +24,38 @@ afterEach(() => {
 })
 
 describe('ScreenerWorkspace', () => {
+  it('runs the shared first-pullback strategy and filters observation versus confirmation', async () => {
+    const firstRun = { ...run, strategy_id: 'strong-first-pullback', strategy_version: 'strong-first-pullback-v1' }
+    const confirmed = { ...candidate, state: 'pullback-confirmed', evidence: {
+      ...candidate.evidence, kind: 'first-pullback-range', stage: 'pullback-confirmed',
+      launch_date: '2026-08-10', confirmation_date: '2026-09-01', pullback_sessions: 5,
+    } }
+    const observation = { ...confirmed, symbol: '000002.SZ', name: '观察标的', rank: 2,
+      state: 'pullback-observation', evidence: { ...confirmed.evidence, stage: 'pullback-observation', confirmation_date: null } }
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'POST') return response(firstRun, 202)
+      if (String(input).includes('/candidates')) return response({ items: [confirmed, observation] })
+      if (String(input).includes('/api/analysis/')) return response(analysis)
+      return response({ items: [firstRun] })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+    renderScreener()
+    await screen.findByText('观察标的', { selector: 'b' })
+    expect(screen.getByText('仅日线量价；板块共振、分时承接未验证')).toBeTruthy()
+    expect(screen.queryByText('距斜边')).toBeNull()
+    await user.click(screen.getByRole('button', { name: '快速过滤：转强确认' }))
+    expect(screen.queryByText('观察标的', { selector: 'b' })).toBeNull()
+    await user.click(screen.getByRole('button', { name: '快速过滤：回踩观察' }))
+    expect(screen.queryByText('测试标的', { selector: 'b' })).toBeNull()
+    expect(await screen.findByText('尚未确认')).toBeTruthy()
+    await user.selectOptions(screen.getByLabelText('策略'), 'strong-first-pullback')
+    await user.click(screen.getByRole('button', { name: '开始选股' }))
+    await waitFor(() => expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(true))
+    const post = fetchMock.mock.calls.find(([, init]) => init?.method === 'POST')!
+    expect(JSON.parse(String(post[1]?.body)).strategy_id).toBe('strong-first-pullback')
+  })
+
   it('defaults V7 to compact platforms and shows dated recognition beside names', async () => {
     const compact = { ...candidate, state: 'accumulating', evidence: {
       ...candidate.evidence, platform_style: 'compact-platform', recognition_rank_bonus: 5,

@@ -1,5 +1,5 @@
-export type ScreenerStrategyId = 'major-descending-breakout' | 'volume-accumulation-20d'
-export type ScreenerState = 'critical-breakout' | 'breakout-retest' | 'broken-out' | 'accumulating'
+export type ScreenerStrategyId = 'major-descending-breakout' | 'volume-accumulation-20d' | 'strong-first-pullback'
+export type ScreenerState = 'critical-breakout' | 'breakout-retest' | 'broken-out' | 'accumulating' | 'pullback-observation' | 'pullback-confirmed'
 export type ScreenerPeriod = '3m' | '6m' | '1y'
 
 export type ScreenerRun = {
@@ -68,6 +68,14 @@ export type ScreenerCandidate = {
     small_body_sessions?: number
     platform_volume_ratio?: number
     stage?: string
+    kind?: string
+    launch_date?: string
+    peak_date?: string
+    confirmation_date?: string | null
+    impulse_gain_percent?: number
+    pullback_depth_percent?: number
+    pullback_sessions?: number
+    breakout_price?: number
     pattern_type?: string
     platform_style?: string
     recognition_rank_bonus?: number

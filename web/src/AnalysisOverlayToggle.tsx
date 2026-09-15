@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState, type ReactNode } from 'react'
 export const analysisLayers = {
   patternsVisible: '形态识别',
   volumeZonesVisible: '密集成交区',
-  keyLevelsVisible: '关键价位与吸筹区间',
+  keyLevelsVisible: '关键价位与形态区间',
   shortTrendLinesVisible: '短期趋势线',
   mediumTrendLinesVisible: '中期趋势线',
   longTrendLinesVisible: '长期关键趋势线',

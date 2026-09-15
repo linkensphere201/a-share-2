@@ -26,7 +26,7 @@ export type GeneratedTrendLineGeometry = {
 
 export type GeneratedZoneGeometry = {
   id: string
-  kind: 'key-level' | 'estimated-volume-at-price' | 'accumulation-range'
+  kind: 'key-level' | 'estimated-volume-at-price' | 'accumulation-range' | 'first-pullback-range'
   x: number
   y: number
   height: number
@@ -190,7 +190,7 @@ export function selectCoreZoneItems(items: AnalysisItem[]): AnalysisItem[] {
   for (const item of items) {
     if (item.item_type !== 'zone') continue
     const kind = item.payload.kind
-    if (kind !== 'key-level' && kind !== 'estimated-volume-at-price' && kind !== 'accumulation-range') continue
+    if (kind !== 'key-level' && kind !== 'estimated-volume-at-price' && kind !== 'accumulation-range' && kind !== 'first-pullback-range') continue
     if (typeof item.payload.ai_reference_code === 'string') {
       aiReferences.push(item)
       continue
@@ -321,9 +321,9 @@ export function projectGeneratedZones(
     const kind = item.payload.kind
     const lower = item.payload.lower
     const upper = item.payload.upper
-    if ((kind !== 'key-level' && kind !== 'estimated-volume-at-price' && kind !== 'accumulation-range')
+    if ((kind !== 'key-level' && kind !== 'estimated-volume-at-price' && kind !== 'accumulation-range' && kind !== 'first-pullback-range')
       || typeof lower !== 'number' || typeof upper !== 'number') return []
-    if (((kind === 'key-level' || kind === 'accumulation-range') && !showKeyLevels)
+    if (((kind === 'key-level' || kind === 'accumulation-range' || kind === 'first-pullback-range') && !showKeyLevels)
       || (kind === 'estimated-volume-at-price' && !showVolumeZones)) return []
     const lowerY = priceSeries.priceToCoordinate(lower)
     const upperY = priceSeries.priceToCoordinate(upper)
@@ -331,10 +331,11 @@ export function projectGeneratedZones(
     const top = Math.max(0, Math.min(lowerY, upperY))
     const bottom = Math.min(paneHeight, Math.max(lowerY, upperY))
     if (bottom < 0 || top > paneHeight) return []
-    const startX = kind === 'accumulation-range' && typeof item.payload.start_date === 'string'
+    const datedRange = kind === 'accumulation-range' || kind === 'first-pullback-range'
+    const startX = datedRange && typeof item.payload.start_date === 'string'
       ? chart.timeScale().timeToCoordinate(item.payload.start_date as Time)
       : 0
-    const endX = kind === 'accumulation-range' && typeof item.payload.end_date === 'string'
+    const endX = datedRange && typeof item.payload.end_date === 'string'
       ? chart.timeScale().timeToCoordinate(item.payload.end_date as Time)
       : width
     if (startX === null || endX === null) return []

@@ -5,7 +5,7 @@ import { MarketBoardBadge } from './MarketBoardBadge'
 import { fetchInstrumentBoardMemberships, type InstrumentBoardMembership } from './boardTags'
 import { TradingSystemControls } from './TradingSystemControls'
 import { TrendExplanationPanel } from './TrendExplanationPanel'
-import { accumulationStageLabel, accumulationPatternLabel, accumulationStyleLabel } from './trendExplanation'
+import { accumulationStageLabel, accumulationPatternLabel, accumulationStyleLabel, firstPullbackStageLabel } from './trendExplanation'
 import { useAnalysisOverlayVisibility, useAnalysisLayers } from './AnalysisOverlayToggle'
 import { logError, logInfo } from './eventLogger'
 import {
@@ -26,12 +26,16 @@ const periodLabels: Record<ScreenerPeriod, string> = { '3m': '3个月', '6m': '�
 const stateLabels: Record<ScreenerState, string> = {
   'critical-breakout': '临界突破', 'breakout-retest': '突破回踩', 'broken-out': '已突破',
   accumulating: '堆量蓄势',
+  'pullback-observation': firstPullbackStageLabel('pullback-observation'),
+  'pullback-confirmed': firstPullbackStageLabel('pullback-confirmed'),
 }
 const strategyLabels: Record<ScreenerStrategyId, string> = {
   'major-descending-breakout': '大斜边突破',
   'volume-accumulation-20d': '20日堆量蓄势',
+  'strong-first-pullback': '强势股首次回踩',
 }
 const trendStates: ScreenerState[] = ['critical-breakout', 'breakout-retest', 'broken-out']
+const pullbackStates: ScreenerState[] = ['pullback-confirmed', 'pullback-observation']
 const selectedRunKey = 'stock-harness.screener.selected-run.v1'
 const selectedCandidateKey = 'stock-harness.screener.selected-candidate.v1'
 type ResultStateFilter = ScreenerState | 'all'
@@ -113,7 +117,7 @@ export function ScreenerWorkspace({
   const visibleBoards = boardOptions.filter(board => `${board.name} ${board.board_symbol}`.toLowerCase().includes(boardQuery.trim().toLowerCase()) || boardFilter.includes(board.board_symbol))
   const recognition = candidates[0]?.recognition
   const resultStateCounts = useMemo(() => Object.fromEntries(
-    ([...trendStates, 'accumulating'] as ScreenerState[]).map(state => [
+    ([...trendStates, ...pullbackStates, 'accumulating'] as ScreenerState[]).map(state => [
       state,
       candidates.filter(item => item.state === state).length,
     ]),
@@ -316,7 +320,7 @@ export function ScreenerWorkspace({
         {selectedRun?.status === 'running' && <div className="screener-progress"><i style={{ width: `${progress}%` }}/></div>}
         <div className="screener-quick-filters" role="group" aria-label="结果快速过滤">
           <button className={resultStateFilter === 'all' ? 'active' : ''} aria-label="快速过滤：全部" onClick={() => setResultStateFilter('all')}>全部 <small>{candidates.length}</small></button>
-          {(selectedRun?.strategy_id === 'volume-accumulation-20d' ? ['accumulating'] as ScreenerState[] : trendStates).map(state => <button
+          {(selectedRun?.strategy_id === 'volume-accumulation-20d' ? ['accumulating'] as ScreenerState[] : selectedRun?.strategy_id === 'strong-first-pullback' ? pullbackStates : trendStates).map(state => <button
             key={state}
             className={resultStateFilter === state ? 'active' : ''}
             aria-label={`快速过滤：${stateLabels[state]}`}
@@ -367,11 +371,11 @@ export function ScreenerWorkspace({
             {item.recognition?.tags.filter(tag => tag === 'recent' || tag === 'historical').map(tag => <i key={tag} className="recognition-name-tag"
               title={`辨识度来源 ${item.recognition?.source_date ?? '--'} · ${item.evidence.recognition_rank_bonus ? `排序加分 ${item.evidence.recognition_rank_bonus}` : '历史轮次不改变原排名'}`}>
               {tag === 'recent' ? '近期辨识度' : '历史辨识度'}</i>)}
-          </span><small>{item.symbol}</small></span><span><b>{candidatePeriodLabel(item)}</b><small>{item.evidence.platform_style ? accumulationStyleLabel(item.evidence.platform_style) : item.evidence.stage ? accumulationStageLabel(item.evidence.stage) : stateLabels[item.state]}</small></span><span>{item.score.toFixed(1)}</span>
+          </span><small>{item.symbol}</small></span><span><b>{candidatePeriodLabel(item)}</b><small>{candidateStageLabel(item)}</small></span><span>{item.score.toFixed(1)}</span>
         </button>)}</div>
       </section>
       <section className="screener-chart-pane">
-        <header>{selected ? <><span className="instrument-name-line"><span>{selected.name}</span><MarketBoardBadge instrument={selected}/></span><small>{selected.line_code} · {candidatePeriodLabel(selected)} · {selected.evidence.stage ? accumulationStageLabel(selected.evidence.stage) : stateLabels[selected.state]}</small></> : <span>个股 K 线</span>}</header>
+        <header>{selected ? <><span className="instrument-name-line"><span>{selected.name}</span><MarketBoardBadge instrument={selected}/></span><small>{selected.line_code} · {candidatePeriodLabel(selected)} · {candidateStageLabel(selected)}</small></> : <span>个股 K 线</span>}</header>
         <div className="screener-chart-body">{selected && analysis
           ? <ScreenerChart key={selected.analysis_run_id} candidate={selected} analysis={analysis} asOfDate={selectedRun?.as_of_date} theme={theme}/>
           : <div className="screener-empty">选择一条结果查看 K 线与形态分析</div>}</div>
@@ -400,7 +404,19 @@ export function ScreenerWorkspace({
           {selected.evidence.score_components && <span><small>下跌 / 抬升 / 平台 / 承接</small>{Object.values(selected.evidence.score_components).map(value => value.toFixed(1)).join(' / ')}</span>}
           {selected.evidence.missing_evidence?.includes('turnover-unavailable') && <span><small>辅助证据</small>换手率暂缺</span>}
         </footer>}
-        {selected && selected.state !== 'accumulating' && <footer className="screener-evidence">
+        {selected && pullbackStates.includes(selected.state) && <footer className="screener-evidence">
+          <span><small>形态阶段</small>{firstPullbackStageLabel(selected.evidence.stage)}</span>
+          <span><small>启动日期</small>{selected.evidence.launch_date ?? '--'}</span>
+          <span><small>确认日期</small>{selected.evidence.confirmation_date ?? '尚未确认'}</span>
+          <span><small>启动涨幅</small>{selected.evidence.impulse_gain_percent?.toFixed(2) ?? '--'}%</span>
+          <span><small>回踩幅度</small>{selected.evidence.pullback_depth_percent?.toFixed(2) ?? '--'}%</span>
+          <span><small>回踩 / 启动均量</small>{selected.evidence.pullback_volume_ratio?.toFixed(2) ?? '--'}x</span>
+          <span><small>失效位（收盘口径）</small>{selected.evidence.invalidation_price?.toFixed(2) ?? '--'}</span>
+          <span><small>前高参考</small>{selected.evidence.first_target_price?.toFixed(2) ?? '--'}</span>
+          <span><small>参考盈亏比</small>{selected.evidence.first_risk_reward?.toFixed(2) ?? '--'}</span>
+          <span><small>证据边界</small>仅日线量价；板块共振、分时承接未验证</span>
+        </footer>}
+        {selected && selected.state !== 'accumulating' && !pullbackStates.includes(selected.state) && <footer className="screener-evidence">
           <span><small>边界</small>{selected.evidence.projected_price?.toFixed(2)}</span>
           <span><small>收盘</small>{latestClose(selected).toFixed(2)}</span>
           <span><small>距斜边</small>{signed(selected.evidence.distance_percent ?? 0)}%</span>
@@ -519,8 +535,14 @@ const ScreenerChart = memo(function ScreenerChart({
 
 function formatRunDate(value: string) { return value.replaceAll('-', '').slice(4) + ' 选股结果' }
 function candidatePeriodLabel(value: ScreenerCandidate) {
+  if (pullbackStates.includes(value.state)) return `回踩${value.evidence.pullback_sessions ?? '-'}日`
   return value.evidence.period ? periodLabels[value.evidence.period]
     : `${value.evidence.platform_sessions ?? 20}日`
+}
+function candidateStageLabel(value: ScreenerCandidate) {
+  if (pullbackStates.includes(value.state)) return firstPullbackStageLabel(value.evidence.stage)
+  return value.evidence.platform_style ? accumulationStyleLabel(value.evidence.platform_style)
+    : value.evidence.stage ? accumulationStageLabel(value.evidence.stage) : stateLabels[value.state]
 }
 function strategyLabel(value: string) {
   return strategyLabels[value as ScreenerStrategyId] ?? value
