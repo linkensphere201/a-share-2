@@ -58,7 +58,7 @@ from stock_harness.trend_context import (
 )
 
 
-ALGORITHM_VERSION = "trend-causal-replay-v31"
+ALGORITHM_VERSION = "trend-causal-replay-v32"
 LOGGER = logging.getLogger(__name__)
 
 
@@ -675,7 +675,7 @@ def _generated_items(
                     "upper": accumulation.upper,
                     "center": (accumulation.lower + accumulation.upper) / 2,
                     "score": accumulation.score,
-                    "method": "decline-lift-platform-price-volume",
+                    "method": "decline-recovery-platform-price-volume",
                     "uncertainty": (
                         "Price-volume accumulation proxy; it does not identify actual "
                         "institutional positions or intent."

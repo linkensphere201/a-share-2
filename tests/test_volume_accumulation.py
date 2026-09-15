@@ -62,7 +62,7 @@ def test_screener_adapter_uses_the_shared_pattern_contract() -> None:
     signal = detect_volume_accumulation(bars)
 
     assert signal is not None
-    assert signal.evidence["algorithm_version"] == "decline-platform-accumulation-v2"
+    assert signal.evidence["algorithm_version"] == "decline-platform-accumulation-v3"
     assert signal.evidence["range_lower"] < signal.evidence["range_upper"]
 
 
@@ -238,3 +238,110 @@ def test_early_lift_limit_up_uses_event_support_not_the_later_raised_platform() 
     assert event["position"] == "lift"
     assert event["state"] == "digested"
     assert event["support_price"] < pattern.lower
+
+
+def _secondary_bars() -> list[AnalysisBar]:
+    bars = _bars()[:60]
+    rebound = [10.8, 11.1, 11.5, 11.8, 12.2, 12.6, 12.8, 13.0]
+    retest = [12.85, 12.7, 12.55, 12.4, 12.3, 12.2, 12.1, 12.0, 12.05, 12.0, 12.05, 12.0]
+    platform = [12.08, 12.12, 12.09, 12.14, 12.10, 12.16, 12.11, 12.18, 12.13, 12.20]
+    for i, close in enumerate([*rebound, *retest, *platform]):
+        volume = 200 if i < 8 else 80 if i < 20 else 160 if i % 2 == 0 else 90
+        bars = _append(bars, close, volume)
+        bars[-1] = replace(bars[-1], open=close * (1.005 if 8 <= i < 20 or i >= 20 and i % 2 else .995))
+    return bars
+
+
+def test_secondary_base_uses_shared_platform_and_screener_contract() -> None:
+    bars = _secondary_bars()
+    pattern = detect_accumulation_pattern(bars)
+    signal = detect_volume_accumulation(bars)
+    assert pattern is not None and pattern.stage == "accumulation"
+    assert pattern.evidence["pattern_type"] == "secondary-base"
+    assert pattern.evidence["pullback_volume_ratio"] < .9
+    assert pattern.evidence["second_bottom_price"] > pattern.evidence["first_bottom_price"]
+    assert signal is not None and signal.score == pattern.score
+    assert signal.evidence["range_lower"] == pattern.lower
+    assert signal.evidence["volume_baseline"] == "pre-platform-retest"
+
+
+@pytest.mark.parametrize("failure", ["supply", "lower-low", "violent", "no-decline", "one-spike"])
+def test_secondary_base_rejects_unhealthy_retests(failure: str) -> None:
+    bars = _secondary_bars()
+    if failure == "supply":
+        bars[68:80] = [replace(b, volume=400) for b in bars[68:80]]
+    elif failure == "lower-low":
+        bars[74] = replace(bars[74], low=9.5, close=10, open=10.1)
+    elif failure == "violent":
+        bars[74] = replace(bars[74], open=13.5, high=13.6, close=12.1, low=12)
+    elif failure == "no-decline":
+        bars[:60] = [replace(b, open=10.7, high=10.8, low=10.6, close=10.7) for b in bars[:60]]
+    else:
+        bars[-7] = replace(bars[-7], volume=10000)
+    assert detect_volume_accumulation(bars) is None
+
+
+def test_secondary_base_lifecycle_is_causal_and_breakout_is_not_accumulating() -> None:
+    bars = _secondary_bars()
+    original = detect_accumulation_pattern(bars)
+    rally = _append(bars, 13.5, 400)
+    pattern = detect_accumulation_pattern(rally)
+    assert original is not None and pattern is not None
+    assert pattern.stage == "breakout"
+    assert detect_volume_accumulation(rally) is None
+    assert detect_accumulation_pattern(bars) == original
+    failed = detect_accumulation_pattern(_append(rally, 11, 400))
+    assert failed is not None and failed.stage == "invalidated"
+
+
+def test_gentle_retest_can_preserve_a_formed_platform_without_future_bars() -> None:
+    from stock_harness.accumulation_pattern import AccumulationPatternConfig, _follow_up
+    bars = _secondary_bars()
+    original = detect_accumulation_pattern(bars)
+    assert original is not None
+    latest = _append(bars, 12.12, 70)[-1]
+    pattern = _follow_up(original, [latest], latest, None, AccumulationPatternConfig())
+    assert pattern.stage == "accumulation"
+    assert pattern.evidence["gentle_retest"] is True
+    assert pattern.lower == original.lower
+    assert original.evidence.get("gentle_retest") is None
+
+
+def test_secondary_base_remains_scale_invariant() -> None:
+    bars = _secondary_bars()
+    original = detect_accumulation_pattern(bars)
+    scaled = detect_accumulation_pattern([
+        replace(b, open=b.open * 10, high=b.high * 10, low=b.low * 10, close=b.close * 10)
+        for b in bars
+    ])
+    assert original is not None and scaled is not None
+    assert scaled.stage == original.stage
+    assert scaled.score == pytest.approx(original.score)
+
+
+def test_dry_secondary_platform_requires_internal_demand_not_blanket_expansion() -> None:
+    bars = _secondary_bars()
+    closes = [12.16, 12.10, 12.18, 12.12, 12.20, 12.14, 12.22, 12.16, 12.24, 12.18]
+    bars[-10:] = [replace(
+        b, open=close * (.995 if i % 2 == 0 else 1.005),
+        high=close * (1.005 if i % 2 == 0 else 1.01), low=close * .99,
+        close=close, volume=b.volume // 2,
+    ) for i, (b, close) in enumerate(zip(bars[-10:], closes))]
+    signal = detect_volume_accumulation(bars)
+    assert signal is not None
+    assert signal.evidence["demand_regime"] == "dry-up-retest"
+    assert .5 <= signal.evidence["platform_volume_ratio"] < 1
+    assert signal.evidence["robust_up_down_volume_ratio"] >= 1.1
+    bars[-10:] = [replace(b, volume=60) for b in bars[-10:]]
+    assert detect_volume_accumulation(bars) is None
+
+
+@pytest.mark.parametrize("volume,close", [(400, 12.12), (0, 12.12), (70, 11.0)])
+def test_followup_cannot_preserve_supply_pressure_missing_volume_or_breakdown(volume: int, close: float) -> None:
+    from stock_harness.accumulation_pattern import AccumulationPatternConfig, _follow_up
+    bars = _secondary_bars()
+    original = detect_accumulation_pattern(bars)
+    assert original is not None
+    latest = _append(bars, close, volume)[-1]
+    pattern = _follow_up(original, [latest], latest, None, AccumulationPatternConfig())
+    assert pattern.stage not in {"accumulation", "pending-digestion"}

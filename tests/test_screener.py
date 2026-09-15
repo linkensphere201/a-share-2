@@ -281,10 +281,10 @@ def test_volume_accumulation_run_persists_independent_candidate():
         candidates = store.list_screener_candidates(str(run["run_id"]))
 
         assert run["strategy_id"] == "volume-accumulation-20d"
-        assert run["strategy_version"] == "volume-accumulation-20d-v5"
+        assert run["strategy_version"] == "volume-accumulation-20d-v6"
         assert candidates[0]["state"] == "accumulating"
         assert candidates[0]["line_code"] == "VOL-ACC-20D"
-        assert candidates[0]["evidence"]["algorithm_version"] == "decline-platform-accumulation-v2"
+        assert candidates[0]["evidence"]["algorithm_version"] == "decline-platform-accumulation-v3"
         linked = store.get_generated_analysis_run(candidates[0]["analysis_run_id"])
         assert linked is not None
         assert any(
@@ -301,6 +301,36 @@ def test_volume_accumulation_run_persists_independent_candidate():
             assert evidence[field] == zone["payload"][field]
         assert evidence["range_lower"] == zone["payload"]["lower"]
         assert evidence["range_upper"] == zone["payload"]["upper"]
+    finally:
+        store.close()
+
+
+def test_secondary_base_screener_and_linked_chart_publish_identical_evidence():
+    from test_volume_accumulation import _secondary_bars
+    store, days = _store_with_major_edge()
+    try:
+        bars = _secondary_bars()
+        store.upsert_daily_bars("tushare", [
+            DailyBar("000001.SZ", day, b.open, b.high, b.low, b.close, b.volume)
+            for day, b in zip(days[-len(bars):], bars)
+        ])
+        run = ScreenerService(store).run_sync(
+            [MajorLinePeriod.YEAR], list(MajorLineState), 10, days[-1],
+            "volume-accumulation-20d",
+        )
+        candidates = store.list_screener_candidates(str(run["run_id"]))
+        assert len(candidates) == 1
+        candidate = candidates[0]
+        linked = store.get_generated_analysis_run(candidate["analysis_run_id"])
+        assert linked is not None
+        zone = next(x for x in linked["items"] if x["item_id"] == candidate["line_item_id"])
+        assert candidate["evidence"]["pattern_type"] == "secondary-base"
+        for field in ("pattern_type", "stage", "demand_regime", "first_bottom_date",
+                      "second_bottom_date", "pullback_volume_ratio", "score_components"):
+            assert candidate["evidence"][field] == zone["payload"][field]
+        assert candidate["score"] == zone["payload"]["score"]
+        assert candidate["evidence"]["range_lower"] == zone["payload"]["lower"]
+        assert candidate["evidence"]["range_upper"] == zone["payload"]["upper"]
     finally:
         store.close()
 

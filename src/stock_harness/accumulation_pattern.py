@@ -10,8 +10,8 @@ from typing import Mapping, Sequence
 from stock_harness.analysis_inputs import AnalysisBar
 
 
-ALGORITHM_VERSION = "decline-platform-accumulation-v2"
-ANALYSIS_LOOKBACK = 135
+ALGORITHM_VERSION = "decline-platform-accumulation-v3"
+ANALYSIS_LOOKBACK = 170
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +90,23 @@ def detect_accumulation_pattern(
                 )
                 if candidate is not None:
                     candidates.append((end, candidate))
+            # Confirm the first low before searching its rebound and higher retest.
+            platform_start = end - width
+            for trough in range(max(59, platform_start - 46), platform_start - 15):
+                if history[trough].low != min(b.low for b in history[trough - 3:trough + 4]):
+                    continue
+                recovery_sessions = platform_start - trough - 1
+                for decline_width in config.decline_windows:
+                    start = trough + 1 - decline_width
+                    if start < 0:
+                        continue
+                    candidate = _candidate(
+                        history[start:end], decline_width, config,
+                        limit_up_dates, turnover_by_date,
+                        recovery_sessions=recovery_sessions,
+                    )
+                    if candidate is not None:
+                        candidates.append((end, candidate))
     if not candidates:
         return None
     formed = [(end, p) for end, p in candidates if p.stage == "accumulation"]
@@ -155,6 +172,10 @@ def _demand(platform: Sequence[AnalysisBar], baseline: Sequence[AnalysisBar]) ->
         fmean(down_days) if down_days else 0,
     )
     persistence = sum(b.close > b.open and b.volume >= prior for b in platform) / len(platform)
+    median_volume = _quantile([b.volume for b in platform], .5)
+    local_persistence = sum(
+        b.close > b.open and b.volume >= median_volume for b in platform
+    ) / len(platform)
     share = max(b.volume for b in platform) / max(total, 1)
     moderate = _unit((expansion - .8) / .5) * _unit((3.5 - expansion) / 1.5)
     quality = (
@@ -171,6 +192,7 @@ def _demand(platform: Sequence[AnalysisBar], baseline: Sequence[AnalysisBar]) ->
         "robust_up_down_volume_ratio": robust_ratio, "platform_volume_ratio": expansion,
         "dominant_session_share": share, "volume_weighted_close_location": close_location,
         "repair_pullback_volume_ratio": repair_ratio, "demand_persistence": persistence,
+        "platform_demand_persistence": local_persistence,
         "demand_quality": quality,
     }
 
@@ -181,10 +203,12 @@ def _candidate(
     config: AccumulationPatternConfig,
     limit_up_dates: frozenset[str] | None,
     turnover_by_date: Mapping[str, float] | None,
+    *, recovery_sessions: int | None = None,
 ) -> AccumulationPattern | None:
     decline = bars[:decline_width]
-    lift = bars[decline_width:decline_width + config.lift_window]
-    platform = bars[decline_width + config.lift_window:]
+    recovery_width = recovery_sessions if recovery_sessions is not None else config.lift_window
+    lift = bars[decline_width:decline_width + recovery_width]
+    platform = bars[decline_width + recovery_width:]
     decline_return = (decline[-1].close / decline[0].close - 1) * 100
     ma20, ma40, ma60 = (_ma(decline, w) for w in (20, 40, 60))
     divergence = (ma60 / ma20 - 1) * 100
@@ -208,6 +232,12 @@ def _candidate(
 
     early_bottom = _quantile([b.low for b in lift[:5]], .3)
     late_bottom = _quantile([b.low for b in lift[5:]], .3)
+    recovery_evidence: dict[str, object] = {}
+    if recovery_sessions is not None:
+        recovery = _secondary_recovery(decline, lift, atr)
+        if recovery is None:
+            return None
+        early_bottom, late_bottom, recovery_evidence = recovery
     bottom_lift = (late_bottom / early_bottom - 1) * 100
     lift_atr = (late_bottom - early_bottom) / atr
     lower = _quantile([b.low for b in platform], .2)
@@ -232,7 +262,9 @@ def _candidate(
             or contraction > 1.5):
         return None
 
-    demand = _demand(platform, bars[decline_width - 10:decline_width + 10])
+    # Compare a secondary platform with its pullback, not the earlier rebound surge.
+    baseline = lift[-10:] if recovery_sessions is not None else bars[decline_width - 10:decline_width + 10]
+    demand = _demand(platform, baseline)
     decline_quality = (
         .35 * _unit(abs(decline_return) / 25) + .2 * sustained
         + .45 * _unit(deceleration)
@@ -255,14 +287,27 @@ def _candidate(
         and short_slope >= -.03 * atr
         and recent_divergence < divergence
     )
+    dry_retest = (
+        recovery_sessions is not None
+        and .5 <= float(demand["platform_volume_ratio"]) < 1
+        and float(demand["platform_demand_persistence"]) >= .3
+        and float(demand["average_up_down_volume_ratio"]) >= 1.2
+        and float(demand["robust_up_down_volume_ratio"]) >= 1.1
+        and float(demand["repair_pullback_volume_ratio"]) >= 1.1
+        and float(demand["volume_weighted_close_location"]) >= .55
+    )
+    volume_confirmed = dry_retest or (
+        float(demand["demand_persistence"]) >= .25
+        and 1 <= float(demand["platform_volume_ratio"]) <= 3
+    )
     established = (
         slowing and score >= config.min_quality_score
         and float(demand["up_down_volume_ratio"]) > 1
         and float(demand["average_up_down_volume_ratio"]) > 1
         and float(demand["robust_up_down_volume_ratio"]) >= 1
-        and float(demand["demand_persistence"]) >= .25
         and float(demand["dominant_session_share"]) <= .35
-        and 1 <= float(demand["platform_volume_ratio"]) <= 3
+        and volume_confirmed
+        and platform[-1].close <= upper + config.breakout_atr * atr
     )
     missing = []
     turnover_ratio = None
@@ -276,6 +321,11 @@ def _candidate(
         missing.append("limit-up-dates-unavailable")
     evidence: dict[str, object] = {
         "algorithm_version": ALGORITHM_VERSION,
+        "pattern_type": "secondary-base" if recovery_sessions is not None else "decline-lift-platform",
+        "recovery_sessions": recovery_width,
+        "volume_baseline": "pre-platform-retest" if recovery_sessions is not None else "decline-lift",
+        "demand_regime": "dry-up-retest" if dry_retest else "moderate-expansion",
+        **recovery_evidence,
         "as_of_date": platform[-1].period_end.isoformat(),
         "decline_start_date": decline[0].period_start.isoformat(),
         "decline_end_date": decline[-1].period_end.isoformat(),
@@ -319,12 +369,53 @@ def _candidate(
     evidence["reasons"] = reasons
     evidence["limit_up_events"] = _limit_events(
         [*lift, *platform], limit_up_dates, lower, atr,
-        platform_start=config.lift_window, buffer_atr=config.invalidation_atr,
+        platform_start=recovery_width, buffer_atr=config.invalidation_atr,
     )
     return AccumulationPattern(
         score, platform[0].period_start.isoformat(), platform[-1].period_end.isoformat(),
         lower, upper, evidence, "accumulation" if established else "stabilizing",
     )
+
+
+def _secondary_recovery(
+    decline: Sequence[AnalysisBar], recovery: Sequence[AnalysisBar], atr: float,
+) -> tuple[float, float, dict[str, object]] | None:
+    first_low = decline[-1].low
+    peak_index = max(range(len(recovery)), key=lambda i: recovery[i].close)
+    rebound, pullback = recovery[:peak_index + 1], recovery[peak_index + 1:]
+    if len(rebound) < 3 or not 3 <= len(pullback) <= 25:
+        return None
+    peak = recovery[peak_index].close
+    second_low = min(b.low for b in pullback)
+    amplitude = peak - first_low
+    if amplitude <= 0:
+        return None
+    retracement = (peak - second_low) / amplitude
+    rebound_volume = fmean(b.volume for b in rebound)
+    volume_ratio = fmean(b.volume for b in pullback) / max(rebound_volume, 1)
+    # A higher low alone is insufficient: reject deep, violent or supply-led retests.
+    if (amplitude < max(first_low * .05, atr * 1.5)
+            or min(b.low for b in recovery) < first_low - .3 * atr
+            or second_low < first_low + .3 * atr
+            or not .1 <= retracement <= .7
+            or (peak - second_low) / peak > .15
+            or volume_ratio > .9
+            or any(b.open - b.close > 1.5 * atr for b in pullback)
+            or any(b.close < a.close and b.volume > rebound_volume * 1.2
+                   for a, b in zip([rebound[-1], *pullback], pullback))):
+        return None
+    return first_low, second_low, {
+        "first_bottom_date": decline[-1].period_end.isoformat(),
+        "first_bottom_price": first_low,
+        "rebound_peak_date": recovery[peak_index].period_end.isoformat(),
+        "rebound_peak_price": peak,
+        "second_bottom_date": min(pullback, key=lambda b: b.low).period_end.isoformat(),
+        "second_bottom_price": second_low,
+        "rebound_percent": amplitude / first_low * 100,
+        "pullback_sessions": len(pullback),
+        "pullback_retracement": retracement,
+        "pullback_volume_ratio": volume_ratio,
+    }
 
 
 def _limit_events(
@@ -410,8 +501,17 @@ def _follow_up(
     elif stage == "accumulation" and any(e["state"] == "pending" for e in events):
         stage = "pending-digestion"
     if follow and stage in {"accumulation", "pending-digestion"}:
-        stage = "stabilizing"
-        evidence["reasons"] = [*evidence["reasons"], "recent-platform-unconfirmed"]
+        gentle = all(
+            b.close >= pattern.lower and b.low >= float(evidence["invalidation_price"])
+            and b.close <= float(evidence["breakout_price"])
+            and abs(b.close - b.open) <= atr
+            and 0 < b.volume <= float(evidence["platform_average_volume"]) * .9
+            for b in follow
+        ) and pattern.upper - min(b.close for b in follow) <= 2 * atr
+        evidence["gentle_retest"] = gentle
+        if not gentle:
+            stage = "stabilizing"
+            evidence["reasons"] = [*evidence["reasons"], "recent-platform-unconfirmed"]
     evidence.update({
         "stage": stage, "as_of_date": latest.period_end.isoformat(),
         "transition_date": transition_date, "limit_up_events": events,
