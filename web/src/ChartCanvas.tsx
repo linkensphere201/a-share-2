@@ -206,6 +206,7 @@ type ChartCanvasProps = {
   keyLevelsVisible?: boolean
   volumeZonesVisible?: boolean
   patternsVisible?: boolean
+  pivotsVisible?: boolean
   breakoutStateVisible?: boolean
   trendIsolation?: boolean
   onBreakoutStateChange?: (value: GeneratedBreakoutState | undefined) => void
@@ -290,13 +291,14 @@ export function ChartCanvas({
   onToolbarCollapsedChange,
   trendAnalysisEnabled = false,
   showTentativePivots = true,
-  shortTrendLinesVisible = true,
-  mediumTrendLinesVisible = true,
-  longTrendLinesVisible = true,
-  keyLevelsVisible = true,
-  volumeZonesVisible = true,
-  patternsVisible = true,
-  breakoutStateVisible = true,
+  shortTrendLinesVisible = false,
+  mediumTrendLinesVisible = false,
+  longTrendLinesVisible = false,
+  keyLevelsVisible = false,
+  volumeZonesVisible = false,
+  patternsVisible = false,
+  pivotsVisible = false,
+  breakoutStateVisible = false,
   trendIsolation = false,
   onBreakoutStateChange,
   onTrendAnalysisChange,
@@ -1623,7 +1625,7 @@ export function ChartCanvas({
   const macdPaneTop = projectPaneTop(chartRef.current, macdPaneRef.current)
   const openInterestPaneTop = projectPaneTop(chartRef.current, openInterestPaneRef.current)
   const generatedPivots = projectGeneratedPivots(
-    displayedTrendAnalysis,
+    pivotsVisible ? displayedTrendAnalysis : null,
     chartRef.current,
     candleRef.current ?? closeLineRef.current,
     hostRef.current,

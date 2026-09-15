@@ -12,6 +12,7 @@ import { MarketBoardBadge } from './MarketBoardBadge'
 import type { TrendAnalysisRun } from './trendAnalysisClient'
 import { BoardTagStrip } from './BoardTagStrip'
 import { ActiveMarketValueReadout } from './ActiveMarketValueReadout'
+import { useAnalysisOverlayVisibility, useAnalysisLayers } from './AnalysisOverlayToggle'
 
 type InstrumentWindowProps = {
   windowState: ChartWindowState
@@ -34,7 +35,6 @@ type InstrumentWindowProps = {
   onOpenInterestVisibleChange: (visible: boolean) => void
   onPaneRatiosChange: (ratios: ChartPaneRatios) => void
   onToolbarCollapsedChange: (collapsed: boolean) => void
-  onRiskRewardVisibleChange: (visible: boolean) => void
   onScenarioTargetChange: (target?: string) => void
   onTradingSystemsChange: (systems: TradingSystemWindowStates) => void
   onTradingSystemRecalculate: (
@@ -65,7 +65,6 @@ export function ChartWindow({
   onOpenInterestVisibleChange,
   onPaneRatiosChange,
   onToolbarCollapsedChange,
-  onRiskRewardVisibleChange,
   onScenarioTargetChange,
   onTradingSystemsChange,
   onTradingSystemRecalculate,
@@ -77,6 +76,10 @@ export function ChartWindow({
   const [trendRecalculationState, setTrendRecalculationState] = useState<'idle' | 'running' | 'failed'>('idle')
   const [explanationOpen, setExplanationOpen] = useState(false)
   const [highlightedAnalysisItemId, setHighlightedAnalysisItemId] = useState<string>()
+  const [scenarioVisible, setScenarioVisible] = useAnalysisOverlayVisibility(
+    JSON.stringify([instrument.symbol, (viewedTrendAnalysis ?? trendAnalysis)?.run_id]),
+  )
+  const overlayControls = useAnalysisLayers(JSON.stringify([instrument.symbol, (viewedTrendAnalysis ?? trendAnalysis)?.run_id]))
   useEffect(() => {
     setBreakoutState(undefined)
     setTrendAnalysis(null)
@@ -138,6 +141,7 @@ export function ChartWindow({
             state={chart.tradingSystems.trend}
             breakoutState={breakoutState}
             analysisRun={trendAnalysis}
+            externalLayerControls
             recalculationState={trendRecalculationState}
             onChange={trend => onTradingSystemsChange({ ...chart.tradingSystems, trend })}
             onRecalculate={async (trend, refreshData) => {
@@ -166,20 +170,14 @@ export function ChartWindow({
           onToolbarCollapsedChange={onToolbarCollapsedChange}
           trendAnalysisEnabled={chart.tradingSystems.trend.enabled || explanationOpen}
           showTentativePivots={Boolean(chart.tradingSystems.trend.settings.showTentativePivots)}
-          shortTrendLinesVisible={explanationOpen || chart.tradingSystems.trend.layers['short-trend-lines'] !== false}
-          mediumTrendLinesVisible={explanationOpen || chart.tradingSystems.trend.layers['medium-trend-lines'] !== false}
-          longTrendLinesVisible={explanationOpen || chart.tradingSystems.trend.layers['long-trend-lines'] !== false}
-          keyLevelsVisible={explanationOpen || chart.tradingSystems.trend.layers['key-levels'] !== false}
-          volumeZonesVisible={chart.tradingSystems.trend.layers['volume-zones'] !== false}
-          patternsVisible={explanationOpen || chart.tradingSystems.trend.layers.patterns !== false}
-          breakoutStateVisible={chart.tradingSystems.trend.layers['breakout-state'] !== false}
           trendIsolation={chart.tradingSystems.trend.isolate}
           onBreakoutStateChange={setBreakoutState}
           onTrendAnalysisChange={setTrendAnalysis}
           trendAnalysisOverride={viewedTrendAnalysis}
           highlightedAnalysisItemId={highlightedAnalysisItemId}
           selectedScenarioTarget={chart.selectedScenarioTarget}
-          riskRewardVisible={chart.riskRewardVisible}
+          riskRewardVisible={scenarioVisible}
+          {...overlayControls.layers}
         />
         {explanationOpen && (viewedTrendAnalysis ?? trendAnalysis) && <AnalysisWorkspacePanel
           symbol={instrument.symbol}
@@ -188,9 +186,10 @@ export function ChartWindow({
           onRunChange={setViewedTrendAnalysis}
           onHighlightItemChange={setHighlightedAnalysisItemId}
           selectedScenarioTarget={chart.selectedScenarioTarget}
-          scenarioVisible={chart.riskRewardVisible}
+          scenarioVisible={scenarioVisible}
+          overlayControls={overlayControls}
           onScenarioTargetChange={onScenarioTargetChange}
-          onScenarioVisibleChange={onRiskRewardVisibleChange}
+          onScenarioVisibleChange={setScenarioVisible}
           onClose={() => {
             setExplanationOpen(false)
             setHighlightedAnalysisItemId(undefined)

@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { loadAiAnalysisReports, type AiAnalysisReport } from './aiAnalysisClient'
 import { AnalysisChatPanel } from './AnalysisChatPanel'
 import { TrendExplanationPanel } from './TrendExplanationPanel'
+import type { AnalysisLayerControls } from './AnalysisOverlayToggle'
 import {
   loadExactTrendAnalysis, loadTrendAnalysisRuns,
   type TrendAnalysisRun, type TrendAnalysisRunSummary,
@@ -12,6 +13,7 @@ export function AnalysisWorkspacePanel({
   symbol, run, followingLatest, onRunChange, onHighlightItemChange, onClose,
   selectedScenarioTarget, scenarioVisible, onScenarioTargetChange,
   onScenarioVisibleChange,
+  overlayControls,
 }: {
   symbol: string
   run: TrendAnalysisRun
@@ -23,6 +25,7 @@ export function AnalysisWorkspacePanel({
   scenarioVisible?: boolean
   onScenarioTargetChange?: (label: string) => void
   onScenarioVisibleChange?: (visible: boolean) => void
+  overlayControls?: AnalysisLayerControls
 }) {
   const [runs, setRuns] = useState<TrendAnalysisRunSummary[]>([])
   const [legacyReports, setLegacyReports] = useState<AiAnalysisReport[]>([])
@@ -80,6 +83,7 @@ export function AnalysisWorkspacePanel({
       {legacyOpen ? <LegacyReports reports={legacyReports} selected={selectedLegacy} onSelected={setSelectedLegacy}/>
       : <TrendExplanationPanel
         embedded
+        overlayControls={overlayControls}
         run={run}
         onHighlightItemChange={onHighlightItemChange}
         onClose={onClose}

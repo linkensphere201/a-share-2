@@ -179,7 +179,7 @@ describe('StockWorkspace', () => {
     await user.click(screen.getByRole('button', { name: '仅查看趋势体系' }))
     await user.click(screen.getByRole('button', { name: '趋势交易体系设置' }))
     fireEvent.change(screen.getByRole('spinbutton', { name: '短期交易日' }), { target: { value: '80' } })
-    await user.click(screen.getByRole('checkbox', { name: '显示关键位' }))
+    expect(screen.queryByRole('checkbox', { name: '显示关键位' })).toBeNull()
     await user.click(screen.getByRole('button', { name: '保存' }))
 
     await waitFor(() => {
@@ -190,7 +190,6 @@ describe('StockWorkspace', () => {
         isolate: true,
         settingsRevision: 1,
         settings: { shortHorizonBars: 80, mediumHorizonBars: 120, longHorizonBars: 250 },
-        layers: { 'key-levels': false },
       })
     })
 
@@ -200,7 +199,7 @@ describe('StockWorkspace', () => {
     expect(screen.getByRole('button', { name: '退出趋势隔离' }).getAttribute('aria-pressed')).toBe('true')
     await user.click(screen.getByRole('button', { name: '趋势交易体系设置' }))
     expect(screen.getByRole('spinbutton', { name: '短期交易日' })).toHaveProperty('value', '80')
-    expect(screen.getByRole('checkbox', { name: '显示关键位' })).toHaveProperty('checked', false)
+    expect(screen.queryByRole('checkbox', { name: '显示关键位' })).toBeNull()
   })
 
   it('hides volume and MACD from their pane controls and persists both states', async () => {

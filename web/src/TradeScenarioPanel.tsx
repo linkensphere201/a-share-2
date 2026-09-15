@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { AnalysisOverlayToggle } from './AnalysisOverlayToggle'
 import {
   isVolumeZoneTarget,
   readPrimaryStructuralScenario,
@@ -12,6 +13,7 @@ export function TradeScenarioPanel({
   run,
   selectedTargetLabel,
   visible = false,
+  showVisibilityControl = true,
   onTargetChange,
   onVisibleChange,
   onHighlightItemChange,
@@ -19,6 +21,7 @@ export function TradeScenarioPanel({
   run: TrendAnalysisRun
   selectedTargetLabel?: string
   visible?: boolean
+  showVisibilityControl?: boolean
   onTargetChange?: (label: string) => void
   onVisibleChange?: (visible: boolean) => void
   onHighlightItemChange: (itemId?: string) => void
@@ -36,8 +39,8 @@ export function TradeScenarioPanel({
   return <section className={`trade-scenario-panel ${scenario.state}`} aria-label="盈亏比场景">
     <h3>
       <span>交易场景</span>
-      <label><input type="checkbox" aria-label="显示趋势目标与盈亏比" checked={visible}
-        disabled={!onVisibleChange} onChange={event => onVisibleChange?.(event.target.checked)}/>目标与盈亏比</label>
+      {showVisibilityControl && <AnalysisOverlayToggle label="显示趋势目标与盈亏比"
+        checked={visible} onChange={onVisibleChange}>目标区域与盈亏比</AnalysisOverlayToggle>}
     </h3>
     <div className="trade-scenario-summary">
       <button

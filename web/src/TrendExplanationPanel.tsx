@@ -4,6 +4,7 @@ import { buildTrendExplanation } from './trendExplanation'
 import { readTrendEvidence } from './trendEvidence'
 import type { TrendAnalysisRun } from './trendAnalysisClient'
 import { TradeScenarioPanel } from './TradeScenarioPanel'
+import { AnalysisOverlayToggle, AnalysisLayerToggles, type AnalysisLayerControls } from './AnalysisOverlayToggle'
 
 export function TrendExplanationPanel({
   run,
@@ -14,6 +15,7 @@ export function TrendExplanationPanel({
   scenarioVisible = false,
   onScenarioTargetChange,
   onScenarioVisibleChange,
+  overlayControls,
 }: {
   run: TrendAnalysisRun
   onHighlightItemChange: (itemId?: string) => void
@@ -23,6 +25,7 @@ export function TrendExplanationPanel({
   scenarioVisible?: boolean
   onScenarioTargetChange?: (label: string) => void
   onScenarioVisibleChange?: (visible: boolean) => void
+  overlayControls?: AnalysisLayerControls
 }) {
   const explanation = buildTrendExplanation(run)
   if (!explanation) return null
@@ -40,11 +43,17 @@ export function TrendExplanationPanel({
         {explanation.stale && <span className="stale">已过期</span>}
       </div>
       <p className="trend-explanation-summary">{explanation.summary}</p>
+      <div className="trend-explanation-overlay-controls">
+        {overlayControls && <AnalysisLayerToggles {...overlayControls}/>}
+        <AnalysisOverlayToggle label="显示趋势目标与盈亏比" checked={scenarioVisible}
+          onChange={onScenarioVisibleChange}>目标区域与盈亏比</AnalysisOverlayToggle>
+      </div>
       <div className="trend-explanation-sections">
         <TradeScenarioPanel
           run={run}
           selectedTargetLabel={selectedScenarioTarget}
           visible={scenarioVisible}
+          showVisibilityControl={false}
           onTargetChange={onScenarioTargetChange}
           onVisibleChange={onScenarioVisibleChange}
           onHighlightItemChange={onHighlightItemChange}

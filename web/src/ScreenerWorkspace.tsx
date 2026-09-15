@@ -6,6 +6,7 @@ import { fetchInstrumentBoardMemberships, type InstrumentBoardMembership } from 
 import { TradingSystemControls } from './TradingSystemControls'
 import { TrendExplanationPanel } from './TrendExplanationPanel'
 import { accumulationStageLabel } from './trendExplanation'
+import { useAnalysisOverlayVisibility, useAnalysisLayers } from './AnalysisOverlayToggle'
 import { logError, logInfo } from './eventLogger'
 import {
   deleteScreenerRun, listScreenerCandidates, listScreenerRuns,
@@ -434,8 +435,10 @@ const ScreenerChart = memo(function ScreenerChart({
   const [explanationOpen, setExplanationOpen] = useState(false)
   const [highlightedItemId, setHighlightedItemId] = useState<string | undefined>(candidate.line_item_id)
   const [selectedScenarioTarget, setSelectedScenarioTarget] = useState<string>()
-  const [scenarioVisible, setScenarioVisible] = useState(false)
-  const layers = trendState.layers
+  const [scenarioVisible, setScenarioVisible] = useAnalysisOverlayVisibility(
+    JSON.stringify([candidate.symbol, analysis.run_id]),
+  )
+  const overlayControls = useAnalysisLayers(JSON.stringify([candidate.symbol, analysis.run_id]))
   return <div className={explanationOpen ? 'screener-chart-runtime explanation-open' : 'screener-chart-runtime'}>
     <ChartCanvas
       symbol={candidate.symbol}
@@ -454,6 +457,7 @@ const ScreenerChart = memo(function ScreenerChart({
         instrumentKind="stock"
         state={trendState}
         analysisRun={analysis}
+        externalLayerControls
         onChange={setTrendState}
         onRecalculate={() => undefined}
         recalculationAvailable={false}
@@ -465,25 +469,20 @@ const ScreenerChart = memo(function ScreenerChart({
         }}
       />}
       trendAnalysisEnabled={trendState.enabled}
-      shortTrendLinesVisible={layers['short-trend-lines'] !== false}
-      mediumTrendLinesVisible={layers['medium-trend-lines'] !== false}
-      longTrendLinesVisible={layers['long-trend-lines'] !== false}
-      keyLevelsVisible={layers['key-levels'] !== false}
-      volumeZonesVisible={layers['volume-zones'] !== false}
-      patternsVisible={layers.patterns !== false}
-      breakoutStateVisible={layers['breakout-state'] !== false}
       trendIsolation={trendState.isolate}
       asOfDate={asOfDate}
       trendAnalysisOverride={trendState.enabled ? analysis : null}
       highlightedAnalysisItemId={highlightedItemId}
       selectedScenarioTarget={selectedScenarioTarget}
       riskRewardVisible={scenarioVisible}
+      {...overlayControls.layers}
     />
     {explanationOpen && <TrendExplanationPanel
       run={analysis}
       onHighlightItemChange={itemId => setHighlightedItemId(itemId ?? candidate.line_item_id)}
       selectedScenarioTarget={selectedScenarioTarget}
       scenarioVisible={scenarioVisible}
+      overlayControls={overlayControls}
       onScenarioTargetChange={setSelectedScenarioTarget}
       onScenarioVisibleChange={setScenarioVisible}
       onClose={() => {

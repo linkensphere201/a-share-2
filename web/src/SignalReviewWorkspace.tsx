@@ -4,6 +4,7 @@ import {
 } from 'react'
 import { ArrowLeft, Boxes, Eye, Layers3, ListFilter, MessageSquare, Pin, PinOff, Play, Radar, RefreshCw, RotateCcw, Search } from 'lucide-react'
 import { ChartCanvas } from './ChartCanvas'
+import { AnalysisOverlayToggle, useAnalysisOverlayVisibility, useAnalysisLayers } from './AnalysisOverlayToggle'
 import { MarketBoardBadge } from './MarketBoardBadge'
 import type { ThemeDefinition } from './themeStore'
 import {
@@ -85,7 +86,6 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
   const [highlightedEvidenceId, setHighlightedEvidenceId] = useState<string>()
   const [scenarioHighlightedItemId, setScenarioHighlightedItemId] = useState<string>()
   const [selectedScenarioTarget, setSelectedScenarioTarget] = useState<string>()
-  const [scenarioVisible, setScenarioVisible] = useState(false)
   const [selectedEvidenceId, setSelectedEvidenceId] = useState<string>()
   const [dailyView, setDailyView] = useState<DailyView>('results')
   const [observationQuery, setObservationQuery] = useState('')
@@ -102,7 +102,6 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
   const [selectedScoreSystem, setSelectedScoreSystem] = useState('trend-breakout')
   const [analysisScope, setAnalysisScope] = useState<AnalysisScope>('board')
   const [selectedAnalysisScore, setSelectedAnalysisScore] = useState<SignalScoreResult>()
-  const [meanOverlayVisible, setMeanOverlayVisible] = useState(false)
   useEffect(() => { setSelectedAnalysisScore(undefined); setHighlightedSystemProjectionId(undefined) }, [selectedRun?.run_id, dailyView, analysisScope])
   const [highlightedSystemProjectionId, setHighlightedSystemProjectionId] = useState<string>()
   const [hotspotFilter, setHotspotFilter] = useState<HotspotFilter>('all')
@@ -443,6 +442,10 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
   const workspaceChatAvailable = runs.some(item => item.status === 'succeeded')
   const inspected = selectedAnalysisScore ?? selectedPoolItem ?? selectedObservation ?? selectedItem
   const inspectedMeanScore = (scoresBySystem.get('mean-reversion') ?? []).find(score => score.symbol === inspected?.symbol)
+  const overlayContext = JSON.stringify([selectedRun?.run_id, inspected?.symbol, displayedAnalysis?.run_id, dailyView, analysisScope])
+  const [scenarioVisible, setScenarioVisible] = useAnalysisOverlayVisibility(overlayContext)
+  const [meanOverlayVisible, setMeanOverlayVisible] = useAnalysisOverlayVisibility(overlayContext)
+  const overlayControls = useAnalysisLayers(overlayContext)
   const inspectedTrendScore = scores.find(score => score.symbol === inspected?.symbol
     && ['trend-breakout', 'stock-trend-opportunity', 'market-regime'].includes(score.system_id))
     ?? selectedItem?.payload.score_result ?? selectedPoolItem?.payload.opportunity_score
@@ -789,13 +792,14 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
         </div>}
         <div className="signal-chart">{inspected
           ? <ChartCanvas key={`${selectedRun?.run_id}:${inspected.symbol}`} symbol={inspected.symbol} instrumentName={inspected.name} instrumentKind={selectedAnalysisScore?.kind ?? selectedPoolItem?.kind ?? selectedItem?.kind ?? 'sector'} focused theme={theme} range="1Y" priceMode="normal" volumeVisible indicator="none" settlementVisible={false} openInterestVisible={false} asOfDate={selectedRun?.effective_date}
-              toolbarContent={<TradingSystemControls embedded instrumentKind={selectedAnalysisScore?.kind ?? selectedPoolItem?.kind ?? selectedItem?.kind ?? 'sector'} state={reviewTrendState} breakoutState={chartBreakoutState} analysisRun={displayedAnalysis} recalculationState={trendRecalculationState} recalculationAvailable={recalculationAvailable} recalculationDisabledReason="历史轮次保持冻结，只能重新测算最新复盘日期" onChange={setReviewTrendState} onRecalculate={recalculateInspectedTrend} explanationOpen={trendExplanationOpen} onExplanationOpenChange={setTrendExplanationOpen}/>}
+              toolbarContent={<TradingSystemControls externalLayerControls embedded instrumentKind={selectedAnalysisScore?.kind ?? selectedPoolItem?.kind ?? selectedItem?.kind ?? 'sector'} state={reviewTrendState} breakoutState={chartBreakoutState} analysisRun={displayedAnalysis} recalculationState={trendRecalculationState} recalculationAvailable={recalculationAvailable} recalculationDisabledReason="历史轮次保持冻结，只能重新测算最新复盘日期" onChange={setReviewTrendState} onRecalculate={recalculateInspectedTrend} explanationOpen={trendExplanationOpen} onExplanationOpenChange={setTrendExplanationOpen}/>}
               trendAnalysisEnabled={reviewTrendState.enabled && Boolean(displayedAnalysis)} trendAnalysisOverride={displayedAnalysis} highlightedAnalysisItemId={highlightedAnalysisItemId} selectedScenarioTarget={selectedScenarioTarget} riskRewardVisible={scenarioVisible}
               analysisSystemProjection={meanOverlayVisible ? inspectedMeanScore?.chart_projection : undefined} highlightedSystemProjectionId={highlightedSystemProjectionId}
-              showTentativePivots={Boolean(reviewTrendState.settings.showTentativePivots)} shortTrendLinesVisible={reviewTrendState.layers['short-trend-lines'] !== false} mediumTrendLinesVisible={reviewTrendState.layers['medium-trend-lines'] !== false} longTrendLinesVisible={reviewTrendState.layers['long-trend-lines'] !== false} keyLevelsVisible={reviewTrendState.layers['key-levels'] !== false} volumeZonesVisible={reviewTrendState.layers['volume-zones'] !== false} patternsVisible={reviewTrendState.layers.patterns !== false} breakoutStateVisible={reviewTrendState.layers['breakout-state'] !== false} trendIsolation={reviewTrendState.isolate} onBreakoutStateChange={setChartBreakoutState}/>
+              {...overlayControls.layers} showTentativePivots={Boolean(reviewTrendState.settings.showTentativePivots)} trendIsolation={reviewTrendState.isolate} onBreakoutStateChange={setChartBreakoutState}/>
           : <div className="signal-empty">选择一项结果查看 K 线</div>}
           {trendExplanationOpen && displayedAnalysis && <TrendExplanationPanel
             run={displayedAnalysis}
+            overlayControls={overlayControls}
             selectedScenarioTarget={selectedScenarioTarget}
             scenarioVisible={scenarioVisible}
             onScenarioTargetChange={setSelectedScenarioTarget}
@@ -817,7 +821,8 @@ export function SignalReviewWorkspace({ theme, onClose }: Props) {
                   : <p>本轮未保存该标的的趋势分析。</p>}
               </section>
               <section aria-label="均值回归分析"><header>均值回归
-                <label><input aria-label="显示均值结构与目标位" type="checkbox" checked={meanOverlayVisible} onChange={event => setMeanOverlayVisible(event.target.checked)}/>结构与目标位</label>
+                <AnalysisOverlayToggle label="显示均值结构与目标位" checked={meanOverlayVisible}
+                  onChange={setMeanOverlayVisible}>结构与目标位</AnalysisOverlayToggle>
               </header>{inspectedMeanScore ? <MeanReversionResultPanel score={inspectedMeanScore} highlightedProjectionId={highlightedSystemProjectionId} onHighlight={setHighlightedSystemProjectionId}/>
                 : <p>本轮未保存该标的的均值回归分析。</p>}
               </section>

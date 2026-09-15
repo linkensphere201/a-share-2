@@ -1243,6 +1243,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .ai-analysis-empty { align-self: start; margin: 12px; padding: 10px; border: 1px dashed var(--theme-border); color: var(--theme-muted); line-height: 1.6; }
 .trend-explanation-meta { min-height: 24px; display: flex; align-items: center; gap: 8px; padding: 0 9px; border-bottom: 1px solid var(--theme-border); color: var(--theme-muted); font-size: 8px; }
 .trend-explanation-meta .stale { color: #d8aa5d; }
+.analysis-overlay-toggle { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; color: var(--theme-muted); }
+.analysis-overlay-toggle input { margin: 0; flex-shrink: 0; }
+.trend-explanation-overlay-controls { display: flex; flex-wrap: wrap; gap: 6px 12px; padding: 5px 9px; border-bottom: 1px solid var(--theme-border); }
+.trend-explanation-pane { grid-template-rows: auto auto auto minmax(0, 1fr); }
+.trend-explanation-panel { grid-template-rows: 30px auto auto auto minmax(0, 1fr); }
 .trend-explanation-summary { margin: 0; padding: 8px 9px; border-bottom: 1px solid var(--theme-border); color: var(--theme-text); font-size: 9px; line-height: 1.5; }
 .trend-explanation-sections { min-height: 0; overflow: auto; }
 .trend-explanation-sections section { border-bottom: 1px solid var(--theme-border); }

@@ -35,6 +35,7 @@ type TradingSystemControlsProps = {
   recalculationAvailable?: boolean
   recalculationDisabledReason?: string
   embedded?: boolean
+  externalLayerControls?: boolean
 }
 
 export function TradingSystemControls({
@@ -50,6 +51,7 @@ export function TradingSystemControls({
   recalculationAvailable = true,
   recalculationDisabledReason,
   embedded = false,
+  externalLayerControls = false,
 }: TradingSystemControlsProps) {
   const descriptor = tradingSystemRegistry.get('trend')!
   const supported = descriptor.supportedInstrumentKinds.includes(instrumentKind)
@@ -194,12 +196,12 @@ export function TradingSystemControls({
               <label><input aria-label="盘中临时K线参与预览" type="checkbox" checked={draftSettings.provisionalPreview} onChange={event => setDraftSettings(current => ({ ...current, provisionalPreview: event.target.checked }))}/>盘中预览</label>
               <label><input aria-label="显示待确认拐点" type="checkbox" checked={draftSettings.showTentativePivots} onChange={event => setDraftSettings(current => ({ ...current, showTentativePivots: event.target.checked }))}/>待确认拐点</label>
             </fieldset>
-            <fieldset className="trading-system-layers">
+            {!externalLayerControls && <fieldset className="trading-system-layers">
               <legend>分析图层</legend>
               {descriptor.layers.map(layer => (
                 <label key={layer.id}><input aria-label={`显示${layer.label}`} type="checkbox" checked={draftLayers[layer.id] !== false} onChange={event => setDraftLayers(current => ({ ...current, [layer.id]: event.target.checked }))}/>{layer.label}</label>
               ))}
-            </fieldset>
+            </fieldset>}
           </div>
           <footer>
             <button className="icon-command" title="恢复默认" aria-label="恢复趋势体系默认设置" onClick={restoreDefaults}><RotateCcw size={12}/></button>
