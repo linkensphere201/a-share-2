@@ -1,6 +1,7 @@
 from datetime import date, timedelta
 import time
 import sqlite3
+import json
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -11,6 +12,7 @@ from stock_harness.models import AdjustmentFactor, DailyBar, Instrument, Instrum
 from stock_harness.screener import STRATEGY_VERSION, ScreenerService
 from stock_harness.sqlite_store import SQLiteMarketDataStore
 from stock_harness.sqlite_schema import SCHEMA
+from stock_harness.pattern_analysis import PatternAnalysisService
 
 
 def _store_with_major_edge() -> tuple[SQLiteMarketDataStore, list[date]]:
@@ -105,6 +107,65 @@ def test_screener_persists_candidate_and_exact_linked_analysis():
         assert candidates[0]["evidence"]["invalidation_price"] == scenario["payload"]["invalidation_price"]
     finally:
         store.close()
+
+
+def test_major_screener_uses_one_authoritative_result_per_symbol(monkeypatch):
+    store, days = _store_with_major_edge()
+    calls = []
+    original = PatternAnalysisService.analyze
+
+    def analyze(service, request):
+        calls.append(request)
+        return original(service, request)
+
+    monkeypatch.setattr(PatternAnalysisService, "analyze", analyze)
+    try:
+        run = ScreenerService(store).run_sync(
+            [MajorLinePeriod.YEAR], list(MajorLineState), 10, days[-1],
+        )
+        assert len(calls) == 1
+        candidate = store.list_screener_candidates(str(run["run_id"]))[0]
+        analysis = store.get_generated_analysis_run(candidate["analysis_run_id"])
+        line = next(item for item in analysis["items"] if item["item_id"] == candidate["line_item_id"])
+        assert candidate["state"] == line["payload"]["major_line_state"]
+        assert candidate["score"] == line["payload"]["score"]
+        assert candidate["line_code"] == line["payload"]["major_line_code"]
+    finally:
+        store.close()
+
+
+def test_major_screener_respects_full_analysis_for_reported_300102_failure(monkeypatch):
+    fixture = json.loads((Path(__file__).parent / "fixtures" /
+                          "major_descending_300102_20260914.json").read_text(encoding="utf-8"))
+    symbol = fixture["symbol"]
+    cutoff = date.fromisoformat(fixture["as_of_date"])
+    calls = []
+    original = PatternAnalysisService.analyze
+
+    def analyze(service, request):
+        result = original(service, request)
+        calls.append(result[0])
+        return result
+
+    monkeypatch.setattr(PatternAnalysisService, "analyze", analyze)
+    with SQLiteMarketDataStore(":memory:") as store:
+        store.upsert_instruments([Instrument(symbol, "Regression 300102", InstrumentKind.STOCK, "SZ")])
+        days = [date.fromisoformat(row[0]) for row in fixture["bars"]]
+        store.upsert_daily_bars("tushare", [
+            DailyBar(symbol, day, *row[1:]) for day, row in zip(days, fixture["bars"])
+        ])
+        store.upsert_adjustment_factors("tushare", [AdjustmentFactor(symbol, day, 1) for day in days])
+        store.upsert_trading_dates("tushare", days)
+        run = ScreenerService(store).run_sync(
+            [MajorLinePeriod.HALF_YEAR, MajorLinePeriod.YEAR], list(MajorLineState), 10, cutoff,
+        )
+        assert run["status"] == "succeeded"
+        assert len(calls) == 1
+        lines = [item for item in calls[0]["items"] if item["item_type"] == "line"]
+        assert any(item["item_id"] == "major-descending-6m-20260126-20260818"
+                   and item["payload"]["major_line_state"] == "forming" for item in lines)
+        assert not any(item["item_id"] == "major-descending-6m-20260204-20260818" for item in lines)
+        assert store.list_screener_candidates(str(run["run_id"])) == []
 
 
 def test_screener_retains_only_ten_finished_runs():

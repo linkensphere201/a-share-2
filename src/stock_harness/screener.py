@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
 from datetime import date
 import logging
 import threading
@@ -13,8 +12,7 @@ from stock_harness.analysis_inputs import (
     AnalysisHorizons, AnalysisInputMode, AnalysisInputService, AnalysisTimeframe,
 )
 from stock_harness.major_descending_lines import (
-    MajorDescendingLine, MajorLineDiagnostics, MajorLinePeriod, MajorLineState,
-    detect_major_descending_lines,
+    MajorLinePeriod, MajorLineState,
 )
 from stock_harness.pattern_analysis import PatternAnalysisRequest, PatternAnalysisService
 from stock_harness.sqlite_store import SQLiteMarketDataStore
@@ -30,8 +28,8 @@ from stock_harness.volume_accumulation import (
 
 LOGGER = logging.getLogger(__name__)
 STRATEGY_ID = "major-descending-breakout"
-STRATEGY_VERSION = "major-descending-breakout-v4"
-CONFIG_VERSION = "screener-major-descending-v4"
+STRATEGY_VERSION = "major-descending-breakout-v5"
+CONFIG_VERSION = "screener-major-descending-v5"
 DEFAULT_HORIZONS = AnalysisHorizons(60, 120, 250)
 SCREENABLE_STATES = (
     MajorLineState.CRITICAL_BREAKOUT,
@@ -148,8 +146,8 @@ class ScreenerService:
         started = time.perf_counter()
         universe = self._store.list_active_stock_symbols_for_screening()
         state_set = set(states).intersection(SCREENABLE_STATES)
-        diagnostics = MajorLineDiagnostics()
-        candidates: list[tuple[dict[str, str], MajorDescendingLine, dict[str, object]]] = []
+        period_set = {period.value for period in periods}
+        candidates: list[dict[str, object]] = []
         self._store.update_screener_progress(
             run_id, universe_count=len(universe), scanned_count=0
         )
@@ -159,19 +157,50 @@ class ScreenerService:
         )
         for index, instrument in enumerate(universe, 1):
             try:
-                analysis_input = self._inputs.build(
-                    instrument["symbol"], cutoff, AnalysisTimeframe.DAILY,
-                    AnalysisInputMode.FINAL, DEFAULT_HORIZONS,
-                )
+                analysis = self._analysis.analyze(PatternAnalysisRequest(
+                    symbol=instrument["symbol"],
+                    timeframes=(AnalysisTimeframe.DAILY,), horizons=DEFAULT_HORIZONS,
+                    config_version=CONFIG_VERSION, include_preview=False, as_of_date=cutoff,
+                ))[0]
+                if analysis["status"] != "succeeded":
+                    raise RuntimeError(f"pattern analysis failed: {instrument['symbol']}")
                 lines = [
-                    item for item in detect_major_descending_lines(
-                        analysis_input.bars, periods, diagnostics=diagnostics
-                    )
-                    if item.state in state_set
+                    item for item in analysis["items"]
+                    if item["item_type"] == "line"
+                    and item["payload"].get("major_line_period") in period_set
+                    and item["payload"].get("major_line_state") in state_set
+                    and item["payload"].get("major_line_code")
+                    and item["payload"].get("evolution_role") != "previous"
                 ]
                 if lines:
-                    line = max(lines, key=lambda item: (_state_priority(item.state), item.score))
-                    candidates.append((instrument, line, _local_structure(analysis_input.bars)))
+                    line = max(lines, key=lambda item: (
+                        _state_priority(MajorLineState(item["payload"]["major_line_state"])),
+                        item["payload"]["score"],
+                    ))
+                    payload = line["payload"]
+                    # Numeric context only; structural decisions come exclusively
+                    # from the saved analysis above, never a second detector pass.
+                    analysis_input = self._inputs.build(
+                        instrument["symbol"], cutoff, AnalysisTimeframe.DAILY,
+                        AnalysisInputMode.FINAL, DEFAULT_HORIZONS,
+                    )
+                    evidence = {
+                        **payload,
+                        "period": payload["major_line_period"],
+                        "state": payload["major_line_state"],
+                        "first_date": payload["first_pivot_date"],
+                        "second_date": payload["second_pivot_date"],
+                        "latest_close": payload["projected_price"] * (1 + payload["distance_percent"] / 100),
+                        **_local_structure(analysis_input.bars),
+                        "as_of_date": cutoff.isoformat(),
+                        **_scenario_evidence(analysis, line["item_id"]),
+                    }
+                    candidates.append({
+                        "symbol": instrument["symbol"], "state": payload["major_line_state"],
+                        "score": payload["score"], "line_item_id": line["item_id"],
+                        "line_code": payload["major_line_code"], "analysis_run_id": analysis["run_id"],
+                        "evidence": evidence,
+                    })
             except (ValueError, LookupError) as error:
                 LOGGER.debug(
                     "screener_symbol_skipped run_id=%s symbol=%s reason=%s",
@@ -187,51 +216,14 @@ class ScreenerService:
                         run_id, index, len(universe), len(candidates),
                     )
         candidates.sort(
-            key=lambda item: (_state_priority(item[1].state), item[1].score), reverse=True
+            key=lambda item: (_state_priority(MajorLineState(item["state"])), item["score"]), reverse=True
         )
-        retained: list[dict[str, object]] = []
-        for instrument, line, structure in candidates[:max_results]:
-            analysis = self._analysis.analyze(PatternAnalysisRequest(
-                symbol=instrument["symbol"],
-                timeframes=(AnalysisTimeframe.DAILY,),
-                horizons=DEFAULT_HORIZONS,
-                config_version=CONFIG_VERSION, include_preview=False, as_of_date=cutoff,
-            ))[0]
-            if not any(item["item_id"] == line.item_id for item in analysis["items"]):
-                raise RuntimeError(
-                    f"screening line is absent from linked analysis: {instrument['symbol']} {line.item_id}"
-                )
-            evidence = asdict(line)
-            evidence.update({
-                "period": line.period.value, "state": line.state.value,
-                "latest_close": line.projected_price * (1 + line.distance_percent / 100),
-                "small_14": structure["small_14"],
-                "medium_28": structure["medium_28"],
-                "as_of_date": cutoff.isoformat(),
-                **_scenario_evidence(analysis, line.item_id),
-            })
-            retained.append({
-                "symbol": instrument["symbol"], "state": line.state.value,
-                "score": line.score, "line_item_id": line.item_id,
-                "line_code": line.code, "analysis_run_id": analysis["run_id"],
-                "evidence": evidence,
-            })
+        retained = candidates[:max_results]
         self._store.complete_screener_run(run_id, retained, retention=10)
         LOGGER.info(
             "screener_run_completed run_id=%s as_of=%s universe=%s matches=%s retained=%s duration_ms=%.1f",
             run_id, cutoff, len(universe), len(candidates), len(retained),
             (time.perf_counter() - started) * 1000,
-        )
-        LOGGER.info(
-            "screener_line_integrity run_id=%s pairs=%s accepted=%s "
-            "wick_breach=%s body_breach=%s close_breach=%s dominant_high=%s "
-            "missing_confirmation=%s",
-            run_id, diagnostics.anchor_pairs, diagnostics.accepted,
-            diagnostics.rejected_wick_breach,
-            diagnostics.rejected_body_breach,
-            diagnostics.rejected_close_breach,
-            diagnostics.rejected_dominant_high,
-            diagnostics.rejected_confirmation,
         )
 
     def _execute_volume_accumulation(
