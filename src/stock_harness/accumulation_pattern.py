@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from math import isfinite
-from statistics import fmean
+from statistics import fmean, pstdev
 from typing import Mapping, Sequence
 
 from stock_harness.analysis_inputs import AnalysisBar
 
 
-ALGORITHM_VERSION = "decline-platform-accumulation-v3"
+ALGORITHM_VERSION = "decline-platform-accumulation-v4"
 ANALYSIS_LOOKBACK = 170
 
 
@@ -115,7 +115,64 @@ def detect_accumulation_pattern(
         formed or candidates,
         key=lambda pair: (pair[0], pair[1].score + float(pair[1].evidence["platform_sessions"]) * .15),
     )
-    return _follow_up(selected, history[end:], history[-1], limit_up_dates, config)
+    result = _follow_up(selected, history[end:], history[-1], limit_up_dates, config)
+    compact = compact_platform_evidence(history)
+    eligible = result.stage in {"accumulation", "pending-digestion"}
+    style = ("compact-platform" if compact["qualified"] else
+             "secondary-retest" if result.evidence["pattern_type"] == "secondary-base"
+             or result.evidence.get("gentle_retest") else "broad-base") if eligible else result.stage
+    return replace(result, evidence={**result.evidence, "platform_style": style, "compact_platform": compact})
+
+
+def compact_platform_evidence(bars: Sequence[AnalysisBar]) -> dict[str, object]:
+    """Absolute recent-window quality, independent of historical ATR or chosen base."""
+    if len(bars) < 11:
+        return {"qualified": False, "score": 0.0, "reasons": ["recent-history-insufficient"]}
+    recent = bars[-10:]
+    def window_metrics(values: Sequence[AnalysisBar]) -> dict[str, float]:
+        bodies = [abs(b.close - b.open) / b.open * 100 for b in values]
+        closes = [b.close for b in values]
+        return {
+            "range_percent": (max(b.high for b in values) / min(b.low for b in values) - 1) * 100,
+            "close_range_percent": (max(closes) / min(closes) - 1) * 100,
+            "drift_percent": (closes[-1] / closes[0] - 1) * 100,
+            "close_dispersion_percent": pstdev(closes) / fmean(closes) * 100,
+            "small_body_fraction": sum(x <= 1.5 for x in bodies) / len(values),
+            "max_body_percent": max(bodies),
+            "mean_body_percent": fmean(bodies),
+            "max_daily_range_percent": max((b.high - b.low) / b.open * 100 for b in values),
+        }
+    ten, five = window_metrics(recent), window_metrics(recent[-5:])
+    gap = max(abs(b.open / a.close - 1) * 100 for a, b in zip(bars[-11:-1], recent))
+    activity = fmean(b.close * b.volume for b in recent)
+    checks = {
+        "ten-day-range-wide": ten["range_percent"] <= 8,
+        "close-band-wide": ten["close_range_percent"] <= 5,
+        "price-drift": abs(ten["drift_percent"]) <= 3,
+        "close-dispersion": ten["close_dispersion_percent"] <= 1.5,
+        "small-bodies-insufficient": ten["small_body_fraction"] >= .8,
+        "large-body": ten["max_body_percent"] <= 3,
+        "large-wick-or-range": ten["max_daily_range_percent"] <= 4,
+        "large-gap": gap <= 2,
+        "recent-five-not-tight": five["range_percent"] <= 6 and abs(five["drift_percent"]) <= 2
+            and five["small_body_fraction"] >= .8,
+        "one-sided-candles": sum(b.close > b.open for b in recent) >= 2
+            and sum(b.close < b.open for b in recent) >= 2,
+        "activity-insufficient": activity >= 5_000_000 and all(b.volume > 0 for b in recent),
+    }
+    quality = 100 * (
+        .3 * _unit(1 - ten["range_percent"] / 10)
+        + .25 * _unit(1 - ten["mean_body_percent"] / 2)
+        + .25 * _unit(1 - ten["close_dispersion_percent"] / 2)
+        + .2 * _unit(1 - abs(five["drift_percent"]) / 3)
+    )
+    return {
+        "qualified": all(checks.values()), "score": round(quality, 2),
+        "start_date": recent[0].period_end.isoformat(), "end_date": recent[-1].period_end.isoformat(),
+        "last10": ten, "last5": five, "max_gap_percent": gap,
+        "mean_close_volume_proxy": activity, "activity_basis": "close-times-shares-not-exact-turnover",
+        "reasons": [reason for reason, passed in checks.items() if not passed],
+    }
 
 
 def _quantile(values: Sequence[float], fraction: float) -> float:

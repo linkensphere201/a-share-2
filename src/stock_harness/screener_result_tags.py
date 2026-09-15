@@ -10,22 +10,22 @@ def attach_recognition_tags(
 ) -> list[dict[str, object]]:
     if not candidates:
         return []
+    if all(isinstance(item.get("evidence", {}).get("recognition"), dict) for item in candidates):
+        return [{**item, "recognition": item["evidence"]["recognition"]} for item in candidates]
     source = store.get_latest_succeeded_signal_review_run(
         "weekly-board-recognition", date.fromisoformat(as_of_date),
     )
-    recognized: set[str] = set()
+    recognized: dict[str, set[str]] = {}
     if source:
-        recognized = {
-            str(item["symbol"])
-            for item in store.list_signal_review_items(str(source["run_id"]))
-            if item["active"] and item["profile"] == "historical"
-        }
+        for item in store.list_signal_review_items(str(source["run_id"])):
+            if item["active"] and item["profile"] in {"historical", "recent"}:
+                recognized.setdefault(str(item["symbol"]), set()).add(item["profile"])
     return [{
         **item,
-        "recognition": {
+        "recognition": item.get("evidence", {}).get("recognition") or {
             "available": source is not None,
             "source_run_id": source["run_id"] if source else None,
             "source_date": source["effective_date"] if source else None,
-            "tags": ["historical"] if item["symbol"] in recognized else [],
+            "tags": sorted(recognized.get(str(item["symbol"]), set())),
         },
     } for item in candidates]

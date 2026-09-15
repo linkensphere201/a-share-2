@@ -13,7 +13,7 @@ from stock_harness.analysis_inputs import AnalysisBar
 
 
 STRATEGY_ID = "volume-accumulation-20d"
-STRATEGY_VERSION = "volume-accumulation-20d-v6"
+STRATEGY_VERSION = "volume-accumulation-20d-v7"
 STATE = "accumulating"
 VolumeAccumulationConfig = AccumulationPatternConfig
 
@@ -22,6 +22,13 @@ VolumeAccumulationConfig = AccumulationPatternConfig
 class VolumeAccumulationSignal:
     score: float
     evidence: dict[str, object]
+
+
+def accumulation_rank_key(signal: VolumeAccumulationSignal) -> tuple[bool, float, float]:
+    compact = signal.evidence.get("compact_platform", {})
+    qualified = signal.evidence.get("platform_style") == "compact-platform"
+    bonus = 5.0 if signal.evidence.get("recognition", {}).get("tags") else 0.0
+    return qualified, (float(compact.get("score", 0)) if qualified else signal.score) + bonus, signal.score
 
 
 def detect_volume_accumulation(

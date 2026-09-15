@@ -62,7 +62,7 @@ def test_screener_adapter_uses_the_shared_pattern_contract() -> None:
     signal = detect_volume_accumulation(bars)
 
     assert signal is not None
-    assert signal.evidence["algorithm_version"] == "decline-platform-accumulation-v3"
+    assert signal.evidence["algorithm_version"] == "decline-platform-accumulation-v4"
     assert signal.evidence["range_lower"] < signal.evidence["range_upper"]
 
 
@@ -345,3 +345,46 @@ def test_followup_cannot_preserve_supply_pressure_missing_volume_or_breakdown(vo
     latest = _append(bars, close, volume)[-1]
     pattern = _follow_up(original, [latest], latest, None, AccumulationPatternConfig())
     assert pattern.stage not in {"accumulation", "pending-digestion"}
+
+
+def test_compact_platform_uses_recent_absolute_limits_and_shared_output() -> None:
+    from stock_harness.accumulation_pattern import compact_platform_evidence
+    bars = [replace(b, volume=b.volume * 10000) for b in _bars()]
+    evidence = compact_platform_evidence(bars)
+    assert evidence["qualified"] is True
+    signal = detect_volume_accumulation(bars)
+    assert signal is not None and signal.evidence["platform_style"] == "compact-platform"
+    assert signal.evidence["compact_platform"] == evidence
+    # Earlier volatility cannot relax or improve the recent compactness measurement.
+    bars[0] = replace(bars[0], high=100)
+    assert compact_platform_evidence(bars) == evidence
+
+
+@pytest.mark.parametrize("failure", ["body", "wick", "gap", "drift", "inactive"])
+def test_compact_platform_rejects_recent_disorder(failure: str) -> None:
+    from stock_harness.accumulation_pattern import compact_platform_evidence
+    bars = [replace(b, volume=b.volume * 10000) for b in _bars()]
+    if failure == "body":
+        bars[-2] = replace(bars[-2], open=10.6, low=10.5)
+    elif failure == "wick":
+        bars[-2] = replace(bars[-2], high=12.5)
+    elif failure == "gap":
+        bars[-2] = replace(bars[-2], open=11.9, close=11.91, high=11.92, low=11.89)
+    elif failure == "drift":
+        bars[-1] = replace(bars[-1], open=11.8, close=11.81, high=11.85, low=11.75)
+    else:
+        bars[-1] = replace(bars[-1], volume=0)
+    assert compact_platform_evidence(bars)["qualified"] is False
+
+
+def test_compact_rank_precedes_broad_bases_and_recognition_is_a_bounded_bonus() -> None:
+    from stock_harness.volume_accumulation import VolumeAccumulationSignal, accumulation_rank_key
+    def signal(quality: float, recognized: bool, compact: bool = True) -> VolumeAccumulationSignal:
+        return VolumeAccumulationSignal(99, {
+            "platform_style": "compact-platform" if compact else "broad-base",
+            "compact_platform": {"score": quality},
+            "recognition": {"tags": ["recent"] if recognized else []},
+        })
+    assert accumulation_rank_key(signal(70, True)) > accumulation_rank_key(signal(73, False))
+    assert accumulation_rank_key(signal(70, True)) < accumulation_rank_key(signal(80, False))
+    assert accumulation_rank_key(signal(70, False)) > accumulation_rank_key(signal(99, True, False))

@@ -281,10 +281,10 @@ def test_volume_accumulation_run_persists_independent_candidate():
         candidates = store.list_screener_candidates(str(run["run_id"]))
 
         assert run["strategy_id"] == "volume-accumulation-20d"
-        assert run["strategy_version"] == "volume-accumulation-20d-v6"
+        assert run["strategy_version"] == "volume-accumulation-20d-v7"
         assert candidates[0]["state"] == "accumulating"
         assert candidates[0]["line_code"] == "VOL-ACC-20D"
-        assert candidates[0]["evidence"]["algorithm_version"] == "decline-platform-accumulation-v3"
+        assert candidates[0]["evidence"]["algorithm_version"] == "decline-platform-accumulation-v4"
         linked = store.get_generated_analysis_run(candidates[0]["analysis_run_id"])
         assert linked is not None
         assert any(
@@ -297,7 +297,7 @@ def test_volume_accumulation_run_persists_independent_candidate():
         evidence = candidates[0]["evidence"]
         assert candidates[0]["line_item_id"] == zone["item_id"]
         assert candidates[0]["score"] == zone["payload"]["score"]
-        for field in ("stage", "score_components", "platform_sessions", "limit_up_events"):
+        for field in ("stage", "score_components", "platform_sessions", "limit_up_events", "platform_style", "compact_platform"):
             assert evidence[field] == zone["payload"][field]
         assert evidence["range_lower"] == zone["payload"]["lower"]
         assert evidence["range_upper"] == zone["payload"]["upper"]

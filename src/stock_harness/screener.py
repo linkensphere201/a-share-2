@@ -17,12 +17,13 @@ from stock_harness.major_descending_lines import (
 from stock_harness.pattern_analysis import PatternAnalysisRequest, PatternAnalysisService
 from stock_harness.sqlite_store import SQLiteMarketDataStore
 from stock_harness.accumulation_pattern import ANALYSIS_LOOKBACK
+from stock_harness.screener_result_tags import attach_recognition_tags
 from stock_harness.volume_accumulation import (
     STATE as ACCUMULATION_STATE,
     STRATEGY_ID as ACCUMULATION_STRATEGY_ID,
     STRATEGY_VERSION as ACCUMULATION_STRATEGY_VERSION,
     VolumeAccumulationSignal,
-    detect_volume_accumulation,
+    detect_volume_accumulation, accumulation_rank_key,
 )
 
 
@@ -271,7 +272,13 @@ class ScreenerService:
                         "screener_accumulation_progress run_id=%s scanned=%s universe=%s matches=%s",
                         run_id, index, len(universe), len(matches),
                     )
-        matches.sort(key=lambda item: item[1].score, reverse=True)
+        recognition = attach_recognition_tags(
+            self._store, [{"symbol": item[0]["symbol"]} for item in matches], cutoff.isoformat(),
+        )
+        for (_, signal), tagged in zip(matches, recognition):
+            signal.evidence["recognition"] = tagged["recognition"]
+            signal.evidence["recognition_rank_bonus"] = 5.0 if tagged["recognition"]["tags"] else 0.0
+        matches.sort(key=lambda item: accumulation_rank_key(item[1]), reverse=True)
         retained: list[dict[str, object]] = []
         for instrument, signal in matches[:max_results]:
             analysis = self._analysis.analyze(PatternAnalysisRequest(
