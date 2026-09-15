@@ -21,6 +21,13 @@ test('main chart targets require checking the shared analysis toggle', async ({ 
       second_pivot_date: bars[100].trade_date, first_price: 11.5, second_price: 12,
     } }, { item_id: 'pivot', item_type: 'anchor', payload: {
       kind: 'low', pivot_date: bars[100].trade_date, price: 11.5,
+    } }, { item_id: 'pattern', item_type: 'pattern', payload: {
+      display_name: '合成平台形态', completion_state: 'forming', primary: true,
+      neckline_price: 12.7, score: 0.8, pivots: [
+        { pivot_date: bars[60].trade_date, price: 12.7 },
+        { pivot_date: bars[80].trade_date, price: 11.7 },
+        { pivot_date: bars[100].trade_date, price: 12.7 },
+      ],
     } }] }
   await page.route('**/api/instruments/*/daily-bars**', route => route.fulfill({ json: { items: bars, instrument_kind: 'stock' } }))
   await page.route('**/api/analysis/trend/**', route => route.fulfill({ json: route.request().url().includes('/runs?')
@@ -42,6 +49,16 @@ test('main chart targets require checking the shared analysis toggle', async ({ 
   await expect(page.locator('.generated-pivot')).toHaveCount(1)
   await page.getByRole('checkbox', { name: '显示长期关键趋势线' }).uncheck()
   await page.getByRole('checkbox', { name: '显示拐点标记', exact: true }).uncheck()
+  await page.getByRole('checkbox', { name: '显示形态识别', exact: true }).check()
+  await expect(page.locator('.generated-pattern')).toHaveCount(1)
+  await expect(page.locator('.generated-pattern polyline')).toHaveCSS('stroke-width', '2px')
+  await expect(page.locator('.generated-pattern polyline')).toHaveCSS('opacity', '1')
+  await page.screenshot({ path: info.outputPath('pattern-dark.png') })
+  await page.getByRole('combobox', { name: '主题配色' }).selectOption('porcelain')
+  await expect(page.locator('.generated-pattern polyline')).toHaveCSS('stroke', 'rgb(135, 80, 0)')
+  await page.screenshot({ path: info.outputPath('pattern-light.png') })
+  await page.getByRole('combobox', { name: '主题配色' }).selectOption('koehler')
+  await page.getByRole('checkbox', { name: '显示形态识别', exact: true }).uncheck()
   await expect(page.locator('.generated-risk-reward')).toHaveCount(0)
   await checkbox.check()
   await expect(page.locator('.generated-risk-reward')).toBeVisible()

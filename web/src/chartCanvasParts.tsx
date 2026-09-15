@@ -297,8 +297,14 @@ export function GeneratedAnalysisOverlay({
   highlightedItemId?: string
 }) {
   const labeled = new Set(pivots.slice(-4).map(item => item.id))
+  const hasVisibleHighlight = Boolean(highlightedItemId && (
+    lines.some(item => item.id === highlightedItemId)
+    || zones.some(item => item.id === highlightedItemId)
+    || patterns.some(item => item.id === highlightedItemId)
+    || riskReward?.scenarioId === highlightedItemId
+  ))
   return (
-    <div className={highlightedItemId ? 'chart-generated-analysis has-highlight' : 'chart-generated-analysis'} aria-label="自动趋势分析图层">
+    <div className={hasVisibleHighlight ? 'chart-generated-analysis has-highlight' : 'chart-generated-analysis'} aria-label="自动趋势分析图层">
       <svg width="100%" height="100%" aria-hidden="true">
         {riskReward && <g className={`generated-risk-reward ${riskReward.direction} ${riskReward.state}${highlightedItemId === riskReward.scenarioId ? ' highlighted' : ''}`}>
           <rect

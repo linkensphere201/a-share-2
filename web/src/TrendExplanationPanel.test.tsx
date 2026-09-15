@@ -101,4 +101,15 @@ describe('TrendExplanationPanel', () => {
     expect(onHighlight).toHaveBeenLastCalledWith(undefined)
     expect(onClose).toHaveBeenCalledOnce()
   })
+
+  it('does not dim visible geometry when the highlighted layer is hidden', () => {
+    const { container } = render(<GeneratedAnalysisOverlay
+      pivots={[]} zones={[]} patterns={[]}
+      lines={[{ id: 'visible-line', kind: 'support', horizon: 'long', score: 0.9,
+        touchCount: 3, line: { x1: 0, y1: 10, x2: 100, y2: 20 } }]}
+      run={run} preview={false} highlightedItemId="hidden-pattern"
+    />)
+    expect(container.querySelector('.chart-generated-analysis')?.classList.contains('has-highlight')).toBe(false)
+    expect(container.querySelectorAll('.generated-trend-line')).toHaveLength(1)
+  })
 })
