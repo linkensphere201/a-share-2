@@ -1,4 +1,4 @@
-export type ScreenerStrategyId = 'major-descending-breakout' | 'volume-accumulation-20d' | 'strong-first-pullback'
+export type ScreenerStrategyId = 'major-descending-breakout' | 'volume-accumulation-20d' | 'strong-first-pullback' | 'low-base-platform-pullback'
 export type ScreenerState = 'critical-breakout' | 'breakout-retest' | 'broken-out' | 'accumulating' | 'pullback-observation' | 'pullback-confirmed'
 export type ScreenerPeriod = '3m' | '6m' | '1y'
 
@@ -71,6 +71,8 @@ export type ScreenerCandidate = {
     kind?: string
     launch_date?: string
     launch_type?: string
+    origin_above_context_low_percent?: number
+    pullback_platform_volume_ratio?: number
     volume_regime?: string
     pullback_turnover_ratio?: number
     observation_window_sessions?: number

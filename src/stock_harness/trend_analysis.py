@@ -13,6 +13,7 @@ from typing import Sequence
 
 from stock_harness.accumulation_pattern import ANALYSIS_LOOKBACK, detect_accumulation_pattern
 from stock_harness.first_pullback_pattern import detect_first_pullback
+from stock_harness.low_base_pullback import detect_low_base_pullback
 from stock_harness.analysis_inputs import (
     AnalysisHorizons,
     AnalysisInput,
@@ -59,7 +60,7 @@ from stock_harness.trend_context import (
 )
 
 
-ALGORITHM_VERSION = "trend-causal-replay-v36"
+ALGORITHM_VERSION = "trend-causal-replay-v37"
 LOGGER = logging.getLogger(__name__)
 
 
@@ -654,6 +655,12 @@ def _generated_items(
     )]
     if analysis_input.timeframe is AnalysisTimeframe.DAILY:
         if analysis_input.instrument.kind == "stock":
+            low_base = detect_low_base_pullback(analysis_input.bars)
+            if low_base is not None:
+                items.append(GeneratedAnalysisItem(
+                    item_id=f"low-base-pullback-{low_base['launch_date']}",
+                    item_type=GeneratedItemType.ZONE, payload=low_base,
+                ))
             pullback = detect_first_pullback(analysis_input.bars)
             if pullback is not None:
                 items.append(GeneratedAnalysisItem(

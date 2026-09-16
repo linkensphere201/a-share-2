@@ -130,6 +130,12 @@ function firstPullbackWindowText(payload: Record<string, unknown>): string {
 
 function explainZone(item: AnalysisItem, allItems: AnalysisItem[]): TrendExplanationItem {
   const payload = item.payload
+  if (payload.kind === 'first-pullback-range' && payload.launch_type === 'low-base-platform') return {
+    analysisItemId: item.item_id,
+    title: `低位平台回踩 · ${firstPullbackStageLabel(payload.stage)}`,
+    detail: `放量起点 ${stringValue(payload.launch_date) ?? '-'}；向前 ${numberValue(payload.observation_window_sessions) ?? '-'} 个交易日；平台起点 ${stringValue(payload.start_date) ?? '-'}，振幅 ${formatPercent(payload.platform_range_percent)}；回踩区间 ${stringValue(payload.pullback_metric_start_date) ?? '-'} 至 ${stringValue(payload.pullback_metric_end_date) ?? '-'}；回踩/放量段均量 ${formatRatio(payload.pullback_volume_ratio)}x，回踩/平台均量 ${formatRatio(payload.pullback_platform_volume_ratio)}x；收盘失效位 ${formatPrice(payload.invalidation_price)}；突破确认 ${stringValue(payload.confirmation_date) ?? '尚未确认'}。${payload.screen_eligible === true ? '' : '当前不满足选股条件。'}仅量价候选，不代表主力持仓；未预测翻倍或突破后的目标价。`,
+    score: numberValue(payload.score),
+  }
   if (payload.kind === 'first-pullback-range') return {
     analysisItemId: item.item_id,
     title: `强势股首次回踩 · ${firstPullbackStageLabel(payload.stage)}`,

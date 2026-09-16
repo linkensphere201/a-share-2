@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from datetime import date
 import logging
 import threading
@@ -18,6 +19,9 @@ from stock_harness.pattern_analysis import PatternAnalysisRequest, PatternAnalys
 from stock_harness.sqlite_store import SQLiteMarketDataStore
 from stock_harness.accumulation_pattern import ANALYSIS_LOOKBACK
 from stock_harness.first_pullback_pattern import CONFIG as PULLBACK_CONFIG
+from stock_harness.low_base_pullback import (
+    ALGORITHM_VERSION as LOW_BASE_VERSION, CONFIG as LOW_BASE_CONFIG, LAUNCH_TYPE as LOW_BASE_TYPE,
+)
 from stock_harness.screener_result_tags import attach_recognition_tags
 from stock_harness.volume_accumulation import (
     STATE as ACCUMULATION_STATE,
@@ -34,6 +38,7 @@ STRATEGY_VERSION = "major-descending-breakout-v5"
 CONFIG_VERSION = "screener-major-descending-v5"
 PULLBACK_STRATEGY_ID = "strong-first-pullback"
 PULLBACK_STRATEGY_VERSION = "strong-first-pullback-v3"
+LOW_BASE_STRATEGY_ID = "low-base-platform-pullback"
 DEFAULT_HORIZONS = AnalysisHorizons(60, 120, 250)
 SCREENABLE_STATES = (
     MajorLineState.CRITICAL_BREAKOUT,
@@ -71,6 +76,13 @@ class ScreenerService:
             "window": 20,
             "context_window": 80,
             "states": [ACCUMULATION_STATE],
+            "final_bars_only": True,
+        }, {
+            "strategy_id": LOW_BASE_STRATEGY_ID,
+            "name": "低位平台回踩",
+            "version": LOW_BASE_VERSION,
+            "window": LOW_BASE_CONFIG.observation_window_sessions,
+            "states": ["pullback-observation", "pullback-confirmed"],
             "final_bars_only": True,
         }, {
             "strategy_id": PULLBACK_STRATEGY_ID,
@@ -143,8 +155,8 @@ class ScreenerService:
         self, run_id: str, cutoff: date, periods: Sequence[MajorLinePeriod],
         states: Sequence[MajorLineState], max_results: int, strategy_id: str,
     ) -> None:
-        if strategy_id == PULLBACK_STRATEGY_ID:
-            self._execute_first_pullback(run_id, cutoff, max_results)
+        if strategy_id in (PULLBACK_STRATEGY_ID, LOW_BASE_STRATEGY_ID):
+            self._execute_first_pullback(run_id, cutoff, max_results, strategy_id)
             return
         if strategy_id == ACCUMULATION_STRATEGY_ID:
             self._execute_volume_accumulation(run_id, cutoff, max_results)
@@ -240,7 +252,8 @@ class ScreenerService:
             (time.perf_counter() - started) * 1000,
         )
 
-    def _execute_first_pullback(self, run_id: str, cutoff: date, max_results: int) -> None:
+    def _execute_first_pullback(self, run_id: str, cutoff: date, max_results: int,
+                                strategy_id: str = PULLBACK_STRATEGY_ID) -> None:
         started = time.perf_counter()
         universe = self._store.list_active_stock_symbols_for_screening()
         candidates = []
@@ -249,7 +262,7 @@ class ScreenerService:
             try:
                 analysis = self._analysis.analyze(PatternAnalysisRequest(
                     symbol=instrument["symbol"], timeframes=(AnalysisTimeframe.DAILY,),
-                    horizons=DEFAULT_HORIZONS, config_version=PULLBACK_STRATEGY_VERSION,
+                    horizons=DEFAULT_HORIZONS, config_version=_strategy_version(strategy_id),
                     include_preview=False, as_of_date=cutoff,
                 ))[0]
                 if analysis["status"] != "succeeded":
@@ -258,6 +271,7 @@ class ScreenerService:
                     evidence = item["payload"]
                     if (item["item_type"] != "zone"
                         or evidence.get("kind") != "first-pullback-range"
+                        or ((evidence.get("launch_type") == LOW_BASE_TYPE) != (strategy_id == LOW_BASE_STRATEGY_ID))
                         or not evidence.get("screen_eligible")
                         or evidence.get("stage") not in {"pullback-observation", "pullback-confirmed"}
                         or evidence.get("as_of_date") != cutoff.isoformat()):
@@ -265,7 +279,8 @@ class ScreenerService:
                     candidates.append({
                         "symbol": instrument["symbol"], "state": evidence["stage"],
                         "score": evidence["score"], "line_item_id": item["item_id"],
-                        "line_code": "FIRST-PULLBACK", "analysis_run_id": analysis["run_id"],
+                        "line_code": "LOW-BASE-PULLBACK" if strategy_id == LOW_BASE_STRATEGY_ID else "FIRST-PULLBACK",
+                        "analysis_run_id": analysis["run_id"],
                         "evidence": evidence,
                     })
             except (ValueError, LookupError) as error:
@@ -381,6 +396,8 @@ class ScreenerService:
 
 
 def _strategy_version(strategy_id: str) -> str:
+    if strategy_id == LOW_BASE_STRATEGY_ID:
+        return LOW_BASE_VERSION
     if strategy_id == PULLBACK_STRATEGY_ID:
         return PULLBACK_STRATEGY_VERSION
     if strategy_id == STRATEGY_ID:
@@ -391,6 +408,11 @@ def _strategy_version(strategy_id: str) -> str:
 
 
 def _parameters(strategy_id, periods, states, max_results: int) -> dict[str, object]:
+    if strategy_id == LOW_BASE_STRATEGY_ID:
+        return {"max_results": max_results, "final_bars_only": True,
+                "window": LOW_BASE_CONFIG.observation_window_sessions,
+                "states": ["pullback-observation", "pullback-confirmed"],
+                "pattern_parameters": asdict(LOW_BASE_CONFIG), "analysis_config": LOW_BASE_VERSION}
     if strategy_id == PULLBACK_STRATEGY_ID:
         return {"max_results": max_results, "final_bars_only": True,
                 "window": PULLBACK_CONFIG.observation_window_sessions,

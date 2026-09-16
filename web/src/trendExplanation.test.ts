@@ -9,6 +9,19 @@ const basePattern = {
 }
 
 describe('trend explanation', () => {
+  it('names low-base platforms without inventing a doubling target or a high flag', () => {
+    const run: TrendAnalysisRun = { run_id: 'low', as_of_date: '2026-02-25', completion_state: 'complete',
+      stale: false, stale_reasons: [], warnings: [], items: [{ item_id: 'low', item_type: 'zone', payload: {
+        kind: 'first-pullback-range', launch_type: 'low-base-platform', stage: 'pullback-confirmed',
+        observation_window_sessions: 30, pullback_volume_ratio: .45, pullback_platform_volume_ratio: .76,
+        confirmation_date: '2026-02-24', screen_eligible: true,
+      } }] }
+    const item = buildTrendExplanation(run)!.sections.flatMap(section => section.items).find(i => i.analysisItemId === 'low')!
+    expect(item.title).toBe('低位平台回踩 · 转强确认')
+    expect(item.detail).toContain('0.76x')
+    expect(item.detail).toContain('未预测翻倍')
+    expect(item.detail).not.toContain('旗形')
+  })
   it('distinguishes rolling early flags and elevated turnover from normal contraction', () => {
     const run: TrendAnalysisRun = { run_id: 'flag', as_of_date: '2026-08-24', completion_state: 'complete',
       stale: false, stale_reasons: [], warnings: [], items: [{ item_id: 'flag', item_type: 'zone', payload: {

@@ -24,8 +24,8 @@ afterEach(() => {
 })
 
 describe('ScreenerWorkspace', () => {
-  it('runs the shared first-pullback strategy and filters observation versus confirmation', async () => {
-    const firstRun = { ...run, strategy_id: 'strong-first-pullback', strategy_version: 'strong-first-pullback-v1' }
+  it.each(['strong-first-pullback', 'low-base-platform-pullback'])('runs %s and filters observation versus confirmation', async (strategyId) => {
+    const firstRun = { ...run, strategy_id: strategyId, strategy_version: `${strategyId}-v1` }
     const confirmed = { ...candidate, state: 'pullback-confirmed', evidence: {
       ...candidate.evidence, kind: 'first-pullback-range', stage: 'pullback-confirmed',
       launch_date: '2026-08-10', confirmation_date: '2026-09-01', pullback_sessions: 5,
@@ -49,11 +49,11 @@ describe('ScreenerWorkspace', () => {
     await user.click(screen.getByRole('button', { name: '快速过滤：回踩观察' }))
     expect(screen.queryByText('测试标的', { selector: 'b' })).toBeNull()
     expect(await screen.findByText('尚未确认')).toBeTruthy()
-    await user.selectOptions(screen.getByLabelText('策略'), 'strong-first-pullback')
+    await user.selectOptions(screen.getByLabelText('策略'), strategyId)
     await user.click(screen.getByRole('button', { name: '开始选股' }))
     await waitFor(() => expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(true))
     const post = fetchMock.mock.calls.find(([, init]) => init?.method === 'POST')!
-    expect(JSON.parse(String(post[1]?.body)).strategy_id).toBe('strong-first-pullback')
+    expect(JSON.parse(String(post[1]?.body)).strategy_id).toBe(strategyId)
   })
 
   it('defaults V7 to compact platforms and shows dated recognition beside names', async () => {

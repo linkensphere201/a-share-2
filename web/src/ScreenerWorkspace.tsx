@@ -33,6 +33,7 @@ const strategyLabels: Record<ScreenerStrategyId, string> = {
   'major-descending-breakout': '大斜边突破',
   'volume-accumulation-20d': '20日堆量蓄势',
   'strong-first-pullback': '强势股首次回踩',
+  'low-base-platform-pullback': '低位平台回踩',
 }
 const trendStates: ScreenerState[] = ['critical-breakout', 'breakout-retest', 'broken-out']
 const pullbackStates: ScreenerState[] = ['pullback-confirmed', 'pullback-observation']
@@ -320,7 +321,7 @@ export function ScreenerWorkspace({
         {selectedRun?.status === 'running' && <div className="screener-progress"><i style={{ width: `${progress}%` }}/></div>}
         <div className="screener-quick-filters" role="group" aria-label="结果快速过滤">
           <button className={resultStateFilter === 'all' ? 'active' : ''} aria-label="快速过滤：全部" onClick={() => setResultStateFilter('all')}>全部 <small>{candidates.length}</small></button>
-          {(selectedRun?.strategy_id === 'volume-accumulation-20d' ? ['accumulating'] as ScreenerState[] : selectedRun?.strategy_id === 'strong-first-pullback' ? pullbackStates : trendStates).map(state => <button
+          {(selectedRun?.strategy_id === 'volume-accumulation-20d' ? ['accumulating'] as ScreenerState[] : ['strong-first-pullback', 'low-base-platform-pullback'].includes(selectedRun?.strategy_id ?? '') ? pullbackStates : trendStates).map(state => <button
             key={state}
             className={resultStateFilter === state ? 'active' : ''}
             aria-label={`快速过滤：${stateLabels[state]}`}
@@ -409,13 +410,18 @@ export function ScreenerWorkspace({
           {selected.evidence.flag_window && <>
             <span><small>滚动观察窗口</small>{selected.evidence.observation_window_sessions} 个交易日</span>
             <span><small>整理区间</small>{selected.evidence.flag_window.start_date} ~ {selected.evidence.flag_window.end_date}</span>
-            <span><small>旗形阶段</small>{selected.evidence.flag_window.phase === 'early' ? '早期旗形观察' : '旗形整理观察'} · {selected.evidence.flag_window.sessions} 日</span>
+            <span><small>整理阶段</small>{selected.evidence.launch_type === 'low-base-platform' ? '低位平台' : selected.evidence.flag_window.phase === 'early' ? '早期旗形观察' : '旗形整理观察'} · {selected.evidence.flag_window.sessions} 日</span>
           </>}
           <span><small>启动日期</small>{selected.evidence.launch_date ?? '--'}</span>
           <span><small>确认日期</small>{selected.evidence.confirmation_date ?? '尚未确认'}</span>
           <span><small>启动涨幅</small>{selected.evidence.impulse_gain_percent?.toFixed(2) ?? '--'}%</span>
           <span><small>回踩幅度</small>{selected.evidence.pullback_depth_percent?.toFixed(2) ?? '--'}%</span>
           <span><small>回踩 / 启动均量</small>{selected.evidence.pullback_volume_ratio?.toFixed(2) ?? '--'}x</span>
+          {selected.evidence.launch_type === 'low-base-platform' && <>
+            <span><small>启动前距60日低点</small>{selected.evidence.origin_above_context_low_percent?.toFixed(2) ?? '--'}%</span>
+            <span><small>平台振幅</small>{selected.evidence.platform_range_percent?.toFixed(2) ?? '--'}%</span>
+            <span><small>回踩 / 平台均量</small>{selected.evidence.pullback_platform_volume_ratio?.toFixed(2) ?? '--'}x</span>
+          </>}
           {selected.evidence.launch_type === 'strong-momentum' && <>
             <span><small>启动类型</small>连续强阳启动</span>
             <span><small>量能类型</small>{firstPullbackVolumeLabel(selected.evidence.volume_regime)}</span>
