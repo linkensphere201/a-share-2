@@ -427,43 +427,89 @@ class SQLiteAnalysisStoreMixin:
     def upsert_generated_analysis_target(
         self, target: GeneratedAnalysisTarget
     ) -> int:
+        with self._lock, self._transaction():
+            return self._upsert_generated_analysis_target(target)
+
+    def _upsert_generated_analysis_target(
+        self, target: GeneratedAnalysisTarget
+    ) -> int:
         target.validate()
         now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
-        with self._lock, self._transaction():
-            instrument = self._canonical_instrument_identity(target.symbol)
-            if instrument is None:
-                raise ValueError(
-                    f"analysis target references unknown instrument: {target.symbol.strip()}"
-                )
-            symbol, instrument_id = instrument
-            target_id = int(self._connection.execute(
-                """
-                INSERT INTO generated_analysis_targets(
-                    instrument_id, system_id, timeframe, algorithm_version,
-                    config_version, settings_json, enabled, updated_at_ms
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(instrument_id, system_id, timeframe) DO UPDATE SET
-                    algorithm_version = excluded.algorithm_version,
-                    config_version = excluded.config_version,
-                    settings_json = excluded.settings_json,
-                    enabled = excluded.enabled,
-                    updated_at_ms = excluded.updated_at_ms
-                RETURNING target_id
-                """,
-                (
-                    instrument_id, target.system_id.strip(),
-                    target.timeframe.strip(), target.algorithm_version.strip(),
-                    target.config_version.strip(),
-                    json.dumps(target.settings, sort_keys=True, separators=(",", ":")),
-                    int(target.enabled), now_ms,
-                ),
-            ).fetchone()[0])
-            if not target.enabled:
-                self._connection.execute(
-                    "DELETE FROM generated_analysis_dirty_targets WHERE target_id = ?",
-                    (target_id,),
-                )
+        instrument = self._canonical_instrument_identity(target.symbol)
+        if instrument is None:
+            raise ValueError(
+                f"analysis target references unknown instrument: {target.symbol.strip()}"
+            )
+        _, instrument_id = instrument
+        target_id = int(self._connection.execute(
+            """
+            INSERT INTO generated_analysis_targets(
+                instrument_id, system_id, timeframe, algorithm_version,
+                config_version, settings_json, enabled, updated_at_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(instrument_id, system_id, timeframe) DO UPDATE SET
+                algorithm_version = excluded.algorithm_version,
+                config_version = excluded.config_version,
+                settings_json = excluded.settings_json,
+                enabled = excluded.enabled,
+                updated_at_ms = excluded.updated_at_ms
+            RETURNING target_id
+            """,
+            (
+                instrument_id, target.system_id.strip(),
+                target.timeframe.strip(), target.algorithm_version.strip(),
+                target.config_version.strip(),
+                json.dumps(target.settings, sort_keys=True, separators=(",", ":")),
+                int(target.enabled), now_ms,
+            ),
+        ).fetchone()[0])
+        if not target.enabled:
+            self._connection.execute(
+                "DELETE FROM generated_analysis_dirty_targets WHERE target_id = ?",
+                (target_id,),
+            )
         return target_id
+
+    def reserve_generated_analysis_target(
+        self, target: GeneratedAnalysisTarget, cutoff: date,
+        *, lease_ms: int = 60_000,
+    ) -> ClaimedAnalysisTarget:
+        """Register and lease an explicit generation without exposing queued work."""
+        target.validate()
+        if not target.enabled or lease_ms <= 0:
+            raise ValueError("explicit analysis requires an enabled target and positive lease")
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        reason = "explicit-user-recalculate"
+        with self._lock, self._transaction():
+            target_id = self._upsert_generated_analysis_target(target)
+            row = self._connection.execute(
+                """
+                INSERT INTO generated_analysis_dirty_targets(
+                    target_id, dirty_from, dirty_through, reason, generation,
+                    queued_at_ms, claimed_at_ms, lease_until_ms
+                ) VALUES (?, ?, ?, ?, 1, ?, ?, ?)
+                ON CONFLICT(target_id) DO UPDATE SET
+                    dirty_from = min(dirty_from, excluded.dirty_from),
+                    dirty_through = max(dirty_through, excluded.dirty_through),
+                    reason = excluded.reason, generation = generation + 1,
+                    queued_at_ms = excluded.queued_at_ms,
+                    claimed_at_ms = excluded.claimed_at_ms,
+                    lease_until_ms = excluded.lease_until_ms, last_error = NULL
+                RETURNING dirty_from, dirty_through, generation
+                """,
+                (target_id, _date_key(cutoff), _date_key(cutoff), reason,
+                 now_ms, now_ms, now_ms + lease_ms),
+            ).fetchone()
+        return ClaimedAnalysisTarget(
+            target_id=target_id, symbol=target.symbol.strip().upper(),
+            system_id=target.system_id.strip(), timeframe=target.timeframe.strip(),
+            algorithm_version=target.algorithm_version.strip(),
+            config_version=target.config_version.strip(),
+            settings=json.loads(json.dumps(target.settings)),
+            dirty_from=_date_from_key(int(row[0])),
+            dirty_through=_date_from_key(int(row[1])), reason=reason,
+            generation=int(row[2]),
+        )
 
     def queue_generated_analysis_target(
         self,

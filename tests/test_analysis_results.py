@@ -1,4 +1,5 @@
 from dataclasses import replace
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 import time
 import sqlite3
@@ -256,6 +257,72 @@ def test_only_registered_enabled_target_is_queued_and_ranges_coalesce(store):
     assert claimed[0].dirty_through == date(2026, 8, 19)
     assert claimed[0].generation == 2
     assert store.complete_generated_analysis_target(target_id, claimed[0].generation)
+    assert store.claim_generated_analysis_targets() == []
+
+
+def test_explicit_reservation_preserves_generation_and_input_invalidation(store):
+    target = GeneratedAnalysisTarget(
+        "000001.SZ", "trend", "daily", "trend-1", "settings-3"
+    )
+    store.upsert_generated_analysis_target(target)
+    store.queue_generated_analysis_target(
+        target.symbol, "trend", "daily", date(2026, 8, 18), date(2026, 8, 19), "update"
+    )
+    old = store.claim_generated_analysis_targets()[0]
+    current = store.reserve_generated_analysis_target(
+        replace(target, config_version="settings-4"), date(2026, 8, 17)
+    )
+    assert current.generation == old.generation + 1
+    assert current.config_version == "settings-4"
+    assert current.dirty_from == date(2026, 8, 17)
+    assert current.dirty_through == date(2026, 8, 19)
+    assert not store.complete_generated_analysis_target(old.target_id, old.generation)
+    assert not store.fail_generated_analysis_target(old.target_id, old.generation, "old failure")
+    assert store.claim_generated_analysis_targets() == []
+    store.queue_generated_analysis_target(
+        target.symbol, "trend", "daily", date(2026, 8, 20), date(2026, 8, 20), "update"
+    )
+    assert not store.complete_generated_analysis_target(current.target_id, current.generation)
+    new = store.claim_generated_analysis_targets()[0]
+    assert new.generation == current.generation + 1
+    assert new.dirty_through == date(2026, 8, 20)
+
+
+def test_failed_explicit_reservation_rolls_back_target_configuration(store):
+    target = GeneratedAnalysisTarget(
+        "000001.SZ", "trend", "daily", "trend-1", "original-settings"
+    )
+    target_id = store.upsert_generated_analysis_target(target)
+    store._connection.execute("""
+        CREATE TEMP TRIGGER reject_reservation
+        BEFORE INSERT ON generated_analysis_dirty_targets
+        BEGIN SELECT RAISE(ABORT, 'reservation rejected'); END
+    """)
+    with pytest.raises(sqlite3.IntegrityError, match="reservation rejected"):
+        store.reserve_generated_analysis_target(
+            replace(target, config_version="new-settings"), date(2026, 8, 18)
+        )
+    row = store._connection.execute(
+        "SELECT config_version FROM generated_analysis_targets WHERE target_id = ?",
+        (target_id,),
+    ).fetchone()
+    assert row[0] == "original-settings"
+    assert store.claim_generated_analysis_targets() == []
+
+
+def test_concurrent_explicit_reservations_keep_their_own_configuration(store):
+    def reserve(index):
+        return store.reserve_generated_analysis_target(GeneratedAnalysisTarget(
+            "000001.SZ", "trend", "daily", "trend-1", f"settings-{index}",
+            settings={"long_horizon_bars": 100 + index},
+        ), date(2026, 8, 18 + index))
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        claims = list(pool.map(reserve, range(2)))
+    assert {claim.generation for claim in claims} == {1, 2}
+    for index, claim in enumerate(claims):
+        assert claim.config_version == f"settings-{index}"
+        assert claim.settings == {"long_horizon_bars": 100 + index}
     assert store.claim_generated_analysis_targets() == []
 
 

@@ -166,7 +166,7 @@ class TrendAnalysisService:
         pivot_config: DirectionalChangeConfig,
     ) -> dict[str, object]:
         normalized = symbol.strip().upper()
-        target_id = self._store.upsert_generated_analysis_target(
+        claim = self._store.reserve_generated_analysis_target(
             GeneratedAnalysisTarget(
                 normalized, "trend", timeframe.value,
                 ALGORITHM_VERSION, config_version,
@@ -179,15 +179,9 @@ class TrendAnalysisService:
                     "atr_multiplier": pivot_config.atr_multiplier,
                     "minimum_reversal_percent": pivot_config.minimum_reversal_percent,
                 },
-            )
+            ),
+            cutoff,
         )
-        self._store.queue_generated_analysis_target(
-            normalized, "trend", timeframe.value, cutoff, cutoff,
-            "explicit-user-recalculate",
-        )
-        claim = self._store.claim_generated_analysis_target(target_id)
-        if claim is None:
-            raise RuntimeError("analysis target is already being calculated")
         return self._execute_claim(
             claim, horizons, cutoff, include_preview, pivot_config
         )

@@ -1,4 +1,5 @@
 from datetime import date, datetime, timedelta, timezone
+from concurrent.futures import ThreadPoolExecutor
 
 from stock_harness.analysis_inputs import AnalysisHorizons, AnalysisTimeframe
 from stock_harness.analysis_results import AnalysisNamespace
@@ -89,6 +90,35 @@ def _futures_store() -> tuple[
         ) for index, (day, close) in enumerate(zip(days, closes)))
     store.upsert_futures_daily_bars("tushare-futures", rows)
     return store, contract, series, days
+
+
+def test_explicit_recalculate_cannot_lose_claim_to_background_worker(monkeypatch):
+    store, days = _store()
+    worker_claims = []
+    with store, ThreadPoolExecutor(max_workers=1) as worker:
+        def race_after(method):
+            def wrapped(*args, **kwargs):
+                result = method(*args, **kwargs)
+                worker_claims.extend(worker.submit(
+                    store.claim_generated_analysis_targets
+                ).result(timeout=5))
+                return result
+            return wrapped
+
+        # The old queue/claim path exposes work here; reservation must not.
+        monkeypatch.setattr(store, "queue_generated_analysis_target", race_after(
+            store.queue_generated_analysis_target
+        ))
+        reserve = getattr(store, "reserve_generated_analysis_target", None)
+        if reserve is not None:
+            monkeypatch.setattr(store, "reserve_generated_analysis_target", race_after(reserve))
+        result = TrendAnalysisService(store).recalculate(
+            "000001.SZ", [AnalysisTimeframe.DAILY], AnalysisHorizons(3, 6, 10),
+            config_version="race-test", include_preview=False, as_of_date=days[-2],
+        )[0]
+        assert result["status"] == "succeeded"
+        assert worker_claims == []
+        assert store.claim_generated_analysis_targets() == []
 
 
 def test_explicit_recalculate_registers_and_persists_only_requested_timeframes():
