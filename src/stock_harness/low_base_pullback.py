@@ -8,7 +8,7 @@ from typing import Sequence
 from stock_harness.analysis_inputs import AnalysisBar
 
 
-ALGORITHM_VERSION = "low-base-platform-pullback-v3"
+ALGORITHM_VERSION = "low-base-platform-pullback-v4"
 LAUNCH_TYPE = "low-base-platform"
 
 
@@ -29,6 +29,8 @@ class LowBasePullbackConfig:
     max_platform_drift: float = .035
     min_small_body_fraction: float = .70
     min_adjacent_overlap_fraction: float = .60
+    min_directional_decline: float = .01
+    max_decline_efficiency: float = .80
     max_platform_sessions: int = 22
     max_platform_range: float = .14
     max_platform_close_range: float = .09
@@ -128,12 +130,18 @@ def _platform_evidence(platform):
                   for a, b in zip(platform, platform[1:])) / max(1, len(platform) - 1)
     half = max(1, len(platform) // 2)
     floor_drift = fmean(b.low for b in platform[-half:]) / fmean(b.low for b in platform[:half]) - 1
+    path = sum(abs(b.close - a.close) for a, b in zip(platform, platform[1:]))
+    efficiency = abs(platform[-1].close - platform[0].close) / path if path else 0.
+    directional_decline = (len(platform) >= CONFIG.mature_platform_sessions
+                           and drift <= -CONFIG.min_directional_decline
+                           and efficiency >= CONFIG.max_decline_efficiency)
     stable = (upper / lower - 1 <= CONFIG.max_platform_range
               and close_range <= CONFIG.max_platform_close_range
               and abs(drift) <= CONFIG.max_platform_drift
               and floor_drift >= -CONFIG.max_platform_drift
               and small >= CONFIG.min_small_body_fraction
-              and overlap >= CONFIG.min_adjacent_overlap_fraction)
+              and overlap >= CONFIG.min_adjacent_overlap_fraction
+              and not directional_decline)
     return {
         "start_date": platform[0].period_end.isoformat(),
         "end_date": platform[-1].period_end.isoformat(), "sessions": len(platform),
@@ -149,6 +157,8 @@ def _platform_evidence(platform):
         "volume_quality": quality,
         "adjacent_overlap_fraction": round(overlap, 4),
         "floor_drift_percent": round(floor_drift * 100, 4),
+        "directional_efficiency": round(efficiency, 4),
+        "directional_decline": directional_decline,
         "stable": stable,
         "mature": stable and len(platform) >= CONFIG.mature_platform_sessions,
     }
@@ -174,6 +184,8 @@ def _retest(bars, start, end, pulse_volume):
         if (retest[-1].close > bars[split - 1].close * (1 - CONFIG.min_retest_decline)
             or retest[-1].close > bars[end - 1].close * 1.005
             or sum(bars[i].close < bars[i - 1].close for i in range(split, end + 1)) < 2
+            or any(bars[i].close < bars[i - 1].close and bars[i].volume > platform_volume
+                   for i in range(split, end + 1))
             or retest_volume > pulse_volume * CONFIG.max_retest_pulse_volume_ratio
             or retest_volume > platform_volume * CONFIG.max_retest_platform_volume_ratio):
             continue
@@ -212,6 +224,11 @@ def _follow(bars, launch, peak_index, origin, context_low):
                 break
             continue
         prior = bars[start:end]
+        if evidence is not None and current.close < bars[end - 1].close:
+            reference_volume = fmean(b.volume for b in bars[start:evidence["retest_start"]])
+            if current.volume > reference_volume:
+                # Averages cannot preserve confirmation permission after expanding selling.
+                recognized, evidence = None, None
         if (recognized is not None and prior
             and end - evidence["retest_end"] <= CONFIG.max_retest_confirmation_delay):
             boundary = max(b.high for b in prior)

@@ -54,13 +54,21 @@ def test_prelaunch_calibration_uses_only_available_prefix(symbol, day, stage):
     assert result["stage"] == stage
     assert result["launch_type"] == "low-base-platform"
     assert result["as_of_date"] == day
-    assert result["pullback_volume_ratio"] <= .70
-    assert result["pullback_platform_volume_ratio"] <= .90
+    pending = symbol == "001258.SZ" and day == "2026-02-10"
+    if pending:
+        assert result["shape_maturity"] == "platform-established"
+        assert result["pullback_volume_ratio"] is None
+        assert result["pullback_platform_volume_ratio"] is None
+        assert result["pullback_metric_start_date"] is None
+    else:
+        assert result["pullback_volume_ratio"] <= .70
+        assert result["pullback_platform_volume_ratio"] <= .90
     assert all(v <= day for k, v in result.items() if k.endswith("_date") and v is not None)
     assert result["first_target_price"] is None
     assert result["first_risk_reward"] is None
     shape = result["platform_shape"]
-    assert shape["end_date"] < result["pullback_metric_start_date"]
+    if not pending:
+        assert shape["end_date"] < result["pullback_metric_start_date"]
     assert shape["sessions"] >= 3
 
 
@@ -268,3 +276,45 @@ def test_real_short_platforms_are_not_promoted_by_later_breakout():
         for day in ("2026-08-14", "2026-08-17"):
             result = detect_low_base_pullback(bars(symbol, day))
             assert result["shape_maturity"] == "forming"
+
+
+def test_small_monotonic_decline_is_not_a_stable_platform():
+    from stock_harness.low_base_pullback import _platform_evidence
+    prefix = synthetic_shape([10.45, 10.40, 10.35, 10.30, 10.25])
+    facts = _platform_evidence(prefix[-5:])
+    assert abs(facts["close_drift_percent"]) < 3.5
+    assert not facts["stable"]
+    result = detect_low_base_pullback(prefix)
+    assert result is None or result["shape_maturity"] != "platform-established"
+
+
+@pytest.mark.parametrize("closes", [[10.45] * 5, [10.45, 10.30, 10.50, 10.25, 10.25]])
+def test_flat_or_two_sided_plateau_is_not_confused_with_directional_decline(closes):
+    from stock_harness.low_base_pullback import _platform_evidence
+    facts = _platform_evidence(synthetic_shape(closes)[-5:])
+    assert not facts["directional_decline"]
+    assert facts["stable"]
+
+
+def test_bad_volume_inside_retest_cannot_be_hidden_by_later_dry_days():
+    from stock_harness.low_base_pullback import _retest
+    prefix = list(synthetic_shape([10.45, 10.46, 10.45, 10.46, 10.47],
+                                  [10.35, 10.25, 10.20, 10.15]))
+    prefix[-2] = replace(prefix[-2], volume=170.)
+    assert _retest(prefix, 61, len(prefix) - 1, 300.) is None
+
+
+@pytest.mark.parametrize("volume", [170., 500.])
+def test_expanding_down_day_revokes_old_retest_before_later_breakout(volume):
+    prefix = synthetic_shape([10.45, 10.46, 10.45, 10.46, 10.47], [10.35, 10.25])
+    assert detect_low_base_pullback(prefix)["shape_maturity"] == "platform-retest"
+    day = prefix[-1].period_end + timedelta(days=1)
+    bad = replace(prefix[-1], period_start=day, period_end=day,
+                  open=10.26, high=10.30, low=10.10, close=10.20, volume=volume)
+    changed = (*prefix, bad)
+    current = detect_low_base_pullback(changed)
+    assert current is None or not current["screen_eligible"] or current["shape_maturity"] != "platform-retest"
+    breakout = replace(bad, period_start=day + timedelta(days=1), period_end=day + timedelta(days=1),
+                       open=10.50, high=10.80, low=10.45, close=10.75, volume=300.)
+    later = detect_low_base_pullback((*changed, breakout))
+    assert later is None or later["stage"] != "pullback-confirmed"

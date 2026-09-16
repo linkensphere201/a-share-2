@@ -8,7 +8,7 @@ test(`${strategyId} saved evidence uses opt-in shared chart zones at desktop and
       open: close - .04, high: close + .1, low: close - .12, close,
       volume: i < 80 || i >= 89 ? 100 : 240, source: 'synthetic-acceptance' }
   })
-  const run = { run_id: 'first-pullback-v1', strategy_id: strategyId, strategy_version: `${strategyId}-${strategyId === 'low-base-platform-pullback' ? 'v3' : 'v1'}`,
+  const run = { run_id: 'first-pullback-v1', strategy_id: strategyId, strategy_version: `${strategyId}-${strategyId === 'low-base-platform-pullback' ? 'v4' : 'v1'}`,
     as_of_date: bars.at(-1)!.trade_date, parameters: {}, status: 'succeeded', candidate_count: 1,
     universe_count: 1, scanned_count: 1 }
   const evidence = { kind: 'first-pullback-range', as_of_date: run.as_of_date,

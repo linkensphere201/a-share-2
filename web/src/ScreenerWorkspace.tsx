@@ -69,7 +69,7 @@ export function ScreenerWorkspace({
   const [platformStyle, setPlatformStyle] = useState('all')
   const [maturity, setMaturity] = useState('all')
   useEffect(() => {
-    setMaturity(selectedRun?.strategy_version === 'low-base-platform-pullback-v3' ? 'platform-retest' : 'all')
+    setMaturity(['low-base-platform-pullback-v3', 'low-base-platform-pullback-v4'].includes(selectedRun?.strategy_version ?? '') ? 'platform-retest' : 'all')
   }, [selectedRun?.run_id, selectedRun?.strategy_version])
   useEffect(() => {
     setPlatformStyle(selectedRun?.strategy_version === 'volume-accumulation-20d-v7' ? 'compact-platform' : 'all')
