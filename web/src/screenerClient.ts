@@ -70,6 +70,13 @@ export type ScreenerCandidate = {
     stage?: string
     kind?: string
     launch_date?: string
+    launch_type?: string
+    volume_regime?: string
+    pullback_turnover_ratio?: number
+    observation_window_sessions?: number
+    observation_window_start_date?: string
+    observation_window_end_date?: string
+    flag_window?: { start_date: string; end_date: string; sessions: number; phase: string; qualified: boolean }
     peak_date?: string
     confirmation_date?: string | null
     impulse_gain_percent?: number

@@ -9,6 +9,20 @@ const basePattern = {
 }
 
 describe('trend explanation', () => {
+  it('distinguishes rolling early flags and elevated turnover from normal contraction', () => {
+    const run: TrendAnalysisRun = { run_id: 'flag', as_of_date: '2026-08-24', completion_state: 'complete',
+      stale: false, stale_reasons: [], warnings: [], items: [{ item_id: 'flag', item_type: 'zone', payload: {
+        kind: 'first-pullback-range', stage: 'pullback-observation', launch_type: 'strong-momentum',
+        volume_regime: 'elevated-turnover-digestion', pullback_turnover_ratio: .96,
+        observation_window_sessions: 20,
+        flag_window: { start_date: '2026-08-21', end_date: '2026-08-24', sessions: 2, phase: 'early' },
+      } }] }
+    const item = buildTrendExplanation(run)!.sections.flatMap(section => section.items).find(i => i.analysisItemId === 'flag')!
+    expect(item.detail).toContain('向前 20 个交易日')
+    expect(item.detail).toContain('早期旗形观察 2026-08-21 至 2026-08-24（2日）')
+    expect(item.detail).toContain('非标准缩量')
+    expect(item.detail).toContain('0.96x')
+  })
   it('explains first-pullback confirmation without inventing market or intraday permission', () => {
     const run: TrendAnalysisRun = { run_id: 'first', as_of_date: '2026-09-14', completion_state: 'complete',
       stale: false, stale_reasons: [], warnings: [], items: [{ item_id: 'pullback', item_type: 'zone', payload: {

@@ -5,7 +5,7 @@ import { MarketBoardBadge } from './MarketBoardBadge'
 import { fetchInstrumentBoardMemberships, type InstrumentBoardMembership } from './boardTags'
 import { TradingSystemControls } from './TradingSystemControls'
 import { TrendExplanationPanel } from './TrendExplanationPanel'
-import { accumulationStageLabel, accumulationPatternLabel, accumulationStyleLabel, firstPullbackStageLabel } from './trendExplanation'
+import { accumulationStageLabel, accumulationPatternLabel, accumulationStyleLabel, firstPullbackStageLabel, firstPullbackVolumeLabel } from './trendExplanation'
 import { useAnalysisOverlayVisibility, useAnalysisLayers } from './AnalysisOverlayToggle'
 import { logError, logInfo } from './eventLogger'
 import {
@@ -406,11 +406,21 @@ export function ScreenerWorkspace({
         </footer>}
         {selected && pullbackStates.includes(selected.state) && <footer className="screener-evidence">
           <span><small>形态阶段</small>{firstPullbackStageLabel(selected.evidence.stage)}</span>
+          {selected.evidence.flag_window && <>
+            <span><small>滚动观察窗口</small>{selected.evidence.observation_window_sessions} 个交易日</span>
+            <span><small>整理区间</small>{selected.evidence.flag_window.start_date} ~ {selected.evidence.flag_window.end_date}</span>
+            <span><small>旗形阶段</small>{selected.evidence.flag_window.phase === 'early' ? '早期旗形观察' : '旗形整理观察'} · {selected.evidence.flag_window.sessions} 日</span>
+          </>}
           <span><small>启动日期</small>{selected.evidence.launch_date ?? '--'}</span>
           <span><small>确认日期</small>{selected.evidence.confirmation_date ?? '尚未确认'}</span>
           <span><small>启动涨幅</small>{selected.evidence.impulse_gain_percent?.toFixed(2) ?? '--'}%</span>
           <span><small>回踩幅度</small>{selected.evidence.pullback_depth_percent?.toFixed(2) ?? '--'}%</span>
           <span><small>回踩 / 启动均量</small>{selected.evidence.pullback_volume_ratio?.toFixed(2) ?? '--'}x</span>
+          {selected.evidence.launch_type === 'strong-momentum' && <>
+            <span><small>启动类型</small>连续强阳启动</span>
+            <span><small>量能类型</small>{firstPullbackVolumeLabel(selected.evidence.volume_regime)}</span>
+            <span><small>回踩均量 / 启动至峰值最大日量</small>{selected.evidence.pullback_turnover_ratio?.toFixed(2) ?? '--'}x</span>
+          </>}
           <span><small>失效位（收盘口径）</small>{selected.evidence.invalidation_price?.toFixed(2) ?? '--'}</span>
           <span><small>前高参考</small>{selected.evidence.first_target_price?.toFixed(2) ?? '--'}</span>
           <span><small>参考盈亏比</small>{selected.evidence.first_risk_reward?.toFixed(2) ?? '--'}</span>

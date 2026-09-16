@@ -113,12 +113,27 @@ export function firstPullbackStageLabel(value: unknown): string {
   } as Record<string, string>)[String(value)] ?? '首次回踩'
 }
 
+export function firstPullbackVolumeLabel(value: unknown): string {
+  return ({ 'turnover-contraction': '相对峰值成交量收敛',
+    'elevated-turnover-digestion': '高量分歧消化（非标准缩量）',
+    'expanding-turnover': '成交量未收敛', 'expanding-volume': '成交量未收敛',
+    'rally-mean-contraction': '相对上涨均量收敛',
+  } as Record<string, string>)[String(value)] ?? '量能口径未记录'
+}
+
+function firstPullbackWindowText(payload: Record<string, unknown>): string {
+  const flag = payload.flag_window
+  if (!flag || typeof flag !== 'object' || Array.isArray(flag)) return ''
+  const window = flag as Record<string, unknown>
+  return `向前 ${numberValue(payload.observation_window_sessions) ?? '-'} 个交易日；${window.phase === 'early' ? '早期旗形观察' : '旗形整理观察'} ${stringValue(window.start_date) ?? '-'} 至 ${stringValue(window.end_date) ?? '-'}（${numberValue(window.sessions) ?? '-'}日）；`
+}
+
 function explainZone(item: AnalysisItem, allItems: AnalysisItem[]): TrendExplanationItem {
   const payload = item.payload
   if (payload.kind === 'first-pullback-range') return {
     analysisItemId: item.item_id,
     title: `强势股首次回踩 · ${firstPullbackStageLabel(payload.stage)}`,
-    detail: `启动 ${stringValue(payload.launch_date) ?? '-'}；涨幅 ${formatPercent(payload.impulse_gain_percent)}，回踩幅度 ${formatPercent(payload.pullback_depth_percent)}；回踩/启动均量 ${formatRatio(payload.pullback_volume_ratio)}x；失效位 ${formatPrice(payload.invalidation_price)}，前高参考 ${formatPrice(payload.first_target_price)}，参考盈亏比 ${formatRatio(payload.first_risk_reward)}。${payload.screen_eligible === true ? '' : '当前不满足选股条件。'}仅日线量价结构，板块共振与分时承接尚未验证，不代表主力持仓或买入指令。`,
+    detail: `${firstPullbackWindowText(payload)}启动 ${stringValue(payload.launch_date) ?? '-'}；${payload.launch_type === 'strong-momentum' ? `连续强阳启动；${firstPullbackVolumeLabel(payload.volume_regime)}，回踩均量/启动至峰值最大日量 ${formatRatio(payload.pullback_turnover_ratio)}x；` : ''}涨幅 ${formatPercent(payload.impulse_gain_percent)}，回踩幅度 ${formatPercent(payload.pullback_depth_percent)}；回踩/启动均量 ${formatRatio(payload.pullback_volume_ratio)}x；失效位 ${formatPrice(payload.invalidation_price)}，前高参考 ${formatPrice(payload.first_target_price)}，参考盈亏比 ${formatRatio(payload.first_risk_reward)}。${payload.screen_eligible === true ? '' : '当前不满足选股条件。'}仅日线量价结构，板块共振与分时承接尚未验证，不代表主力持仓或买入指令。`,
     score: numberValue(payload.score),
   }
   const volume = payload.kind === 'estimated-volume-at-price'

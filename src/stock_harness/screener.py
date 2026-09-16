@@ -17,6 +17,7 @@ from stock_harness.major_descending_lines import (
 from stock_harness.pattern_analysis import PatternAnalysisRequest, PatternAnalysisService
 from stock_harness.sqlite_store import SQLiteMarketDataStore
 from stock_harness.accumulation_pattern import ANALYSIS_LOOKBACK
+from stock_harness.first_pullback_pattern import CONFIG as PULLBACK_CONFIG
 from stock_harness.screener_result_tags import attach_recognition_tags
 from stock_harness.volume_accumulation import (
     STATE as ACCUMULATION_STATE,
@@ -32,7 +33,7 @@ STRATEGY_ID = "major-descending-breakout"
 STRATEGY_VERSION = "major-descending-breakout-v5"
 CONFIG_VERSION = "screener-major-descending-v5"
 PULLBACK_STRATEGY_ID = "strong-first-pullback"
-PULLBACK_STRATEGY_VERSION = "strong-first-pullback-v2"
+PULLBACK_STRATEGY_VERSION = "strong-first-pullback-v3"
 DEFAULT_HORIZONS = AnalysisHorizons(60, 120, 250)
 SCREENABLE_STATES = (
     MajorLineState.CRITICAL_BREAKOUT,
@@ -75,6 +76,7 @@ class ScreenerService:
             "strategy_id": PULLBACK_STRATEGY_ID,
             "name": "强势股首次回踩",
             "version": PULLBACK_STRATEGY_VERSION,
+            "window": PULLBACK_CONFIG.observation_window_sessions,
             "states": ["pullback-observation", "pullback-confirmed"],
             "final_bars_only": True,
         }]
@@ -391,6 +393,7 @@ def _strategy_version(strategy_id: str) -> str:
 def _parameters(strategy_id, periods, states, max_results: int) -> dict[str, object]:
     if strategy_id == PULLBACK_STRATEGY_ID:
         return {"max_results": max_results, "final_bars_only": True,
+                "window": PULLBACK_CONFIG.observation_window_sessions,
                 "states": ["pullback-observation", "pullback-confirmed"],
                 "analysis_config": PULLBACK_STRATEGY_VERSION}
     if strategy_id == ACCUMULATION_STRATEGY_ID:

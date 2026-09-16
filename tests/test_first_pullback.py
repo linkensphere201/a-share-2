@@ -121,8 +121,10 @@ def test_outside_bar_at_last_index_does_not_crash_or_claim_intraday_order():
     bars = list(append(bars, 12))
     bars[-1] = replace(bars[-1], high=13.5)
     result = detect_first_pullback(bars)
-    assert result["stage"] == "invalidated"
-    assert "outside-bar-order-ambiguous" in result["reasons"]
+    assert result is None
+    later = detect_first_pullback(append(bars, 12))
+    assert later["recognition_date"] == (bars[-1].period_end + timedelta(days=1)).isoformat()
+    assert later["peak_date"] == bars[-1].period_end.isoformat()
 
 
 def seed(store, bars):
@@ -191,6 +193,89 @@ def test_research_zone_does_not_change_existing_trade_scenarios():
         item = GeneratedAnalysisItem(item_id="first", item_type=GeneratedItemType.ZONE,
                                      payload={**detect_first_pullback(sample()), "stage": stage})
         assert build_structural_map([item], 11.85).boundaries == ()
+
+
+def momentum_sample():
+    base = tuple(replace(bar, open=10., high=11.5, low=9.5, close=10., volume=100)
+                 for bar in sample()[:40])
+    for close in (11., 12.1, 13.31):
+        base = append(base, close, volume=120)
+    base = append(base, 12.9, volume=300)
+    base = (*base[:-1], replace(base[-1], high=14.5))
+    return append(base, 12.6, volume=150)
+
+
+def test_momentum_needs_later_daily_evidence_not_a_same_day_peak():
+    bars = momentum_sample()
+    assert detect_first_pullback(bars[:-1]) is None
+    result = detect_first_pullback(bars)
+    assert result["launch_type"] == "strong-momentum"
+    assert result["screen_eligible"]
+    assert result["recognition_date"] == bars[-1].period_end.isoformat()
+    assert result["pullback_turnover_ratio"] == .5
+    assert result["confirmation_date"] is None
+
+
+@pytest.mark.parametrize("failure", ["heavy-volume", "support-lost", "second-correction", "weak-launch"])
+def test_momentum_does_not_bypass_volume_support_or_first_wave_gates(failure):
+    bars = momentum_sample()
+    if failure == "heavy-volume":
+        bars = (*bars[:-1], replace(bars[-1], volume=500))
+    elif failure == "support-lost":
+        bars = append(bars, 10.5)
+    elif failure == "second-correction":
+        bars = append(append(bars, 13.2), 12.6)
+    else:
+        bars = list(bars)
+        bars[40] = replace(bars[40], open=10.2, high=10.4, low=10.1, close=10.3)
+        bars[41] = replace(bars[41], open=10.8, high=11.1, low=10.7, close=11.)
+    result = detect_first_pullback(bars)
+    assert result is None or not result["screen_eligible"]
+
+
+def test_elevated_turnover_requires_stabilization_and_is_not_called_contraction():
+    bars = momentum_sample()
+    bars = (*bars[:-1], replace(bars[-1], volume=290))
+    assert not detect_first_pullback(bars)["screen_eligible"]
+    result = detect_first_pullback(append(bars, 12.7, volume=280))
+    assert result["screen_eligible"]
+    assert result["stage"] == "pullback-observation"
+    assert result["volume_regime"] == "elevated-turnover-digestion"
+
+
+def test_rolling_window_uses_sessions_and_rejects_a_pole_outside_n(monkeypatch):
+    import stock_harness.first_pullback_pattern as module
+    bars = momentum_sample()
+    result = detect_first_pullback(bars)
+    assert result["flag_window"]["sessions"] == 2
+    assert result["flag_window"]["phase"] == "early"
+    assert result["observation_window_start_date"] == bars[-20].period_end.isoformat()
+    monkeypatch.setattr(module, "CONFIG", replace(module.CONFIG, observation_window_sessions=4))
+    short = detect_first_pullback(bars)
+    assert not short["screen_eligible"]
+    assert "launch-outside-observation-window" in short["reasons"]
+
+
+def test_flag_geometry_uses_multiple_bars_not_just_last_candle():
+    bars = sample(False)
+    assert detect_first_pullback(bars)["screen_eligible"]
+    expanding = list(bars)
+    for index in (47, 48):
+        expanding[index] = replace(expanding[index], low=10.8)
+    result = detect_first_pullback(expanding)
+    assert expanding[-1] == bars[-1]
+    assert not result["screen_eligible"]
+    assert "flag-range-expanding" in result["reasons"]
+
+
+def test_momentum_from_a_narrow_base_uses_the_same_strong_launch_rules():
+    bars = list(momentum_sample())
+    for index in range(40):
+        bars[index] = replace(bars[index], high=10.1, low=9.9)
+    bars[40] = replace(bars[40], volume=200)
+    result = detect_first_pullback(bars)
+    assert result["launch_type"] == "strong-momentum"
+    assert result["screen_eligible"]
 
 
 def test_legacy_candidate_rows_survive_state_migration(tmp_path, monkeypatch):
