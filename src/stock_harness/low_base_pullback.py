@@ -8,7 +8,7 @@ from typing import Sequence
 from stock_harness.analysis_inputs import AnalysisBar
 
 
-ALGORITHM_VERSION = "low-base-platform-pullback-v1"
+ALGORITHM_VERSION = "low-base-platform-pullback-v2"
 LAUNCH_TYPE = "low-base-platform"
 
 
@@ -98,6 +98,39 @@ def _geometry(platform):
     close_range = max(b.close for b in platform) / min(b.close for b in platform) - 1
     body = fmean(abs(b.close - b.open) / b.open for b in platform)
     return lower, upper, close_range, body
+
+
+def _platform_evidence(platform):
+    """Describe the pre-retest plateau, never a future outcome or entry quality."""
+    lower, upper, close_range, body = _geometry(platform)
+    bullish = [b.volume for b in platform if b.close > b.open]
+    bearish = [b.volume for b in platform if b.close < b.open]
+    ratio = fmean(bullish) / fmean(bearish) if bullish and bearish else None
+    # Remove the largest bullish day to expose single-pulse volume illusions.
+    trimmed = sorted(bullish)[:-1]
+    robust = fmean(trimmed) / fmean(bearish) if trimmed and bearish else None
+    if len(bullish) < 3 or len(bearish) < 2:
+        quality = "insufficient-directional-evidence"
+    elif robust > 1:
+        quality = "persistent-bullish-volume"
+    elif ratio > 1:
+        quality = "single-pulse-dominated"
+    else:
+        quality = "no-persistent-bullish-advantage"
+    return {
+        "start_date": platform[0].period_end.isoformat(),
+        "end_date": platform[-1].period_end.isoformat(), "sessions": len(platform),
+        "range_percent": round((upper / lower - 1) * 100, 4),
+        "close_range_percent": round(close_range * 100, 4),
+        "close_drift_percent": round((platform[-1].close / platform[0].close - 1) * 100, 4),
+        "mean_body_percent": round(body * 100, 4),
+        "small_body_fraction": round(sum(abs(b.close / b.open - 1) <= CONFIG.max_mean_body_fraction
+                                         for b in platform) / len(platform), 4),
+        "bullish_sessions": len(bullish), "bearish_sessions": len(bearish),
+        "bullish_bearish_volume_ratio": round(ratio, 4) if ratio is not None else None,
+        "trimmed_bullish_bearish_volume_ratio": round(robust, 4) if robust is not None else None,
+        "volume_quality": quality,
+    }
 
 
 def _retest(bars, start, end, pulse_volume):
@@ -198,10 +231,9 @@ def _follow(bars, launch, peak_index, origin, context_low):
     if state == "disorderly":
         reasons.append("retest-not-currently-qualified")
     eligible = not reasons and state in ("pullback-observation", "pullback-confirmed")
-    risk, reward = last.close - support, upper - last.close
+    shape = _platform_evidence(bars[start:evidence["retest_start"]])
     score = (45 + 20 * max(0., 1 - evidence["pulse_ratio"])
-             + 15 * max(0., 1 - close_range / CONFIG.max_platform_close_range)
-             + (10 if confirmation is not None else 0))
+             + 15 * max(0., 1 - shape["close_range_percent"] / (100 * CONFIG.max_platform_close_range)))
     stamp = lambda i: bars[i].period_end.isoformat()
     return {
         "kind": "first-pullback-range", "display_name": "Low-base platform pullback",
@@ -213,8 +245,8 @@ def _follow(bars, launch, peak_index, origin, context_low):
         "start_date": stamp(start), "end_date": stamp(terminal), "as_of_date": stamp(len(bars) - 1),
         "latest_close": last.close, "lower": lower, "upper": upper, "center": (lower + upper) / 2,
         "invalidation_price": support, "breakout_price": boundary if confirmation is not None else upper,
-        "first_target_price": upper if confirmation is None and reward > 0 else None,
-        "first_risk_reward": round(reward / risk, 4) if confirmation is None and risk > 0 and reward > 0 else None,
+        "first_target_price": None, "first_risk_reward": None,
+        "platform_shape": shape,
         "impulse_origin_price": origin, "peak_price": peak,
         "impulse_gain_percent": round((peak / origin - 1) * 100, 4),
         "origin_above_context_low_percent": round((origin / context_low - 1) * 100, 4),

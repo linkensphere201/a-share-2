@@ -292,7 +292,8 @@ class ScreenerService:
                 LOGGER.info("screener_first_pullback_progress run_id=%s scanned=%s universe=%s matches=%s",
                             run_id, index, len(universe), len(candidates))
         candidates.sort(key=lambda item: (
-            item["state"] != "pullback-confirmed", -item["score"], item["symbol"],
+            strategy_id != LOW_BASE_STRATEGY_ID and item["state"] != "pullback-confirmed",
+            -item["score"], item["symbol"],
         ))
         self._store.complete_screener_run(run_id, candidates[:max_results], retention=10)
         LOGGER.info("screener_first_pullback_completed run_id=%s matches=%s duration_ms=%.1f",

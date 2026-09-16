@@ -57,9 +57,11 @@ def test_prelaunch_calibration_uses_only_available_prefix(symbol, day, stage):
     assert result["pullback_volume_ratio"] <= .70
     assert result["pullback_platform_volume_ratio"] <= .90
     assert all(v <= day for k, v in result.items() if k.endswith("_date") and v is not None)
-    if stage == "pullback-confirmed":
-        assert result["first_target_price"] is None
-        assert result["first_risk_reward"] is None
+    assert result["first_target_price"] is None
+    assert result["first_risk_reward"] is None
+    shape = result["platform_shape"]
+    assert shape["end_date"] < result["pullback_metric_start_date"]
+    assert shape["sessions"] >= 3
 
 
 def test_confirmation_freezes_retest_evidence_not_future_returns():
@@ -69,6 +71,53 @@ def test_confirmation_freezes_retest_evidence_not_future_returns():
                 "pullback_metric_start_date", "pullback_metric_end_date", "flag_window"):
         assert first[key] == later[key]
     assert first["confirmation_date"] == "2026-02-24"
+
+
+def test_breakout_does_not_improve_shape_score_or_change_plateau_evidence():
+    observation = detect_low_base_pullback(bars(cutoff="2026-02-13"))
+    confirmed = detect_low_base_pullback(bars(cutoff="2026-02-24"))
+    assert observation["platform_shape"] == confirmed["platform_shape"]
+    assert observation["score"] == confirmed["score"]
+
+
+@pytest.mark.parametrize("volumes,quality", [
+    ((200, 200, 200, 100, 100), "persistent-bullish-volume"),
+    ((1000, 50, 50, 100, 100), "single-pulse-dominated"),
+    ((50, 50, 50, 100, 100), "no-persistent-bullish-advantage"),
+])
+def test_platform_volume_requires_persistence_not_one_large_candle(volumes, quality):
+    from stock_harness.low_base_pullback import _platform_evidence
+    original = bars()[-5:]
+    platform = [replace(b, open=10., close=10.01 if i < 3 else 9.99,
+                        high=10.1, low=9.9, volume=volumes[i])
+                for i, b in enumerate(original)]
+    facts = _platform_evidence(platform)
+    assert facts["volume_quality"] == quality
+    assert facts["small_body_fraction"] == 1
+    assert facts["bullish_sessions"] == 3
+    assert facts["bearish_sessions"] == 2
+
+
+def test_one_sided_platform_is_unknown_not_infinite_bullish_advantage():
+    from stock_harness.low_base_pullback import _platform_evidence
+    platform = [replace(b, open=b.close * .999) for b in bars()[-5:]]
+    facts = _platform_evidence(platform)
+    assert facts["volume_quality"] == "insufficient-directional-evidence"
+    assert facts["bullish_bearish_volume_ratio"] is None
+    assert facts["trimmed_bullish_bearish_volume_ratio"] is None
+
+
+def test_plateau_metrics_exclude_later_retest_and_breakout():
+    from statistics import fmean
+    for day in ("2026-02-11", "2026-02-24"):
+        prefix = bars(cutoff=day)
+        result = detect_low_base_pullback(prefix)
+        plateau = [b for b in prefix if result["start_date"] <= b.period_end.isoformat()
+                   < result["pullback_metric_start_date"]]
+        shape = result["platform_shape"]
+        assert shape["sessions"] == len(plateau)
+        assert shape["close_drift_percent"] == round((plateau[-1].close / plateau[0].close - 1) * 100, 4)
+        assert shape["mean_body_percent"] == round(fmean(abs(b.close - b.open) / b.open for b in plateau) * 100, 4)
 
 
 @pytest.mark.parametrize("failure", ["no-volume-pulse", "high-position", "heavy-retest",
