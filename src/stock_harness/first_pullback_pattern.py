@@ -10,7 +10,7 @@ from typing import Sequence
 from stock_harness.analysis_inputs import AnalysisBar
 
 
-ALGORITHM_VERSION = "strong-first-pullback-v1"
+ALGORITHM_VERSION = "strong-first-pullback-v2"
 KIND = "first-pullback-range"
 SCREENABLE_STATES = ("pullback-observation", "pullback-confirmed")
 LOOKBACK = 250
@@ -77,6 +77,8 @@ def _follow(bars, launch: int, boundary: float, atr: float):
     pullback_start = None
     confirmation = None
     confirmed_stop = None
+    trough_close = None
+    recovery_high = None
     state = "launching"
     reason = None
     support = boundary
@@ -109,11 +111,17 @@ def _follow(bars, launch: int, boundary: float, atr: float):
         if bar.high >= peak:
             state, reason, terminal = "completed", "prior-high-reached", index
             break
-        if confirmation is not None:
-            recovery_high = max(b.high for b in bars[confirmation:index])
+        # Wave counting is structural, independent of the volume-based entry gate.
+        if recovery_high is not None:
             if bar.close <= recovery_high * (1 - CONFIG.min_pullback_fraction):
                 state, reason, terminal = "completed", "second-pullback-started", index
                 break
+            recovery_high = max(recovery_high, bar.high)
+        else:
+            trough_close = bar.close if trough_close is None else min(trough_close, bar.close)
+            if bar.close >= trough_close * (1 + CONFIG.min_pullback_fraction):
+                recovery_high = bar.high
+        if confirmation is not None:
             if index - confirmation > CONFIG.confirmation_fresh_sessions:
                 state, reason, terminal = "expired", "confirmation-stale", index
                 break
@@ -137,10 +145,8 @@ def _follow(bars, launch: int, boundary: float, atr: float):
             and prior_volume_ratio <= CONFIG.max_pullback_volume_ratio):
             confirmation = index
             confirmed_stop = max(invalidation, min(b.low for b in bars[peak_index + 1:index + 1]) - atr * .25)
+            recovery_high = max(recovery_high or bar.high, bar.high)
             state = "pullback-confirmed"
-            if bar.high >= peak:
-                state, reason, terminal = "completed", "prior-high-reached", index
-                break
     if pullback_start is None:
         return None, terminal
     last = bars[-1]
@@ -166,7 +172,8 @@ def _follow(bars, launch: int, boundary: float, atr: float):
     return {
         "kind": KIND, "display_name": "强势股首次回踩", "algorithm_version": ALGORITHM_VERSION,
         "stage": state, "screen_eligible": eligible, "score": round(score, 4),
-        "start_date": bars[pullback_start].period_end.isoformat(),
+        "start_date": pullback[0].period_end.isoformat(),
+        "recognition_date": bars[pullback_start].period_end.isoformat(),
         "end_date": bars[end].period_end.isoformat(),
         "launch_date": bars[launch].period_end.isoformat(),
         "peak_date": bars[peak_index].period_end.isoformat(),
@@ -179,7 +186,9 @@ def _follow(bars, launch: int, boundary: float, atr: float):
         "impulse_gain_percent": round(gain * 100, 4),
         "pullback_depth_percent": round((peak - min(b.low for b in pullback)) / peak * 100, 4),
         "pullback_volume_ratio": round(volume_ratio, 4),
-        "pullback_sessions": end - pullback_start + 1,
+        "pullback_sessions": len(pullback),
+        "pullback_metric_start_date": pullback[0].period_end.isoformat(),
+        "pullback_metric_end_date": pullback[-1].period_end.isoformat(),
         "reasons": reasons, "parameters": asdict(CONFIG),
         "missing_evidence": ["sector-relative-strength", "market-permission", "intraday-confirmation"],
         "uncertainty": "Daily price-volume hypothesis; no institutional-position or execution confirmation. Prior high is a reference, not a forecast.",

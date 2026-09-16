@@ -32,7 +32,7 @@ STRATEGY_ID = "major-descending-breakout"
 STRATEGY_VERSION = "major-descending-breakout-v5"
 CONFIG_VERSION = "screener-major-descending-v5"
 PULLBACK_STRATEGY_ID = "strong-first-pullback"
-PULLBACK_STRATEGY_VERSION = "strong-first-pullback-v1"
+PULLBACK_STRATEGY_VERSION = "strong-first-pullback-v2"
 DEFAULT_HORIZONS = AnalysisHorizons(60, 120, 250)
 SCREENABLE_STATES = (
     MajorLineState.CRITICAL_BREAKOUT,

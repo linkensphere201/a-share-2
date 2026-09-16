@@ -91,6 +91,31 @@ def test_confirmation_expires_and_too_late_entry_is_not_eligible():
     assert detect_first_pullback(bars)["stage"] == "expired"
 
 
+def test_second_pullback_ends_first_leg_even_without_volume_confirmation():
+    bars = append(sample(False), 11.85, volume=50)
+    first = detect_first_pullback(bars)
+    assert first["confirmation_date"] is None
+    assert first["stage"] == "pullback-observation"
+    second = detect_first_pullback(append(bars, 11.5))
+    assert not second["screen_eligible"]
+    assert second["stage"] == "completed"
+    assert "second-pullback-started" in second["reasons"]
+
+
+def test_volume_window_dates_match_sessions_and_freeze_after_confirmation():
+    bars = list(sample(False))
+    day = bars[45]
+    # A shallow first day is included in volume evidence before the 3% recognition.
+    bars[45] = replace(day, open=12.6, high=12.75, low=12.5, close=12.6)
+    observed = detect_first_pullback(bars)
+    assert observed["start_date"] == day.period_end.isoformat()
+    assert observed["recognition_date"] == bars[46].period_end.isoformat()
+    confirmed = detect_first_pullback(sample())
+    followed = detect_first_pullback(append(sample(), 11.9))
+    assert confirmed["pullback_sessions"] == followed["pullback_sessions"]
+    assert confirmed["pullback_metric_end_date"] == sample()[-2].period_end.isoformat()
+
+
 def test_outside_bar_at_last_index_does_not_crash_or_claim_intraday_order():
     bars = list(sample()[:45])
     bars = list(append(bars, 12))
