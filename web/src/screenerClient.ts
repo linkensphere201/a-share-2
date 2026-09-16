@@ -71,6 +71,9 @@ export type ScreenerCandidate = {
     kind?: string
     launch_date?: string
     launch_type?: string
+    shape_maturity?: 'forming' | 'platform-established' | 'platform-retest'
+    platform_shape?: { start_date: string; end_date: string; sessions: number; stable: boolean; mature: boolean;
+      close_drift_percent: number; small_body_fraction: number; volume_quality: string }
     origin_above_context_low_percent?: number
     pullback_platform_volume_ratio?: number
     volume_regime?: string

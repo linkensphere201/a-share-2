@@ -8,7 +8,7 @@ from typing import Sequence
 from stock_harness.analysis_inputs import AnalysisBar
 
 
-ALGORITHM_VERSION = "low-base-platform-pullback-v2"
+ALGORITHM_VERSION = "low-base-platform-pullback-v3"
 LAUNCH_TYPE = "low-base-platform"
 
 
@@ -25,6 +25,10 @@ class LowBasePullbackConfig:
     min_pulse_gain: float = .025
     max_pulse_gain: float = .22
     min_platform_sessions: int = 3
+    mature_platform_sessions: int = 5
+    max_platform_drift: float = .035
+    min_small_body_fraction: float = .70
+    min_adjacent_overlap_fraction: float = .60
     max_platform_sessions: int = 22
     max_platform_range: float = .14
     max_platform_close_range: float = .09
@@ -32,8 +36,9 @@ class LowBasePullbackConfig:
     max_platform_volume_ratio: float = .90
     max_platform_extension: float = .025
     min_retest_sessions: int = 2
-    max_retest_sessions: int = 4
+    max_retest_sessions: int = 8
     min_retest_decline: float = .01
+    min_retest_start_decline: float = .003
     max_retest_pulse_volume_ratio: float = .70
     max_retest_platform_volume_ratio: float = .90
     support_origin_allowance: float = .02
@@ -50,7 +55,7 @@ CONFIG = LowBasePullbackConfig()
 def detect_low_base_pullback(bars: Sequence[AnalysisBar]) -> dict[str, object] | None:
     """A bounded research candidate, not proof of accumulation or future return."""
     bars = tuple(bars[-250:])
-    if len(bars) < CONFIG.context_sessions + CONFIG.min_platform_sessions + 3:
+    if len(bars) < CONFIG.context_sessions + CONFIG.min_platform_sessions + 1:
         return None
     if any(
         not b.period_complete or b.contains_provisional or b.contains_roll_event
@@ -117,6 +122,18 @@ def _platform_evidence(platform):
         quality = "single-pulse-dominated"
     else:
         quality = "no-persistent-bullish-advantage"
+    drift = platform[-1].close / platform[0].close - 1
+    small = sum(abs(b.close / b.open - 1) <= CONFIG.max_mean_body_fraction for b in platform) / len(platform)
+    overlap = sum(max(a.low, b.low) <= min(a.high, b.high)
+                  for a, b in zip(platform, platform[1:])) / max(1, len(platform) - 1)
+    half = max(1, len(platform) // 2)
+    floor_drift = fmean(b.low for b in platform[-half:]) / fmean(b.low for b in platform[:half]) - 1
+    stable = (upper / lower - 1 <= CONFIG.max_platform_range
+              and close_range <= CONFIG.max_platform_close_range
+              and abs(drift) <= CONFIG.max_platform_drift
+              and floor_drift >= -CONFIG.max_platform_drift
+              and small >= CONFIG.min_small_body_fraction
+              and overlap >= CONFIG.min_adjacent_overlap_fraction)
     return {
         "start_date": platform[0].period_end.isoformat(),
         "end_date": platform[-1].period_end.isoformat(), "sessions": len(platform),
@@ -130,14 +147,27 @@ def _platform_evidence(platform):
         "bullish_bearish_volume_ratio": round(ratio, 4) if ratio is not None else None,
         "trimmed_bullish_bearish_volume_ratio": round(robust, 4) if robust is not None else None,
         "volume_quality": quality,
+        "adjacent_overlap_fraction": round(overlap, 4),
+        "floor_drift_percent": round(floor_drift * 100, 4),
+        "stable": stable,
+        "mature": stable and len(platform) >= CONFIG.mature_platform_sessions,
     }
 
 
 def _retest(bars, start, end, pulse_volume):
-    for size in range(CONFIG.min_retest_sessions, CONFIG.max_retest_sessions + 1):
+    matches = []
+    # Prefer the complete decline after a stable shelf, not an arbitrary two-day tail.
+    for size in range(CONFIG.max_retest_sessions, CONFIG.min_retest_sessions - 1, -1):
         split = end + 1 - size
+        if split < start + CONFIG.min_platform_sessions:
+            continue
         platform, retest = bars[start:split], bars[split:end + 1]
-        if len(platform) < CONFIG.min_platform_sessions:
+        if not _platform_evidence(platform)["stable"]:
+            continue
+        # The correction must begin at a local closing high of the preceding shelf.
+        if (len(platform) >= CONFIG.mature_platform_sessions
+            and (bars[split - 1].close < max(b.close for b in platform[-3:]) * .995
+                 or retest[0].close > bars[split - 1].close * (1 - CONFIG.min_retest_start_decline))):
             continue
         platform_volume = fmean(b.volume for b in platform)
         retest_volume = fmean(b.volume for b in retest)
@@ -147,8 +177,9 @@ def _retest(bars, start, end, pulse_volume):
             or retest_volume > pulse_volume * CONFIG.max_retest_pulse_volume_ratio
             or retest_volume > platform_volume * CONFIG.max_retest_platform_volume_ratio):
             continue
-        return split, retest_volume / pulse_volume, retest_volume / platform_volume
-    return None
+        matches.append((len(platform) >= CONFIG.mature_platform_sessions, size,
+                        (split, retest_volume / pulse_volume, retest_volume / platform_volume)))
+    return max(matches, key=lambda m: (m[0], m[1]))[2] if matches else None
 
 
 def _follow(bars, launch, peak_index, origin, context_low):
@@ -219,7 +250,15 @@ def _follow(bars, launch, peak_index, origin, context_low):
             # Losing platform quality cancels earlier confirmation permission.
             recognized, evidence = None, None
     if evidence is None:
-        return None, terminal
+        pending = bars[start:terminal + 1]
+        if (state not in ("launching", "disorderly")
+            or len(pending) < CONFIG.min_platform_sessions
+            or not _platform_evidence(pending)["stable"]
+            or fmean(b.volume for b in pending) > pulse_volume * CONFIG.max_platform_volume_ratio):
+            return None, terminal
+        evidence = {"retest_start": terminal + 1, "retest_end": terminal,
+                    "pulse_ratio": None, "platform_ratio": None, "platform_end": terminal}
+        state = "pullback-observation"
     platform = bars[start:evidence["platform_end"] + 1]
     retest = bars[evidence["retest_start"]:evidence["retest_end"] + 1]
     lower, upper, close_range, body = _geometry(platform)
@@ -232,7 +271,9 @@ def _follow(bars, launch, peak_index, origin, context_low):
         reasons.append("retest-not-currently-qualified")
     eligible = not reasons and state in ("pullback-observation", "pullback-confirmed")
     shape = _platform_evidence(bars[start:evidence["retest_start"]])
-    score = (45 + 20 * max(0., 1 - evidence["pulse_ratio"])
+    maturity = ("platform-retest" if shape["mature"] and retest else
+                "platform-established" if shape["mature"] else "forming")
+    score = (45 + 20 * max(0., 1 - (evidence["pulse_ratio"] if retest else 1))
              + 15 * max(0., 1 - shape["close_range_percent"] / (100 * CONFIG.max_platform_close_range)))
     stamp = lambda i: bars[i].period_end.isoformat()
     return {
@@ -240,13 +281,15 @@ def _follow(bars, launch, peak_index, origin, context_low):
         "algorithm_version": ALGORITHM_VERSION, "launch_type": LAUNCH_TYPE,
         "stage": state, "screen_eligible": eligible, "score": round(score, 4),
         "launch_date": stamp(launch), "launch_confirmation_date": stamp(peak_index),
-        "peak_date": stamp(peak_index), "recognition_date": stamp(recognized),
+        "peak_date": stamp(peak_index), "recognition_date": stamp(recognized) if recognized is not None else None,
         "confirmation_date": stamp(confirmation) if confirmation is not None else None,
         "start_date": stamp(start), "end_date": stamp(terminal), "as_of_date": stamp(len(bars) - 1),
         "latest_close": last.close, "lower": lower, "upper": upper, "center": (lower + upper) / 2,
         "invalidation_price": support, "breakout_price": boundary if confirmation is not None else upper,
         "first_target_price": None, "first_risk_reward": None,
         "platform_shape": shape,
+        "shape_maturity": maturity,
+        "maturity_rank": {"platform-retest": 0, "platform-established": 1, "forming": 2}[maturity],
         "impulse_origin_price": origin, "peak_price": peak,
         "impulse_gain_percent": round((peak / origin - 1) * 100, 4),
         "origin_above_context_low_percent": round((origin / context_low - 1) * 100, 4),
@@ -254,11 +297,11 @@ def _follow(bars, launch, peak_index, origin, context_low):
         "platform_close_range_percent": round(close_range * 100, 4),
         "platform_mean_body_percent": round(body * 100, 4),
         "platform_volume_ratio": round(fmean(b.volume for b in platform) / pulse_volume, 4),
-        "pullback_volume_ratio": round(evidence["pulse_ratio"], 4),
-        "pullback_platform_volume_ratio": round(evidence["platform_ratio"], 4),
-        "pullback_depth_percent": round((upper - min(b.low for b in retest)) / upper * 100, 4),
-        "pullback_sessions": len(retest), "pullback_metric_start_date": retest[0].period_end.isoformat(),
-        "pullback_metric_end_date": retest[-1].period_end.isoformat(),
+        "pullback_volume_ratio": round(evidence["pulse_ratio"], 4) if retest else None,
+        "pullback_platform_volume_ratio": round(evidence["platform_ratio"], 4) if retest else None,
+        "pullback_depth_percent": round((upper - min(b.low for b in retest)) / upper * 100, 4) if retest else None,
+        "pullback_sessions": len(retest), "pullback_metric_start_date": retest[0].period_end.isoformat() if retest else None,
+        "pullback_metric_end_date": retest[-1].period_end.isoformat() if retest else None,
         "volume_regime": "pulse-and-platform-contraction",
         "observation_window_sessions": CONFIG.observation_window_sessions,
         "observation_window_start_date": stamp(window_start), "observation_window_end_date": stamp(len(bars) - 1),

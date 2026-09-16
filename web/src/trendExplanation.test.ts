@@ -9,6 +9,20 @@ const basePattern = {
 }
 
 describe('trend explanation', () => {
+  it.each([
+    ['forming', true, '初步形成'],
+    ['platform-established', true, '平台成立'],
+    ['platform-retest', true, '平台缩量回踩'],
+    ['platform-retest', false, '平台缩量回踩 · 结构失效'],
+  ])('shows shared maturity %s without hiding invalidation', (maturity, eligible, title) => {
+    const run: TrendAnalysisRun = { run_id: 'low-v3', as_of_date: '2026-02-25', completion_state: 'complete',
+      stale: false, stale_reasons: [], warnings: [], items: [{ item_id: 'low-v3', item_type: 'zone', payload: {
+        kind: 'first-pullback-range', launch_type: 'low-base-platform', shape_maturity: maturity,
+        stage: eligible ? 'pullback-observation' : 'invalidated', screen_eligible: eligible,
+      } }] }
+    const item = buildTrendExplanation(run)!.sections.flatMap(section => section.items).find(i => i.analysisItemId === 'low-v3')!
+    expect(item.title).toBe(`低位平台回踩 · ${title}`)
+  })
   it('names low-base platforms without inventing a doubling target or a high flag', () => {
     const run: TrendAnalysisRun = { run_id: 'low', as_of_date: '2026-02-25', completion_state: 'complete',
       stale: false, stale_reasons: [], warnings: [], items: [{ item_id: 'low', item_type: 'zone', payload: {

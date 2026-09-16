@@ -5,7 +5,7 @@ import { MarketBoardBadge } from './MarketBoardBadge'
 import { fetchInstrumentBoardMemberships, type InstrumentBoardMembership } from './boardTags'
 import { TradingSystemControls } from './TradingSystemControls'
 import { TrendExplanationPanel } from './TrendExplanationPanel'
-import { accumulationStageLabel, accumulationPatternLabel, accumulationStyleLabel, firstPullbackStageLabel, firstPullbackVolumeLabel } from './trendExplanation'
+import { accumulationStageLabel, accumulationPatternLabel, accumulationStyleLabel, firstPullbackStageLabel, firstPullbackVolumeLabel, lowBaseMaturityLabel } from './trendExplanation'
 import { useAnalysisOverlayVisibility, useAnalysisLayers } from './AnalysisOverlayToggle'
 import { logError, logInfo } from './eventLogger'
 import {
@@ -67,6 +67,10 @@ export function ScreenerWorkspace({
   const [maxResults, setMaxResults] = useState(200)
   const [resultStateFilter, setResultStateFilter] = useState<ResultStateFilter>('all')
   const [platformStyle, setPlatformStyle] = useState('all')
+  const [maturity, setMaturity] = useState('all')
+  useEffect(() => {
+    setMaturity(selectedRun?.strategy_version === 'low-base-platform-pullback-v3' ? 'platform-retest' : 'all')
+  }, [selectedRun?.run_id, selectedRun?.strategy_version])
   useEffect(() => {
     setPlatformStyle(selectedRun?.strategy_version === 'volume-accumulation-20d-v7' ? 'compact-platform' : 'all')
   }, [selectedRun?.run_id, selectedRun?.strategy_version])
@@ -87,8 +91,9 @@ export function ScreenerWorkspace({
 
   const stateCandidates = useMemo(() => candidates.filter(item =>
     (resultStateFilter === 'all' || item.state === resultStateFilter)
-    && (platformStyle === 'all' || item.evidence.platform_style === platformStyle)),
-  [candidates, resultStateFilter, platformStyle])
+    && (platformStyle === 'all' || item.evidence.platform_style === platformStyle)
+    && (maturity === 'all' || item.evidence.shape_maturity === maturity)),
+  [candidates, resultStateFilter, platformStyle, maturity])
   const historicalCandidates = useMemo(() => stateCandidates.filter(
     item => item.recognition?.tags.includes('historical'),
   ), [stateCandidates])
@@ -328,6 +333,13 @@ export function ScreenerWorkspace({
             onClick={() => setResultStateFilter(state)}
           >{stateLabels[state]} <small>{resultStateCounts[state]}</small></button>)}
         </div>
+        {candidates.some(item => item.evidence.shape_maturity) && <div className="screener-quick-filters" role="group" aria-label="形态成熟度过滤">
+          {['platform-retest', 'platform-established', 'forming', 'all'].map(value => <button key={value}
+            className={maturity === value ? 'active' : ''} aria-pressed={maturity === value}
+            onClick={() => setMaturity(value)}>{value === 'all' ? '全部成熟度' : lowBaseMaturityLabel(value)}
+            <small>{candidates.filter(item => value === 'all' || item.evidence.shape_maturity === value).length}</small>
+          </button>)}
+        </div>}
         {candidates.some(item => item.evidence.platform_style) && <div className="screener-quick-filters" role="group" aria-label="平台类型过滤">
           {['compact-platform', 'secondary-retest', 'broad-base', 'all'].map(style => <button key={style}
             className={platformStyle === style ? 'active' : ''} aria-pressed={platformStyle === style}
@@ -406,7 +418,7 @@ export function ScreenerWorkspace({
           {selected.evidence.missing_evidence?.includes('turnover-unavailable') && <span><small>辅助证据</small>换手率暂缺</span>}
         </footer>}
         {selected && pullbackStates.includes(selected.state) && <footer className="screener-evidence">
-          <span><small>形态阶段</small>{firstPullbackStageLabel(selected.evidence.stage)}</span>
+          <span><small>形态阶段</small>{candidateStageLabel(selected)}</span>
           {selected.evidence.flag_window && <>
             <span><small>滚动观察窗口</small>{selected.evidence.observation_window_sessions} 个交易日</span>
             <span><small>整理区间</small>{selected.evidence.flag_window.start_date} ~ {selected.evidence.flag_window.end_date}</span>
@@ -418,6 +430,11 @@ export function ScreenerWorkspace({
           <span><small>回踩幅度</small>{selected.evidence.pullback_depth_percent?.toFixed(2) ?? '--'}%</span>
           <span><small>回踩 / 启动均量</small>{selected.evidence.pullback_volume_ratio?.toFixed(2) ?? '--'}x</span>
           {selected.evidence.launch_type === 'low-base-platform' && <>
+            {selected.evidence.platform_shape && <>
+              <span><small>独立平台</small>{selected.evidence.platform_shape.start_date} ~ {selected.evidence.platform_shape.end_date} · {selected.evidence.platform_shape.sessions} 日</span>
+              <span><small>平台价格漂移</small>{selected.evidence.platform_shape.close_drift_percent.toFixed(2)}%</span>
+              <span><small>小实体占比</small>{(selected.evidence.platform_shape.small_body_fraction * 100).toFixed(0)}%</span>
+            </>}
             <span><small>启动前距60日低点</small>{selected.evidence.origin_above_context_low_percent?.toFixed(2) ?? '--'}%</span>
             <span><small>平台振幅</small>{selected.evidence.platform_range_percent?.toFixed(2) ?? '--'}%</span>
             <span><small>回踩 / 平台均量</small>{selected.evidence.pullback_platform_volume_ratio?.toFixed(2) ?? '--'}x</span>
@@ -428,8 +445,10 @@ export function ScreenerWorkspace({
             <span><small>回踩均量 / 启动至峰值最大日量</small>{selected.evidence.pullback_turnover_ratio?.toFixed(2) ?? '--'}x</span>
           </>}
           <span><small>失效位（收盘口径）</small>{selected.evidence.invalidation_price?.toFixed(2) ?? '--'}</span>
-          <span><small>前高参考</small>{selected.evidence.first_target_price?.toFixed(2) ?? '--'}</span>
-          <span><small>参考盈亏比</small>{selected.evidence.first_risk_reward?.toFixed(2) ?? '--'}</span>
+          {selected.evidence.launch_type !== 'low-base-platform' && <>
+            <span><small>前高参考</small>{selected.evidence.first_target_price?.toFixed(2) ?? '--'}</span>
+            <span><small>参考盈亏比</small>{selected.evidence.first_risk_reward?.toFixed(2) ?? '--'}</span>
+          </>}
           <span><small>证据边界</small>仅日线量价；板块共振、分时承接未验证</span>
         </footer>}
         {selected && selected.state !== 'accumulating' && !pullbackStates.includes(selected.state) && <footer className="screener-evidence">
@@ -556,6 +575,7 @@ function candidatePeriodLabel(value: ScreenerCandidate) {
     : `${value.evidence.platform_sessions ?? 20}日`
 }
 function candidateStageLabel(value: ScreenerCandidate) {
+  if (value.evidence.shape_maturity) return lowBaseMaturityLabel(value.evidence.shape_maturity)
   if (pullbackStates.includes(value.state)) return firstPullbackStageLabel(value.evidence.stage)
   return value.evidence.platform_style ? accumulationStyleLabel(value.evidence.platform_style)
     : value.evidence.stage ? accumulationStageLabel(value.evidence.stage) : stateLabels[value.state]

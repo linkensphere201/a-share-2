@@ -292,6 +292,7 @@ class ScreenerService:
                 LOGGER.info("screener_first_pullback_progress run_id=%s scanned=%s universe=%s matches=%s",
                             run_id, index, len(universe), len(candidates))
         candidates.sort(key=lambda item: (
+            item["evidence"].get("maturity_rank", 3) if strategy_id == LOW_BASE_STRATEGY_ID else 0,
             strategy_id != LOW_BASE_STRATEGY_ID and item["state"] != "pullback-confirmed",
             -item["score"], item["symbol"],
         ))

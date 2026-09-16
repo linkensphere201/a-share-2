@@ -113,6 +113,11 @@ export function firstPullbackStageLabel(value: unknown): string {
   } as Record<string, string>)[String(value)] ?? '首次回踩'
 }
 
+export function lowBaseMaturityLabel(value: unknown): string {
+  return ({ forming: '初步形成', 'platform-established': '平台成立',
+    'platform-retest': '平台缩量回踩' } as Record<string, string>)[String(value)] ?? '成熟度未记录'
+}
+
 export function firstPullbackVolumeLabel(value: unknown): string {
   return ({ 'turnover-contraction': '相对峰值成交量收敛',
     'elevated-turnover-digestion': '高量分歧消化（非标准缩量）',
@@ -132,7 +137,7 @@ function explainZone(item: AnalysisItem, allItems: AnalysisItem[]): TrendExplana
   const payload = item.payload
   if (payload.kind === 'first-pullback-range' && payload.launch_type === 'low-base-platform') return {
     analysisItemId: item.item_id,
-    title: `低位平台回踩 · ${firstPullbackStageLabel(payload.stage)}`,
+    title: `低位平台回踩 · ${payload.shape_maturity ? lowBaseMaturityLabel(payload.shape_maturity) + (payload.screen_eligible === false ? ` · ${firstPullbackStageLabel(payload.stage)}` : '') : firstPullbackStageLabel(payload.stage)}`,
     detail: `放量起点 ${stringValue(payload.launch_date) ?? '-'}；向前 ${numberValue(payload.observation_window_sessions) ?? '-'} 个交易日；平台起点 ${stringValue(payload.start_date) ?? '-'}，振幅 ${formatPercent(payload.platform_range_percent)}；回踩区间 ${stringValue(payload.pullback_metric_start_date) ?? '-'} 至 ${stringValue(payload.pullback_metric_end_date) ?? '-'}；回踩/放量段均量 ${formatRatio(payload.pullback_volume_ratio)}x，回踩/平台均量 ${formatRatio(payload.pullback_platform_volume_ratio)}x；收盘失效位 ${formatPrice(payload.invalidation_price)}；突破确认 ${stringValue(payload.confirmation_date) ?? '尚未确认'}。${payload.screen_eligible === true ? '' : '当前不满足选股条件。'}仅量价候选，不代表主力持仓；未预测翻倍或突破后的目标价。`,
     score: numberValue(payload.score),
   }

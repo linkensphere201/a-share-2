@@ -8,10 +8,15 @@ test(`${strategyId} saved evidence uses opt-in shared chart zones at desktop and
       open: close - .04, high: close + .1, low: close - .12, close,
       volume: i < 80 || i >= 89 ? 100 : 240, source: 'synthetic-acceptance' }
   })
-  const run = { run_id: 'first-pullback-v1', strategy_id: strategyId, strategy_version: `${strategyId}-v1`,
+  const run = { run_id: 'first-pullback-v1', strategy_id: strategyId, strategy_version: `${strategyId}-${strategyId === 'low-base-platform-pullback' ? 'v3' : 'v1'}`,
     as_of_date: bars.at(-1)!.trade_date, parameters: {}, status: 'succeeded', candidate_count: 1,
     universe_count: 1, scanned_count: 1 }
   const evidence = { kind: 'first-pullback-range', as_of_date: run.as_of_date,
+    ...(strategyId === 'low-base-platform-pullback' ? {
+      shape_maturity: 'platform-retest', platform_shape: { start_date: bars[89].trade_date,
+        end_date: bars[94].trade_date, sessions: 6, stable: true, mature: true,
+        close_drift_percent: -.7, small_body_fraction: .83, volume_quality: 'persistent-bullish-volume' },
+    } : {}),
     launch_type: strategyId === 'low-base-platform-pullback' ? 'low-base-platform' : 'base-breakout',
     observation_window_sessions: 30, origin_above_context_low_percent: 8,
     platform_range_percent: 5, pullback_platform_volume_ratio: .65,
@@ -37,6 +42,15 @@ test(`${strategyId} saved evidence uses opt-in shared chart zones at desktop and
   await page.getByRole('button', { name: '选股器', exact: true }).click()
   await page.getByLabel('策略').selectOption(strategyId)
   await expect(page.locator('.screener-evidence')).toContainText('尚未确认')
+  if (strategyId === 'low-base-platform-pullback') {
+    const filters = page.getByRole('group', { name: '形态成熟度过滤' })
+    await expect(filters.getByRole('button', { name: /平台缩量回踩/ })).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.locator('.screener-evidence')).toContainText('独立平台')
+    await expect(page.locator('.screener-evidence')).not.toContainText('参考盈亏比')
+    await filters.getByRole('button', { name: /初步形成/ }).click()
+    await expect(page.locator('.screener-evidence')).toHaveCount(0)
+    await filters.getByRole('button', { name: /平台缩量回踩/ }).click()
+  }
   await expect(page.locator('.generated-price-zone.first-pullback-range')).toHaveCount(0)
   await page.getByRole('button', { name: '打开形态分析结果' }).click()
   const checkbox = page.getByRole('checkbox', { name: '显示关键价位与形态区间', exact: true })

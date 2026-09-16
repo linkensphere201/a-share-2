@@ -211,3 +211,60 @@ def test_api_registers_separate_low_base_strategy():
     registered = next(s for s in ScreenerService.strategies() if s["strategy_id"] == LOW_BASE_STRATEGY_ID)
     assert registered["window"] == 30
     assert registered["states"] == ["pullback-observation", "pullback-confirmed"]
+
+
+def synthetic_shape(platform_closes, retest_closes=()):
+    template = bars()[0]
+    series = []
+    values = [(10., 10., 100.)] * 60 + [(10., 10.5, 300.)]
+    values += [(close - .01, close, 150.) for close in platform_closes]
+    values += [(close + .02, close, 70.) for close in retest_closes]
+    for index, (opening, closing, volume) in enumerate(values):
+        day = date(2026, 1, 1) + timedelta(days=index)
+        series.append(replace(template, period_start=day, period_end=day, open=opening,
+                              close=closing, high=max(opening, closing) + .10,
+                              low=min(opening, closing) - .10, volume=volume))
+    return tuple(series)
+
+
+@pytest.mark.parametrize("platform,retest,maturity", [
+    ([10.45, 10.46, 10.45], [], "forming"),
+    ([10.45, 10.46, 10.45], [10.35, 10.25], "forming"),
+    ([10.45, 10.46, 10.45, 10.46, 10.47], [], "platform-established"),
+    ([10.45, 10.46, 10.45, 10.46, 10.47], [10.35, 10.25], "platform-retest"),
+])
+def test_maturity_requires_an_independent_plateau(platform, retest, maturity):
+    result = detect_low_base_pullback(synthetic_shape(platform, retest))
+    assert result and result["screen_eligible"]
+    assert result["shape_maturity"] == maturity
+    assert result["platform_shape"]["sessions"] == len(platform)
+    assert result["pullback_sessions"] == len(retest)
+    if not retest:
+        assert result["pullback_metric_start_date"] is None
+        assert result["recognition_date"] is None
+        assert result["pullback_volume_ratio"] is None
+
+
+def test_complete_retest_can_include_a_small_up_day_and_last_more_than_four_days():
+    result = detect_low_base_pullback(synthetic_shape(
+        [10.45, 10.46, 10.45, 10.46, 10.47], [10.40, 10.38, 10.39, 10.30, 10.25, 10.20]))
+    assert result["shape_maturity"] == "platform-retest"
+    assert result["pullback_sessions"] == 6
+    assert result["platform_shape"]["sessions"] == 5
+
+
+def test_slow_decline_is_not_a_mature_plateau_even_with_small_bodies():
+    from stock_harness.low_base_pullback import _platform_evidence
+    prefix = synthetic_shape([10.5, 10.4, 10.3, 10.2, 10.1, 10.0])
+    facts = _platform_evidence(prefix[-6:])
+    assert facts["small_body_fraction"] == 1
+    assert not facts["stable"]
+    result = detect_low_base_pullback(prefix)
+    assert result is None or not result["screen_eligible"] or result["shape_maturity"] == "forming"
+
+
+def test_real_short_platforms_are_not_promoted_by_later_breakout():
+    for symbol in ("600127.SH", "600371.SH"):
+        for day in ("2026-08-14", "2026-08-17"):
+            result = detect_low_base_pullback(bars(symbol, day))
+            assert result["shape_maturity"] == "forming"
