@@ -24,6 +24,29 @@ afterEach(() => {
 })
 
 describe('ScreenerWorkspace', () => {
+  it('starts the bull-flag strategy and displays only ongoing flag evidence', async () => {
+    const flagRun = { ...run, strategy_id: 'bull-flag-consolidation', strategy_version: 'bull-flag-consolidation-v1' }
+    const flag = { ...candidate, state: 'pullback-observation', evidence: { ...candidate.evidence,
+      kind: 'bull-flag-range', flag_sessions: 6, launch_age_sessions: 8, impulse_gain_percent: 12,
+      center_drift_percent: -1, flag_pole_volume_ratio: .5, late_early_volume_ratio: .7, pole_low: 10 } }
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'POST') return response(flagRun, 202)
+      if (String(input).includes('/candidates')) return response({ items: [flag] })
+      if (String(input).includes('/api/analysis/')) return response(analysis)
+      return response({ items: [flagRun] })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+    renderScreener()
+    await screen.findByText('旗杆涨幅')
+    expect(screen.queryByText('参考盈亏比')).toBeNull()
+    expect(screen.queryByRole('button', { name: '快速过滤：转强确认' })).toBeNull()
+    await user.selectOptions(screen.getByLabelText('策略'), 'bull-flag-consolidation')
+    await user.click(screen.getByRole('button', { name: '开始选股' }))
+    await waitFor(() => expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(true))
+    const post = fetchMock.mock.calls.find(([, init]) => init?.method === 'POST')!
+    expect(JSON.parse(String(post[1]?.body)).strategy_id).toBe('bull-flag-consolidation')
+  })
   it.each(['strong-first-pullback', 'low-base-platform-pullback'])('runs %s and filters observation versus confirmation', async (strategyId) => {
     const firstRun = { ...run, strategy_id: strategyId, strategy_version: `${strategyId}-v1` }
     const confirmed = { ...candidate, state: 'pullback-confirmed', evidence: {

@@ -1,4 +1,4 @@
-export type ScreenerStrategyId = 'major-descending-breakout' | 'volume-accumulation-20d' | 'strong-first-pullback' | 'low-base-platform-pullback'
+export type ScreenerStrategyId = 'major-descending-breakout' | 'volume-accumulation-20d' | 'strong-first-pullback' | 'low-base-platform-pullback' | 'bull-flag-consolidation'
 export type ScreenerState = 'critical-breakout' | 'breakout-retest' | 'broken-out' | 'accumulating' | 'pullback-observation' | 'pullback-confirmed'
 export type ScreenerPeriod = '3m' | '6m' | '1y'
 
@@ -71,6 +71,17 @@ export type ScreenerCandidate = {
     kind?: string
     launch_date?: string
     launch_type?: string
+    start_date?: string
+    end_date?: string
+    launch_age_sessions?: number
+    pole_sessions?: number
+    flag_sessions?: number
+    pole_low?: number
+    center_drift_percent?: number
+    flag_range_percent?: number
+    flag_pole_volume_ratio?: number
+    late_early_volume_ratio?: number
+    rolling_contraction_fraction?: number
     shape_maturity?: 'forming' | 'platform-established' | 'platform-retest'
     platform_shape?: { start_date: string; end_date: string; sessions: number; stable: boolean; mature: boolean;
       close_drift_percent: number; small_body_fraction: number; volume_quality: string }

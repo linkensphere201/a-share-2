@@ -1439,6 +1439,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .generated-price-zone.estimated-volume-at-price { fill: #5f9fbd16; stroke: #6ca8c344; stroke-width: .5; }
 .generated-price-zone.accumulation-range { fill: #38a77a20; stroke: #42bd8980; stroke-width: .8; stroke-dasharray: 4 2; }
 .generated-price-zone.first-pullback-range { fill: #218b9c30; stroke: #218b9c; stroke-width: 1.8; stroke-dasharray: 5 3; }
+.generated-price-zone.bull-flag-range { fill: #b9953338; stroke: #d4ad40; stroke-width: 1.8; stroke-dasharray: 5 3; }
 .generated-price-zone.first-pullback-range.pullback-confirmed { fill: #32a46c30; stroke: #32a46c; stroke-dasharray: none; }
 .generated-price-zone.first-pullback-range.invalidated { fill: #c84c5420; stroke: #c84c54; }
 .generated-price-zone.first-pullback-range.expired, .generated-price-zone.first-pullback-range.completed { fill: #77777718; stroke: #888; }

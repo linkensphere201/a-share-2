@@ -1,17 +1,23 @@
 import { expect, test } from '@playwright/test'
 
-for (const strategyId of ['strong-first-pullback', 'low-base-platform-pullback']) {
+for (const strategyId of ['strong-first-pullback', 'low-base-platform-pullback', 'bull-flag-consolidation']) {
 test(`${strategyId} saved evidence uses opt-in shared chart zones at desktop and mobile widths`, async ({ page }, info) => {
   const bars = Array.from({ length: 100 }, (_, i) => {
-    const close = i < 80 ? 10 + .02 * (i % 3) : i < 89 ? 10.5 + (i - 80) * .25 : 12.4 - (i - 89) * .09
+    const close = strategyId === 'bull-flag-consolidation'
+      ? i < 91 ? 10 + .02 * (i % 3) : i < 94 ? [10.4, 10.8, 11.1][i - 91] : 11.04 - (i - 94) * .015
+      : i < 80 ? 10 + .02 * (i % 3) : i < 89 ? 10.5 + (i - 80) * .25 : 12.4 - (i - 89) * .09
     return { trade_date: new Date(Date.UTC(2026, 4, 1 + i)).toISOString().slice(0, 10),
       open: close - .04, high: close + .1, low: close - .12, close,
-      volume: i < 80 || i >= 89 ? 100 : 240, source: 'synthetic-acceptance' }
+      volume: strategyId === 'bull-flag-consolidation' ? i < 91 ? 100 : i < 94 ? 300 : 180 - (i - 94) * 12
+        : i < 80 || i >= 89 ? 100 : 240, source: 'synthetic-acceptance' }
   })
   const run = { run_id: 'first-pullback-v1', strategy_id: strategyId, strategy_version: `${strategyId}-${strategyId === 'low-base-platform-pullback' ? 'v4' : 'v1'}`,
     as_of_date: bars.at(-1)!.trade_date, parameters: {}, status: 'succeeded', candidate_count: 1,
     universe_count: 1, scanned_count: 1 }
-  const evidence = { kind: 'first-pullback-range', as_of_date: run.as_of_date,
+  const zoneKind = strategyId === 'bull-flag-consolidation' ? 'bull-flag-range' : 'first-pullback-range'
+  const evidence = { kind: zoneKind, as_of_date: run.as_of_date,
+    flag_sessions: 6, launch_age_sessions: 8, center_drift_percent: -1, flag_range_percent: 3,
+    flag_pole_volume_ratio: .5, late_early_volume_ratio: .7, pole_low: 10,
     ...(strategyId === 'low-base-platform-pullback' ? {
       shape_maturity: 'platform-retest', platform_shape: { start_date: bars[89].trade_date,
         end_date: bars[94].trade_date, sessions: 6, stable: true, mature: true,
@@ -21,14 +27,16 @@ test(`${strategyId} saved evidence uses opt-in shared chart zones at desktop and
     observation_window_sessions: 30, origin_above_context_low_percent: 8,
     platform_range_percent: 5, pullback_platform_volume_ratio: .65,
     flag_window: { start_date: bars[90].trade_date, end_date: run.as_of_date, sessions: 10, phase: 'low-base-platform' },
-    stage: 'pullback-observation', screen_eligible: true, launch_date: bars[80].trade_date,
+    stage: 'pullback-observation', screen_eligible: true, launch_date: bars[strategyId === 'bull-flag-consolidation' ? 91 : 80].trade_date,
     peak_date: bars[88].trade_date, confirmation_date: null, pullback_sessions: 10,
-    impulse_gain_percent: 25, pullback_depth_percent: 8, pullback_volume_ratio: .42,
+    impulse_gain_percent: strategyId === 'bull-flag-consolidation' ? 12 : 25, pullback_depth_percent: 8, pullback_volume_ratio: .42,
     invalidation_price: 11, first_target_price: 12.6, first_risk_reward: 2,
-    lower: 11.1, upper: 11.6, score: 80, start_date: bars[90].trade_date, end_date: run.as_of_date }
+    lower: strategyId === 'bull-flag-consolidation' ? 10.8 : 11.1,
+    upper: strategyId === 'bull-flag-consolidation' ? 11.14 : 11.6,
+    score: 80, start_date: bars[strategyId === 'bull-flag-consolidation' ? 94 : 90].trade_date, end_date: run.as_of_date }
   const candidate = { rank: 1, symbol: '000001.SZ', name: '首踩合成验收', exchange: 'SZ', kind: 'stock',
     state: 'pullback-observation', score: 80, analysis_run_id: 'first-analysis', line_item_id: 'first-zone',
-    line_code: 'FIRST-PULLBACK', evidence }
+    line_code: strategyId === 'bull-flag-consolidation' ? 'BULL-FLAG' : 'FIRST-PULLBACK', evidence }
   await page.route('**/api/screener/**', route => route.fulfill({ json: {
     items: route.request().url().endsWith('/candidates') ? [candidate] : [run],
   } }))
@@ -41,7 +49,7 @@ test(`${strategyId} saved evidence uses opt-in shared chart zones at desktop and
   await page.goto('/')
   await page.getByRole('button', { name: '选股器', exact: true }).click()
   await page.getByLabel('策略').selectOption(strategyId)
-  await expect(page.locator('.screener-evidence')).toContainText('尚未确认')
+  await expect(page.locator('.screener-evidence')).toContainText(strategyId === 'bull-flag-consolidation' ? '旗面盘整中' : '尚未确认')
   if (strategyId === 'low-base-platform-pullback') {
     const filters = page.getByRole('group', { name: '形态成熟度过滤' })
     await expect(filters.getByRole('button', { name: /平台缩量回踩/ })).toHaveAttribute('aria-pressed', 'true')
@@ -51,17 +59,17 @@ test(`${strategyId} saved evidence uses opt-in shared chart zones at desktop and
     await expect(page.locator('.screener-evidence')).toHaveCount(0)
     await filters.getByRole('button', { name: /平台缩量回踩/ }).click()
   }
-  await expect(page.locator('.generated-price-zone.first-pullback-range')).toHaveCount(0)
+  await expect(page.locator(`.generated-price-zone.${zoneKind}`)).toHaveCount(0)
   await page.getByRole('button', { name: '打开形态分析结果' }).click()
   const checkbox = page.getByRole('checkbox', { name: '显示关键价位与形态区间', exact: true })
   await expect(checkbox).not.toBeChecked()
   await checkbox.check()
-  await expect(page.locator('.generated-price-zone.first-pullback-range')).toHaveCount(1)
+  await expect(page.locator(`.generated-price-zone.${zoneKind}`)).toHaveCount(1)
   await page.getByRole('button', { name: '关闭趋势分析结果说明', exact: true }).click()
   for (const width of [1440, 1024, 390]) {
     await page.setViewportSize({ width, height: 900 })
     await page.locator('.screener-evidence').scrollIntoViewIfNeeded()
-    await expect(page.locator('.generated-price-zone.first-pullback-range')).toBeVisible()
+    await expect(page.locator(`.generated-price-zone.${zoneKind}`)).toBeVisible()
     expect(await page.locator('.screener-evidence span').evaluateAll(elements => elements.some(
       e => e.scrollWidth > e.clientWidth + 1,
     ))).toBe(false)

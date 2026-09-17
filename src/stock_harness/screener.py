@@ -23,6 +23,10 @@ from stock_harness.low_base_pullback import (
     ALGORITHM_VERSION as LOW_BASE_VERSION, CONFIG as LOW_BASE_CONFIG, LAUNCH_TYPE as LOW_BASE_TYPE,
 )
 from stock_harness.screener_result_tags import attach_recognition_tags
+from stock_harness.bull_flag_pattern import (
+    STRATEGY_ID as BULL_FLAG_STRATEGY_ID, ALGORITHM_VERSION as BULL_FLAG_VERSION,
+    CONFIG as BULL_FLAG_CONFIG, KIND as BULL_FLAG_KIND,
+)
 from stock_harness.volume_accumulation import (
     STATE as ACCUMULATION_STATE,
     STRATEGY_ID as ACCUMULATION_STRATEGY_ID,
@@ -84,6 +88,10 @@ class ScreenerService:
             "window": LOW_BASE_CONFIG.observation_window_sessions,
             "states": ["pullback-observation", "pullback-confirmed"],
             "final_bars_only": True,
+        }, {
+            "strategy_id": BULL_FLAG_STRATEGY_ID, "name": "牛旗盘整",
+            "version": BULL_FLAG_VERSION, "window": BULL_FLAG_CONFIG.max_launch_age,
+            "states": ["pullback-observation"], "final_bars_only": True,
         }, {
             "strategy_id": PULLBACK_STRATEGY_ID,
             "name": "强势股首次回踩",
@@ -155,7 +163,7 @@ class ScreenerService:
         self, run_id: str, cutoff: date, periods: Sequence[MajorLinePeriod],
         states: Sequence[MajorLineState], max_results: int, strategy_id: str,
     ) -> None:
-        if strategy_id in (PULLBACK_STRATEGY_ID, LOW_BASE_STRATEGY_ID):
+        if strategy_id in (PULLBACK_STRATEGY_ID, LOW_BASE_STRATEGY_ID, BULL_FLAG_STRATEGY_ID):
             self._execute_first_pullback(run_id, cutoff, max_results, strategy_id)
             return
         if strategy_id == ACCUMULATION_STRATEGY_ID:
@@ -270,7 +278,7 @@ class ScreenerService:
                 for item in analysis["items"]:
                     evidence = item["payload"]
                     if (item["item_type"] != "zone"
-                        or evidence.get("kind") != "first-pullback-range"
+                        or evidence.get("kind") != (BULL_FLAG_KIND if strategy_id == BULL_FLAG_STRATEGY_ID else "first-pullback-range")
                         or ((evidence.get("launch_type") == LOW_BASE_TYPE) != (strategy_id == LOW_BASE_STRATEGY_ID))
                         or not evidence.get("screen_eligible")
                         or evidence.get("stage") not in {"pullback-observation", "pullback-confirmed"}
@@ -279,7 +287,7 @@ class ScreenerService:
                     candidates.append({
                         "symbol": instrument["symbol"], "state": evidence["stage"],
                         "score": evidence["score"], "line_item_id": item["item_id"],
-                        "line_code": "LOW-BASE-PULLBACK" if strategy_id == LOW_BASE_STRATEGY_ID else "FIRST-PULLBACK",
+                        "line_code": "BULL-FLAG" if strategy_id == BULL_FLAG_STRATEGY_ID else "LOW-BASE-PULLBACK" if strategy_id == LOW_BASE_STRATEGY_ID else "FIRST-PULLBACK",
                         "analysis_run_id": analysis["run_id"],
                         "evidence": evidence,
                     })
@@ -398,6 +406,8 @@ class ScreenerService:
 
 
 def _strategy_version(strategy_id: str) -> str:
+    if strategy_id == BULL_FLAG_STRATEGY_ID:
+        return BULL_FLAG_VERSION
     if strategy_id == LOW_BASE_STRATEGY_ID:
         return LOW_BASE_VERSION
     if strategy_id == PULLBACK_STRATEGY_ID:
@@ -410,6 +420,10 @@ def _strategy_version(strategy_id: str) -> str:
 
 
 def _parameters(strategy_id, periods, states, max_results: int) -> dict[str, object]:
+    if strategy_id == BULL_FLAG_STRATEGY_ID:
+        return {"max_results": max_results, "final_bars_only": True,
+                "window": BULL_FLAG_CONFIG.max_launch_age, "states": ["pullback-observation"],
+                "pattern_parameters": asdict(BULL_FLAG_CONFIG), "analysis_config": BULL_FLAG_VERSION}
     if strategy_id == LOW_BASE_STRATEGY_ID:
         return {"max_results": max_results, "final_bars_only": True,
                 "window": LOW_BASE_CONFIG.observation_window_sessions,

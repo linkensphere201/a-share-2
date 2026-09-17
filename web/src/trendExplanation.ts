@@ -135,6 +135,11 @@ function firstPullbackWindowText(payload: Record<string, unknown>): string {
 
 function explainZone(item: AnalysisItem, allItems: AnalysisItem[]): TrendExplanationItem {
   const payload = item.payload
+  if (payload.kind === 'bull-flag-range') return {
+    analysisItemId: item.item_id, title: '牛旗形态 · 旗面盘整中',
+    detail: `启动 ${stringValue(payload.launch_date) ?? '-'}，距今 ${numberValue(payload.launch_age_sessions) ?? '-'} 个交易日；旗杆涨幅 ${formatPercent(payload.impulse_gain_percent)}；旗面 ${stringValue(payload.start_date) ?? '-'} 至 ${stringValue(payload.end_date) ?? '-'}；重心变化 ${formatPercent(payload.center_drift_percent)}；盘整/上涨均量 ${formatRatio(payload.flag_pole_volume_ratio)}x；后段/前段均量 ${formatRatio(payload.late_early_volume_ratio)}x；旗杆最低价 ${formatPrice(payload.pole_low)}。仅描述正在盘整的量价形态，不代表买入信号或后续涨幅预测。`,
+    score: numberValue(payload.score),
+  }
   if (payload.kind === 'first-pullback-range' && payload.launch_type === 'low-base-platform') return {
     analysisItemId: item.item_id,
     title: `低位平台回踩 · ${payload.shape_maturity ? lowBaseMaturityLabel(payload.shape_maturity) + (payload.screen_eligible === false ? ` · ${firstPullbackStageLabel(payload.stage)}` : '') : firstPullbackStageLabel(payload.stage)}`,

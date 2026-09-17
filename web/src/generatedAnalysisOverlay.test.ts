@@ -212,16 +212,16 @@ describe('generated analysis overlay projection', () => {
       }))
   })
 
-  it('shares dated first-pullback zone projection and hides it until opted in', () => {
+  it.each(['first-pullback-range', 'bull-flag-range'])('shares dated %s projection and hides it until opted in', (kind) => {
     const pullback: TrendAnalysisRun = { ...run, items: [{
       item_id: 'first-pullback', item_type: 'zone', payload: {
-        kind: 'first-pullback-range', start_date: '2026-08-01', end_date: '2026-08-18',
+        kind, start_date: '2026-08-01', end_date: '2026-08-18',
         lower: 10.2, upper: 10.8, score: 80, stage: 'pullback-confirmed',
       },
     }] }
     expect(projectGeneratedZones(pullback, chart, series, host, false, true)).toEqual([])
     expect(projectGeneratedZones(pullback, chart, series, host, true, false)).toEqual([
-      expect.objectContaining({ id: 'first-pullback', kind: 'first-pullback-range',
+      expect.objectContaining({ id: 'first-pullback', kind,
         stage: 'pullback-confirmed', x: 20, width: 60 }),
     ])
   })

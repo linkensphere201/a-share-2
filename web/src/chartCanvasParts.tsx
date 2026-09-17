@@ -351,6 +351,8 @@ export function GeneratedAnalysisOverlay({
               ? `蓄势区间 ${formatPrice(item.lower)}-${formatPrice(item.upper)} · 评分 ${item.score.toFixed(1)}`
               : item.kind === 'first-pullback-range'
               ? `回踩形态区 ${formatPrice(item.lower)}-${formatPrice(item.upper)} · 评分 ${item.score.toFixed(1)}`
+              : item.kind === 'bull-flag-range'
+              ? `牛旗盘整区 ${formatPrice(item.lower)}-${formatPrice(item.upper)} · 评分 ${item.score.toFixed(1)}`
               : `日线估算成交密集区 ${formatPrice(item.lower)}-${formatPrice(item.upper)} · 占比 ${((item.estimatedShare ?? 0) * 100).toFixed(1)}%`}</title>
           </rect>
         ))}
