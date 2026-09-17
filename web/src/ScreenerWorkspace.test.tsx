@@ -24,6 +24,33 @@ afterEach(() => {
 })
 
 describe('ScreenerWorkspace', () => {
+  it('runs the fixed deep-drawdown shape without template or trade controls', async () => {
+    const shapeRun = { ...run, strategy_id: 'deep-drawdown-consolidation' }
+    const shape = { ...candidate, state: 'shape-match', evidence: {
+      kind: 'deep-drawdown-range', as_of_date: '2026-09-16', window_start_date: '2026-06-25',
+      reference: { symbol: '002137.SZ', start_date: '2026-06-24', end_date: '2026-09-15' },
+      max_drawdown_percent: -40, recent_early_volume_ratio: .2,
+    } }
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'POST') return response(shapeRun, 202)
+      if (String(input).includes('/candidates')) return response({ items: [shape] })
+      if (String(input).includes('/api/analysis/')) return response(analysis)
+      return response({ items: [shapeRun] })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+    renderScreener()
+    await screen.findByText('最大收盘回撤')
+    expect(screen.getByText('20.0%')).toBeTruthy()
+    expect(screen.queryByText('参考盈亏比')).toBeNull()
+    expect(screen.queryByLabelText(/模板/)).toBeNull()
+    expect(screen.getByRole('button', { name: '快速过滤：形态相似' })).toBeTruthy()
+    await user.selectOptions(screen.getByLabelText('策略'), 'deep-drawdown-consolidation')
+    await user.click(screen.getByRole('button', { name: '开始选股' }))
+    await waitFor(() => expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(true))
+    const post = fetchMock.mock.calls.find(([, init]) => init?.method === 'POST')!
+    expect(JSON.parse(String(post[1]?.body)).strategy_id).toBe('deep-drawdown-consolidation')
+  })
   it('starts the bull-flag strategy and displays only ongoing flag evidence', async () => {
     const flagRun = { ...run, strategy_id: 'bull-flag-consolidation', strategy_version: 'bull-flag-consolidation-v1' }
     const flag = { ...candidate, state: 'pullback-observation', evidence: { ...candidate.evidence,

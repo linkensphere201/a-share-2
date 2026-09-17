@@ -28,6 +28,7 @@ const stateLabels: Record<ScreenerState, string> = {
   accumulating: '堆量蓄势',
   'pullback-observation': firstPullbackStageLabel('pullback-observation'),
   'pullback-confirmed': firstPullbackStageLabel('pullback-confirmed'),
+  'shape-match': '形态相似',
 }
 const strategyLabels: Record<ScreenerStrategyId, string> = {
   'major-descending-breakout': '大斜边突破',
@@ -35,6 +36,7 @@ const strategyLabels: Record<ScreenerStrategyId, string> = {
   'strong-first-pullback': '强势股首次回踩',
   'low-base-platform-pullback': '低位平台回踩',
   'bull-flag-consolidation': '牛旗盘整',
+  'deep-drawdown-consolidation': '深跌缩量整理',
 }
 const trendStates: ScreenerState[] = ['critical-breakout', 'breakout-retest', 'broken-out']
 const pullbackStates: ScreenerState[] = ['pullback-confirmed', 'pullback-observation']
@@ -124,7 +126,7 @@ export function ScreenerWorkspace({
   const visibleBoards = boardOptions.filter(board => `${board.name} ${board.board_symbol}`.toLowerCase().includes(boardQuery.trim().toLowerCase()) || boardFilter.includes(board.board_symbol))
   const recognition = candidates[0]?.recognition
   const resultStateCounts = useMemo(() => Object.fromEntries(
-    ([...trendStates, ...pullbackStates, 'accumulating'] as ScreenerState[]).map(state => [
+    ([...trendStates, ...pullbackStates, 'accumulating', 'shape-match'] as ScreenerState[]).map(state => [
       state,
       candidates.filter(item => item.state === state).length,
     ]),
@@ -327,7 +329,7 @@ export function ScreenerWorkspace({
         {selectedRun?.status === 'running' && <div className="screener-progress"><i style={{ width: `${progress}%` }}/></div>}
         <div className="screener-quick-filters" role="group" aria-label="结果快速过滤">
           <button className={resultStateFilter === 'all' ? 'active' : ''} aria-label="快速过滤：全部" onClick={() => setResultStateFilter('all')}>全部 <small>{candidates.length}</small></button>
-          {(selectedRun?.strategy_id === 'bull-flag-consolidation' ? ['pullback-observation'] as ScreenerState[] : selectedRun?.strategy_id === 'volume-accumulation-20d' ? ['accumulating'] as ScreenerState[] : ['strong-first-pullback', 'low-base-platform-pullback'].includes(selectedRun?.strategy_id ?? '') ? pullbackStates : trendStates).map(state => <button
+          {(selectedRun?.strategy_id === 'deep-drawdown-consolidation' ? ['shape-match'] as ScreenerState[] : selectedRun?.strategy_id === 'bull-flag-consolidation' ? ['pullback-observation'] as ScreenerState[] : selectedRun?.strategy_id === 'volume-accumulation-20d' ? ['accumulating'] as ScreenerState[] : ['strong-first-pullback', 'low-base-platform-pullback'].includes(selectedRun?.strategy_id ?? '') ? pullbackStates : trendStates).map(state => <button
             key={state}
             className={resultStateFilter === state ? 'active' : ''}
             aria-label={`快速过滤：${selectedRun?.strategy_id === 'bull-flag-consolidation' ? '旗面盘整中' : stateLabels[state]}`}
@@ -375,7 +377,7 @@ export function ScreenerWorkspace({
             {boardStatus === 'ready' && !visibleBoards.length && <span role="status">{boardOptions.length ? '无匹配板块' : '暂无板块数据'}</span>}
           </div>
         </>}
-        <div className="screener-result-head"><span>#</span><span>标的</span><span>周期/状态</span><span>得分</span></div>
+        <div className="screener-result-head"><span>#</span><span>标的</span><span>周期/状态</span><span>{selectedRun?.strategy_id === 'deep-drawdown-consolidation' ? '相似度' : '得分'}</span></div>
         <div className="screener-scroll">{selectedRun?.status === 'failed' && <div className="screener-empty compact error">{selectedRun.error ?? '选股任务失败'}</div>}{selectedRun?.status === 'succeeded' && candidates.length === 0 && <div className="screener-empty compact">本轮没有符合条件的标的</div>}{candidates.length > 0 && filteredCandidates.length === 0 && <div className="screener-empty compact">当前筛选组合没有符合条件的标的</div>}{filteredCandidates.map(item => <button key={item.symbol} className={selected?.symbol === item.symbol ? 'active' : ''} onClick={() => setSelected(item)} onContextMenu={event => {
           event.preventDefault()
           setSelected(item)
@@ -417,6 +419,18 @@ export function ScreenerWorkspace({
           <span><small>结构失效位</small>{selected.evidence.invalidation_price?.toFixed(2) ?? '--'}</span>
           {selected.evidence.score_components && <span><small>下跌 / 抬升 / 平台 / 承接</small>{Object.values(selected.evidence.score_components).map(value => value.toFixed(1)).join(' / ')}</span>}
           {selected.evidence.missing_evidence?.includes('turnover-unavailable') && <span><small>辅助证据</small>换手率暂缺</span>}
+        </footer>}
+        {selected?.evidence.kind === 'deep-drawdown-range' && <footer className="screener-evidence">
+          <span><small>形态</small>深跌缩量整理</span>
+          <span><small>匹配区间</small>{selected.evidence.window_start_date} ~ {selected.evidence.as_of_date}</span>
+          <span><small>参照区间</small>{selected.evidence.reference?.symbol} · {selected.evidence.reference?.start_date} ~ {selected.evidence.reference?.end_date}</span>
+          <span><small>60日涨跌</small>{signed(selected.evidence.return_60d_percent ?? 0)}%</span>
+          <span><small>最大收盘回撤</small>{selected.evidence.max_drawdown_percent?.toFixed(2)}%</span>
+          <span><small>近20日收盘振幅</small>{selected.evidence.close_range_20d_percent?.toFixed(2)}%</span>
+          <span><small>近10日 / 前20日均量</small>{((selected.evidence.recent_early_volume_ratio ?? 0) * 100).toFixed(1)}%</span>
+          <span><small>价格 / 末段相关性</small>{selected.evidence.price_correlation?.toFixed(3)} / {selected.evidence.recent_correlation?.toFixed(3)}</span>
+          <span><small>价格 / 末段 / 幅度 / 量能得分</small>{Object.values(selected.evidence.similarity_components ?? {}).map(v => v.toFixed(1)).join(' / ')}</span>
+          <span><small>价格口径</small>{selected.evidence.price_basis === 'forward-adjusted-as-of' ? '截至当日前复权' : '原始价格'}</span>
         </footer>}
         {selected?.evidence.kind === 'bull-flag-range' && <footer className="screener-evidence">
           <span><small>形态阶段</small>旗面盘整中</span>
@@ -464,7 +478,7 @@ export function ScreenerWorkspace({
           </>}
           <span><small>证据边界</small>仅日线量价；板块共振、分时承接未验证</span>
         </footer>}
-        {selected && selected.state !== 'accumulating' && !pullbackStates.includes(selected.state) && <footer className="screener-evidence">
+        {selected && selected.state !== 'shape-match' && selected.state !== 'accumulating' && !pullbackStates.includes(selected.state) && <footer className="screener-evidence">
           <span><small>边界</small>{selected.evidence.projected_price?.toFixed(2)}</span>
           <span><small>收盘</small>{latestClose(selected).toFixed(2)}</span>
           <span><small>距斜边</small>{signed(selected.evidence.distance_percent ?? 0)}%</span>
@@ -583,12 +597,14 @@ const ScreenerChart = memo(function ScreenerChart({
 
 function formatRunDate(value: string) { return value.replaceAll('-', '').slice(4) + ' 选股结果' }
 function candidatePeriodLabel(value: ScreenerCandidate) {
+  if (value.evidence.kind === 'deep-drawdown-range') return '60日'
   if (value.evidence.kind === 'bull-flag-range') return `盘整${value.evidence.flag_sessions ?? '-'}日`
   if (pullbackStates.includes(value.state)) return `回踩${value.evidence.pullback_sessions ?? '-'}日`
   return value.evidence.period ? periodLabels[value.evidence.period]
     : `${value.evidence.platform_sessions ?? 20}日`
 }
 function candidateStageLabel(value: ScreenerCandidate) {
+  if (value.evidence.kind === 'deep-drawdown-range') return '形态相似'
   if (value.evidence.kind === 'bull-flag-range') return '旗面盘整中'
   if (value.evidence.shape_maturity) return lowBaseMaturityLabel(value.evidence.shape_maturity)
   if (pullbackStates.includes(value.state)) return firstPullbackStageLabel(value.evidence.stage)

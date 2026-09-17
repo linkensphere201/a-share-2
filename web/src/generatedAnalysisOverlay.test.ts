@@ -212,7 +212,7 @@ describe('generated analysis overlay projection', () => {
       }))
   })
 
-  it.each(['first-pullback-range', 'bull-flag-range'])('shares dated %s projection and hides it until opted in', (kind) => {
+  it.each(['first-pullback-range', 'bull-flag-range', 'deep-drawdown-range'])('shares dated %s projection and hides it until opted in', (kind) => {
     const pullback: TrendAnalysisRun = { ...run, items: [{
       item_id: 'first-pullback', item_type: 'zone', payload: {
         kind, start_date: '2026-08-01', end_date: '2026-08-18',

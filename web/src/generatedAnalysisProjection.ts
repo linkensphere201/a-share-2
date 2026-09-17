@@ -26,7 +26,7 @@ export type GeneratedTrendLineGeometry = {
 
 export type GeneratedZoneGeometry = {
   id: string
-  kind: 'key-level' | 'estimated-volume-at-price' | 'accumulation-range' | 'first-pullback-range' | 'bull-flag-range'
+  kind: 'key-level' | 'estimated-volume-at-price' | 'accumulation-range' | 'first-pullback-range' | 'bull-flag-range' | 'deep-drawdown-range'
   x: number
   y: number
   height: number
@@ -190,7 +190,7 @@ export function selectCoreZoneItems(items: AnalysisItem[]): AnalysisItem[] {
   for (const item of items) {
     if (item.item_type !== 'zone') continue
     const kind = item.payload.kind
-    if (kind !== 'key-level' && kind !== 'estimated-volume-at-price' && kind !== 'accumulation-range' && kind !== 'first-pullback-range' && kind !== 'bull-flag-range') continue
+    if (kind !== 'key-level' && kind !== 'estimated-volume-at-price' && kind !== 'accumulation-range' && kind !== 'first-pullback-range' && kind !== 'bull-flag-range' && kind !== 'deep-drawdown-range') continue
     if (typeof item.payload.ai_reference_code === 'string') {
       aiReferences.push(item)
       continue
@@ -321,9 +321,9 @@ export function projectGeneratedZones(
     const kind = item.payload.kind
     const lower = item.payload.lower
     const upper = item.payload.upper
-    if ((kind !== 'key-level' && kind !== 'estimated-volume-at-price' && kind !== 'accumulation-range' && kind !== 'first-pullback-range' && kind !== 'bull-flag-range')
+    if ((kind !== 'key-level' && kind !== 'estimated-volume-at-price' && kind !== 'accumulation-range' && kind !== 'first-pullback-range' && kind !== 'bull-flag-range' && kind !== 'deep-drawdown-range')
       || typeof lower !== 'number' || typeof upper !== 'number') return []
-    if (((kind === 'key-level' || kind === 'accumulation-range' || kind === 'first-pullback-range' || kind === 'bull-flag-range') && !showKeyLevels)
+    if (((kind === 'key-level' || kind === 'accumulation-range' || kind === 'first-pullback-range' || kind === 'bull-flag-range' || kind === 'deep-drawdown-range') && !showKeyLevels)
       || (kind === 'estimated-volume-at-price' && !showVolumeZones)) return []
     const lowerY = priceSeries.priceToCoordinate(lower)
     const upperY = priceSeries.priceToCoordinate(upper)
@@ -331,7 +331,7 @@ export function projectGeneratedZones(
     const top = Math.max(0, Math.min(lowerY, upperY))
     const bottom = Math.min(paneHeight, Math.max(lowerY, upperY))
     if (bottom < 0 || top > paneHeight) return []
-    const datedRange = kind === 'accumulation-range' || kind === 'first-pullback-range' || kind === 'bull-flag-range'
+    const datedRange = kind === 'accumulation-range' || kind === 'first-pullback-range' || kind === 'bull-flag-range' || kind === 'deep-drawdown-range'
     const startX = datedRange && typeof item.payload.start_date === 'string'
       ? chart.timeScale().timeToCoordinate(item.payload.start_date as Time)
       : 0

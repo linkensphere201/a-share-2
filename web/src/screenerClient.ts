@@ -1,5 +1,5 @@
-export type ScreenerStrategyId = 'major-descending-breakout' | 'volume-accumulation-20d' | 'strong-first-pullback' | 'low-base-platform-pullback' | 'bull-flag-consolidation'
-export type ScreenerState = 'critical-breakout' | 'breakout-retest' | 'broken-out' | 'accumulating' | 'pullback-observation' | 'pullback-confirmed'
+export type ScreenerStrategyId = 'major-descending-breakout' | 'volume-accumulation-20d' | 'strong-first-pullback' | 'low-base-platform-pullback' | 'bull-flag-consolidation' | 'deep-drawdown-consolidation'
+export type ScreenerState = 'critical-breakout' | 'breakout-retest' | 'broken-out' | 'accumulating' | 'pullback-observation' | 'pullback-confirmed' | 'shape-match'
 export type ScreenerPeriod = '3m' | '6m' | '1y'
 
 export type ScreenerRun = {
@@ -69,6 +69,14 @@ export type ScreenerCandidate = {
     platform_volume_ratio?: number
     stage?: string
     kind?: string
+    price_basis?: string
+    price_correlation?: number
+    recent_correlation?: number
+    return_60d_percent?: number
+    max_drawdown_percent?: number
+    recent_early_volume_ratio?: number
+    reference?: { symbol: string; start_date: string; end_date: string }
+    similarity_components?: { price_path: number; recent_path: number; amplitude: number; volume_path: number }
     launch_date?: string
     launch_type?: string
     start_date?: string
