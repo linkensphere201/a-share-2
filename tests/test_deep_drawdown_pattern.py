@@ -41,6 +41,30 @@ def test_fixed_reference_and_score_scale():
     assert detect_deep_drawdown(scaled)["score"] == 100
 
 
+@pytest.mark.parametrize("expanding", [False, True])
+def test_matching_prices_cannot_compensate_for_noncontracting_volume(expanding):
+    values = [replace(b, volume=100 + (i * 20 if expanding else 0))
+              for i, b in enumerate(sample())]
+    assert detect_deep_drawdown(values) is None
+
+
+@pytest.mark.parametrize("gap", ["outside", "inside", "truncated"])
+def test_missing_bar_gate_is_scoped_to_known_comparison_window(gap):
+    from stock_harness.analysis_inputs import AnalysisInputService, AnalysisTimeframe, AnalysisInputMode, AnalysisInputWarning
+    from stock_harness.trend_analysis import _deep_drawdown_item
+    with SQLiteMarketDataStore(":memory:") as store:
+        store.upsert_instruments([Instrument("000001.SZ", "test", InstrumentKind.STOCK, "SZ")])
+        store.upsert_daily_bars("tushare", [DailyBar("000001.SZ", b.period_end,
+            b.open, b.high, b.low, b.close, b.volume) for b in sample()])
+        value = AnalysisInputService(store).build("000001.SZ", date(2026, 9, 16),
+            AnalysisTimeframe.DAILY, AnalysisInputMode.FINAL)
+        missing = sample()[0].period_start - timedelta(days=5) if gap != "inside" else sample()[20].period_start
+        warning = AnalysisInputWarning("unexplained_missing_bars", "warning", "test",
+            dates=(missing,), count=12 if gap == "truncated" else 1)
+        item = _deep_drawdown_item(replace(value, warnings=(warning,)))
+        assert (item is not None) == (gap == "outside")
+
+
 @pytest.mark.parametrize("case", ["short", "flat", "rising", "zero-volume", "nan", "preview",
                                   "incomplete", "roll", "unsorted", "before-reference"])
 def test_invalid_or_unlike_controls(case):

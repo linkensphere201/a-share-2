@@ -8,7 +8,7 @@ from typing import Sequence
 from stock_harness.analysis_inputs import AnalysisBar
 
 STRATEGY_ID = "deep-drawdown-consolidation"
-ALGORITHM_VERSION = "deep-drawdown-consolidation-v1"
+ALGORITHM_VERSION = "deep-drawdown-consolidation-v2"
 KIND = "deep-drawdown-range"
 STATE = "shape-match"
 WINDOW = 60
@@ -57,6 +57,10 @@ def detect_deep_drawdown(bars: Sequence[AnalysisBar]) -> dict[str, object] | Non
         for b in bars
     ) or any(a.period_end >= b.period_start for a, b in zip(bars, bars[1:])):
         return None
+    volume_ratio = fmean(b.volume for b in bars[-10:]) / fmean(b.volume for b in bars[:20])
+    # Price similarity must not compensate for the absence of volume contraction.
+    if volume_ratio >= 1:
+        return None
     prices = tuple(log(b.close) for b in bars)
     amplitude = pstdev(prices)
     if amplitude < 1e-8:
@@ -95,7 +99,7 @@ def detect_deep_drawdown(bars: Sequence[AnalysisBar]) -> dict[str, object] | Non
         "return_60d_percent": round((bars[-1].close / bars[0].close - 1) * 100, 4),
         "max_drawdown_percent": round(drawdown * 100, 4),
         "close_range_20d_percent": round((max(b.close for b in tail) / min(b.close for b in tail) - 1) * 100, 4),
-        "recent_early_volume_ratio": round(fmean(b.volume for b in bars[-10:]) / fmean(b.volume for b in bars[:20]), 6),
+        "recent_early_volume_ratio": round(volume_ratio, 6),
         "reference": {"symbol": REFERENCE_SYMBOL, "start_date": REFERENCE_START,
                       "end_date": REFERENCE_END, "source": "tushare", "price_basis": "raw"},
         "first_target_price": None, "first_risk_reward": None,

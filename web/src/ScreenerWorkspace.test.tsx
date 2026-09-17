@@ -30,6 +30,7 @@ describe('ScreenerWorkspace', () => {
       kind: 'deep-drawdown-range', as_of_date: '2026-09-16', window_start_date: '2026-06-25',
       reference: { symbol: '002137.SZ', start_date: '2026-06-24', end_date: '2026-09-15' },
       max_drawdown_percent: -40, recent_early_volume_ratio: .2,
+      similarity_components: { amplitude: 13, price_path: 48, recent_path: 18, volume_path: 12 },
     } }
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       if (init?.method === 'POST') return response(shapeRun, 202)
@@ -42,6 +43,7 @@ describe('ScreenerWorkspace', () => {
     renderScreener()
     await screen.findByText('最大收盘回撤')
     expect(screen.getByText('20.0%')).toBeTruthy()
+    expect(screen.getByText('48.0 / 18.0 / 13.0 / 12.0')).toBeTruthy()
     expect(screen.queryByText('参考盈亏比')).toBeNull()
     expect(screen.queryByLabelText(/模板/)).toBeNull()
     expect(screen.getByRole('button', { name: '快速过滤：形态相似' })).toBeTruthy()

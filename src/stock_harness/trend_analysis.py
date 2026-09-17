@@ -15,7 +15,7 @@ from stock_harness.accumulation_pattern import ANALYSIS_LOOKBACK, detect_accumul
 from stock_harness.first_pullback_pattern import detect_first_pullback
 from stock_harness.low_base_pullback import detect_low_base_pullback
 from stock_harness.bull_flag_pattern import detect_bull_flag
-from stock_harness.deep_drawdown_pattern import detect_deep_drawdown
+from stock_harness.deep_drawdown_pattern import WINDOW as DEEP_DRAWDOWN_WINDOW, detect_deep_drawdown
 from stock_harness.analysis_inputs import (
     AnalysisHorizons,
     AnalysisInput,
@@ -62,7 +62,7 @@ from stock_harness.trend_context import (
 )
 
 
-ALGORITHM_VERSION = "trend-causal-replay-v43"
+ALGORITHM_VERSION = "trend-causal-replay-v44"
 LOGGER = logging.getLogger(__name__)
 
 
@@ -620,9 +620,16 @@ def _market_benchmark(symbol: str) -> str | None:
 
 def _deep_drawdown_item(value: AnalysisInput) -> GeneratedAnalysisItem | None:
     if (value.timeframe is not AnalysisTimeframe.DAILY or value.instrument.kind != "stock"
-            or not value.bars or value.bars[-1].period_end != value.as_of_date
-            or any(w.code == "unexplained_missing_bars" for w in value.warnings)):
+            or len(value.bars) < DEEP_DRAWDOWN_WINDOW or value.bars[-1].period_end != value.as_of_date):
         return None
+    window_start = value.bars[-DEEP_DRAWDOWN_WINDOW].period_start
+    for warning in value.warnings:
+        if warning.code != "unexplained_missing_bars":
+            continue
+        # Warning dates may be truncated. Only waive fully known, older gaps.
+        if (not warning.dates or warning.count != len(warning.dates)
+                or any(day >= window_start for day in warning.dates)):
+            return None
     evidence = detect_deep_drawdown(value.bars)
     if evidence is None:
         return None

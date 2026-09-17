@@ -429,7 +429,7 @@ export function ScreenerWorkspace({
           <span><small>近20日收盘振幅</small>{selected.evidence.close_range_20d_percent?.toFixed(2)}%</span>
           <span><small>近10日 / 前20日均量</small>{((selected.evidence.recent_early_volume_ratio ?? 0) * 100).toFixed(1)}%</span>
           <span><small>价格 / 末段相关性</small>{selected.evidence.price_correlation?.toFixed(3)} / {selected.evidence.recent_correlation?.toFixed(3)}</span>
-          <span><small>价格 / 末段 / 幅度 / 量能得分</small>{Object.values(selected.evidence.similarity_components ?? {}).map(v => v.toFixed(1)).join(' / ')}</span>
+          <span><small>价格 / 末段 / 幅度 / 量能得分</small>{(['price_path', 'recent_path', 'amplitude', 'volume_path'] as const).map(key => selected.evidence.similarity_components?.[key]?.toFixed(1) ?? '-').join(' / ')}</span>
           <span><small>价格口径</small>{selected.evidence.price_basis === 'forward-adjusted-as-of' ? '截至当日前复权' : '原始价格'}</span>
         </footer>}
         {selected?.evidence.kind === 'bull-flag-range' && <footer className="screener-evidence">
