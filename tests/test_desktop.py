@@ -1,7 +1,11 @@
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 from stock_harness.desktop import (
     DEFAULT_DESKTOP_PORT,
+    DesktopServer,
     _parser,
     build_frontend_url,
     open_desktop_window,
@@ -80,3 +84,40 @@ def test_webview_storage_prefers_local_app_data(
 def test_smoke_test_uses_independent_log_directory(tmp_path: Path) -> None:
     assert resolve_runtime_log_directory(tmp_path, False) == tmp_path
     assert resolve_runtime_log_directory(tmp_path, True) == tmp_path / "smoke"
+
+
+def test_backend_readiness_does_not_depend_on_http_proxy(monkeypatch):
+    import urllib.request
+    from fastapi import FastAPI
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("startup must use owned server readiness, not an HTTP self-probe")
+
+    monkeypatch.setattr(urllib.request, "urlopen", forbidden)
+    app = FastAPI()
+    server = DesktopServer(app, "127.0.0.1", 0)
+    try:
+        server.start(timeout_seconds=5)
+        assert server._server.started
+        sockets = server._server.servers[0].sockets
+        port = sockets[0].getsockname()[1]
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(f"http://127.0.0.1:{port}/openapi.json", timeout=2) as response:
+            assert response.status == 200
+    finally:
+        server.stop()
+    assert not server._thread.is_alive()
+
+
+@pytest.mark.parametrize("alive", [False, True])
+def test_backend_startup_failure_and_timeout_are_not_ready(alive):
+    server = DesktopServer.__new__(DesktopServer)
+    joined = []
+    server._server = SimpleNamespace(started=False, should_exit=False)
+    server._thread = SimpleNamespace(start=lambda: None, is_alive=lambda: alive,
+                                     join=lambda timeout: joined.append(timeout))
+    with pytest.raises(TimeoutError if alive else RuntimeError):
+        server.start(timeout_seconds=.01)
+    if alive:
+        assert server._server.should_exit
+        assert joined == [10.0]

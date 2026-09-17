@@ -10,7 +10,6 @@ import socket
 import sys
 import threading
 import time
-import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -61,20 +60,19 @@ class DesktopServer:
         )
         self._thread = threading.Thread(target=self._server.run, name="stock-harness-api", daemon=True)
 
-    def start(self, health_url: str, timeout_seconds: float = 30.0) -> None:
+    def start(self, timeout_seconds: float = 30.0) -> None:
         self._thread.start()
         deadline = time.monotonic() + timeout_seconds
         while time.monotonic() < deadline:
             if not self._thread.is_alive():
                 raise RuntimeError("StockHarness backend stopped during startup")
-            try:
-                with urllib.request.urlopen(health_url, timeout=1.0) as response:
-                    if response.status == 200:
-                        return
-            except (OSError, urllib.error.URLError):
-                time.sleep(0.1)
+            # Uvicorn sets started only after lifespan startup and socket binding.
+            # An HTTP self-probe can be intercepted by the desktop's proxy setup.
+            if self._server.started:
+                return
+            time.sleep(0.1)
         self.stop()
-        raise TimeoutError(f"StockHarness backend did not become ready: {health_url}")
+        raise TimeoutError("StockHarness backend did not finish startup and bind its port")
 
     def stop(self) -> None:
         self._server.should_exit = True
@@ -177,7 +175,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     server = DesktopServer(app, args.host, port)
     try:
-        server.start(f"{url}/api/health")
+        server.start()
         if update_service is not None:
             update_service.start()
         if intraday_service is not None:
@@ -188,7 +186,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             analysis_worker.start()
         LOGGER.info("desktop_ready url=%s frontend_url=%s", url, frontend_url)
         if args.smoke_test:
-            with urllib.request.urlopen(url, timeout=5.0) as response:
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+            with opener.open(url, timeout=5.0) as response:
                 if response.status != 200 or b"StockHarness" not in response.read():
                     raise RuntimeError("StockHarness frontend smoke test failed")
             return 0
