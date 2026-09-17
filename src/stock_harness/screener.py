@@ -200,11 +200,14 @@ class ScreenerService:
         )
         for index, instrument in enumerate(universe, 1):
             try:
-                analysis = self._analysis.analyze(PatternAnalysisRequest(
+                analysis = self._analysis.analyze_screening_candidate(PatternAnalysisRequest(
                     symbol=instrument["symbol"],
                     timeframes=(AnalysisTimeframe.DAILY,), horizons=DEFAULT_HORIZONS,
                     config_version=CONFIG_VERSION, include_preview=False, as_of_date=cutoff,
-                ))[0]
+                ), "major-descending", periods=tuple(item.value for item in periods),
+                    states=tuple(item.value for item in states))
+                if analysis is None:
+                    raise LookupError("no matching shared structure")
                 if analysis["status"] != "succeeded":
                     raise RuntimeError(f"pattern analysis failed: {instrument['symbol']}")
                 lines = [
@@ -291,7 +294,9 @@ class ScreenerService:
                     if strategy_id == DEEP_DRAWDOWN_STRATEGY_ID
                     else self._analysis.analyze_low_base_candidate(request)
                     if strategy_id == LOW_BASE_STRATEGY_ID
-                    else self._analysis.analyze(request)[0]
+                    else self._analysis.analyze_screening_candidate(
+                        request, "bull-flag" if strategy_id == BULL_FLAG_STRATEGY_ID else "first-pullback",
+                    )
                 )
                 if analysis is None:
                     raise LookupError("no matching shared structure")

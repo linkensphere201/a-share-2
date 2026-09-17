@@ -206,7 +206,9 @@ class AnalysisInputService:
 
         horizons.validate()
         kind = self._store.get_instrument_kind(normalized_symbol)
-        summary_reader = getattr(self._store, "get_instrument_summary", None)
+        summary_reader = getattr(self._store, "get_analysis_instrument_summary", None)
+        if summary_reader is None:
+            summary_reader = getattr(self._store, "get_instrument_summary", None)
         summary = summary_reader(normalized_symbol) if summary_reader else {}
         summary = summary or {}
         normalized_symbol = str(summary.get("symbol") or normalized_symbol)

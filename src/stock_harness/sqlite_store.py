@@ -1969,6 +1969,20 @@ class SQLiteMarketDataStore(
             item["instrument_tags"] = tags.get(str(item["symbol"]), [])
         return results
 
+    def get_analysis_instrument_summary(self, symbol: str) -> dict[str, object] | None:
+        """Stock analysis needs metadata, not history counts or UI enrichment."""
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT symbol, kind, exchange, active FROM instruments "
+                "WHERE symbol = ? COLLATE NOCASE", (symbol,),
+            ).fetchone()
+        if row is None:
+            return None
+        if row[1] != "stock":
+            return self.get_instrument_summary(symbol)
+        return {"symbol": str(row[0]), "kind": str(row[1]),
+                "exchange": row[2], "active": bool(row[3])}
+
     def get_instrument_summary(self, symbol: str) -> dict[str, object] | None:
         futures_min_case = (
             "WHEN instrument.kind IN ('futures-contract', 'futures-continuous') THEN "

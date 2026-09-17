@@ -89,6 +89,19 @@ class TrendAnalysisService:
         )
         return _deep_drawdown_item(value) is not None
 
+    def has_screening_structure(
+        self, symbol: str, cutoff: date, horizons: AnalysisHorizons, structure: str,
+        *, periods: tuple[str, ...] = (), states: tuple[str, ...] = (),
+    ) -> bool:
+        value = self._inputs.build(
+            symbol, cutoff, AnalysisTimeframe.DAILY, AnalysisInputMode.FINAL, horizons,
+        )
+        value, _ = _qualify_roll_input(value)
+        if structure == "major-descending":
+            return any(line.period.value in periods and line.state.value in states
+                       for line in detect_major_descending_lines(value.bars, include_candidates=True))
+        return _pullback_item(value, structure) is not None
+
     def recalculate(
         self,
         symbol: str,
@@ -653,6 +666,20 @@ def _low_base_item(analysis_input: AnalysisInput) -> GeneratedAnalysisItem | Non
     )
 
 
+def _pullback_item(value: AnalysisInput, structure: str) -> GeneratedAnalysisItem | None:
+    detectors = {"bull-flag": detect_bull_flag, "first-pullback": detect_first_pullback}
+    detector = detectors[structure]
+    if value.timeframe is not AnalysisTimeframe.DAILY or value.instrument.kind != "stock":
+        return None
+    evidence = detector(value.bars)
+    if evidence is None:
+        return None
+    return GeneratedAnalysisItem(
+        item_id=f"{structure}-{evidence['launch_date']}",
+        item_type=GeneratedItemType.ZONE, payload=evidence,
+    )
+
+
 def _generated_items(
     analysis_input: AnalysisInput,
     horizons: AnalysisHorizons,
@@ -713,21 +740,15 @@ def _generated_items(
             deep_drawdown = _deep_drawdown_item(analysis_input)
             if deep_drawdown is not None:
                 items.append(deep_drawdown)
-            bull_flag = detect_bull_flag(analysis_input.bars)
+            bull_flag = _pullback_item(analysis_input, "bull-flag")
             if bull_flag is not None:
-                items.append(GeneratedAnalysisItem(
-                    item_id=f"bull-flag-{bull_flag['launch_date']}",
-                    item_type=GeneratedItemType.ZONE, payload=bull_flag,
-                ))
+                items.append(bull_flag)
             low_base = _low_base_item(analysis_input)
             if low_base is not None:
                 items.append(low_base)
-            pullback = detect_first_pullback(analysis_input.bars)
+            pullback = _pullback_item(analysis_input, "first-pullback")
             if pullback is not None:
-                items.append(GeneratedAnalysisItem(
-                    item_id=f"first-pullback-{pullback['launch_date']}",
-                    item_type=GeneratedItemType.ZONE, payload=pullback,
-                ))
+                items.append(pullback)
         accumulation = detect_accumulation_pattern(
             analysis_input.bars,
             limit_up_dates=None if limit_up_dates is None else frozenset(limit_up_dates),

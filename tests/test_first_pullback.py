@@ -281,9 +281,10 @@ def test_momentum_from_a_narrow_base_uses_the_same_strong_launch_rules():
 def test_legacy_candidate_rows_survive_state_migration(tmp_path, monkeypatch):
     import stock_harness.sqlite_store as module
     from test_screener import _store_with_major_edge
+    from stock_harness.major_descending_lines import MajorLinePeriod, MajorLineState
     source, days = _store_with_major_edge()
     with source:
-        run = ScreenerService(source).run_sync([], [], 10, days[-1])
+        run = ScreenerService(source).run_sync(list(MajorLinePeriod), list(MajorLineState), 10, days[-1])
         # Populate the old-state table with a real saved analysis and evidence.
         analysis = source._connection.execute('SELECT run_id FROM generated_analysis_runs LIMIT 1').fetchone()[0]
         run = source.create_screener_run("volume-accumulation-20d", "old", days[-1], {})
