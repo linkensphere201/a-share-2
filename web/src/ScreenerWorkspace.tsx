@@ -89,8 +89,8 @@ export function ScreenerWorkspace({
   const [startingStrategy, setStartingStrategy] = useState<ScreenerStrategyId | null>(null)
   const startingRef = useRef(false)
   const runListEpoch = useRef(0)
-  const runningRunId = runs.find(run => run.status === 'running')?.run_id
-  const hasRunningRun = runningRunId !== undefined
+  const runningRunIds = runs.filter(run => run.status === 'running').map(run => run.run_id).sort().join(',')
+  const strategyBusy = runs.some(run => run.status === 'running' && run.strategy_id === strategyId)
 
   const stateCandidates = useMemo(() => candidates.filter(item =>
     (resultStateFilter === 'all' || item.state === resultStateFilter)
@@ -192,22 +192,22 @@ export function ScreenerWorkspace({
   }, [filteredCandidates, selected?.symbol])
 
   useEffect(() => {
-    if (!runningRunId) return
+    if (!runningRunIds) return
     const controller = new AbortController()
     let handle: number
     const poll = async () => {
       try {
-        const current = await loadScreenerRun(runningRunId, controller.signal)
+        const updates = await Promise.all(runningRunIds.split(',').map(id => loadScreenerRun(id, controller.signal)))
         if (controller.signal.aborted) return
-        setSelectedRun(selected => selected?.run_id === current.run_id ? current : selected)
-        setRuns(values => values.map(item => item.run_id === current.run_id ? current : item))
-        if (current.status !== 'running') { await refreshRuns(); return }
+        setSelectedRun(selected => updates.find(item => item.run_id === selected?.run_id) ?? selected)
+        setRuns(values => values.map(item => updates.find(update => update.run_id === item.run_id) ?? item))
+        if (updates.some(item => item.status !== 'running')) await refreshRuns()
       } catch (value) { if (!controller.signal.aborted) setError(String(value)) }
       if (!controller.signal.aborted) handle = window.setTimeout(poll, 1000)
     }
     handle = window.setTimeout(poll, 1000)
     return () => { controller.abort(); window.clearTimeout(handle) }
-  }, [runningRunId, refreshRuns])
+  }, [runningRunIds, refreshRuns])
 
   useEffect(() => {
     if (!selected) { setAnalysis(null); return }
@@ -232,14 +232,15 @@ export function ScreenerWorkspace({
   }
 
   const start = async () => {
-    if (startingRef.current || hasRunningRun) return
+    if (startingRef.current || strategyBusy) return
     startingRef.current = true
     setStartingStrategy(strategyId)
     setError('')
     try {
       const run = await startScreenerRun({ strategy_id: strategyId, periods, states, max_results: maxResults })
       runListEpoch.current++
-      setRuns(values => [run, ...values].slice(0, 10))
+      setRuns(values => [run, ...values.filter(item => item.run_id !== run.run_id)]
+        .sort((a, b) => Number(b.status === 'running') - Number(a.status === 'running')).slice(0, 10))
       setSelectedRun(run)
       logInfo('screener', '选股任务已启动', { runId: run.run_id, strategyId })
     } catch (value) {
@@ -303,8 +304,8 @@ export function ScreenerWorkspace({
       <label className="screener-limit">上限<select value={maxResults} onChange={event => setMaxResults(Number(event.target.value))}>
         {[50, 100, 200, 500].map(value => <option key={value}>{value}</option>)}
       </select></label>
-      <button className="primary-button" aria-busy={startingStrategy !== null} disabled={startingStrategy !== null || (strategyId === 'major-descending-breakout' && (!periods.length || !states.length)) || hasRunningRun} onClick={start}>
-        {startingStrategy !== null || hasRunningRun ? <RefreshCw size={14} className="spin"/> : <Play size={14}/>}开始选股
+      <button className="primary-button" aria-busy={startingStrategy !== null} disabled={startingStrategy !== null || (strategyId === 'major-descending-breakout' && (!periods.length || !states.length)) || strategyBusy} onClick={start}>
+        {startingStrategy !== null || strategyBusy ? <RefreshCw size={14} className="spin"/> : <Play size={14}/>}开始选股
       </button>
     </header>
     {error && <div className="screener-error">{error}</div>}
@@ -320,12 +321,12 @@ export function ScreenerWorkspace({
           event.preventDefault()
           setContextMenu({ kind: 'run', ...menuPosition(event.clientX, event.clientY), run })
         }}>
-          <span>{formatRunDate(run.as_of_date)}</span><small>{strategyLabel(run.strategy_id)} · {run.status === 'running' ? `${run.scanned_count}/${run.universe_count}` : run.status === 'failed' ? '失败' : `${run.candidate_count} 个标的`}</small>
+          <span>{formatRunDate(run.as_of_date)}</span><small>{strategyLabel(run.strategy_id)} · {run.status === 'running' ? run.execution_state === 'queued' ? `排队中 · 第${run.queue_position ?? 1}位` : `${run.scanned_count}/${run.universe_count}` : run.status === 'failed' ? '失败' : `${run.candidate_count} 个标的`}</small>
           <i className={run.status}/>
         </button>)}</div>
       </aside>
       <section className="screener-results">
-        <header><span>选股结果</span><small>{selectedRun?.as_of_date ?? '尚未运行'} · {selectedRun?.status === 'running' ? `扫描 ${progress}%` : `${candidates.length} 个`}</small></header>
+        <header><span>选股结果</span><small>{selectedRun?.as_of_date ?? '尚未运行'} · {selectedRun?.status === 'running' ? selectedRun.execution_state === 'queued' ? '排队中' : `扫描 ${progress}%` : `${candidates.length} 个`}</small></header>
         {selectedRun?.status === 'running' && <div className="screener-progress"><i style={{ width: `${progress}%` }}/></div>}
         <div className="screener-quick-filters" role="group" aria-label="结果快速过滤">
           <button className={resultStateFilter === 'all' ? 'active' : ''} aria-label="快速过滤：全部" onClick={() => setResultStateFilter('all')}>全部 <small>{candidates.length}</small></button>

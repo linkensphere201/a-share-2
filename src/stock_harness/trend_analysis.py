@@ -100,7 +100,10 @@ class TrendAnalysisService:
         if structure == "major-descending":
             return any(line.period.value in periods and line.state.value in states
                        for line in detect_major_descending_lines(value.bars, include_candidates=True))
-        return _pullback_item(value, structure) is not None
+        item = _pullback_item(value, structure)
+        return bool(item is not None and item.payload.get("screen_eligible")
+                    and item.payload.get("stage") in {"pullback-observation", "pullback-confirmed"}
+                    and item.payload.get("as_of_date") == cutoff.isoformat())
 
     def recalculate(
         self,
@@ -319,9 +322,7 @@ class TrendAnalysisService:
             self._store.complete_generated_analysis_target(
                 target_id, claim.generation
             )
-            latest = self._store.get_latest_generated_analysis_run(
-                normalized, "trend", timeframe.value, namespace
-            )
+            latest = self._store.get_generated_analysis_run(run_id)
             if latest is None:
                 raise RuntimeError("completed analysis result is not readable")
             return _public_result(latest)

@@ -17,6 +17,7 @@ from stock_harness.screener import (
 from stock_harness.sqlite_store import SQLiteMarketDataStore
 from test_bull_flag_pattern import fixture as flag_bars
 from test_first_pullback import sample as pullback_bars
+from test_first_pullback import append as append_pullback_bar
 from test_low_base_pullback import bars as low_base_bars
 from test_deep_drawdown_pattern import sample as deep_bars
 from test_volume_accumulation import _bars as accumulation_bars
@@ -39,7 +40,7 @@ def source_bars(strategy):
             ACCUMULATION_STRATEGY_ID: accumulation_bars}[strategy]()
 
 
-def run_case(strategy, optimized):
+def run_case(strategy, optimized, historical_negatives=False):
     bars = source_bars(strategy)
     with SQLiteMarketDataStore(":memory:") as store:
         instruments = [Instrument(f"{600000+i}.SH", str(i), InstrumentKind.STOCK, "SH")
@@ -49,7 +50,11 @@ def run_case(strategy, optimized):
         for index, instrument in enumerate(instruments):
             for bar in bars:
                 if index >= 2:
-                    bar = replace(bar, open=10., high=10.1, low=9.9, close=10., volume=100)
+                    if historical_negatives:
+                        if bar is bars[-1]:
+                            bar = replace(bar, open=8., high=8.1, low=7.9, close=8., volume=100)
+                    else:
+                        bar = replace(bar, open=10., high=10.1, low=9.9, close=10., volume=100)
                 daily.append(DailyBar(instrument.symbol, bar.period_end, bar.open,
                                       bar.high, bar.low, bar.close, bar.volume))
         store.upsert_daily_bars("tushare", daily)
@@ -82,6 +87,18 @@ def test_all_strategies_preserve_order_scores_and_evidence(strategy):
     assert before and before == after
     print(f"{strategy}: {before_time:.3f}s -> {after_time:.3f}s; "
           f"{before_time / after_time:.2f}x; {len(after)} identical candidates")
+
+
+def test_strong_pullback_historical_negatives_preserve_results():
+    from stock_harness.first_pullback_pattern import detect_first_pullback
+    bars = list(pullback_bars())
+    bars[-1] = replace(bars[-1], open=8., high=8.1, low=7.9, close=8., volume=100)
+    assert detect_first_pullback(bars) is not None
+    before_time, before = run_case(PULLBACK_STRATEGY_ID, False, historical_negatives=True)
+    after_time, after = run_case(PULLBACK_STRATEGY_ID, True, historical_negatives=True)
+    assert len(before) == 2 and before == after
+    print(f"strong historical negatives: {before_time:.3f}s -> {after_time:.3f}s; "
+          f"{before_time / after_time:.2f}x; identical evidence")
 
 
 @pytest.mark.parametrize("strategy", STRATEGIES[:3])
@@ -123,3 +140,38 @@ def test_stock_input_metadata_is_equivalent_without_ui_queries():
         assert len(statements) == 1
         assert "daily_bars" not in statements[0]
         assert store.get_analysis_instrument_summary("missing") is None
+
+
+def test_invalidated_pullback_skips_full_analysis(monkeypatch):
+    from stock_harness.first_pullback_pattern import detect_first_pullback
+
+    bars = append_pullback_bar(pullback_bars(), 8)
+    evidence = detect_first_pullback(bars)
+    assert evidence and not evidence["screen_eligible"]
+    def forbidden(*args, **kwargs):
+        pytest.fail("historical ineligible structures must not run full analysis")
+    monkeypatch.setattr(PatternAnalysisService, "analyze", forbidden)
+    with SQLiteMarketDataStore(":memory:") as store:
+        store.upsert_instruments([Instrument("600001.SH", "Test", InstrumentKind.STOCK, "SH")])
+        store.upsert_daily_bars("tushare", [DailyBar("600001.SH", b.period_end, b.open,
+                                                     b.high, b.low, b.close, b.volume) for b in bars])
+        result = ScreenerService(store).run_sync([], [], 10, bars[-1].period_end, PULLBACK_STRATEGY_ID)
+        assert result["status"] == "succeeded"
+        assert result["candidate_count"] == 0
+
+
+def test_analysis_returns_own_run_not_latest_other_request(monkeypatch):
+    from stock_harness.analysis_inputs import AnalysisHorizons, AnalysisTimeframe
+    from stock_harness.pattern_analysis import PatternAnalysisRequest
+    with SQLiteMarketDataStore(":memory:") as store:
+        store.upsert_instruments([Instrument("600001.SH", "Test", InstrumentKind.STOCK, "SH")])
+        bars = flag_bars()
+        store.upsert_daily_bars("tushare", [DailyBar("600001.SH", b.period_end, b.open,
+                                                     b.high, b.low, b.close, b.volume) for b in bars])
+        monkeypatch.setattr(store, "get_latest_generated_analysis_run",
+                            lambda *args, **kwargs: pytest.fail("latest can belong to a concurrent request"))
+        request = PatternAnalysisRequest("600001.SH", (AnalysisTimeframe.DAILY,),
+                                         AnalysisHorizons(), "isolated-request", as_of_date=bars[-1].period_end)
+        result, = PatternAnalysisService(store).analyze(request)
+        assert result["config_version"] == "isolated-request"
+        assert store.get_generated_analysis_run(result["run_id"])["items"] == result["items"]

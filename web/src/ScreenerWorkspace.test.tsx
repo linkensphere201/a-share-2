@@ -24,6 +24,47 @@ afterEach(() => {
 })
 
 describe('ScreenerWorkspace', () => {
+  it('allows other strategies, prevents duplicates and polls all running and queued tasks', async () => {
+    let finished = false
+    const jobs = [
+      { ...run, run_id: 'major-active', status: 'running', execution_state: 'running', scanned_count: 20 },
+      { ...run, run_id: 'flag-active', strategy_id: 'bull-flag-consolidation', status: 'running', execution_state: 'running', scanned_count: 30 },
+      { ...run, run_id: 'pullback-queued', strategy_id: 'strong-first-pullback', status: 'running', execution_state: 'queued', queue_position: 1 },
+    ]
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (init?.method === 'POST') {
+        const created = { ...run, run_id: 'low-queued', strategy_id: 'low-base-platform-pullback', status: 'running', execution_state: 'queued', queue_position: 2 }
+        jobs.push(created)
+        return response(created, 202)
+      }
+      if (url.includes('/candidates')) return response({ items: [] })
+      if (url.includes('/runs?')) return response({ items: jobs.map(job => finished && job.run_id === 'flag-active' ? { ...job, status: 'succeeded' } : job) })
+      const job = jobs.find(job => url.endsWith(`/${job.run_id}`))
+      if (job) {
+        if (job.run_id === 'flag-active') { finished = true; return response({ ...job, status: 'succeeded' }) }
+        return response(job)
+      }
+      throw new Error(url)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+    renderScreener()
+    await screen.findByText(/强势股首次回踩 · 排队中/)
+    expect((screen.getByRole('button', { name: '开始选股' }) as HTMLButtonElement).disabled).toBe(true)
+    await user.selectOptions(screen.getByLabelText('策略'), 'low-base-platform-pullback')
+    expect((screen.getByRole('button', { name: '开始选股' }) as HTMLButtonElement).disabled).toBe(false)
+    await user.click(screen.getByRole('button', { name: '开始选股' }))
+    await screen.findByText(/低位平台回踩 · 排队中/)
+    expect((screen.getByRole('button', { name: '开始选股' }) as HTMLButtonElement).disabled).toBe(true)
+    await waitFor(() => {
+      for (const id of ['major-active', 'flag-active', 'pullback-queued', 'low-queued']) {
+        expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith(`/${id}`))).toBe(true)
+      }
+    }, { timeout: 3000 })
+    await screen.findByText(/牛旗盘整 · 1 个标的/)
+    expect(screen.getByText(/低位平台回踩 · 排队中/).closest('button')?.className).toContain('active')
+  })
   it('runs the fixed deep-drawdown shape without template or trade controls', async () => {
     const shapeRun = { ...run, strategy_id: 'deep-drawdown-consolidation' }
     const shape = { ...candidate, state: 'shape-match', evidence: {

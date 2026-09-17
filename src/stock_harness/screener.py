@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 import logging
 import threading
@@ -64,7 +65,9 @@ class ScreenerService:
         self._inputs = AnalysisInputService(store)
         self._analysis = PatternAnalysisService(store)
         self._lock = threading.Lock()
-        self._thread: threading.Thread | None = None
+        self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="stock-harness-screener")
+        self._jobs: dict[str, tuple[str, str]] = {}
+        self._stopping = threading.Event()
         recovered = store.recover_interrupted_screener_runs()
         if recovered:
             LOGGER.warning("screener_interrupted_runs_recovered count=%s", recovered)
@@ -119,8 +122,10 @@ class ScreenerService:
         strategy_id: str = STRATEGY_ID,
     ) -> dict[str, object]:
         with self._lock:
-            if self._thread is not None and self._thread.is_alive():
-                raise ScreenerBusyError("another screener run is already active")
+            if self._stopping.is_set():
+                raise ScreenerBusyError("screener is shutting down")
+            if any(job[0] == strategy_id for job in self._jobs.values()):
+                raise ScreenerBusyError("this strategy is already running or queued")
             cutoff = as_of_date or self._store.get_latest_stock_daily_bar_date()
             if cutoff is None:
                 raise ValueError("no completed stock daily bars are available")
@@ -128,13 +133,36 @@ class ScreenerService:
                 strategy_id, _strategy_version(strategy_id), cutoff,
                 _parameters(strategy_id, periods, states, max_results),
             )
-            self._thread = threading.Thread(
-                target=self._run_guarded,
-                args=(str(run["run_id"]), cutoff, tuple(periods), tuple(states), max_results, strategy_id),
-                name="stock-harness-screener", daemon=True,
-            )
-            self._thread.start()
-            return run
+            run_id = str(run["run_id"])
+            self._jobs[run_id] = (strategy_id, "queued")
+            try:
+                self._executor.submit(
+                    self._run_guarded, run_id, cutoff, tuple(periods), tuple(states), max_results, strategy_id,
+                )
+            except Exception as error:
+                self._jobs.pop(run_id, None)
+                self._store.fail_screener_run(run_id, str(error))
+                raise
+        return self.describe_run(run)
+
+    def describe_run(self, run: dict[str, object]) -> dict[str, object]:
+        with self._lock:
+            queued = [key for key, value in self._jobs.items() if value[1] == "queued"]
+            job = self._jobs.get(str(run["run_id"]))
+            if run["status"] == "running" and job is not None:
+                return {**run, "execution_state": job[1],
+                        "queue_position": queued.index(str(run["run_id"])) + 1 if job[1] == "queued" else 0}
+        return run
+
+    def close(self) -> None:
+        with self._lock:
+            self._stopping.set()
+        # Drain accepted jobs before the application closes the shared SQLite store.
+        self._executor.shutdown(wait=True)
+
+    def _check_stopping(self) -> None:
+        if self._stopping.is_set():
+            raise RuntimeError("application stopped during screening")
 
     def run_sync(
         self,
@@ -163,10 +191,16 @@ class ScreenerService:
         states: Sequence[MajorLineState], max_results: int, strategy_id: str,
     ) -> None:
         try:
+            with self._lock:
+                self._jobs[run_id] = (strategy_id, "running")
+            self._check_stopping()
             self._execute(run_id, cutoff, periods, states, max_results, strategy_id)
         except Exception as error:
             self._store.fail_screener_run(run_id, str(error))
             LOGGER.exception("screener_run_failed run_id=%s", run_id)
+        finally:
+            with self._lock:
+                self._jobs.pop(run_id, None)
 
     def _execute(
         self, run_id: str, cutoff: date, periods: Sequence[MajorLinePeriod],
@@ -199,6 +233,7 @@ class ScreenerService:
             run_id, cutoff, len(universe), ",".join(item.value for item in periods),
         )
         for index, instrument in enumerate(universe, 1):
+            self._check_stopping()
             try:
                 analysis = self._analysis.analyze_screening_candidate(PatternAnalysisRequest(
                     symbol=instrument["symbol"],
@@ -281,6 +316,7 @@ class ScreenerService:
         candidates = []
         self._store.update_screener_progress(run_id, universe_count=len(universe), scanned_count=0)
         for index, instrument in enumerate(universe, 1):
+            self._check_stopping()
             try:
                 if strategy_id == DEEP_DRAWDOWN_STRATEGY_ID and instrument["symbol"] == REFERENCE_SYMBOL:
                     raise LookupError("reference stock is excluded from similarity screening")
@@ -350,6 +386,7 @@ class ScreenerService:
         )
         horizons = AnalysisHorizons(20, 60, ANALYSIS_LOOKBACK)
         for index, instrument in enumerate(universe, 1):
+            self._check_stopping()
             try:
                 analysis_input = self._inputs.build(
                     instrument["symbol"], cutoff, AnalysisTimeframe.DAILY,
@@ -399,6 +436,7 @@ class ScreenerService:
         )
         retained: list[dict[str, object]] = []
         for instrument, signal in matches[:max_results]:
+            self._check_stopping()
             analysis = self._analysis.analyze(PatternAnalysisRequest(
                 symbol=instrument["symbol"], timeframes=(AnalysisTimeframe.DAILY,),
                 horizons=DEFAULT_HORIZONS, config_version=CONFIG_VERSION,

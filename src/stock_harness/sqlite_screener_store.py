@@ -195,7 +195,7 @@ class SQLiteScreenerStoreMixin:
                        parameters_json, status, universe_count, scanned_count,
                        candidate_count, error, started_at_ms, completed_at_ms
                 FROM screener_runs
-                ORDER BY started_at_ms DESC, run_id DESC LIMIT ?
+                ORDER BY (status = 'running') DESC, started_at_ms DESC, run_id DESC LIMIT ?
                 """,
                 (limit,),
             ).fetchall()

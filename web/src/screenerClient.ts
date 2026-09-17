@@ -16,6 +16,8 @@ export type ScreenerRun = {
     max_results: number
   }
   status: 'running' | 'succeeded' | 'failed'
+  execution_state?: 'queued' | 'running'
+  queue_position?: number
   universe_count: number
   scanned_count: number
   candidate_count: number

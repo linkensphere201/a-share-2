@@ -138,6 +138,7 @@ def create_app(
             app.state.store, bridge, chat_workdir, learning_library
         )
         yield
+        app.state.screener.close()
         app.state.chat_service.close()
         if owned_store:
             app.state.store.close()

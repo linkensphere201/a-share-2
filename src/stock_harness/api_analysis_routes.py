@@ -237,14 +237,15 @@ def create_analysis_router() -> APIRouter:
     def list_screener_runs(
         request: Request, limit: int = Query(default=10, ge=1, le=10)
     ) -> dict[str, object]:
-        return {"items": store(request).list_screener_runs(limit)}
+        return {"items": [request.app.state.screener.describe_run(run)
+                          for run in store(request).list_screener_runs(limit)]}
 
     @router.get("/api/screener/runs/{run_id}")
     def get_screener_run(run_id: str, request: Request) -> dict[str, object]:
         result = store(request).get_screener_run(run_id)
         if result is None:
             raise HTTPException(status_code=404, detail="screener run not found")
-        return result
+        return request.app.state.screener.describe_run(result)
 
     @router.delete(
         "/api/screener/runs/{run_id}", status_code=status.HTTP_204_NO_CONTENT
