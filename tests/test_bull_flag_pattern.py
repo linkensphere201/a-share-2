@@ -110,3 +110,48 @@ def test_api_registers_the_independent_strategy():
     from stock_harness.api_models import ScreenerRunInput
     assert ScreenerRunInput(strategy_id=STRATEGY_ID).strategy_id == STRATEGY_ID
     assert next(s for s in ScreenerService.strategies() if s["strategy_id"] == STRATEGY_ID)["states"] == ["pullback-observation"]
+
+
+def test_directional_selloff_is_not_sideways_oscillation():
+    bars = list(fixture())
+    for i in range(63, len(bars)):
+        close = 11.04 - (i - 63) * .055
+        bars[i] = replace(bars[i], open=close + .02, high=close + .05, low=close - .05, close=close)
+    assert detect_bull_flag(bars) is None
+
+
+def test_bullish_volume_surge_cannot_be_hidden_in_contracting_flag_average():
+    bars = list(fixture())
+    bars[65] = replace(bars[65], open=11., close=11.06, high=11.16, low=10.98, volume=400.)
+    assert detect_bull_flag(bars) is None
+
+
+def test_upper_wick_alone_cannot_supply_the_pole_gain():
+    bars = list(fixture())
+    bars[61] = replace(bars[61], open=10.4, close=10.55, high=10.65, low=10.35)
+    bars[62] = replace(bars[62], open=10.56, close=10.60, high=11.20, low=10.50)
+    assert detect_bull_flag(bars) is None
+
+
+def test_gently_descending_two_sided_flag_and_small_volume_bounce_remain_valid():
+    bars = list(fixture())
+    closes = [11.04, 10.88, 11., 10.80, 10.92, 10.82]
+    volumes = [180., 168., 174., 144., 132., 120.]
+    for i, (close, volume) in enumerate(zip(closes, volumes), 63):
+        bars[i] = replace(bars[i], open=close - .01, high=close + .05, low=close - .05,
+                          close=close, volume=volume)
+    result = detect_bull_flag(bars)
+    assert result
+    assert result["flag_close_drift_percent"] < -1.5
+    assert result["flag_directional_efficiency"] < .8
+    assert result["max_local_volume_expansion"] <= 1.8
+
+
+def test_local_volume_surge_below_pole_mean_is_still_rejected():
+    bars = list(fixture())
+    volumes = [180., 140., 280., 90., 80., 70.]
+    for i, volume in enumerate(volumes, 63):
+        bars[i] = replace(bars[i], volume=volume)
+    # Below pole mean and globally contracting, but the third bar is a local expansion.
+    bars[65] = replace(bars[65], volume=300., open=11., close=11.06, high=11.16, low=10.98)
+    assert detect_bull_flag(bars) is None
