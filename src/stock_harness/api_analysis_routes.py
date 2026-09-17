@@ -86,19 +86,21 @@ def create_analysis_router() -> APIRouter:
             raise HTTPException(status_code=404, detail="signal review run not found")
         return result
 
-    @router.get("/api/signals/runs/{run_id}/items")
+    @router.get("/api/signals/runs/{run_id}/items", response_model=dict[str, object])
     def list_signal_items(
         run_id: str, request: Request,
         limit: int = Query(default=5000, ge=1, le=5000),
         offset: int = Query(default=0, ge=0),
-    ) -> dict[str, object]:
+    ) -> Response:
         selected_store = store(request)
         if selected_store.get_signal_review_run(run_id) is None:
             raise HTTPException(status_code=404, detail="signal review run not found")
-        return {
+        # Stored evidence is already JSON-compatible. Encode in the worker so
+        # a large review cannot monopolize the chart API's event loop.
+        return JSONResponse({
             "items": selected_store.list_signal_review_items(run_id, limit, offset),
             "total": selected_store.count_signal_review_items(run_id),
-        }
+        })
 
     @router.get("/api/signals/runs/{run_id}/items/{item_id}")
     def get_signal_item(run_id: str, item_id: str, request: Request) -> dict[str, object]:
@@ -157,25 +159,26 @@ def create_analysis_router() -> APIRouter:
             raise HTTPException(status_code=404, detail="hotspot wave not found")
         return {"items": items, "total": len(items)}
 
-    @router.get("/api/signals/runs/{run_id}/board-observations")
+    @router.get("/api/signals/runs/{run_id}/board-observations", response_model=dict[str, object])
     def list_board_observations(
         run_id: str, request: Request, symbol: str | None = None,
         query: str | None = None,
         attention_only: bool = False,
         limit: int = Query(default=200, ge=1, le=5000),
         offset: int = Query(default=0, ge=0),
-    ) -> dict[str, object]:
+    ) -> Response:
         selected_store = store(request)
         if selected_store.get_signal_review_run(run_id) is None:
             raise HTTPException(status_code=404, detail="signal review run not found")
-        return {
-            "items": selected_store.list_board_daily_observations(
-                run_id=run_id, symbol=symbol, query=query,
-                attention_only=attention_only,
-                limit=limit, offset=offset,
-            ),
+        items = selected_store.list_board_daily_observations(
+            run_id=run_id, symbol=symbol, query=query,
+            attention_only=attention_only, limit=limit, offset=offset,
+        )
+        return JSONResponse({
+            "items": [{**item, "effective_date": cast(date, item["effective_date"]).isoformat()}
+                      for item in items],
             "total": selected_store.count_board_daily_observations(run_id),
-        }
+        })
 
     @router.get("/api/observation-pools/runs/{run_id}/{pool_kind}")
     def get_observation_pool(
