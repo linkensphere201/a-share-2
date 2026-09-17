@@ -221,6 +221,49 @@ def test_api_registers_separate_low_base_strategy():
     assert registered["states"] == ["pullback-observation", "pullback-confirmed"]
 
 
+def test_absent_structure_skips_full_analysis_but_completes_progress(monkeypatch):
+    def forbidden(*args, **kwargs):
+        pytest.fail("negative stocks must not run or register full analysis")
+
+    monkeypatch.setattr(PatternAnalysisService, "analyze", forbidden)
+    with SQLiteMarketDataStore(":memory:") as store:
+        store.upsert_instruments([
+            Instrument(symbol, symbol, InstrumentKind.STOCK, "SZ")
+            for symbol in ("000001.SZ", "000002.SZ")
+        ])
+        data = [DailyBar("000001.SZ", b.period_end, 10., 10.1, 9.9, 10., 100.)
+                for b in bars()]
+        store.upsert_daily_bars("tushare", data)
+        store.upsert_trading_dates("tushare", [b.trade_date for b in data])
+        run = ScreenerService(store).run_sync([], [], 10, data[-1].trade_date, LOW_BASE_STRATEGY_ID)
+        assert run["status"] == "succeeded"
+        assert run["scanned_count"] == run["universe_count"] == 2
+        assert not store.list_screener_candidates(run["run_id"])
+
+
+@pytest.mark.parametrize("symbol", FILES)
+def test_shared_negative_gate_matches_full_items_across_historical_prefixes(symbol):
+    from stock_harness.analysis_inputs import AnalysisHorizons, AnalysisTimeframe
+    from stock_harness.trend_analysis import TrendAnalysisService
+
+    with SQLiteMarketDataStore(":memory:") as store:
+        store.upsert_instruments([Instrument(symbol, symbol, InstrumentKind.STOCK, symbol[-2:])])
+        data = [DailyBar(symbol, date.fromisoformat(d), o, h, l, c, v)
+                for d, o, h, l, c, v in rows(symbol)]
+        store.upsert_daily_bars("tushare", data)
+        store.upsert_trading_dates("tushare", [b.trade_date for b in data])
+        service = TrendAnalysisService(store)
+        for row in data[::10] + data[-10:]:
+            exists = service.has_low_base_structure(symbol, row.trade_date, AnalysisHorizons())
+            full = service.build_review_snapshot(
+                symbol, AnalysisTimeframe.DAILY, AnalysisHorizons(),
+                as_of_date=row.trade_date, config_version="parity-test",
+            )
+            assert exists == any(
+                i["item_id"].startswith("low-base-pullback-") for i in full["items"]
+            ), row.trade_date
+
+
 def synthetic_shape(platform_closes, retest_closes=()):
     template = bars()[0]
     series = []

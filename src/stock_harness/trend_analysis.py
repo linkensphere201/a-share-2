@@ -70,6 +70,16 @@ class TrendAnalysisService:
         self._store = store
         self._inputs = AnalysisInputService(store)
 
+    def has_low_base_structure(
+        self, symbol: str, cutoff: date, horizons: AnalysisHorizons,
+    ) -> bool:
+        """Read-only negative gate using the exact full-analysis input and item builder."""
+        analysis_input = self._inputs.build(
+            symbol, cutoff, AnalysisTimeframe.DAILY, AnalysisInputMode.FINAL, horizons,
+        )
+        detector_input, _ = _qualify_roll_input(analysis_input)
+        return _low_base_item(detector_input) is not None
+
     def recalculate(
         self,
         symbol: str,
@@ -599,6 +609,19 @@ def _market_benchmark(symbol: str) -> str | None:
     return None
 
 
+def _low_base_item(analysis_input: AnalysisInput) -> GeneratedAnalysisItem | None:
+    if (analysis_input.timeframe is not AnalysisTimeframe.DAILY
+            or analysis_input.instrument.kind != "stock"):
+        return None
+    evidence = detect_low_base_pullback(analysis_input.bars)
+    if evidence is None:
+        return None
+    return GeneratedAnalysisItem(
+        item_id=f"low-base-pullback-{evidence['launch_date']}",
+        item_type=GeneratedItemType.ZONE, payload=evidence,
+    )
+
+
 def _generated_items(
     analysis_input: AnalysisInput,
     horizons: AnalysisHorizons,
@@ -662,12 +685,9 @@ def _generated_items(
                     item_id=f"bull-flag-{bull_flag['launch_date']}",
                     item_type=GeneratedItemType.ZONE, payload=bull_flag,
                 ))
-            low_base = detect_low_base_pullback(analysis_input.bars)
+            low_base = _low_base_item(analysis_input)
             if low_base is not None:
-                items.append(GeneratedAnalysisItem(
-                    item_id=f"low-base-pullback-{low_base['launch_date']}",
-                    item_type=GeneratedItemType.ZONE, payload=low_base,
-                ))
+                items.append(low_base)
             pullback = detect_first_pullback(analysis_input.bars)
             if pullback is not None:
                 items.append(GeneratedAnalysisItem(

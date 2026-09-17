@@ -88,6 +88,21 @@ class PatternAnalysisService:
             pivot_config=request.pivot_config,
         ))
 
+    def analyze_low_base_candidate(
+        self, request: PatternAnalysisRequest,
+    ) -> PatternAnalysisResult | None:
+        """Reject absent structures cheaply; only full saved analysis can select a stock."""
+        request.validate()
+        if (request.timeframes != (AnalysisTimeframe.DAILY,)
+                or request.include_preview or request.as_of_date is None
+                or request.profile is not PatternAnalysisProfile.FULL):
+            raise ValueError("low-base screening requires dated final daily full analysis")
+        if not self._delegate.has_low_base_structure(
+            request.symbol, request.as_of_date, request.horizons,
+        ):
+            return None
+        return self.analyze(request)[0]
+
     def build_snapshot(
         self,
         request: PatternAnalysisRequest,

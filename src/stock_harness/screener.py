@@ -268,11 +268,18 @@ class ScreenerService:
         self._store.update_screener_progress(run_id, universe_count=len(universe), scanned_count=0)
         for index, instrument in enumerate(universe, 1):
             try:
-                analysis = self._analysis.analyze(PatternAnalysisRequest(
+                request = PatternAnalysisRequest(
                     symbol=instrument["symbol"], timeframes=(AnalysisTimeframe.DAILY,),
                     horizons=DEFAULT_HORIZONS, config_version=_strategy_version(strategy_id),
                     include_preview=False, as_of_date=cutoff,
-                ))[0]
+                )
+                analysis = (
+                    self._analysis.analyze_low_base_candidate(request)
+                    if strategy_id == LOW_BASE_STRATEGY_ID
+                    else self._analysis.analyze(request)[0]
+                )
+                if analysis is None:
+                    raise LookupError("no shared low-base structure")
                 if analysis["status"] != "succeeded":
                     raise RuntimeError(f"pattern analysis failed: {instrument['symbol']}")
                 for item in analysis["items"]:
