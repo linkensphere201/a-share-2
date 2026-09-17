@@ -19,7 +19,7 @@ class SQLiteScreenerStoreMixin:
                 "AND name = 'screener_candidates'"
             ).fetchone()
             if row is None or all(f"'{state}'" in str(row[0]) for state in (
-                "accumulating", "pullback-observation", "pullback-confirmed",
+                "accumulating", "pullback-observation", "pullback-confirmed", "shape-match",
             )):
                 return
             self._connection.execute("PRAGMA foreign_keys = OFF")
@@ -35,7 +35,7 @@ class SQLiteScreenerStoreMixin:
                             state IN (
                                 'critical-breakout', 'breakout-retest',
                                 'broken-out', 'accumulating',
-                                'pullback-observation', 'pullback-confirmed'
+                                'pullback-observation', 'pullback-confirmed', 'shape-match'
                             )
                         ),
                         score REAL NOT NULL,

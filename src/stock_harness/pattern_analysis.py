@@ -103,6 +103,20 @@ class PatternAnalysisService:
             return None
         return self.analyze(request)[0]
 
+    def analyze_deep_drawdown_candidate(
+        self, request: PatternAnalysisRequest,
+    ) -> PatternAnalysisResult | None:
+        request.validate()
+        if (request.timeframes != (AnalysisTimeframe.DAILY,)
+                or request.include_preview or request.as_of_date is None
+                or request.profile is not PatternAnalysisProfile.FULL):
+            raise ValueError("deep-drawdown screening requires dated final daily full analysis")
+        if not self._delegate.has_deep_drawdown_structure(
+            request.symbol, request.as_of_date, request.horizons,
+        ):
+            return None
+        return self.analyze(request)[0]
+
     def build_snapshot(
         self,
         request: PatternAnalysisRequest,

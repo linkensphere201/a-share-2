@@ -23,6 +23,11 @@ from stock_harness.low_base_pullback import (
     ALGORITHM_VERSION as LOW_BASE_VERSION, CONFIG as LOW_BASE_CONFIG, LAUNCH_TYPE as LOW_BASE_TYPE,
 )
 from stock_harness.screener_result_tags import attach_recognition_tags
+from stock_harness.deep_drawdown_pattern import (
+    STRATEGY_ID as DEEP_DRAWDOWN_STRATEGY_ID, ALGORITHM_VERSION as DEEP_DRAWDOWN_VERSION,
+    KIND as DEEP_DRAWDOWN_KIND, STATE as DEEP_DRAWDOWN_STATE, MIN_SCORE,
+    REFERENCE_SYMBOL, REFERENCE_START, REFERENCE_END,
+)
 from stock_harness.bull_flag_pattern import (
     STRATEGY_ID as BULL_FLAG_STRATEGY_ID, ALGORITHM_VERSION as BULL_FLAG_VERSION,
     CONFIG as BULL_FLAG_CONFIG, KIND as BULL_FLAG_KIND,
@@ -99,6 +104,10 @@ class ScreenerService:
             "window": PULLBACK_CONFIG.observation_window_sessions,
             "states": ["pullback-observation", "pullback-confirmed"],
             "final_bars_only": True,
+        }, {
+            "strategy_id": DEEP_DRAWDOWN_STRATEGY_ID, "name": "深跌缩量整理",
+            "version": DEEP_DRAWDOWN_VERSION, "window": 60,
+            "states": [DEEP_DRAWDOWN_STATE], "final_bars_only": True,
         }]
 
     def start_run(
@@ -163,7 +172,7 @@ class ScreenerService:
         self, run_id: str, cutoff: date, periods: Sequence[MajorLinePeriod],
         states: Sequence[MajorLineState], max_results: int, strategy_id: str,
     ) -> None:
-        if strategy_id in (PULLBACK_STRATEGY_ID, LOW_BASE_STRATEGY_ID, BULL_FLAG_STRATEGY_ID):
+        if strategy_id in (PULLBACK_STRATEGY_ID, LOW_BASE_STRATEGY_ID, BULL_FLAG_STRATEGY_ID, DEEP_DRAWDOWN_STRATEGY_ID):
             self._execute_first_pullback(run_id, cutoff, max_results, strategy_id)
             return
         if strategy_id == ACCUMULATION_STRATEGY_ID:
@@ -263,38 +272,44 @@ class ScreenerService:
     def _execute_first_pullback(self, run_id: str, cutoff: date, max_results: int,
                                 strategy_id: str = PULLBACK_STRATEGY_ID) -> None:
         started = time.perf_counter()
+        if strategy_id == DEEP_DRAWDOWN_STRATEGY_ID and cutoff < date.fromisoformat(REFERENCE_END):
+            raise ValueError("deep-drawdown reference is only available from " + REFERENCE_END)
         universe = self._store.list_active_stock_symbols_for_screening()
         candidates = []
         self._store.update_screener_progress(run_id, universe_count=len(universe), scanned_count=0)
         for index, instrument in enumerate(universe, 1):
             try:
+                if strategy_id == DEEP_DRAWDOWN_STRATEGY_ID and instrument["symbol"] == REFERENCE_SYMBOL:
+                    raise LookupError("reference stock is excluded from similarity screening")
                 request = PatternAnalysisRequest(
                     symbol=instrument["symbol"], timeframes=(AnalysisTimeframe.DAILY,),
                     horizons=DEFAULT_HORIZONS, config_version=_strategy_version(strategy_id),
                     include_preview=False, as_of_date=cutoff,
                 )
                 analysis = (
-                    self._analysis.analyze_low_base_candidate(request)
+                    self._analysis.analyze_deep_drawdown_candidate(request)
+                    if strategy_id == DEEP_DRAWDOWN_STRATEGY_ID
+                    else self._analysis.analyze_low_base_candidate(request)
                     if strategy_id == LOW_BASE_STRATEGY_ID
                     else self._analysis.analyze(request)[0]
                 )
                 if analysis is None:
-                    raise LookupError("no shared low-base structure")
+                    raise LookupError("no matching shared structure")
                 if analysis["status"] != "succeeded":
                     raise RuntimeError(f"pattern analysis failed: {instrument['symbol']}")
                 for item in analysis["items"]:
                     evidence = item["payload"]
                     if (item["item_type"] != "zone"
-                        or evidence.get("kind") != (BULL_FLAG_KIND if strategy_id == BULL_FLAG_STRATEGY_ID else "first-pullback-range")
+                        or evidence.get("kind") != (DEEP_DRAWDOWN_KIND if strategy_id == DEEP_DRAWDOWN_STRATEGY_ID else BULL_FLAG_KIND if strategy_id == BULL_FLAG_STRATEGY_ID else "first-pullback-range")
                         or ((evidence.get("launch_type") == LOW_BASE_TYPE) != (strategy_id == LOW_BASE_STRATEGY_ID))
                         or not evidence.get("screen_eligible")
-                        or evidence.get("stage") not in {"pullback-observation", "pullback-confirmed"}
+                        or evidence.get("stage") not in {"pullback-observation", "pullback-confirmed", DEEP_DRAWDOWN_STATE}
                         or evidence.get("as_of_date") != cutoff.isoformat()):
                         continue
                     candidates.append({
                         "symbol": instrument["symbol"], "state": evidence["stage"],
                         "score": evidence["score"], "line_item_id": item["item_id"],
-                        "line_code": "BULL-FLAG" if strategy_id == BULL_FLAG_STRATEGY_ID else "LOW-BASE-PULLBACK" if strategy_id == LOW_BASE_STRATEGY_ID else "FIRST-PULLBACK",
+                        "line_code": "DEEP-DRAWDOWN" if strategy_id == DEEP_DRAWDOWN_STRATEGY_ID else "BULL-FLAG" if strategy_id == BULL_FLAG_STRATEGY_ID else "LOW-BASE-PULLBACK" if strategy_id == LOW_BASE_STRATEGY_ID else "FIRST-PULLBACK",
                         "analysis_run_id": analysis["run_id"],
                         "evidence": evidence,
                     })
@@ -413,6 +428,8 @@ class ScreenerService:
 
 
 def _strategy_version(strategy_id: str) -> str:
+    if strategy_id == DEEP_DRAWDOWN_STRATEGY_ID:
+        return DEEP_DRAWDOWN_VERSION
     if strategy_id == BULL_FLAG_STRATEGY_ID:
         return BULL_FLAG_VERSION
     if strategy_id == LOW_BASE_STRATEGY_ID:
@@ -427,6 +444,11 @@ def _strategy_version(strategy_id: str) -> str:
 
 
 def _parameters(strategy_id, periods, states, max_results: int) -> dict[str, object]:
+    if strategy_id == DEEP_DRAWDOWN_STRATEGY_ID:
+        return {"max_results": max_results, "final_bars_only": True, "window": 60,
+                "states": [DEEP_DRAWDOWN_STATE], "minimum_score": MIN_SCORE,
+                "reference_symbol": REFERENCE_SYMBOL, "reference_start": REFERENCE_START,
+                "reference_end": REFERENCE_END, "analysis_config": DEEP_DRAWDOWN_VERSION}
     if strategy_id == BULL_FLAG_STRATEGY_ID:
         return {"max_results": max_results, "final_bars_only": True,
                 "window": BULL_FLAG_CONFIG.max_launch_age, "states": ["pullback-observation"],

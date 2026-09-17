@@ -15,6 +15,7 @@ from stock_harness.accumulation_pattern import ANALYSIS_LOOKBACK, detect_accumul
 from stock_harness.first_pullback_pattern import detect_first_pullback
 from stock_harness.low_base_pullback import detect_low_base_pullback
 from stock_harness.bull_flag_pattern import detect_bull_flag
+from stock_harness.deep_drawdown_pattern import detect_deep_drawdown
 from stock_harness.analysis_inputs import (
     AnalysisHorizons,
     AnalysisInput,
@@ -61,7 +62,7 @@ from stock_harness.trend_context import (
 )
 
 
-ALGORITHM_VERSION = "trend-causal-replay-v42"
+ALGORITHM_VERSION = "trend-causal-replay-v43"
 LOGGER = logging.getLogger(__name__)
 
 
@@ -79,6 +80,14 @@ class TrendAnalysisService:
         )
         detector_input, _ = _qualify_roll_input(analysis_input)
         return _low_base_item(detector_input) is not None
+
+    def has_deep_drawdown_structure(
+        self, symbol: str, cutoff: date, horizons: AnalysisHorizons,
+    ) -> bool:
+        value = self._inputs.build(
+            symbol, cutoff, AnalysisTimeframe.DAILY, AnalysisInputMode.FINAL, horizons,
+        )
+        return _deep_drawdown_item(value) is not None
 
     def recalculate(
         self,
@@ -609,6 +618,21 @@ def _market_benchmark(symbol: str) -> str | None:
     return None
 
 
+def _deep_drawdown_item(value: AnalysisInput) -> GeneratedAnalysisItem | None:
+    if (value.timeframe is not AnalysisTimeframe.DAILY or value.instrument.kind != "stock"
+            or not value.bars or value.bars[-1].period_end != value.as_of_date
+            or any(w.code == "unexplained_missing_bars" for w in value.warnings)):
+        return None
+    evidence = detect_deep_drawdown(value.bars)
+    if evidence is None:
+        return None
+    evidence["price_basis"] = value.price_basis
+    return GeneratedAnalysisItem(
+        item_id=f"deep-drawdown-{evidence['window_start_date']}",
+        item_type=GeneratedItemType.ZONE, payload=evidence,
+    )
+
+
 def _low_base_item(analysis_input: AnalysisInput) -> GeneratedAnalysisItem | None:
     if (analysis_input.timeframe is not AnalysisTimeframe.DAILY
             or analysis_input.instrument.kind != "stock"):
@@ -679,6 +703,9 @@ def _generated_items(
     )]
     if analysis_input.timeframe is AnalysisTimeframe.DAILY:
         if analysis_input.instrument.kind == "stock":
+            deep_drawdown = _deep_drawdown_item(analysis_input)
+            if deep_drawdown is not None:
+                items.append(deep_drawdown)
             bull_flag = detect_bull_flag(analysis_input.bars)
             if bull_flag is not None:
                 items.append(GeneratedAnalysisItem(
