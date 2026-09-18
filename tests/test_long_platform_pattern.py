@@ -69,6 +69,25 @@ def test_historical_volume_spike_cannot_fake_recent_contraction():
     assert detect_long_platform(bars) is None
 
 
+@pytest.mark.parametrize("price_scale,volume_scale", [(.1, 1000), (10, .001)])
+def test_platform_classification_is_invariant_to_price_and_volume_units(price_scale, volume_scale):
+    bars = sample()
+    original = detect_long_platform(bars)
+    scaled = detect_long_platform([replace(
+        b, open=b.open * price_scale, high=b.high * price_scale,
+        low=b.low * price_scale, close=b.close * price_scale,
+        volume=b.volume * volume_scale,
+    ) for b in bars])
+    assert original is not None and scaled is not None
+    for key in ("start_date", "end_date", "platform_sessions", "platform_type", "platform_stage"):
+        assert scaled[key] == original[key]
+    for key in ("score", "platform_range_percent", "recent_range_percent",
+                "recent_history_volume_ratio", "recent_history_median_volume_ratio"):
+        assert scaled[key] == pytest.approx(original[key])
+    for key in ("lower", "upper", "center", "latest_close"):
+        assert scaled[key] == pytest.approx(original[key] * price_scale)
+
+
 def test_missing_demand_and_ma_history_are_not_hard_rejections():
     bars = [replace(b, open=b.close) for b in sample()[-60:]]
     result = detect_long_platform(bars)
