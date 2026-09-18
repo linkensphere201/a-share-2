@@ -33,6 +33,7 @@ export type ScreenerRun = {
 }
 
 export type ScreenerCandidate = {
+  evidence_complete?: boolean
   recognition?: {
     available: boolean
     source_run_id: string | null
@@ -173,10 +174,20 @@ export async function deleteScreenerRun(runId: string): Promise<void> {
 }
 
 export async function listScreenerCandidates(runId: string, signal?: AbortSignal): Promise<ScreenerCandidate[]> {
-  const payload = await json<{ items: ScreenerCandidate[] }>(
-    await fetch(`/api/screener/runs/${encodeURIComponent(runId)}/candidates`, { signal }),
-  )
-  return payload.items
+  const items: ScreenerCandidate[] = []
+  for (let offset = 0; offset < 10000;) {
+    const payload = await json<{ items: ScreenerCandidate[]; has_more?: boolean }>(
+      await fetch(`/api/screener/runs/${encodeURIComponent(runId)}/candidates?limit=200&offset=${offset}&summary=true`, { signal }),
+    )
+    items.push(...payload.items)
+    if (!payload.has_more || !payload.items.length) break
+    offset += payload.items.length
+  }
+  return items
+}
+
+export async function loadScreenerCandidate(runId: string, rank: number, signal?: AbortSignal): Promise<ScreenerCandidate> {
+  return json<ScreenerCandidate>(await fetch(`/api/screener/runs/${encodeURIComponent(runId)}/candidates/${rank}`, { signal }))
 }
 
 export async function startScreenerRun(input: {

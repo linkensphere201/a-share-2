@@ -263,7 +263,8 @@ class SQLiteScreenerStoreMixin:
         if (limit is not None and not 1 <= limit <= 500) or offset < 0:
             raise ValueError("invalid candidate page")
         columns = ("kind", "as_of_date", "period", "platform_sessions", "stage", "platform_stage",
-                   "shape_maturity", "platform_style", "recognition", "recognition_rank_bonus")
+                   "shape_maturity", "platform_style", "recognition", "recognition_rank_bonus",
+                   "flag_sessions", "pullback_sessions")
         evidence = "candidate.evidence_json"
         if summary:
             evidence = "json_object(" + ",".join(

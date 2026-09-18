@@ -24,6 +24,28 @@ afterEach(() => {
 })
 
 describe('ScreenerWorkspace', () => {
+  it('loads summary pages then fetches evidence only for the selected candidate', async () => {
+    const summary = { ...candidate, evidence_complete: false, evidence: {
+      kind: 'deep-drawdown-range', as_of_date: '2026-09-16',
+    }, state: 'shape-match' }
+    const detail = { ...summary, evidence_complete: true, evidence: {
+      ...summary.evidence, max_drawdown_percent: -40, recent_early_volume_ratio: .2,
+      similarity_components: { amplitude: 13, price_path: 48, recent_path: 18, volume_path: 12 },
+    } }
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith(`/candidates/${candidate.rank}`)) return response(detail)
+      if (url.includes('/candidates?')) return response({ items: [summary], has_more: false })
+      if (url.includes('/api/analysis/')) return response(analysis)
+      return response({ items: [{ ...run, strategy_id: 'deep-drawdown-consolidation' }] })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    renderScreener()
+    await screen.findByText('48.0 / 18.0 / 13.0 / 12.0')
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith(`/candidates/${candidate.rank}`))).toHaveLength(1)
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('summary=true'))).toBe(true)
+  })
+
   it('registers long platforms and shows structural evidence without trade targets', async () => {
     const platformRun = { ...run, strategy_id: 'long-consolidation-platform' }
     const platform = { ...candidate, state: 'shape-match', evidence: {

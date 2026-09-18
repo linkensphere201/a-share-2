@@ -1,3 +1,4 @@
+import { useResultQuery, useSerialPolling } from './useResultQuery'
 import {
   useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent,
   type PointerEvent as ReactPointerEvent,
@@ -217,23 +218,15 @@ export function SignalReviewWorkspace({ theme, onClose, targetLists = [], onAddI
     return () => controller.abort()
   }, [selectedRun?.run_id, selectedRun?.status, scoreUniverse])
 
-  useEffect(() => {
-    if (selectedRun?.status !== 'running' || !selectedDefinition) return
-    const controller = new AbortController()
-    let timer: number
-    const poll = async () => {
-      try {
-        const next = await loadSignalRun(selectedRun.run_id, controller.signal)
-        if (controller.signal.aborted) return
-        setSelectedRun(next)
-        const runs = await listSignalRuns(selectedDefinition.signal_id, controller.signal)
-        if (!controller.signal.aborted) setRuns(orderSignalRuns(runs))
-      } catch (reason) { if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : String(reason)) }
-      if (!controller.signal.aborted) timer = window.setTimeout(poll, 1200)
-    }
-    timer = window.setTimeout(poll, 1200)
-    return () => { controller.abort(); window.clearTimeout(timer) }
-  }, [selectedDefinition, selectedRun?.run_id, selectedRun?.status])
+  useSerialPolling(selectedRun?.status === 'running' && selectedDefinition
+    ? `${selectedDefinition.signal_id}:${selectedRun.run_id}` : undefined, 1200, async signal => {
+    const next = await loadSignalRun(selectedRun!.run_id, signal)
+    if (signal.aborted) return
+    const runs = await listSignalRuns(selectedDefinition!.signal_id, signal)
+    if (signal.aborted) return
+    setSelectedRun(next)
+    setRuns(orderSignalRuns(runs))
+  }, reason => setError(String(reason)))
 
   useEffect(() => {
     if (!selectedDefinition || selectedDefinition.cadence !== 'daily') {
@@ -337,24 +330,20 @@ export function SignalReviewWorkspace({ theme, onClose, targetLists = [], onAddI
     setSelectedScenarioTarget(undefined)
     setTrendRecalculationState('idle')
     setReviewTrendState(current => ({ ...current, analysisStatus: 'not-run' }))
-    if (!deepAnalysisRunId) return
-    const controller = new AbortController()
-    const startedAt = performance.now()
-    loadExactTrendAnalysis(deepAnalysisRunId, controller.signal)
-      .then(value => {
-        setExactAnalysis(value)
-        setReviewTrendState(current => ({ ...current, analysisStatus: 'current' }))
-        reportSignalTiming('趋势分析图层加载', startedAt, {
-          run_id: selectedRun?.run_id, analysis_run_id: deepAnalysisRunId,
-          symbol: selectedPoolItem?.symbol ?? selectedObservation?.symbol ?? selectedItem?.symbol,
-          item_count: value.items.length,
-        })
-      })
-      .catch(reason => {
-        if (reason.name !== 'AbortError') setError(`深度分析图层读取失败：${String(reason)}`)
-      })
-    return () => controller.abort()
   }, [deepAnalysisRunId, selectedItem?.symbol, selectedObservation?.symbol, selectedPoolItem?.symbol, selectedRun?.run_id])
+  useResultQuery(deepAnalysisRunId ? JSON.stringify([
+    deepAnalysisRunId, selectedItem?.symbol, selectedObservation?.symbol,
+    selectedPoolItem?.symbol, selectedRun?.run_id,
+  ]) : undefined, signal => loadExactTrendAnalysis(deepAnalysisRunId!, signal),
+  (value, startedAt) => {
+    setExactAnalysis(value)
+    setReviewTrendState(current => ({ ...current, analysisStatus: 'current' }))
+    reportSignalTiming('趋势分析图层加载', startedAt, {
+      run_id: selectedRun?.run_id, analysis_run_id: deepAnalysisRunId,
+      symbol: selectedPoolItem?.symbol ?? selectedObservation?.symbol ?? selectedItem?.symbol,
+      item_count: value.items.length,
+    })
+  }, reason => setError(`深度分析图层读取失败：${String(reason)}`))
 
   const filtered = useMemo(() => items.filter(item =>
     (profile === 'all' || item.profile === profile)
