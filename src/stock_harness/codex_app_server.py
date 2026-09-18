@@ -30,7 +30,7 @@ DENIED_ITEM_TYPES = {
     "computerAction", "dynamicToolCall", "collabAgentToolCall",
 }
 ALLOWED_MCP_SERVER = "stock_harness_embedded"
-THREAD_POLICY_VERSION = "stockharness-embedded-mcp-v2"
+THREAD_POLICY_VERSION = "stockharness-embedded-mcp-v3"
 TREND_ACCESS_PROFILE = "trend_analysis"
 SIGNAL_ACCESS_PROFILE = "signal_run"
 ALLOWED_MCP_TOOLS = frozenset({
@@ -40,6 +40,7 @@ ALLOWED_MCP_TOOLS = frozenset({
     "get_futures_continuous", "get_trend_analysis", "get_ai_analysis",
     "list_signal_definitions", "list_signal_runs", "get_signal_run", "get_signal_item",
     "list_signal_scores",
+    "list_screener_strategies", "list_screener_runs", "get_screener_run", "list_screener_candidates",
     "list_instrument_members", "list_symbol_boards", "recalculate_trend_analysis",
 })
 READ_ONLY_MCP_TOOLS = ALLOWED_MCP_TOOLS - {"recalculate_trend_analysis"}

@@ -33,6 +33,45 @@ class FakeApi:
         return value(payload) if callable(value) else value
 
 
+def test_screener_read_tools_preserve_evidence_and_page_order():
+    items = [{"symbol": str(i), "analysis_run_id": "analysis-1", "evidence": {"score": i}} for i in range(5)]
+    api = FakeApi({"/api/screener/strategies": {"items": []},
+                   "/api/screener/runs": {"items": [{"run_id": "run-1"}]},
+                   "/api/screener/runs/run-1": {"status": "running", "scanned_count": 3},
+                   "/api/screener/runs/run-1/candidates": {"items": items}})
+    tools = StockHarnessMcpTools(api)
+    assert tools.list_screener_strategies()["ok"]
+    assert tools.list_screener_runs(2)["data"]["items"][0]["run_id"] == "run-1"
+    assert tools.get_screener_run("run-1")["data"]["scanned_count"] == 3
+    page = tools.list_screener_candidates("run-1", 2, 1)["data"]
+    assert page["items"] == items[1:3] and page["total"] == 5 and page["has_more"]
+    assert not tools.list_screener_candidates("run-1", 2, 5)["data"]["has_more"]
+    assert api.calls[1] == ("/api/screener/runs", [("limit", 2)])
+
+
+@pytest.mark.parametrize("run_id", ["", "../health", "run?limit=1", "a/b", "x" * 65])
+def test_screener_run_ids_cannot_escape_endpoint(run_id):
+    api = FakeApi()
+    tools = StockHarnessMcpTools(api)
+    with pytest.raises(ValueError):
+        tools.get_screener_run(run_id)
+    with pytest.raises(ValueError):
+        tools.list_screener_candidates(run_id)
+    assert not api.calls
+
+
+def test_screener_bounds_fail_before_read():
+    api = FakeApi()
+    tools = StockHarnessMcpTools(api)
+    with pytest.raises(ValueError):
+        tools.list_screener_runs(11)
+    with pytest.raises(ValueError):
+        tools.list_screener_candidates("run-1", 201)
+    with pytest.raises(ValueError):
+        tools.list_screener_candidates("run-1", offset=-1)
+    assert not api.calls
+
+
 def test_save_ai_analysis_uses_the_only_local_write_endpoint():
     api = FakeApi({"/api/analysis/ai": {"report_id": "report-1", "revision": 1}})
     tools = StockHarnessMcpTools(api)

@@ -148,6 +148,13 @@ class LocalStockHarnessApi:
         return value
 
 
+def _screener_run_id(value: str) -> str:
+    normalized = value.strip()
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", normalized):
+        raise ValueError("invalid screener run_id")
+    return normalized
+
+
 class StockHarnessMcpTools:
     """Versioned read-only MCP tool implementation over the local application API."""
 
@@ -166,6 +173,34 @@ class StockHarnessMcpTools:
         return self._execute(
             "list_signal_definitions", lambda: self.api.get("/api/signals/definitions")
         )
+
+    def list_screener_strategies(self) -> dict[str, object]:
+        return self._execute("list_screener_strategies", lambda: self.api.get("/api/screener/strategies"))
+
+    def list_screener_runs(self, limit: int = 10) -> dict[str, object]:
+        limit = _bounded(limit, 1, 10, "limit")
+        return self._execute("list_screener_runs", lambda: self.api.get(
+            "/api/screener/runs", [("limit", limit)]))
+
+    def get_screener_run(self, run_id: str) -> dict[str, object]:
+        normalized = _screener_run_id(run_id)
+        return self._execute("get_screener_run", lambda: self.api.get(f"/api/screener/runs/{normalized}"))
+
+    def list_screener_candidates(self, run_id: str, limit: int = 50, offset: int = 0) -> dict[str, object]:
+        normalized = _screener_run_id(run_id)
+        limit = _bounded(limit, 1, 200, "limit")
+        offset = _bounded(offset, 0, 10000, "offset")
+
+        def load():
+            # Slice the existing bounded saved result, compatible with older desktops.
+            payload = self.api.get(f"/api/screener/runs/{normalized}/candidates")
+            items = _items(payload)
+            page = items[offset:offset + limit]
+            return {"run_id": normalized, "items": page, "total": len(items),
+                    "offset": offset, "limit": limit,
+                    "has_more": offset + len(page) < len(items)}
+
+        return self._execute("list_screener_candidates", load)
 
     def list_signal_runs(
         self, signal_id: str | None = None, limit: int = 20,

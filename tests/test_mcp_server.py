@@ -16,6 +16,15 @@ class HealthApi:
         return {"status": "ok"}
 
 
+def test_default_server_targets_desktop_port(monkeypatch):
+    import stock_harness.mcp_server as module
+    seen = []
+    monkeypatch.delenv("STOCK_HARNESS_API_URL", raising=False)
+    monkeypatch.setattr(module, "LocalStockHarnessApi", lambda url, timeout: seen.append(url))
+    module.build_server()
+    assert seen == ["http://127.0.0.1:8765"]
+
+
 class SlowHealthApi:
     def __init__(self):
         self.started = anyio.Event()
@@ -41,6 +50,10 @@ def test_mcp_protocol_exposes_one_bounded_local_write_tool_and_calls_health():
             names = {tool.name for tool in listed.tools}
             assert names == {
                 "stock_harness_health",
+                "list_screener_strategies",
+                "list_screener_runs",
+                "get_screener_run",
+                "list_screener_candidates",
                 "get_active_workspace",
                 "search_instruments",
                 "get_instrument",

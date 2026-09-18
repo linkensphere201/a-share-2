@@ -58,7 +58,7 @@ def build_server(
         raise ValueError(f"unsupported StockHarness MCP profile: {profile}")
     service = tools or StockHarnessMcpTools(
         LocalStockHarnessApi(
-            os.environ.get("STOCK_HARNESS_API_URL", "http://127.0.0.1:8001"),
+            os.environ.get("STOCK_HARNESS_API_URL", "http://127.0.0.1:8765"),
             float(os.environ.get("STOCK_HARNESS_MCP_TIMEOUT_SECONDS", "5")),
         )
     )
@@ -83,6 +83,32 @@ def build_server(
     async def get_active_workspace() -> dict[str, object]:
         """Get the active window group, chart views, links, symbols, and trend-line anchors."""
         return await invoke(service.get_active_workspace)
+
+    @server.tool(title="List screener strategies", annotations=READ_ONLY)
+    async def list_screener_strategies() -> dict[str, object]:
+        """List registered strategies and their algorithm versions; never start a scan."""
+        return await invoke(service.list_screener_strategies)
+
+    @server.tool(title="List screener runs", annotations=READ_ONLY)
+    async def list_screener_runs(limit: Annotated[int, Field(ge=1, le=10)] = 10) -> dict[str, object]:
+        """Read recent runs including execution state, progress and effective date."""
+        return await invoke(service.list_screener_runs, limit)
+
+    @server.tool(title="Get screener run", annotations=READ_ONLY)
+    async def get_screener_run(
+        run_id: Annotated[str, Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")],
+    ) -> dict[str, object]:
+        """Read one exact run's progress, parameters, version and completion state."""
+        return await invoke(service.get_screener_run, run_id)
+
+    @server.tool(title="List screener candidates", annotations=READ_ONLY)
+    async def list_screener_candidates(
+        run_id: Annotated[str, Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")],
+        limit: Annotated[int, Field(ge=1, le=200)] = 50,
+        offset: Annotated[int, Field(ge=0, le=10000)] = 0,
+    ) -> dict[str, object]:
+        """Read a ranked page of saved candidates and exact evidence/analysis IDs, without rescanning."""
+        return await invoke(service.list_screener_candidates, run_id, limit, offset)
 
     @server.tool(title="List signal definitions", annotations=READ_ONLY)
     async def list_signal_definitions() -> dict[str, object]:
