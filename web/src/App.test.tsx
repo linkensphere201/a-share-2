@@ -52,6 +52,38 @@ afterEach(() => {
 })
 
 describe('StockWorkspace', () => {
+  it('does not expose structural close controls or persist runtime split resizing', async () => {
+    vi.stubGlobal('fetch', emptyFetch())
+    const workspace = createDefaultWorkspace()
+    if (workspace.groups[0].layout.type !== 'split') throw new Error('fixture split missing')
+    workspace.groups[0].layout.ratio = .3
+    window.localStorage.setItem(workspaceStorageKey, JSON.stringify(workspace))
+    render(<App />)
+    expect(screen.queryByTitle('移除窗口')).toBeNull()
+    expect(screen.queryByRole('button', { name: '关闭弹出窗口并返回主界面' })).toBeNull()
+    fireEvent.doubleClick(screen.getByRole('separator', { name: '调整左右窗口比例' }))
+    expect(screen.getByRole('separator', { name: '调整左右窗口比例' }).getAttribute('aria-valuenow')).toBe('50')
+    await userEvent.setup().click(screen.getByRole('button', { name: '布局管理' }))
+    expect(screen.getByRole('separator', { name: '调整左右窗口比例' }).getAttribute('aria-valuenow')).toBe('30')
+    expect(JSON.parse(window.localStorage.getItem(workspaceStorageKey)!).groups[0].layout.ratio).toBe(.3)
+  })
+
+  it.each(['chart-primary', 'list-primary'])('closes popped-out %s by docking without deleting its layout', async windowId => {
+    vi.stubGlobal('fetch', emptyFetch())
+    const dock = vi.fn().mockResolvedValue({ ok: true, state: 'docked' })
+    window.pywebview = { api: { dock_window: dock } }
+    const original = createDefaultWorkspace()
+    window.localStorage.setItem(workspaceStorageKey, JSON.stringify(original))
+    window.history.replaceState({}, '', `/?popoutGroupId=group-primary&popoutWindowId=${windowId}`)
+    render(<App />)
+    await userEvent.setup().click(screen.getByRole('button', { name: '关闭弹出窗口并返回主界面' }))
+    await waitFor(() => expect(dock).toHaveBeenCalledWith('group-primary', windowId))
+    const saved = JSON.parse(window.localStorage.getItem(workspaceStorageKey)!).groups[0]
+    expect(saved.layout).toEqual(original.groups[0].layout)
+    expect(saved.attachments).toEqual(original.groups[0].attachments)
+    expect(saved.windows.map((item: { id: string }) => item.id)).toEqual(original.groups[0].windows.map(item => item.id))
+  })
+
   it('pops a chart into the native shell, retains its slot, and docks it after native close', async () => {
     vi.stubGlobal('fetch', emptyFetch())
     const popOut = vi.fn().mockResolvedValue({ ok: true, state: 'opened' })

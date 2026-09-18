@@ -32,11 +32,9 @@ type InstrumentListWindowProps = {
   windowState: InstrumentListWindowState
   focused: boolean
   maximized: boolean
-  removable: boolean
   poppedOutHost?: boolean
   onFocus: () => void
   onToggleMaximize: () => void
-  onRemoveWindow: () => void
   onSelect: (instrument: Instrument) => void
   onDeleteInstrument: (instrument: Instrument) => void
   onTemporaryCast: (chartId: string, instrument: Instrument) => void
@@ -55,11 +53,9 @@ export function InstrumentListWindow({
   windowState,
   focused,
   maximized,
-  removable,
   poppedOutHost = false,
   onFocus,
   onToggleMaximize,
-  onRemoveWindow,
   onSelect,
   onDeleteInstrument,
   onTemporaryCast,
@@ -259,17 +255,16 @@ export function InstrumentListWindow({
             onClick={() => setColumnEditorOpen(value => !value)}
           ><Columns3 size={13}/></button>
           {!derived && <button title="编辑标的" aria-label={`编辑 ${windowState.title} 标的`} onClick={onEdit}><Pencil size={13}/></button>}
-          {!poppedOutHost && <><button
+          {!poppedOutHost && <button
             title={maximized ? '还原窗口' : '最大化窗口'}
             aria-label={maximized ? '还原窗口' : `最大化 ${windowState.title} 窗口`}
             onClick={onToggleMaximize}
-          >{maximized ? <Minimize2 size={13}/> : <Maximize2 size={13}/>}</button>
-          <button
-            title="移除窗口"
-            aria-label={`移除 ${windowState.title} 窗口`}
-            disabled={!removable}
-            onClick={onRemoveWindow}
-          ><X size={14}/></button></>}
+          >{maximized ? <Minimize2 size={13}/> : <Maximize2 size={13}/>}</button>}
+          {poppedOutHost && <button
+            title="关闭弹出窗口并返回主界面"
+            aria-label="关闭弹出窗口并返回主界面"
+            onClick={onDock}
+          ><X size={14}/></button>}
         </div>
       </header>
       {columnEditorOpen && <div className="list-column-editor" onPointerDown={event => event.stopPropagation()}>

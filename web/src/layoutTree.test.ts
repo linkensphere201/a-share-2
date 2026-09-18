@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   collectLayoutWindowIds,
+  moveLayoutWindow,
   createLayoutTree,
   parseLayoutTree,
   removeLayoutWindow,
@@ -11,6 +12,21 @@ import {
 } from './layoutTree'
 
 describe('window layout tree', () => {
+  it('moves nested leaves to each edge without losing identity or duplicating nodes', () => {
+    const ids = ['a', 'b', 'c', 'd']
+    const layout = createLayoutTree(ids)
+    for (const source of ids) for (const target of ids) {
+      for (const position of ['left', 'right', 'top', 'bottom', 'center'] as const) {
+        const moved = moveLayoutWindow(layout, source, target, position, 'new-split')
+        expect(validateLayoutTree(moved, ids)).toEqual([])
+        expect(collectLayoutWindowIds(layout)).toEqual(ids)
+        if (source === target) expect(moved).toBe(layout)
+      }
+    }
+    expect(moveLayoutWindow(layout, 'unknown', 'a', 'left', 'new')).toBe(layout)
+    expect(moveLayoutWindow(layout, 'a', 'unknown', 'left', 'new')).toBe(layout)
+  })
+
   it('builds deterministic valid layouts for one through four windows', () => {
     for (let count = 1; count <= 4; count += 1) {
       const ids = Array.from({ length: count }, (_, index) => `window-${index}`)

@@ -13,7 +13,6 @@ type WindowGroupProps = {
   theme: ThemeDefinition
   onFocusWindow: (id: string) => void
   onToggleMaximize: (id: string) => void
-  onRemoveWindow: (id: string) => void
   onResizeSplit: (id: string, ratio: number) => void
   onSelectListInstrument: (id: string, instrument: Instrument) => void
   onDeleteListInstrument: (id: string, instrument: Instrument) => void
@@ -50,7 +49,6 @@ export function WindowGroup({
   theme,
   onFocusWindow,
   onToggleMaximize,
-  onRemoveWindow,
   onResizeSplit,
   onSelectListInstrument,
   onDeleteListInstrument,
@@ -105,11 +103,9 @@ export function WindowGroup({
           windowState={item}
           focused={group.focusedWindowId === item.id}
           maximized={group.maximizedWindowId === item.id}
-          removable={group.windows.length > 1}
           poppedOutHost={poppedOutHost}
           onFocus={() => onFocusWindow(item.id)}
           onToggleMaximize={() => onToggleMaximize(item.id)}
-          onRemoveWindow={() => onRemoveWindow(item.id)}
           onSelect={instrument => onSelectListInstrument(item.id, instrument)}
           onDeleteInstrument={instrument => onDeleteListInstrument(item.id, instrument)}
           onTemporaryCast={onTemporaryCast}
@@ -137,11 +133,9 @@ export function WindowGroup({
         theme={theme}
         focused={group.focusedWindowId === item.id}
         maximized={group.maximizedWindowId === item.id}
-        removable={group.windows.length > 1}
         poppedOutHost={poppedOutHost}
         onFocus={() => onFocusWindow(item.id)}
         onToggleMaximize={() => onToggleMaximize(item.id)}
-        onRemove={() => onRemoveWindow(item.id)}
         onEdit={() => onEditWindow(item.id)}
         onPopOut={() => onPopOutWindow(item.id)}
         onDock={() => onDockWindow(item.id)}

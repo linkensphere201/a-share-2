@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type DragEvent } from 'react'
 import {
   ArrowLeft,
   BarChart3,
@@ -14,7 +14,7 @@ import {
   Undo2,
   Trash2,
 } from 'lucide-react'
-import { collectLayoutWindowIds, removeLayoutWindow, splitLayoutWindow, swapLayoutWindows, updateSplitRatio, type SplitDirection } from './layoutTree'
+import { collectLayoutWindowIds, moveLayoutWindow, removeLayoutWindow, splitLayoutWindow, swapLayoutWindows, updateSplitRatio, type SplitDirection, type WindowDropPosition } from './layoutTree'
 import { removeWindowAttachments, validateWindowAttachments } from './windowAttachments'
 import { SplitLayout } from './SplitLayout'
 import {
@@ -51,6 +51,8 @@ export function LayoutManager({ workspace, onChange, onClose }: LayoutManagerPro
   const [direction, setDirection] = useState<SplitDirection>('horizontal')
   const [past, setPast] = useState<WorkspaceState[]>([])
   const [future, setFuture] = useState<WorkspaceState[]>([])
+  const [dragged, setDragged] = useState<{ groupId: string; windowId: string }>()
+  const [dropTarget, setDropTarget] = useState<{ windowId: string; position: WindowDropPosition }>()
   const group = workspace.groups.find(item => item.id === selectedGroupId) ?? workspace.groups[0]
   const focused = group.windows.find(item => item.id === group.focusedWindowId) ?? group.windows[0]
 
@@ -208,6 +210,25 @@ export function LayoutManager({ workspace, onChange, onClose }: LayoutManagerPro
     updateGroup(current => ({ ...current, layout: swapLayoutWindows(current.layout, focused.id, target) }))
   }
 
+  const clearDrag = () => { setDragged(undefined); setDropTarget(undefined) }
+  const dragOver = (event: DragEvent<HTMLButtonElement>, windowId: string) => {
+    if (!dragged || dragged.groupId !== group.id || dragged.windowId === windowId) return
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'move'
+    setDropTarget({ windowId, position: dropPosition(event) })
+  }
+  const drop = (event: DragEvent<HTMLButtonElement>, windowId: string) => {
+    if (!dragged || dragged.groupId !== group.id || dragged.windowId === windowId) return
+    event.preventDefault()
+    const source = dragged.windowId
+    const position = dropPosition(event)
+    updateGroup(current => ({ ...current,
+      layout: moveLayoutWindow(current.layout, source, windowId, position, `split-${crypto.randomUUID()}`),
+      focusedWindowId: source, maximizedWindowId: undefined,
+    }))
+    clearDrag()
+  }
+
   return (
     <main className="layout-manager">
       <header className="layout-manager-header">
@@ -258,6 +279,19 @@ export function LayoutManager({ workspace, onChange, onClose }: LayoutManagerPro
                   windowId={id}
                   group={group}
                   onSelect={selected => updateGroup(item => ({ ...item, focusedWindowId: selected }))}
+                  dragging={dragged?.groupId === group.id && dragged.windowId === id}
+                  dropPosition={dragged?.groupId === group.id && dropTarget?.windowId === id ? dropTarget.position : undefined}
+                  onDragStart={event => {
+                    event.dataTransfer.effectAllowed = 'move'
+                    event.dataTransfer.setData('application/x-stockharness-window', id)
+                    setDragged({ groupId: group.id, windowId: id })
+                  }}
+                  onDragEnd={clearDrag}
+                  onDragOver={event => dragOver(event, id)}
+                  onDragLeave={event => {
+                    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropTarget(undefined)
+                  }}
+                  onDrop={event => drop(event, id)}
                 />}
                 onRatioCommit={(id, ratio) => updateGroup(item => ({
                   ...item,
@@ -295,13 +329,33 @@ export function LayoutManager({ workspace, onChange, onClose }: LayoutManagerPro
   )
 }
 
-function LayoutPreviewWindow({ windowId, group, onSelect }: {
+function dropPosition(event: DragEvent<HTMLButtonElement>): WindowDropPosition {
+  const rect = event.currentTarget.getBoundingClientRect()
+  if (!rect.width || !rect.height) return 'center'
+  const x = (event.clientX - rect.left) / rect.width
+  const y = (event.clientY - rect.top) / rect.height
+  const edges = [{ position: 'left', distance: x }, { position: 'right', distance: 1 - x },
+    { position: 'top', distance: y }, { position: 'bottom', distance: 1 - y }] as const
+  const nearest = [...edges].sort((a, b) => a.distance - b.distance)[0]
+  return nearest.distance < .25 ? nearest.position : 'center'
+}
+
+function LayoutPreviewWindow({ windowId, group, onSelect, dragging, dropPosition, ...dragEvents }: {
   windowId: string
   group: WindowGroupState
   onSelect: (id: string) => void
+  dragging: boolean
+  dropPosition?: WindowDropPosition
+  onDragStart: (event: DragEvent<HTMLButtonElement>) => void
+  onDragEnd: () => void
+  onDragOver: (event: DragEvent<HTMLButtonElement>) => void
+  onDragLeave: (event: DragEvent<HTMLButtonElement>) => void
+  onDrop: (event: DragEvent<HTMLButtonElement>) => void
 }) {
   const item = group.windows.find(window => window.id === windowId)!
-  return <button className={`layout-preview-window ${group.focusedWindowId === item.id ? 'active' : ''}`} onClick={() => onSelect(item.id)}>
+  return <button className={`layout-preview-window ${group.focusedWindowId === item.id ? 'active' : ''}${dragging ? ' dragging' : ''}`}
+    draggable data-window-id={item.id} data-drop-position={dropPosition}
+    title="拖动调整位置" {...dragEvents} onClick={() => onSelect(item.id)}>
     {item.type === 'chart' ? <BarChart3 size={20}/> : <List size={20}/>}<strong>{item.title}</strong>
     <small>{item.mode === 'attached' ? '联动' : '固定'} · {item.type === 'chart' ? '图表' : '列表'}</small>
   </button>

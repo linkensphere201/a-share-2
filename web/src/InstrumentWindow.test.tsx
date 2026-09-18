@@ -35,8 +35,8 @@ it('main analysis uses an unchecked shared checkbox despite legacy saved visibil
   state.chart.riskRewardVisible = true
   const noop = () => undefined
   const props: ComponentProps<typeof ChartWindow> = {
-    windowState: state, theme: themes[0], focused: true, maximized: false, removable: true,
-    onFocus: noop, onToggleMaximize: noop, onRemove: noop, onEdit: noop, onPopOut: noop, onDock: noop,
+    windowState: state, theme: themes[0], focused: true, maximized: false,
+    onFocus: noop, onToggleMaximize: noop, onEdit: noop, onPopOut: noop, onDock: noop,
     onCoverageChange: noop, onVisibleRangeChange: noop, onVolumeVisibleChange: noop,
     onIndicatorChange: noop, onSettlementVisibleChange: noop, onOpenInterestVisibleChange: noop,
     onPaneRatiosChange: noop, onToolbarCollapsedChange: noop, onScenarioTargetChange: noop,

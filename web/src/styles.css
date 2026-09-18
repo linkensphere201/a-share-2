@@ -646,6 +646,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .layout-preview-window.active { border-color: #4b84c6; box-shadow: inset 0 0 0 1px #4b84c6; color: #e8ebf0; background: #151c24; }
 .layout-preview-window strong { max-width: 90%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
 .layout-preview-window small { color: #657180; font-size: 9px; }
+.layout-preview-window { position: relative; cursor: grab; }
+.layout-preview-window.dragging { opacity: .45; cursor: grabbing; }
+.layout-preview-window[data-drop-position]::after { content: ''; position: absolute; inset: 3px; pointer-events: none; border: 2px solid var(--theme-accent, #4b84c6); background: color-mix(in srgb, var(--theme-accent, #4b84c6) 24%, transparent); border-radius: 3px; }
+.layout-preview-window[data-drop-position="left"]::after { right: 50%; }
+.layout-preview-window[data-drop-position="right"]::after { left: 50%; }
+.layout-preview-window[data-drop-position="top"]::after { bottom: 50%; }
+.layout-preview-window[data-drop-position="bottom"]::after { top: 50%; }
 .layout-inspector { min-height: 0; overflow: auto; background: #11151b; }
 .layout-inspector > section { display: grid; gap: 9px; padding: 12px; border-bottom: 1px solid #272d36; }
 .layout-inspector label, .window-inspector > label { display: grid; gap: 6px; color: #788493; font-size: 10px; }

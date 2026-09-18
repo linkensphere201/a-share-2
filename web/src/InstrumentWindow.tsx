@@ -19,11 +19,9 @@ type InstrumentWindowProps = {
   theme: ThemeDefinition
   focused: boolean
   maximized: boolean
-  removable: boolean
   poppedOutHost?: boolean
   onFocus: () => void
   onToggleMaximize: () => void
-  onRemove: () => void
   onEdit: () => void
   onPopOut: () => void
   onDock: () => void
@@ -49,11 +47,9 @@ export function ChartWindow({
   theme,
   focused,
   maximized,
-  removable,
   poppedOutHost = false,
   onFocus,
   onToggleMaximize,
-  onRemove,
   onEdit,
   onPopOut,
   onDock,
@@ -104,17 +100,16 @@ export function ChartWindow({
             onClick={poppedOutHost ? onDock : onPopOut}
           >{poppedOutHost ? <><PanelTopClose size={13}/><span>复原</span></> : <PanelTopOpen size={13}/>}</button>
           {windowState.mode === 'detached' && <button title="编辑标的" aria-label={`编辑 ${instrument.name} 标的`} onClick={onEdit}><Pencil size={13}/></button>}
-          {!poppedOutHost && <><button
+          {!poppedOutHost && <button
             title={maximized ? '还原窗口' : '最大化窗口'}
             aria-label={maximized ? '还原窗口' : `最大化 ${instrument.name} 窗口`}
             onClick={onToggleMaximize}
-          >{maximized ? <Minimize2 size={13}/> : <Maximize2 size={13}/>}</button>
-          <button
-            title="移除窗口"
-            aria-label={`移除 ${instrument.name} 窗口`}
-            disabled={!removable}
-            onClick={onRemove}
-          ><X size={14}/></button></>}
+          >{maximized ? <Minimize2 size={13}/> : <Maximize2 size={13}/>}</button>}
+          {poppedOutHost && <button
+            title="关闭弹出窗口并返回主界面"
+            aria-label="关闭弹出窗口并返回主界面"
+            onClick={onDock}
+          ><X size={14}/></button>}
         </div>
       </header>
       <div className={explanationOpen ? 'instrument-window-body analysis-open' : 'instrument-window-body'} onPointerDown={onFocus}>

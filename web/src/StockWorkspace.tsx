@@ -13,7 +13,7 @@ import type { ListInstrument } from './AddToListMenu'
 import { RuntimeEventBar } from './RuntimeEventBar'
 import { subscribeDrawingStore } from './drawingStore'
 import { applyTheme, loadTheme, persistTheme, themes, type ThemeDefinition } from './themeStore'
-import { updateSplitRatio } from './layoutTree'
+import { updateSplitRatio, type WindowLayoutNode } from './layoutTree'
 import { WindowGroup } from './WindowGroup'
 import {
   dockNativeWindow,
@@ -47,7 +47,6 @@ import {
   applyListSelection,
   removeMissingCustomGroupReferences,
   removeInstrumentFromManualList,
-  removeWorkspaceWindow,
   replaceDetachedWindowInstruments,
   resolveActiveChart,
   samePaneRatios,
@@ -89,6 +88,7 @@ export function StockWorkspace() {
   const [instrumentEditor, setInstrumentEditor] = useState<{ windowId?: string; tab: 'instruments' | 'groups' }>()
   const [resolvedWindowSymbols, setResolvedWindowSymbols] = useState<Record<string, string[]>>({})
   const [drawingRevision, setDrawingRevision] = useState(0)
+  const [runtimeLayouts, setRuntimeLayouts] = useState<Record<string, { base: string; layout: WindowLayoutNode }>>({})
   const hostGroupId = popoutTarget?.groupId ?? workspace.activeGroupId
   const activeGroup = workspace.groups.find(group => group.id === hostGroupId) ?? workspace.groups[0]
   const { displayedGroup: displayedActiveGroup, setTemporaryInstrument } = useTemporaryChartCasting(activeGroup)
@@ -437,10 +437,6 @@ export function StockWorkspace() {
     })
   }, [])
 
-  const removeWindow = (id: string) => {
-    updateActiveGroup(group => removeWorkspaceWindow(group, id))
-  }
-
   const clearTemporaryTargetsForList = useCallback((sourceId: string) => {
     const group = workspaceRef.current.groups.find(item => item.id === hostGroupId)
     if (!group) return
@@ -610,7 +606,8 @@ export function StockWorkspace() {
   }
 
   const renderActiveWindowGroup = (renderOnlyWindowId?: string) => <WindowGroup
-    group={displayedActiveGroup}
+    group={{ ...displayedActiveGroup, layout: runtimeLayouts[activeGroup.id]?.base === JSON.stringify(activeGroup.layout)
+      ? runtimeLayouts[activeGroup.id].layout : displayedActiveGroup.layout }}
     theme={theme}
     renderOnlyWindowId={renderOnlyWindowId}
     poppedOutHost={isPopoutHost}
@@ -620,11 +617,11 @@ export function StockWorkspace() {
       focusedWindowId: id,
       maximizedWindowId: group.maximizedWindowId === id ? undefined : id,
     }))}
-    onRemoveWindow={removeWindow}
-    onResizeSplit={(id, ratio) => updateActiveGroup(group => ({
-      ...group,
-      layout: updateSplitRatio(group.layout, id, ratio),
-    }))}
+    onResizeSplit={(id, ratio) => setRuntimeLayouts(current => {
+      const base = JSON.stringify(activeGroup.layout)
+      const layout = current[activeGroup.id]?.base === base ? current[activeGroup.id].layout : activeGroup.layout
+      return { ...current, [activeGroup.id]: { base, layout: updateSplitRatio(layout, id, ratio) } }
+    })}
     onSelectListInstrument={selectListInstrument}
     onDeleteListInstrument={deleteListInstrument}
     onTemporaryCast={temporaryCastInstrument}
@@ -739,7 +736,7 @@ export function StockWorkspace() {
                 </optgroup>)}
               </select>
             </label>
-            <button className="command-button layout-entry" title="布局管理" aria-label="布局管理" onClick={() => setLayoutManagerOpen(true)}><Settings2 size={15}/>布局管理</button>
+            <button className="command-button layout-entry" title="布局管理" aria-label="布局管理" onClick={() => { setRuntimeLayouts({}); setLayoutManagerOpen(true) }}><Settings2 size={15}/>布局管理</button>
             <button className="icon-button" title="自定义指数" aria-label="自定义指数" onClick={() => setCustomIndexManagerOpen(true)}><Gauge size={16}/></button>
             <button className="icon-button" title="标的与自选集合" aria-label="标的与自选集合" onClick={() => setInstrumentEditor({ tab: 'groups' })}><FolderKanban size={16}/></button>
             <button

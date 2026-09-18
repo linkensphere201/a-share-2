@@ -47,10 +47,8 @@ describe('InstrumentListWindow instrument tags', () => {
       windowState={windowState}
       focused
       maximized={false}
-      removable
       onFocus={() => undefined}
       onToggleMaximize={() => undefined}
-      onRemoveWindow={() => undefined}
       onSelect={() => undefined}
       onDeleteInstrument={() => undefined}
       onTemporaryCast={() => undefined}
@@ -93,10 +91,8 @@ describe('InstrumentListWindow instrument tags', () => {
       windowState={windowState}
       focused
       maximized={false}
-      removable
       onFocus={() => undefined}
       onToggleMaximize={() => undefined}
-      onRemoveWindow={() => undefined}
       onSelect={() => undefined}
       onDeleteInstrument={() => undefined}
       onTemporaryCast={() => undefined}
@@ -138,10 +134,8 @@ describe('InstrumentListWindow instrument tags', () => {
       windowState={windowState}
       focused
       maximized={false}
-      removable
       onFocus={() => undefined}
       onToggleMaximize={() => undefined}
-      onRemoveWindow={() => undefined}
       onSelect={() => undefined}
       onDeleteInstrument={onDeleteInstrument}
       onTemporaryCast={onTemporaryCast}

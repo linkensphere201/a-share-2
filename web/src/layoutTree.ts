@@ -1,4 +1,18 @@
 export type SplitDirection = 'horizontal' | 'vertical'
+export type WindowDropPosition = 'center' | 'left' | 'right' | 'top' | 'bottom'
+
+export function moveLayoutWindow(node: WindowLayoutNode, source: string, target: string,
+                                 position: WindowDropPosition, splitId: string): WindowLayoutNode {
+  const ids = collectLayoutWindowIds(node)
+  if (source === target || !ids.includes(source) || !ids.includes(target)) return node
+  if (position === 'center') return swapLayoutWindows(node, source, target)
+  let sourceLeafId = ''
+  visit(node, item => { if (item.type === 'window' && item.windowId === source) sourceLeafId = item.id })
+  const remaining = removeLayoutWindow(node, source)!
+  return splitLayoutWindow(remaining, target, source,
+    position === 'left' || position === 'right' ? 'horizontal' : 'vertical',
+    splitId, sourceLeafId, position === 'left' || position === 'top' ? 'before' : 'after')
+}
 
 export type WindowLayoutLeaf = {
   type: 'window'
