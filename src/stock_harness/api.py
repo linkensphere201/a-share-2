@@ -137,11 +137,14 @@ def create_app(
         app.state.chat_service = CodexChatService(
             app.state.store, bridge, chat_workdir, learning_library
         )
-        yield
-        app.state.screener.close()
-        app.state.chat_service.close()
-        if owned_store:
-            app.state.store.close()
+        try:
+            yield
+        finally:
+            app.state.screener.close()
+            app.state.signal_review.close()
+            app.state.chat_service.close()
+            if owned_store:
+                app.state.store.close()
 
     app = FastAPI(title="StockHarness API", version="0.1.0", lifespan=lifespan)
     app.state.api_runtime = ApiRuntime(

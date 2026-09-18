@@ -150,7 +150,7 @@ class TrendAnalysisService:
         context_payload = self._build_context_evidence(
             detector_input, as_of_date, timeframe, horizons
         )
-        digest = _input_digest(analysis_input, context_payload)
+        digest = _input_digest(analysis_input, context_payload, horizons, pivot_config)
         generated = _generated_items(
             detector_input, horizons, pivot_config,
             limit_up_dates=context_payload.get("accumulation_limit_up_dates"),
@@ -288,7 +288,7 @@ class TrendAnalysisService:
                 namespace=namespace, as_of_date=cutoff,
                 input_start_date=analysis_input.bars[0].period_start,
                 input_end_date=analysis_input.bars[-1].period_end,
-                input_digest=_input_digest(analysis_input, context_payload),
+                input_digest=_input_digest(analysis_input, context_payload, horizons, pivot_config),
                 algorithm_version=claim.algorithm_version,
                 config_version=claim.config_version,
                 completion_state=(
@@ -585,8 +585,13 @@ def _apply_roll_qualification(
 def _input_digest(
     value: AnalysisInput,
     context_payload: dict[str, object] | None = None,
+    horizons: AnalysisHorizons = AnalysisHorizons(),
+    pivot_config: DirectionalChangeConfig = DirectionalChangeConfig(),
 ) -> bytes:
     payload = {
+        "horizons": asdict(horizons),
+        "pivot_config": asdict(pivot_config),
+        "warnings": [asdict(warning) for warning in value.warnings],
         "symbol": value.symbol,
         "timeframe": value.timeframe.value,
         "mode": value.mode.value,
@@ -618,7 +623,7 @@ def _input_digest(
         "context": context_payload,
     }
     encoded = json.dumps(
-        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str
     ).encode("utf-8")
     return hashlib.sha256(encoded).digest()
 

@@ -44,6 +44,24 @@ def _store() -> tuple[SQLiteMarketDataStore, list[date]]:
     return store, days
 
 
+def test_actual_parameters_participate_in_cache_identity():
+    from stock_harness.trend_pivots import DirectionalChangeConfig
+    store, days = _store()
+    try:
+        service = TrendAnalysisService(store)
+        def calculate(multiplier):
+            return service.recalculate("000001.SZ", (AnalysisTimeframe.DAILY,),
+                AnalysisHorizons(3, 6, 12), config_version="same-label",
+                include_preview=False, as_of_date=days[-1],
+                pivot_config=DirectionalChangeConfig(atr_multiplier=multiplier))[0]
+        first, second, repeated = calculate(2.), calculate(8.), calculate(8.)
+        assert first["run_id"] != second["run_id"]
+        assert first["input_digest"] != second["input_digest"]
+        assert second["run_id"] == repeated["run_id"]
+    finally:
+        store.close()
+
+
 def _futures_store() -> tuple[
     SQLiteMarketDataStore, FuturesContract, tuple[FuturesContinuousSeries, ...], list[date]
 ]:

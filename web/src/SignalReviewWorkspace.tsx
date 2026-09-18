@@ -219,14 +219,20 @@ export function SignalReviewWorkspace({ theme, onClose, targetLists = [], onAddI
 
   useEffect(() => {
     if (selectedRun?.status !== 'running' || !selectedDefinition) return
-    const timer = window.setInterval(async () => {
+    const controller = new AbortController()
+    let timer: number
+    const poll = async () => {
       try {
-        const next = await loadSignalRun(selectedRun.run_id)
+        const next = await loadSignalRun(selectedRun.run_id, controller.signal)
+        if (controller.signal.aborted) return
         setSelectedRun(next)
-        setRuns(orderSignalRuns(await listSignalRuns(selectedDefinition.signal_id)))
-      } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)) }
-    }, 1200)
-    return () => window.clearInterval(timer)
+        const runs = await listSignalRuns(selectedDefinition.signal_id, controller.signal)
+        if (!controller.signal.aborted) setRuns(orderSignalRuns(runs))
+      } catch (reason) { if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : String(reason)) }
+      if (!controller.signal.aborted) timer = window.setTimeout(poll, 1200)
+    }
+    timer = window.setTimeout(poll, 1200)
+    return () => { controller.abort(); window.clearTimeout(timer) }
   }, [selectedDefinition, selectedRun?.run_id, selectedRun?.status])
 
   useEffect(() => {

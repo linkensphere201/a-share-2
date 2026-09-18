@@ -124,6 +124,7 @@ class SignalReviewService:
         self._store = store
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
+        self._closing = False
         recovered = store.recover_interrupted_signal_review_runs()
         if recovered:
             LOGGER.warning("signal_review_interrupted_runs_recovered count=%s", recovered)
@@ -158,6 +159,8 @@ class SignalReviewService:
         if signal_id not in {WEEKLY_RECOGNITION_SIGNAL, DAILY_MARKET_BOARD_SIGNAL}:
             raise ValueError(f"unknown signal: {signal_id}")
         with self._lock:
+            if self._closing:
+                raise SignalReviewBusyError("signal review is shutting down")
             if self._thread is not None and self._thread.is_alive():
                 raise SignalReviewBusyError("another signal review run is already active")
             cutoff = effective_date or self._store.get_latest_stock_daily_bar_date()
@@ -181,6 +184,14 @@ class SignalReviewService:
             )
             self._thread.start()
             return run
+
+    def close(self) -> None:
+        """Drain the accepted review before its shared store is closed."""
+        with self._lock:
+            self._closing = True
+            worker = self._thread
+        if worker is not None:
+            worker.join()
 
     def run_sync(self, signal_id: str, effective_date: date) -> dict[str, object]:
         if signal_id not in {WEEKLY_RECOGNITION_SIGNAL, DAILY_MARKET_BOARD_SIGNAL}:

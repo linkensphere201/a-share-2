@@ -71,13 +71,14 @@ class DesktopServer:
             if self._server.started:
                 return
             time.sleep(0.1)
-        self.stop()
+        self.stop(timeout_seconds=10.0)
         raise TimeoutError("StockHarness backend did not finish startup and bind its port")
 
-    def stop(self) -> None:
+    def stop(self, timeout_seconds: float | None = None) -> None:
         self._server.should_exit = True
         if self._thread.is_alive():
-            self._thread.join(timeout=10.0)
+            # Lifespan drains accepted work; storage must outlive that cleanup.
+            self._thread.join(timeout=timeout_seconds)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
