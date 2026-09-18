@@ -31,6 +31,7 @@ const stateLabels: Record<ScreenerState, string> = {
   'shape-match': '形态相似',
 }
 const strategyLabels: Record<ScreenerStrategyId, string> = {
+  'long-consolidation-platform': '长期横盘平台',
   'major-descending-breakout': '大斜边突破',
   'volume-accumulation-20d': '20日堆量蓄势',
   'strong-first-pullback': '强势股首次回踩',
@@ -330,12 +331,12 @@ export function ScreenerWorkspace({
         {selectedRun?.status === 'running' && <div className="screener-progress"><i style={{ width: `${progress}%` }}/></div>}
         <div className="screener-quick-filters" role="group" aria-label="结果快速过滤">
           <button className={resultStateFilter === 'all' ? 'active' : ''} aria-label="快速过滤：全部" onClick={() => setResultStateFilter('all')}>全部 <small>{candidates.length}</small></button>
-          {(selectedRun?.strategy_id === 'deep-drawdown-consolidation' ? ['shape-match'] as ScreenerState[] : selectedRun?.strategy_id === 'bull-flag-consolidation' ? ['pullback-observation'] as ScreenerState[] : selectedRun?.strategy_id === 'volume-accumulation-20d' ? ['accumulating'] as ScreenerState[] : ['strong-first-pullback', 'low-base-platform-pullback'].includes(selectedRun?.strategy_id ?? '') ? pullbackStates : trendStates).map(state => <button
+          {(['long-consolidation-platform', 'deep-drawdown-consolidation'].includes(selectedRun?.strategy_id ?? '') ? ['shape-match'] as ScreenerState[] : selectedRun?.strategy_id === 'bull-flag-consolidation' ? ['pullback-observation'] as ScreenerState[] : selectedRun?.strategy_id === 'volume-accumulation-20d' ? ['accumulating'] as ScreenerState[] : ['strong-first-pullback', 'low-base-platform-pullback'].includes(selectedRun?.strategy_id ?? '') ? pullbackStates : trendStates).map(state => <button
             key={state}
             className={resultStateFilter === state ? 'active' : ''}
-            aria-label={`快速过滤：${selectedRun?.strategy_id === 'bull-flag-consolidation' ? '旗面盘整中' : stateLabels[state]}`}
+            aria-label={`快速过滤：${selectedRun?.strategy_id === 'long-consolidation-platform' ? '平台收紧' : selectedRun?.strategy_id === 'bull-flag-consolidation' ? '旗面盘整中' : stateLabels[state]}`}
             onClick={() => setResultStateFilter(state)}
-          >{selectedRun?.strategy_id === 'bull-flag-consolidation' ? '旗面盘整中' : stateLabels[state]} <small>{resultStateCounts[state]}</small></button>)}
+          >{selectedRun?.strategy_id === 'long-consolidation-platform' ? '平台收紧' : selectedRun?.strategy_id === 'bull-flag-consolidation' ? '旗面盘整中' : stateLabels[state]} <small>{resultStateCounts[state]}</small></button>)}
         </div>
         {candidates.some(item => item.evidence.shape_maturity) && <div className="screener-quick-filters" role="group" aria-label="形态成熟度过滤">
           {['platform-retest', 'platform-established', 'forming', 'all'].map(value => <button key={value}
@@ -420,6 +421,18 @@ export function ScreenerWorkspace({
           <span><small>结构失效位</small>{selected.evidence.invalidation_price?.toFixed(2) ?? '--'}</span>
           {selected.evidence.score_components && <span><small>下跌 / 抬升 / 平台 / 承接</small>{Object.values(selected.evidence.score_components).map(value => value.toFixed(1)).join(' / ')}</span>}
           {selected.evidence.missing_evidence?.includes('turnover-unavailable') && <span><small>辅助证据</small>换手率暂缺</span>}
+        </footer>}
+        {selected?.evidence.kind === 'long-platform-range' && <footer className="screener-evidence">
+          <span><small>平台类型</small>{selected.evidence.platform_type === 'low-base' ? '低位筑底' : selected.evidence.platform_type === 'continuation' ? '上升中继' : '横盘整理'}</span>
+          <span><small>形态阶段</small>{candidateStageLabel(selected)}</span>
+          <span><small>平台区间</small>{selected.evidence.start_date} ~ {selected.evidence.end_date}</span>
+          <span><small>整理时长</small>{selected.evidence.platform_sessions} 个交易日</span>
+          <span><small>平台振幅 / 近20日振幅</small>{selected.evidence.platform_range_percent?.toFixed(2)}% / {selected.evidence.recent_range_percent?.toFixed(2)}%</span>
+          <span><small>近20日 / 前段均量</small>{selected.evidence.recent_history_volume_ratio?.toFixed(2)}x</span>
+          <span><small>重心漂移</small>{selected.evidence.center_drift_percent?.toFixed(2)}%</span>
+          <span><small>下沿抬升</small>{selected.evidence.floor_lift_percent?.toFixed(2)}%</span>
+          <span><small>区间位置</small>{((selected.evidence.range_position ?? 0) * 100).toFixed(0)}%</span>
+          <span><small>MA60 / MA240 变化</small>{selected.evidence.ma60_slope_percent?.toFixed(2) ?? '-'}% / {selected.evidence.ma240_slope_percent?.toFixed(2) ?? '-'}%</span>
         </footer>}
         {selected?.evidence.kind === 'deep-drawdown-range' && <footer className="screener-evidence">
           <span><small>形态</small>深跌缩量整理</span>
@@ -605,6 +618,7 @@ function candidatePeriodLabel(value: ScreenerCandidate) {
     : `${value.evidence.platform_sessions ?? 20}日`
 }
 function candidateStageLabel(value: ScreenerCandidate) {
+  if (value.evidence.kind === 'long-platform-range') return value.evidence.platform_stage === 'near-upper' ? '临近上沿' : '平台收紧'
   if (value.evidence.kind === 'deep-drawdown-range') return '形态相似'
   if (value.evidence.kind === 'bull-flag-range') return '旗面盘整中'
   if (value.evidence.shape_maturity) return lowBaseMaturityLabel(value.evidence.shape_maturity)

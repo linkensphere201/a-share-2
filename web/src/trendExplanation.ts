@@ -135,6 +135,11 @@ function firstPullbackWindowText(payload: Record<string, unknown>): string {
 
 function explainZone(item: AnalysisItem, allItems: AnalysisItem[]): TrendExplanationItem {
   const payload = item.payload
+  if (payload.kind === 'long-platform-range') return {
+    analysisItemId: item.item_id, title: `长期横盘平台 · ${payload.platform_stage === 'near-upper' ? '临近上沿' : '平台收紧'}`,
+    detail: `${stringValue(payload.start_date) ?? '-'} 至 ${stringValue(payload.end_date) ?? '-'}，${numberValue(payload.platform_sessions) ?? '-'}个交易日；平台振幅 ${formatPercent(payload.platform_range_percent)}，近20日振幅 ${formatPercent(payload.recent_range_percent)}；近20日/前段均量 ${formatRatio(payload.recent_history_volume_ratio)}x；重心漂移 ${formatPercent(payload.center_drift_percent)}。仅描述整理结构，不证明资金吸筹。`,
+    score: numberValue(payload.score),
+  }
   if (payload.kind === 'deep-drawdown-range') return {
     analysisItemId: item.item_id, title: '深跌缩量整理 · 形态相似',
     detail: `60日区间 ${stringValue(payload.window_start_date) ?? '-'} 至 ${stringValue(payload.as_of_date) ?? '-'}；区间涨跌 ${formatPercent(payload.return_60d_percent)}；最大收盘回撤 ${formatPercent(payload.max_drawdown_percent)}；近20日收盘振幅 ${formatPercent(payload.close_range_20d_percent)}；近10日/前20日均量 ${formatRatio(payload.recent_early_volume_ratio)}x。`,

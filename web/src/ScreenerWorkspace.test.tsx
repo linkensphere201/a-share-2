@@ -24,6 +24,33 @@ afterEach(() => {
 })
 
 describe('ScreenerWorkspace', () => {
+  it('registers long platforms and shows structural evidence without trade targets', async () => {
+    const platformRun = { ...run, strategy_id: 'long-consolidation-platform' }
+    const platform = { ...candidate, state: 'shape-match', evidence: {
+      kind: 'long-platform-range', as_of_date: '2026-09-17', start_date: '2026-03-01', end_date: '2026-09-17',
+      platform_type: 'low-base', platform_stage: 'tightening', platform_sessions: 130,
+      platform_range_percent: 12, recent_range_percent: 4, recent_history_volume_ratio: .7,
+      center_drift_percent: 1, floor_lift_percent: 3, range_position: .6,
+    } }
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'POST') return response(platformRun, 202)
+      if (String(input).includes('/candidates')) return response({ items: [platform] })
+      if (String(input).includes('/api/analysis/')) return response(analysis)
+      return response({ items: [platformRun] })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+    renderScreener()
+    await screen.findByText('低位筑底')
+    expect(screen.getByText('130 个交易日')).toBeTruthy()
+    expect(screen.getByText('0.70x')).toBeTruthy()
+    expect(screen.queryByText('参考盈亏比')).toBeNull()
+    await user.selectOptions(screen.getByLabelText('策略'), 'long-consolidation-platform')
+    expect(screen.queryByText('周期')).toBeNull()
+    await user.click(screen.getByRole('button', { name: '开始选股' }))
+    const post = fetchMock.mock.calls.find(([, init]) => init?.method === 'POST')!
+    expect(JSON.parse(String(post[1]?.body)).strategy_id).toBe('long-consolidation-platform')
+  })
   it('allows other strategies, prevents duplicates and polls all running and queued tasks', async () => {
     let finished = false
     const jobs = [

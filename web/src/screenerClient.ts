@@ -1,4 +1,4 @@
-export type ScreenerStrategyId = 'major-descending-breakout' | 'volume-accumulation-20d' | 'strong-first-pullback' | 'low-base-platform-pullback' | 'bull-flag-consolidation' | 'deep-drawdown-consolidation'
+export type ScreenerStrategyId = 'major-descending-breakout' | 'volume-accumulation-20d' | 'strong-first-pullback' | 'low-base-platform-pullback' | 'bull-flag-consolidation' | 'deep-drawdown-consolidation' | 'long-consolidation-platform'
 export type ScreenerState = 'critical-breakout' | 'breakout-retest' | 'broken-out' | 'accumulating' | 'pullback-observation' | 'pullback-confirmed' | 'shape-match'
 export type ScreenerPeriod = '3m' | '6m' | '1y'
 
@@ -44,6 +44,14 @@ export type ScreenerCandidate = {
   line_code: string
   analysis_run_id: string
   evidence: {
+    platform_type?: 'low-base' | 'continuation' | 'neutral'
+    platform_stage?: 'near-upper' | 'tightening'
+    recent_range_percent?: number
+    recent_history_volume_ratio?: number
+    floor_lift_percent?: number
+    range_position?: number
+    ma60_slope_percent?: number | null
+    ma240_slope_percent?: number | null
     period?: ScreenerPeriod
     as_of_date: string
     latest_close?: number

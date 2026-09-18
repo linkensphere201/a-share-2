@@ -24,6 +24,10 @@ from stock_harness.low_base_pullback import (
     ALGORITHM_VERSION as LOW_BASE_VERSION, CONFIG as LOW_BASE_CONFIG, LAUNCH_TYPE as LOW_BASE_TYPE,
 )
 from stock_harness.screener_result_tags import attach_recognition_tags
+from stock_harness.long_platform_pattern import (
+    STRATEGY_ID as PLATFORM_STRATEGY_ID, ALGORITHM_VERSION as PLATFORM_VERSION,
+    KIND as PLATFORM_KIND, CONFIG as PLATFORM_CONFIG,
+)
 from stock_harness.deep_drawdown_pattern import (
     STRATEGY_ID as DEEP_DRAWDOWN_STRATEGY_ID, ALGORITHM_VERSION as DEEP_DRAWDOWN_VERSION,
     KIND as DEEP_DRAWDOWN_KIND, STATE as DEEP_DRAWDOWN_STATE, MIN_SCORE,
@@ -75,6 +79,9 @@ class ScreenerService:
     @staticmethod
     def strategies() -> list[dict[str, object]]:
         return [{
+            "strategy_id": PLATFORM_STRATEGY_ID, "name": "长期横盘平台", "version": PLATFORM_VERSION,
+            "window": 250, "states": ["shape-match"], "final_bars_only": True,
+        }, {
             "strategy_id": STRATEGY_ID,
             "name": "大斜边突破",
             "version": STRATEGY_VERSION,
@@ -206,7 +213,7 @@ class ScreenerService:
         self, run_id: str, cutoff: date, periods: Sequence[MajorLinePeriod],
         states: Sequence[MajorLineState], max_results: int, strategy_id: str,
     ) -> None:
-        if strategy_id in (PULLBACK_STRATEGY_ID, LOW_BASE_STRATEGY_ID, BULL_FLAG_STRATEGY_ID, DEEP_DRAWDOWN_STRATEGY_ID):
+        if strategy_id in (PULLBACK_STRATEGY_ID, LOW_BASE_STRATEGY_ID, BULL_FLAG_STRATEGY_ID, DEEP_DRAWDOWN_STRATEGY_ID, PLATFORM_STRATEGY_ID):
             self._execute_first_pullback(run_id, cutoff, max_results, strategy_id)
             return
         if strategy_id == ACCUMULATION_STRATEGY_ID:
@@ -331,7 +338,7 @@ class ScreenerService:
                     else self._analysis.analyze_low_base_candidate(request)
                     if strategy_id == LOW_BASE_STRATEGY_ID
                     else self._analysis.analyze_screening_candidate(
-                        request, "bull-flag" if strategy_id == BULL_FLAG_STRATEGY_ID else "first-pullback",
+                        request, "long-platform" if strategy_id == PLATFORM_STRATEGY_ID else "bull-flag" if strategy_id == BULL_FLAG_STRATEGY_ID else "first-pullback",
                     )
                 )
                 if analysis is None:
@@ -341,7 +348,7 @@ class ScreenerService:
                 for item in analysis["items"]:
                     evidence = item["payload"]
                     if (item["item_type"] != "zone"
-                        or evidence.get("kind") != (DEEP_DRAWDOWN_KIND if strategy_id == DEEP_DRAWDOWN_STRATEGY_ID else BULL_FLAG_KIND if strategy_id == BULL_FLAG_STRATEGY_ID else "first-pullback-range")
+                        or evidence.get("kind") != (PLATFORM_KIND if strategy_id == PLATFORM_STRATEGY_ID else DEEP_DRAWDOWN_KIND if strategy_id == DEEP_DRAWDOWN_STRATEGY_ID else BULL_FLAG_KIND if strategy_id == BULL_FLAG_STRATEGY_ID else "first-pullback-range")
                         or ((evidence.get("launch_type") == LOW_BASE_TYPE) != (strategy_id == LOW_BASE_STRATEGY_ID))
                         or not evidence.get("screen_eligible")
                         or evidence.get("stage") not in {"pullback-observation", "pullback-confirmed", DEEP_DRAWDOWN_STATE}
@@ -350,7 +357,7 @@ class ScreenerService:
                     candidates.append({
                         "symbol": instrument["symbol"], "state": evidence["stage"],
                         "score": evidence["score"], "line_item_id": item["item_id"],
-                        "line_code": "DEEP-DRAWDOWN" if strategy_id == DEEP_DRAWDOWN_STRATEGY_ID else "BULL-FLAG" if strategy_id == BULL_FLAG_STRATEGY_ID else "LOW-BASE-PULLBACK" if strategy_id == LOW_BASE_STRATEGY_ID else "FIRST-PULLBACK",
+                        "line_code": "LONG-PLATFORM" if strategy_id == PLATFORM_STRATEGY_ID else "DEEP-DRAWDOWN" if strategy_id == DEEP_DRAWDOWN_STRATEGY_ID else "BULL-FLAG" if strategy_id == BULL_FLAG_STRATEGY_ID else "LOW-BASE-PULLBACK" if strategy_id == LOW_BASE_STRATEGY_ID else "FIRST-PULLBACK",
                         "analysis_run_id": analysis["run_id"],
                         "evidence": evidence,
                     })
@@ -471,6 +478,8 @@ class ScreenerService:
 
 
 def _strategy_version(strategy_id: str) -> str:
+    if strategy_id == PLATFORM_STRATEGY_ID:
+        return PLATFORM_VERSION
     if strategy_id == DEEP_DRAWDOWN_STRATEGY_ID:
         return DEEP_DRAWDOWN_VERSION
     if strategy_id == BULL_FLAG_STRATEGY_ID:
@@ -487,6 +496,9 @@ def _strategy_version(strategy_id: str) -> str:
 
 
 def _parameters(strategy_id, periods, states, max_results: int) -> dict[str, object]:
+    if strategy_id == PLATFORM_STRATEGY_ID:
+        return {"max_results": max_results, "final_bars_only": True, "states": ["shape-match"],
+                "pattern_parameters": asdict(PLATFORM_CONFIG), "analysis_config": PLATFORM_VERSION}
     if strategy_id == DEEP_DRAWDOWN_STRATEGY_ID:
         return {"max_results": max_results, "final_bars_only": True, "window": 60,
                 "states": [DEEP_DRAWDOWN_STATE], "minimum_score": MIN_SCORE,

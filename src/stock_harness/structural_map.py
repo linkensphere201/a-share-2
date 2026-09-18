@@ -56,7 +56,7 @@ def build_structural_map(
         payload = item.payload
         if item.item_type is GeneratedItemType.ZONE:
             # V1 is a research/screener zone, not a validated trade-scenario boundary.
-            if payload.get("kind") in {"first-pullback-range", "bull-flag-range"}:
+            if payload.get("kind") in {"first-pullback-range", "bull-flag-range", "long-platform-range"}:
                 continue
             lower = _number(payload.get("lower"))
             upper = _number(payload.get("upper"))

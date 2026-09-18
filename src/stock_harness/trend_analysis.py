@@ -15,6 +15,7 @@ from stock_harness.accumulation_pattern import ANALYSIS_LOOKBACK, detect_accumul
 from stock_harness.first_pullback_pattern import detect_first_pullback
 from stock_harness.low_base_pullback import detect_low_base_pullback
 from stock_harness.bull_flag_pattern import detect_bull_flag
+from stock_harness.long_platform_pattern import detect_long_platform
 from stock_harness.deep_drawdown_pattern import WINDOW as DEEP_DRAWDOWN_WINDOW, detect_deep_drawdown
 from stock_harness.analysis_inputs import (
     AnalysisHorizons,
@@ -62,7 +63,7 @@ from stock_harness.trend_context import (
 )
 
 
-ALGORITHM_VERSION = "trend-causal-replay-v44"
+ALGORITHM_VERSION = "trend-causal-replay-v45"
 LOGGER = logging.getLogger(__name__)
 
 
@@ -97,6 +98,8 @@ class TrendAnalysisService:
             symbol, cutoff, AnalysisTimeframe.DAILY, AnalysisInputMode.FINAL, horizons,
         )
         value, _ = _qualify_roll_input(value)
+        if structure == "long-platform":
+            return _long_platform_item(value) is not None
         if structure == "major-descending":
             return any(line.period.value in periods and line.state.value in states
                        for line in detect_major_descending_lines(value.bars, include_candidates=True))
@@ -654,6 +657,25 @@ def _deep_drawdown_item(value: AnalysisInput) -> GeneratedAnalysisItem | None:
     )
 
 
+def _long_platform_item(value: AnalysisInput) -> GeneratedAnalysisItem | None:
+    if (value.timeframe is not AnalysisTimeframe.DAILY or value.instrument.kind != "stock"
+            or not value.bars or value.bars[-1].period_end != value.as_of_date):
+        return None
+    evidence = detect_long_platform(value.bars)
+    if evidence is None:
+        return None
+    start = date.fromisoformat(str(evidence["start_date"]))
+    if any(w.code == "unexplained_missing_bars" and (
+        not w.dates or len(w.dates) != w.count or any(day >= start for day in w.dates)
+    ) for w in value.warnings):
+        return None
+    evidence["price_basis"] = value.price_basis
+    return GeneratedAnalysisItem(
+        item_id=f"long-platform-{evidence['start_date']}",
+        item_type=GeneratedItemType.ZONE, payload=evidence,
+    )
+
+
 def _low_base_item(analysis_input: AnalysisInput) -> GeneratedAnalysisItem | None:
     if (analysis_input.timeframe is not AnalysisTimeframe.DAILY
             or analysis_input.instrument.kind != "stock"):
@@ -738,6 +760,9 @@ def _generated_items(
     )]
     if analysis_input.timeframe is AnalysisTimeframe.DAILY:
         if analysis_input.instrument.kind == "stock":
+            platform = _long_platform_item(analysis_input)
+            if platform is not None:
+                items.append(platform)
             deep_drawdown = _deep_drawdown_item(analysis_input)
             if deep_drawdown is not None:
                 items.append(deep_drawdown)
