@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from enum import StrEnum
 from typing import NotRequired, TypedDict, cast
 
-from stock_harness.analysis_inputs import AnalysisHorizons, AnalysisTimeframe
+from stock_harness.analysis_inputs import AnalysisHorizons, AnalysisTimeframe, AnalysisInput
 from stock_harness.models import StoredDailyBar
 from stock_harness.pattern_analysis_scan import DailyStructureScan, scan_daily_structure
 from stock_harness.sqlite_store import SQLiteMarketDataStore
@@ -46,6 +46,7 @@ class PatternAnalysisRequest:
     as_of_date: date | None = None
     profile: PatternAnalysisProfile = PatternAnalysisProfile.FULL
     pivot_config: DirectionalChangeConfig = DirectionalChangeConfig()
+    prepared_input: AnalysisInput | None = None
 
     def validate(self) -> None:
         if not self.symbol.strip():
@@ -55,6 +56,12 @@ class PatternAnalysisRequest:
         if not self.config_version.strip():
             raise ValueError("pattern-analysis config version is required")
         self.horizons.validate()
+        if self.prepared_input is not None:
+            value = self.prepared_input
+            if (value.symbol != self.symbol.strip().upper() or value.as_of_date != self.as_of_date
+                    or self.timeframes != (value.timeframe,) or value.horizons != self.horizons
+                    or self.include_preview or self.profile is not PatternAnalysisProfile.FULL):
+                raise ValueError("prepared input does not match analysis request")
 
 
 class PatternAnalysisService:
@@ -86,6 +93,7 @@ class PatternAnalysisService:
             include_preview=request.include_preview,
             as_of_date=request.as_of_date,
             pivot_config=request.pivot_config,
+            prepared_input=request.prepared_input,
         ))
 
     def analyze_low_base_candidate(
@@ -97,11 +105,11 @@ class PatternAnalysisService:
                 or request.include_preview or request.as_of_date is None
                 or request.profile is not PatternAnalysisProfile.FULL):
             raise ValueError("low-base screening requires dated final daily full analysis")
-        if not self._delegate.has_low_base_structure(
-            request.symbol, request.as_of_date, request.horizons,
-        ):
+        prepared = self._delegate.prepare_screening_input(
+            request.symbol, request.as_of_date, request.horizons, "low-base")
+        if prepared is None:
             return None
-        return self.analyze(request)[0]
+        return self.analyze(replace(request, prepared_input=prepared))[0]
 
     def analyze_deep_drawdown_candidate(
         self, request: PatternAnalysisRequest,
@@ -111,11 +119,11 @@ class PatternAnalysisService:
                 or request.include_preview or request.as_of_date is None
                 or request.profile is not PatternAnalysisProfile.FULL):
             raise ValueError("deep-drawdown screening requires dated final daily full analysis")
-        if not self._delegate.has_deep_drawdown_structure(
-            request.symbol, request.as_of_date, request.horizons,
-        ):
+        prepared = self._delegate.prepare_screening_input(
+            request.symbol, request.as_of_date, request.horizons, "deep-drawdown")
+        if prepared is None:
             return None
-        return self.analyze(request)[0]
+        return self.analyze(replace(request, prepared_input=prepared))[0]
 
     def analyze_screening_candidate(
         self, request: PatternAnalysisRequest, structure: str,
@@ -129,12 +137,13 @@ class PatternAnalysisService:
             raise ValueError("screening requires dated final daily full analysis")
         if structure not in {"bull-flag", "first-pullback", "major-descending", "long-platform"}:
             raise ValueError(f"unsupported screening structure: {structure}")
-        if not self._delegate.has_screening_structure(
+        prepared = self._delegate.prepare_screening_input(
             request.symbol, request.as_of_date, request.horizons, structure,
             periods=periods, states=states,
-        ):
+        )
+        if prepared is None:
             return None
-        return self.analyze(request)[0]
+        return self.analyze(replace(request, prepared_input=prepared))[0]
 
     def build_snapshot(
         self,

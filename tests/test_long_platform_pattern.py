@@ -138,6 +138,24 @@ def test_negative_gate_skips_full_analysis_and_api_registers(monkeypatch):
         assert run["status"] == "succeeded" and run["scanned_count"] == 1 and run["candidate_count"] == 0
 
 
+def test_positive_gate_builds_subject_input_once(monkeypatch):
+    bars = sample()
+    calls = []
+    build = AnalysisInputService.build
+    def counted(service, symbol, *args, **kwargs):
+        calls.append(symbol)
+        return build(service, symbol, *args, **kwargs)
+    monkeypatch.setattr(AnalysisInputService, "build", counted)
+    with SQLiteMarketDataStore(":memory:") as store:
+        store.upsert_instruments([Instrument("600001.SH", "Fixture", InstrumentKind.STOCK, "SH")])
+        store.upsert_daily_bars("tushare", [DailyBar("600001.SH", b.period_end, b.open, b.high, b.low, b.close, b.volume) for b in bars])
+        store.upsert_trading_dates("tushare", [b.period_end for b in bars])
+        result = PatternAnalysisService(store).analyze_screening_candidate(PatternAnalysisRequest(
+            "600001.SH", (AnalysisTimeframe.DAILY,), AnalysisHorizons(), "count-input",
+            as_of_date=bars[-1].period_end), "long-platform")
+        assert result is not None and calls.count("600001.SH") == 1
+
+
 @pytest.mark.parametrize("change", ["stale", "missing-session"])
 def test_shared_input_rejects_stale_or_unexplained_gaps(change):
     bars = list(sample())

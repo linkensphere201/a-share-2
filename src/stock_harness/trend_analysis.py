@@ -76,37 +76,43 @@ class TrendAnalysisService:
         self, symbol: str, cutoff: date, horizons: AnalysisHorizons,
     ) -> bool:
         """Read-only negative gate using the exact full-analysis input and item builder."""
-        analysis_input = self._inputs.build(
-            symbol, cutoff, AnalysisTimeframe.DAILY, AnalysisInputMode.FINAL, horizons,
-        )
-        detector_input, _ = _qualify_roll_input(analysis_input)
-        return _low_base_item(detector_input) is not None
+        return self.prepare_screening_input(symbol, cutoff, horizons, "low-base") is not None
 
     def has_deep_drawdown_structure(
         self, symbol: str, cutoff: date, horizons: AnalysisHorizons,
     ) -> bool:
-        value = self._inputs.build(
-            symbol, cutoff, AnalysisTimeframe.DAILY, AnalysisInputMode.FINAL, horizons,
-        )
-        return _deep_drawdown_item(value) is not None
+        return self.prepare_screening_input(symbol, cutoff, horizons, "deep-drawdown") is not None
 
     def has_screening_structure(
         self, symbol: str, cutoff: date, horizons: AnalysisHorizons, structure: str,
         *, periods: tuple[str, ...] = (), states: tuple[str, ...] = (),
     ) -> bool:
-        value = self._inputs.build(
+        return self.prepare_screening_input(symbol, cutoff, horizons, structure,
+                                            periods=periods, states=states) is not None
+
+    def prepare_screening_input(
+        self, symbol: str, cutoff: date, horizons: AnalysisHorizons, structure: str,
+        *, periods: tuple[str, ...] = (), states: tuple[str, ...] = (),
+    ) -> AnalysisInput | None:
+        original = self._inputs.build(
             symbol, cutoff, AnalysisTimeframe.DAILY, AnalysisInputMode.FINAL, horizons,
         )
-        value, _ = _qualify_roll_input(value)
-        if structure == "long-platform":
-            return _long_platform_item(value) is not None
-        if structure == "major-descending":
-            return any(line.period.value in periods and line.state.value in states
-                       for line in detect_major_descending_lines(value.bars, include_candidates=True))
-        item = _pullback_item(value, structure)
-        return bool(item is not None and item.payload.get("screen_eligible")
-                    and item.payload.get("stage") in {"pullback-observation", "pullback-confirmed"}
-                    and item.payload.get("as_of_date") == cutoff.isoformat())
+        value, _ = _qualify_roll_input(original)
+        if structure == "low-base":
+            matched = _low_base_item(value) is not None
+        elif structure == "deep-drawdown":
+            matched = _deep_drawdown_item(original) is not None
+        elif structure == "long-platform":
+            matched = _long_platform_item(value) is not None
+        elif structure == "major-descending":
+            matched = any(line.period.value in periods and line.state.value in states
+                          for line in detect_major_descending_lines(value.bars, include_candidates=True))
+        else:
+            item = _pullback_item(value, structure)
+            matched = bool(item is not None and item.payload.get("screen_eligible")
+                           and item.payload.get("stage") in {"pullback-observation", "pullback-confirmed"}
+                           and item.payload.get("as_of_date") == cutoff.isoformat())
+        return original if matched else None
 
     def recalculate(
         self,
@@ -118,6 +124,7 @@ class TrendAnalysisService:
         include_preview: bool,
         as_of_date: date | None = None,
         pivot_config: DirectionalChangeConfig = DirectionalChangeConfig(),
+        prepared_input: AnalysisInput | None = None,
     ) -> list[dict[str, object]]:
         cutoff = as_of_date or date.today()
         results: list[dict[str, object]] = []
@@ -125,6 +132,7 @@ class TrendAnalysisService:
             results.append(self._recalculate_one(
                 symbol, timeframe, horizons, cutoff, config_version,
                 include_preview, pivot_config,
+                prepared_input,
             ))
         return results
 
@@ -151,16 +159,7 @@ class TrendAnalysisService:
             detector_input, as_of_date, timeframe, horizons
         )
         digest = _input_digest(analysis_input, context_payload, horizons, pivot_config)
-        generated = _generated_items(
-            detector_input, horizons, pivot_config,
-            limit_up_dates=context_payload.get("accumulation_limit_up_dates"),
-        )
-        generated.append(GeneratedAnalysisItem(
-            item_id="market-board-context-evidence",
-            item_type=GeneratedItemType.EVIDENCE,
-            payload=context_payload,
-        ))
-        generated = _apply_roll_qualification(generated, roll_qualification)
+        generated = _compute_items(detector_input, horizons, pivot_config, context_payload, roll_qualification)
         return {
             "run_id": f"review-{digest.hex()[:24]}",
             "status": "succeeded",
@@ -204,6 +203,7 @@ class TrendAnalysisService:
         config_version: str,
         include_preview: bool,
         pivot_config: DirectionalChangeConfig,
+        prepared_input: AnalysisInput | None = None,
     ) -> dict[str, object]:
         normalized = symbol.strip().upper()
         claim = self._store.reserve_generated_analysis_target(
@@ -223,7 +223,7 @@ class TrendAnalysisService:
             cutoff,
         )
         return self._execute_claim(
-            claim, horizons, cutoff, include_preview, pivot_config
+            claim, horizons, cutoff, include_preview, pivot_config, prepared_input
         )
 
     def process_claim(self, claim: ClaimedAnalysisTarget) -> dict[str, object]:
@@ -258,6 +258,7 @@ class TrendAnalysisService:
         cutoff: date,
         include_preview: bool,
         pivot_config: DirectionalChangeConfig,
+        prepared_input: AnalysisInput | None = None,
     ) -> dict[str, object]:
         normalized = claim.symbol
         timeframe = AnalysisTimeframe(claim.timeframe)
@@ -265,7 +266,7 @@ class TrendAnalysisService:
         started = time.perf_counter()
         run_id: str | None = None
         try:
-            analysis_input = self._inputs.build(
+            analysis_input = prepared_input or self._inputs.build(
                 normalized,
                 cutoff,
                 timeframe,
@@ -306,16 +307,7 @@ class TrendAnalysisService:
             run = self._store.begin_generated_analysis_run(spec)
             run_id = run.run_id
             if not run.reused:
-                items = _generated_items(
-                    detector_input, horizons, pivot_config,
-                    limit_up_dates=context_payload.get("accumulation_limit_up_dates"),
-                )
-                items.append(GeneratedAnalysisItem(
-                    item_id="market-board-context-evidence",
-                    item_type=GeneratedItemType.EVIDENCE,
-                    payload=context_payload,
-                ))
-                items = _apply_roll_qualification(items, roll_qualification)
+                items = _compute_items(detector_input, horizons, pivot_config, context_payload, roll_qualification)
                 self._store.complete_generated_analysis_run(
                     run.run_id,
                     items,
@@ -706,6 +698,17 @@ def _pullback_item(value: AnalysisInput, structure: str) -> GeneratedAnalysisIte
         item_id=f"{structure}-{evidence['launch_date']}",
         item_type=GeneratedItemType.ZONE, payload=evidence,
     )
+
+
+def _compute_items(analysis_input, horizons, pivot_config, context_payload, roll_qualification):
+    """Pure result construction shared by persisted and isolated replay runs."""
+    items = _generated_items(analysis_input, horizons, pivot_config,
+                             limit_up_dates=context_payload.get("accumulation_limit_up_dates"))
+    items.append(GeneratedAnalysisItem(
+        item_id="market-board-context-evidence", item_type=GeneratedItemType.EVIDENCE,
+        payload=context_payload,
+    ))
+    return _apply_roll_qualification(items, roll_qualification)
 
 
 def _generated_items(
