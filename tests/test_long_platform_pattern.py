@@ -62,6 +62,13 @@ def test_slow_directional_decline_is_not_sideways():
     assert detect_long_platform(bars) is None
 
 
+def test_historical_volume_spike_cannot_fake_recent_contraction():
+    bars = [replace(b, volume=110 if i >= 100 else 100)
+            for i, b in enumerate(sample()[-120:])]
+    bars[90] = replace(bars[90], volume=10000)
+    assert detect_long_platform(bars) is None
+
+
 def test_missing_demand_and_ma_history_are_not_hard_rejections():
     bars = [replace(b, open=b.close) for b in sample()[-60:]]
     result = detect_long_platform(bars)

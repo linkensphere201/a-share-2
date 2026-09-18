@@ -2,12 +2,12 @@
 
 from dataclasses import asdict, dataclass
 from math import isfinite
-from statistics import fmean
+from statistics import fmean, median
 
 from stock_harness.analysis_inputs import AnalysisBar
 
 STRATEGY_ID = "long-consolidation-platform"
-ALGORITHM_VERSION = "long-consolidation-platform-v1"
+ALGORITHM_VERSION = "long-consolidation-platform-v2"
 KIND = "long-platform-range"
 
 
@@ -72,7 +72,9 @@ def detect_long_platform(bars: tuple[AnalysisBar, ...] | list[AnalysisBar]) -> d
                 or (abs(change) > CONFIG.directional_return and efficiency > CONFIG.maximum_directional_efficiency)):
             continue
         volume_ratio = fmean(b.volume for b in recent) / fmean(b.volume for b in history)
-        if volume_ratio > CONFIG.maximum_volume_ratio:
+        # A single historical spike must not manufacture apparent contraction.
+        median_volume_ratio = median(b.volume for b in recent) / median(b.volume for b in history)
+        if max(volume_ratio, median_volume_ratio) > CONFIG.maximum_volume_ratio:
             continue
         before = bars[:len(bars) - size][-60:]
         prior_change = before[-1].close / before[0].close - 1 if len(before) >= 20 else None
@@ -103,6 +105,7 @@ def detect_long_platform(bars: tuple[AnalysisBar, ...] | list[AnalysisBar]) -> d
             "platform_range_percent": round(width * 100, 4), "recent_range_percent": round(recent_range * 100, 4),
             "center_drift_percent": round(center_drift * 100, 4), "fitted_drift_percent": round(fitted_drift * 100, 4),
             "recent_history_volume_ratio": round(volume_ratio, 4),
+            "recent_history_median_volume_ratio": round(median_volume_ratio, 4),
             "up_down_volume_ratio": round(demand, 4) if demand is not None else None,
             "floor_lift_percent": round(floor_lift * 100, 4), "range_position": round(position, 4),
             "prior_return_percent": round(prior_change * 100, 4) if prior_change is not None else None,
