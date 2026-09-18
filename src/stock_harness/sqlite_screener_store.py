@@ -250,19 +250,46 @@ class SQLiteScreenerStoreMixin:
             )
         return True
 
-    def list_screener_candidates(self, run_id: str) -> list[dict[str, object]]:
+    def count_screener_candidates(self, run_id: str) -> int:
+        with self._lock:
+            return int(self._connection.execute(
+                "SELECT count(*) FROM screener_candidates WHERE run_id = ?", (run_id,),
+            ).fetchone()[0])
+
+    def list_screener_candidates(
+        self, run_id: str, *, limit: int | None = None, offset: int = 0,
+        summary: bool = False, rank: int | None = None,
+    ) -> list[dict[str, object]]:
+        if (limit is not None and not 1 <= limit <= 500) or offset < 0:
+            raise ValueError("invalid candidate page")
+        columns = ("kind", "as_of_date", "period", "platform_sessions", "stage", "platform_stage",
+                   "shape_maturity", "platform_style", "recognition", "recognition_rank_bonus")
+        evidence = "candidate.evidence_json"
+        if summary:
+            evidence = "json_object(" + ",".join(
+                f"'{key}',json_extract(candidate.evidence_json, '$.{key}')" for key in columns
+            ) + ")"
+        params: list[object] = [run_id]
+        where = "candidate.run_id = ?"
+        if rank is not None:
+            where += " AND candidate.rank = ?"
+            params.append(rank)
+        paging = ""
+        if limit is not None:
+            paging = " LIMIT ? OFFSET ?"
+            params.extend((limit, offset))
         with self._lock:
             rows = self._connection.execute(
-                """
+                f"""
                 SELECT candidate.rank, instrument.symbol, instrument.name,
                        candidate.state, candidate.score, candidate.line_item_id,
                        candidate.line_code, candidate.analysis_run_id,
-                       candidate.evidence_json, instrument.exchange
+                       {evidence}, instrument.exchange
                 FROM screener_candidates AS candidate
                 JOIN instruments AS instrument USING (instrument_id)
-                WHERE candidate.run_id = ? ORDER BY candidate.rank
+                WHERE {where} ORDER BY candidate.rank {paging}
                 """,
-                (run_id,),
+                params,
             ).fetchall()
         return [{
             "rank": int(row[0]), "symbol": str(row[1]), "name": str(row[2]),
@@ -270,6 +297,7 @@ class SQLiteScreenerStoreMixin:
             "line_item_id": str(row[5]), "line_code": str(row[6]),
             "analysis_run_id": str(row[7]), "evidence": json.loads(str(row[8])),
             "exchange": str(row[9]), "kind": "stock",
+            **({"evidence_complete": False} if summary else {}),
         } for row in rows]
 
     def list_active_stock_symbols_for_screening(

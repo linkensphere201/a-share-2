@@ -25,6 +25,7 @@ class BoardAggregatePool:
                     mmap_size_mib=source.mmap_size_mib,
                     temp_store="FILE",
                     busy_timeout_ms=source.busy_timeout_ms,
+                    read_only=True,
                 )
                 for _ in range(3)
             ]

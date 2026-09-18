@@ -49,6 +49,26 @@ def _store_with_major_edge() -> tuple[SQLiteMarketDataStore, list[date]]:
     return store, days
 
 
+def test_candidate_paging_summary_and_exact_detail_preserve_legacy_result():
+    store, days = _store_with_major_edge()
+    try:
+        run = ScreenerService(store).run_sync([MajorLinePeriod.YEAR], list(MajorLineState), 10, days[-1])
+        with TestClient(create_app(store)) as client:
+            url = f"/api/screener/runs/{run['run_id']}/candidates"
+            full = client.get(url).json()["items"]
+            page = client.get(url, params={"limit": 1, "summary": True}).json()
+            assert page["total"] == 1 and not page["has_more"]
+            assert page["items"][0]["analysis_run_id"] == full[0]["analysis_run_id"]
+            assert page["items"][0]["evidence_complete"] is False
+            assert "latest_close" not in page["items"][0]["evidence"]
+            assert client.get(url + "/1").json() == full[0]
+            assert client.get(url + "/2").status_code == 404
+            assert client.get(url, params={"limit": 1, "offset": 1}).json()["items"] == []
+            assert client.get(url, params={"limit": 201}).status_code == 422
+    finally:
+        store.close()
+
+
 def test_latest_screening_date_uses_bounded_index_probes_and_only_active_stocks():
     with SQLiteMarketDataStore(":memory:") as store:
         store.upsert_instruments([

@@ -192,9 +192,12 @@ class StockHarnessMcpTools:
         offset = _bounded(offset, 0, 10000, "offset")
 
         def load():
-            # Slice the existing bounded saved result, compatible with older desktops.
-            payload = self.api.get(f"/api/screener/runs/{normalized}/candidates")
+            payload = self.api.get(f"/api/screener/runs/{normalized}/candidates",
+                                   [("limit", limit), ("offset", offset)])
             items = _items(payload)
+            if "total" in payload:
+                return {"run_id": normalized, **payload}
+            # Older desktops ignore paging parameters; retain compatibility.
             page = items[offset:offset + limit]
             return {"run_id": normalized, "items": page, "total": len(items),
                     "offset": offset, "limit": limit,

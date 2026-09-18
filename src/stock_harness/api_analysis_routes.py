@@ -261,15 +261,34 @@ def create_analysis_router() -> APIRouter:
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @router.get("/api/screener/runs/{run_id}/candidates")
-    def list_screener_candidates(run_id: str, request: Request) -> dict[str, object]:
+    def list_screener_candidates(
+        run_id: str, request: Request,
+        limit: int | None = Query(default=None, ge=1, le=200),
+        offset: int = Query(default=0, ge=0, le=10000), summary: bool = False,
+    ) -> dict[str, object]:
         selected_store = store(request)
         run = selected_store.get_screener_run(run_id)
         if run is None:
             raise HTTPException(status_code=404, detail="screener run not found")
-        return {"items": attach_recognition_tags(
-            selected_store, selected_store.list_screener_candidates(run_id),
+        page_limit = limit if limit is not None else (200 if summary or offset else None)
+        items = attach_recognition_tags(
+            selected_store, selected_store.list_screener_candidates(run_id, limit=page_limit, offset=offset, summary=summary),
             str(run["as_of_date"]),
-        )}
+        )
+        if page_limit is None:
+            return {"items": items}
+        total = selected_store.count_screener_candidates(run_id)
+        return {"items": items, "total": total, "offset": offset, "limit": page_limit,
+                "has_more": offset + len(items) < total}
+
+    @router.get("/api/screener/runs/{run_id}/candidates/{rank}")
+    def screener_candidate_detail(run_id: str, rank: int, request: Request) -> dict[str, object]:
+        selected_store = store(request)
+        run = selected_store.get_screener_run(run_id)
+        items = selected_store.list_screener_candidates(run_id, rank=rank) if run else []
+        if not items:
+            raise HTTPException(status_code=404, detail="screener candidate not found")
+        return attach_recognition_tags(selected_store, items, str(run["as_of_date"]))[0]
 
     @router.get("/api/analysis/runs/{run_id}")
     def generated_analysis_run(run_id: str, request: Request) -> dict[str, object]:

@@ -97,6 +97,7 @@ class SQLiteMarketDataStore(
         mmap_size_mib: int = 256,
         temp_store: str = "MEMORY",
         busy_timeout_ms: int = 120_000,
+        read_only: bool = False,
     ) -> None:
         if cache_size_kib <= 0:
             raise ValueError("cache_size_kib must be positive")
@@ -108,7 +109,10 @@ class SQLiteMarketDataStore(
         if busy_timeout_ms <= 0:
             raise ValueError("busy_timeout_ms must be positive")
         path_text = str(path)
-        if path_text != ":memory:":
+        self.read_only = read_only
+        if read_only and (path_text == ":memory:" or not Path(path).is_file()):
+            raise ValueError("read-only storage requires an initialized database file")
+        if path_text != ":memory:" and not read_only:
             Path(path).parent.mkdir(parents=True, exist_ok=True)
         self.path = path
         self.cache_size_kib = cache_size_kib
@@ -124,34 +128,23 @@ class SQLiteMarketDataStore(
             )
         self._lock = threading.RLock()
         self._connection = sqlite3.connect(
-            path_text,
+            Path(path).resolve().as_uri() + "?mode=ro" if read_only else path_text,
+            uri=read_only,
             isolation_level=None,
             check_same_thread=False,
             timeout=busy_timeout_ms / 1000,
         )
         self._connection.row_factory = sqlite3.Row
         self._configure()
-        with self._writer_lock:
-            self._connection.executescript(_SCHEMA)
-        self._ensure_chat_policy_version()
-        self._ensure_chat_conversation_sessions()
-        self._ensure_chat_typed_contexts()
-        self._ensure_chat_workspace_contexts()
-        self._ensure_chat_context_index()
-        self._ensure_chat_template_version()
         self._futures_storage_ready = False
-        self._futures_storage_error: str | None = None
-        self._ensure_futures_schema()
-        self._ensure_custom_index_volume()
-        self._ensure_custom_group_member_roles()
-        self._ensure_market_snapshot_metrics()
-        self._ensure_generated_analysis_target_settings()
-        self._ensure_generated_analysis_scenario_type()
-        self._ensure_screener_candidate_states()
-        self._ensure_active_market_value_diagnostics()
-        self._ensure_signal_observation_columns()
-        self.ensure_board_theme_registry()
-        self._backfill_pinyin_aliases()
+        self._futures_storage_error = None
+        if read_only:
+            self._futures_storage_ready = bool(self._connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='futures_daily_bars'"
+            ).fetchone())
+        else:
+            from stock_harness.sqlite_initialization import initialize_database
+            initialize_database(self)
 
     def _ensure_generated_analysis_scenario_type(self) -> None:
         """Extend the immutable generated-item vocabulary without rewriting runs."""
@@ -562,7 +555,8 @@ class SQLiteMarketDataStore(
         return [_date_from_key(int(row[0])) for row in rows]
 
     def _configure(self) -> None:
-        self._connection.execute("PRAGMA journal_mode=WAL")
+        if not self.read_only:
+            self._connection.execute("PRAGMA journal_mode=WAL")
         self._connection.execute("PRAGMA synchronous=NORMAL")
         self._connection.execute("PRAGMA foreign_keys=ON")
         self._connection.execute(f"PRAGMA busy_timeout={self.busy_timeout_ms}")
