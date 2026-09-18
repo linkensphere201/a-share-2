@@ -1,13 +1,21 @@
 """Strategy catalog and saved-analysis adapters; no detector implementations."""
+from __future__ import annotations
+
 from copy import deepcopy
 from dataclasses import asdict, dataclass
+from datetime import date
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Any, Literal, Sequence
+
+if TYPE_CHECKING:
+    from stock_harness.pattern_analysis import PatternAnalysisRequest, PatternAnalysisResult, PatternAnalysisService
+
 from stock_harness.analysis_inputs import AnalysisHorizons
 from stock_harness.major_descending_lines import MajorLinePeriod, MajorLineState
 from stock_harness.first_pullback_pattern import CONFIG as PULLBACK_CONFIG
 from stock_harness.low_base_pullback import (
     ALGORITHM_VERSION as LOW_BASE_VERSION, CONFIG as LOW_BASE_CONFIG, LAUNCH_TYPE as LOW_BASE_TYPE,
 )
-from stock_harness.screener_result_tags import attach_recognition_tags
 from stock_harness.long_platform_pattern import (
     STRATEGY_ID as PLATFORM_STRATEGY_ID, ALGORITHM_VERSION as PLATFORM_VERSION,
     KIND as PLATFORM_KIND, CONFIG as PLATFORM_CONFIG,
@@ -25,8 +33,6 @@ from stock_harness.volume_accumulation import (
     STATE as ACCUMULATION_STATE,
     STRATEGY_ID as ACCUMULATION_STRATEGY_ID,
     STRATEGY_VERSION as ACCUMULATION_STRATEGY_VERSION,
-    VolumeAccumulationSignal,
-    detect_volume_accumulation, accumulation_rank_key,
 )
 
 STRATEGY_ID = "major-descending-breakout"
@@ -123,29 +129,78 @@ def _parameter_defaults(strategy_id, periods, states, max_results: int) -> dict[
 
 
 @dataclass(frozen=True)
+class ShapeSelection:
+    structure: str
+    kind: str
+    line_code: str
+    low_base: bool = False
+
+    def matches(self, item: dict[str, Any], cutoff: date) -> bool:
+        evidence = item['payload']
+        return (item['item_type'] == 'zone' and evidence.get('kind') == self.kind
+                and ((evidence.get('launch_type') == LOW_BASE_TYPE) == self.low_base)
+                and bool(evidence.get('screen_eligible'))
+                and evidence.get('stage') in {'pullback-observation', 'pullback-confirmed', DEEP_DRAWDOWN_STATE}
+                and evidence.get('as_of_date') == cutoff.isoformat())
+
+    def rank_key(self, candidate: dict[str, Any]) -> tuple[float, bool, float, str]:
+        return (candidate['evidence'].get('maturity_rank', 3) if self.low_base else 0,
+                not self.low_base and candidate['state'] != 'pullback-confirmed',
+                -candidate['score'], candidate['symbol'])
+
+
+@dataclass(frozen=True)
 class ScreenerStrategy:
-    definition: dict
-    parameter_template: dict
-    structure: str | None = None
-    kind: str | None = None
-    line_code: str | None = None
+    _definition: dict[str, object]
+    _parameter_template: dict[str, object]
+    execution: Literal['shape', 'major', 'accumulation']
+    analysis_config: str
+    selection: ShapeSelection | None = None
+    valid_from: date | None = None
+    excluded_symbols: frozenset[str] = frozenset()
 
     @property
-    def strategy_id(self):
-        return self.definition["strategy_id"]
+    def definition(self) -> dict[str, object]:
+        return deepcopy(self._definition)
 
     @property
-    def version(self):
-        return self.definition["version"]
+    def structure(self) -> str | None:
+        return self.selection.structure if self.selection else None
 
-    def parameters(self, periods, states, max_results):
-        result = deepcopy(self.parameter_template)
+    @property
+    def kind(self) -> str | None:
+        return self.selection.kind if self.selection else None
+
+    @property
+    def line_code(self) -> str | None:
+        return self.selection.line_code if self.selection else None
+
+    @property
+    def strategy_id(self) -> str:
+        return str(self._definition["strategy_id"])
+
+    @property
+    def version(self) -> str:
+        return str(self._definition["version"])
+
+    def parameters(self, periods: Sequence[MajorLinePeriod], states: Sequence[MajorLineState],
+                   max_results: int) -> dict[str, object]:
+        result = deepcopy(self._parameter_template)
         result["max_results"] = max_results
-        if self.strategy_id == STRATEGY_ID:
+        if self.execution == 'major':
             result.update(periods=[x.value for x in periods], states=[x.value for x in states])
         return result
 
-    def analyze(self, service, request):
+    def validate_cutoff(self, cutoff: date) -> None:
+        if self.valid_from is not None and cutoff < self.valid_from:
+            raise ValueError(f"{self.strategy_id} reference is only available from {self.valid_from}")
+
+    def allows_symbol(self, symbol: str) -> bool:
+        return symbol not in self.excluded_symbols
+
+    def analyze(self, service: PatternAnalysisService, request: PatternAnalysisRequest) -> PatternAnalysisResult | None:
+        if self.selection is None:
+            raise ValueError(f"{self.strategy_id} requires its {self.execution} executor")
         if self.structure == "low-base":
             return service.analyze_low_base_candidate(request)
         if self.structure == "deep-drawdown":
@@ -154,17 +209,23 @@ class ScreenerStrategy:
 
 
 _SHAPES = {
-    PLATFORM_STRATEGY_ID: ("long-platform", PLATFORM_KIND, "LONG-PLATFORM"),
-    DEEP_DRAWDOWN_STRATEGY_ID: ("deep-drawdown", DEEP_DRAWDOWN_KIND, "DEEP-DRAWDOWN"),
-    BULL_FLAG_STRATEGY_ID: ("bull-flag", BULL_FLAG_KIND, "BULL-FLAG"),
-    LOW_BASE_STRATEGY_ID: ("low-base", "first-pullback-range", "LOW-BASE-PULLBACK"),
-    PULLBACK_STRATEGY_ID: ("first-pullback", "first-pullback-range", "FIRST-PULLBACK"),
+    PLATFORM_STRATEGY_ID: ShapeSelection("long-platform", PLATFORM_KIND, "LONG-PLATFORM"),
+    DEEP_DRAWDOWN_STRATEGY_ID: ShapeSelection("deep-drawdown", DEEP_DRAWDOWN_KIND, "DEEP-DRAWDOWN"),
+    BULL_FLAG_STRATEGY_ID: ShapeSelection("bull-flag", BULL_FLAG_KIND, "BULL-FLAG"),
+    LOW_BASE_STRATEGY_ID: ShapeSelection("low-base", "first-pullback-range", "LOW-BASE-PULLBACK", low_base=True),
+    PULLBACK_STRATEGY_ID: ShapeSelection("first-pullback", "first-pullback-range", "FIRST-PULLBACK"),
 }
-STRATEGIES = {
-    d["strategy_id"]: ScreenerStrategy(d, _parameter_defaults(d["strategy_id"], (), (), 0),
-                                      *_SHAPES.get(d["strategy_id"], (None, None, None)))
+STRATEGIES = MappingProxyType({
+    d["strategy_id"]: ScreenerStrategy(
+        d, _parameter_defaults(d["strategy_id"], (), (), 0),
+        execution='shape' if d['strategy_id'] in _SHAPES else 'major' if d['strategy_id'] == STRATEGY_ID else 'accumulation',
+        analysis_config=str(d['version']) if d['strategy_id'] in _SHAPES else CONFIG_VERSION,
+        selection=_SHAPES.get(d['strategy_id']),
+        valid_from=date.fromisoformat(REFERENCE_END) if d['strategy_id'] == DEEP_DRAWDOWN_STRATEGY_ID else None,
+        excluded_symbols=frozenset({REFERENCE_SYMBOL}) if d['strategy_id'] == DEEP_DRAWDOWN_STRATEGY_ID else frozenset(),
+    )
     for d in _definitions()
-}
+})
 
 
 def get_strategy(strategy_id: str) -> ScreenerStrategy:
@@ -174,5 +235,5 @@ def get_strategy(strategy_id: str) -> ScreenerStrategy:
         raise ValueError(f"unknown screener strategy: {strategy_id}") from None
 
 
-def strategy_definitions():
-    return [deepcopy(s.definition) for s in STRATEGIES.values()]
+def strategy_definitions() -> list[dict[str, object]]:
+    return [s.definition for s in STRATEGIES.values()]

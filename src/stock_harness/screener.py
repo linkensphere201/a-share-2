@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 import logging
@@ -19,47 +18,22 @@ from stock_harness.major_descending_lines import (
 from stock_harness.pattern_analysis import PatternAnalysisRequest, PatternAnalysisService
 from stock_harness.sqlite_store import SQLiteMarketDataStore
 from stock_harness.accumulation_pattern import ANALYSIS_LOOKBACK
-from stock_harness.first_pullback_pattern import CONFIG as PULLBACK_CONFIG
-from stock_harness.low_base_pullback import (
-    ALGORITHM_VERSION as LOW_BASE_VERSION, CONFIG as LOW_BASE_CONFIG, LAUNCH_TYPE as LOW_BASE_TYPE,
-)
 from stock_harness.screener_result_tags import attach_recognition_tags
-from stock_harness.screener_strategies import get_strategy, strategy_definitions
-from stock_harness.long_platform_pattern import (
-    STRATEGY_ID as PLATFORM_STRATEGY_ID, ALGORITHM_VERSION as PLATFORM_VERSION,
-    KIND as PLATFORM_KIND, CONFIG as PLATFORM_CONFIG,
-)
-from stock_harness.deep_drawdown_pattern import (
-    STRATEGY_ID as DEEP_DRAWDOWN_STRATEGY_ID, ALGORITHM_VERSION as DEEP_DRAWDOWN_VERSION,
-    KIND as DEEP_DRAWDOWN_KIND, STATE as DEEP_DRAWDOWN_STATE, MIN_SCORE,
-    REFERENCE_SYMBOL, REFERENCE_START, REFERENCE_END,
-)
-from stock_harness.bull_flag_pattern import (
-    STRATEGY_ID as BULL_FLAG_STRATEGY_ID, ALGORITHM_VERSION as BULL_FLAG_VERSION,
-    CONFIG as BULL_FLAG_CONFIG, KIND as BULL_FLAG_KIND,
+from stock_harness.screener_strategies import (
+    get_strategy, strategy_definitions, STRATEGY_ID, STRATEGY_VERSION, CONFIG_VERSION,
+    PULLBACK_STRATEGY_ID, PULLBACK_STRATEGY_VERSION, LOW_BASE_STRATEGY_ID,
+    DEFAULT_HORIZONS, SCREENABLE_STATES,
+    BULL_FLAG_STRATEGY_ID, DEEP_DRAWDOWN_STRATEGY_ID, PLATFORM_STRATEGY_ID,
 )
 from stock_harness.volume_accumulation import (
     STATE as ACCUMULATION_STATE,
     STRATEGY_ID as ACCUMULATION_STRATEGY_ID,
-    STRATEGY_VERSION as ACCUMULATION_STRATEGY_VERSION,
     VolumeAccumulationSignal,
     detect_volume_accumulation, accumulation_rank_key,
 )
 
 
 LOGGER = logging.getLogger(__name__)
-STRATEGY_ID = "major-descending-breakout"
-STRATEGY_VERSION = "major-descending-breakout-v5"
-CONFIG_VERSION = "screener-major-descending-v5"
-PULLBACK_STRATEGY_ID = "strong-first-pullback"
-PULLBACK_STRATEGY_VERSION = "strong-first-pullback-v3"
-LOW_BASE_STRATEGY_ID = "low-base-platform-pullback"
-DEFAULT_HORIZONS = AnalysisHorizons(60, 120, 250)
-SCREENABLE_STATES = (
-    MajorLineState.CRITICAL_BREAKOUT,
-    MajorLineState.BREAKOUT_RETEST,
-    MajorLineState.BROKEN_OUT,
-)
 class ScreenerBusyError(RuntimeError):
     pass
 
@@ -174,14 +148,13 @@ class ScreenerService:
         self, run_id: str, cutoff: date, periods: Sequence[MajorLinePeriod],
         states: Sequence[MajorLineState], max_results: int, strategy_id: str,
     ) -> None:
-        if get_strategy(strategy_id).structure is not None:
+        strategy = get_strategy(strategy_id)
+        if strategy.execution == 'shape':
             self._execute_shape_strategy(run_id, cutoff, max_results, strategy_id)
             return
-        if strategy_id == ACCUMULATION_STRATEGY_ID:
+        if strategy.execution == 'accumulation':
             self._execute_volume_accumulation(run_id, cutoff, max_results)
             return
-        if strategy_id != STRATEGY_ID:
-            raise ValueError(f"unknown screener strategy: {strategy_id}")
         self._execute_major_descending(run_id, cutoff, periods, states, max_results)
 
     def _execute_major_descending(
@@ -206,7 +179,7 @@ class ScreenerService:
                 analysis = self._analysis.analyze_screening_candidate(PatternAnalysisRequest(
                     symbol=instrument["symbol"],
                     timeframes=(AnalysisTimeframe.DAILY,), horizons=DEFAULT_HORIZONS,
-                    config_version=CONFIG_VERSION, include_preview=False, as_of_date=cutoff,
+                    config_version=get_strategy(STRATEGY_ID).analysis_config, include_preview=False, as_of_date=cutoff,
                 ), "major-descending", periods=tuple(item.value for item in periods),
                     states=tuple(item.value for item in states))
                 if analysis is None:
@@ -278,22 +251,24 @@ class ScreenerService:
     def _execute_shape_strategy(self, run_id: str, cutoff: date, max_results: int,
                                 strategy_id: str = PULLBACK_STRATEGY_ID) -> None:
         started = time.perf_counter()
-        if strategy_id == DEEP_DRAWDOWN_STRATEGY_ID and cutoff < date.fromisoformat(REFERENCE_END):
-            raise ValueError("deep-drawdown reference is only available from " + REFERENCE_END)
+        strategy = get_strategy(strategy_id)
+        selection = strategy.selection
+        if selection is None:
+            raise ValueError(f"{strategy_id} has no saved shape selection")
+        strategy.validate_cutoff(cutoff)
         universe = self._store.list_active_stock_symbols_for_screening()
         candidates = []
         self._store.update_screener_progress(run_id, universe_count=len(universe), scanned_count=0)
         for index, instrument in enumerate(universe, 1):
             self._check_stopping()
             try:
-                if strategy_id == DEEP_DRAWDOWN_STRATEGY_ID and instrument["symbol"] == REFERENCE_SYMBOL:
+                if not strategy.allows_symbol(instrument["symbol"]):
                     raise LookupError("reference stock is excluded from similarity screening")
                 request = PatternAnalysisRequest(
                     symbol=instrument["symbol"], timeframes=(AnalysisTimeframe.DAILY,),
-                    horizons=DEFAULT_HORIZONS, config_version=_strategy_version(strategy_id),
+                    horizons=DEFAULT_HORIZONS, config_version=strategy.analysis_config,
                     include_preview=False, as_of_date=cutoff,
                 )
-                strategy = get_strategy(strategy_id)
                 analysis = strategy.analyze(self._analysis, request)
                 if analysis is None:
                     raise LookupError("no matching shared structure")
@@ -301,12 +276,7 @@ class ScreenerService:
                     raise RuntimeError(f"pattern analysis failed: {instrument['symbol']}")
                 for item in analysis["items"]:
                     evidence = item["payload"]
-                    if (item["item_type"] != "zone"
-                        or evidence.get("kind") != strategy.kind
-                        or ((evidence.get("launch_type") == LOW_BASE_TYPE) != (strategy_id == LOW_BASE_STRATEGY_ID))
-                        or not evidence.get("screen_eligible")
-                        or evidence.get("stage") not in {"pullback-observation", "pullback-confirmed", DEEP_DRAWDOWN_STATE}
-                        or evidence.get("as_of_date") != cutoff.isoformat()):
+                    if not selection.matches(item, cutoff):
                         continue
                     candidates.append({
                         "symbol": instrument["symbol"], "state": evidence["stage"],
@@ -323,11 +293,7 @@ class ScreenerService:
             if index % 100 == 0 or index == len(universe):
                 LOGGER.info("screener_first_pullback_progress run_id=%s scanned=%s universe=%s matches=%s",
                             run_id, index, len(universe), len(candidates))
-        candidates.sort(key=lambda item: (
-            item["evidence"].get("maturity_rank", 3) if strategy_id == LOW_BASE_STRATEGY_ID else 0,
-            strategy_id != LOW_BASE_STRATEGY_ID and item["state"] != "pullback-confirmed",
-            -item["score"], item["symbol"],
-        ))
+        candidates.sort(key=selection.rank_key)
         self._store.complete_screener_run(run_id, candidates[:max_results], retention=10)
         LOGGER.info("screener_first_pullback_completed run_id=%s matches=%s duration_ms=%.1f",
                     run_id, len(candidates), (time.perf_counter() - started) * 1000)
@@ -400,7 +366,7 @@ class ScreenerService:
             self._check_stopping()
             analysis = self._analysis.analyze(PatternAnalysisRequest(
                 symbol=instrument["symbol"], timeframes=(AnalysisTimeframe.DAILY,),
-                horizons=DEFAULT_HORIZONS, config_version=CONFIG_VERSION,
+                horizons=DEFAULT_HORIZONS, config_version=get_strategy(ACCUMULATION_STRATEGY_ID).analysis_config,
                 include_preview=False, as_of_date=cutoff,
             ))[0]
             representative = next(
