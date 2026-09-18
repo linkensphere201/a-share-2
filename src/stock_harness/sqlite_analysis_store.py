@@ -26,6 +26,10 @@ from stock_harness.trend_reviews import (
 )
 
 
+class AnalysisInputChangedError(RuntimeError):
+    """Prepared reads no longer describe the database being reserved."""
+
+
 _TREND_REVIEW_SELECT = """
 SELECT review.review_id, instrument.symbol, review.schema_version,
        review.dataset_version, review.timeframe, review.horizon,
@@ -470,9 +474,15 @@ class SQLiteAnalysisStoreMixin:
             )
         return target_id
 
+    def analysis_read_version(self) -> tuple[int, int, int]:
+        """Conservative connection-local stamp: local writes plus external commits."""
+        with self._lock:
+            return (id(self._connection), self._connection.total_changes,
+                    int(self._connection.execute("PRAGMA data_version").fetchone()[0]))
+
     def reserve_generated_analysis_target(
         self, target: GeneratedAnalysisTarget, cutoff: date,
-        *, lease_ms: int = 60_000,
+        *, lease_ms: int = 60_000, expected_read_version: tuple[int, int, int] | None = None,
     ) -> ClaimedAnalysisTarget:
         """Register and lease an explicit generation without exposing queued work."""
         target.validate()
@@ -481,6 +491,9 @@ class SQLiteAnalysisStoreMixin:
         now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
         reason = "explicit-user-recalculate"
         with self._lock, self._transaction():
+            # BEGIN IMMEDIATE excludes concurrent commits between validation and reservation.
+            if expected_read_version is not None and self.analysis_read_version() != expected_read_version:
+                raise AnalysisInputChangedError("prepared analysis input changed before reservation")
             target_id = self._upsert_generated_analysis_target(target)
             row = self._connection.execute(
                 """

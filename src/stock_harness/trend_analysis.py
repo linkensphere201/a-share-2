@@ -20,6 +20,7 @@ from stock_harness.deep_drawdown_pattern import WINDOW as DEEP_DRAWDOWN_WINDOW, 
 from stock_harness.analysis_inputs import (
     AnalysisHorizons,
     AnalysisInput,
+    PreparedAnalysisInput,
     AnalysisInputMode,
     AnalysisInputService,
     AnalysisTimeframe,
@@ -48,6 +49,7 @@ from stock_harness.key_levels import (
 from stock_harness.major_descending_lines import detect_major_descending_lines
 from stock_harness.pattern_ranking import rank_pattern_candidates
 from stock_harness.sqlite_store import SQLiteMarketDataStore
+from stock_harness.sqlite_analysis_store import AnalysisInputChangedError
 from stock_harness.structural_scenario_engine import build_structural_scenario_items
 from stock_harness.trend_pivots import (
     DirectionalChangeConfig,
@@ -93,7 +95,8 @@ class TrendAnalysisService:
     def prepare_screening_input(
         self, symbol: str, cutoff: date, horizons: AnalysisHorizons, structure: str,
         *, periods: tuple[str, ...] = (), states: tuple[str, ...] = (),
-    ) -> AnalysisInput | None:
+    ) -> PreparedAnalysisInput | None:
+        read_version = self._store.analysis_read_version()
         original = self._inputs.build(
             symbol, cutoff, AnalysisTimeframe.DAILY, AnalysisInputMode.FINAL, horizons,
         )
@@ -112,7 +115,7 @@ class TrendAnalysisService:
             matched = bool(item is not None and item.payload.get("screen_eligible")
                            and item.payload.get("stage") in {"pullback-observation", "pullback-confirmed"}
                            and item.payload.get("as_of_date") == cutoff.isoformat())
-        return original if matched else None
+        return PreparedAnalysisInput(original, read_version) if matched else None
 
     def recalculate(
         self,
@@ -124,9 +127,13 @@ class TrendAnalysisService:
         include_preview: bool,
         as_of_date: date | None = None,
         pivot_config: DirectionalChangeConfig = DirectionalChangeConfig(),
-        prepared_input: AnalysisInput | None = None,
+        prepared_input: PreparedAnalysisInput | None = None,
     ) -> list[dict[str, object]]:
         cutoff = as_of_date or date.today()
+        if prepared_input is not None:
+            if tuple(timeframes) != (prepared_input.value.timeframe,):
+                raise ValueError("prepared input requires exactly its own timeframe")
+            prepared_input.validate_final(symbol, prepared_input.value.timeframe, horizons, cutoff, include_preview)
         results: list[dict[str, object]] = []
         for timeframe in dict.fromkeys(timeframes):
             results.append(self._recalculate_one(
@@ -203,27 +210,33 @@ class TrendAnalysisService:
         config_version: str,
         include_preview: bool,
         pivot_config: DirectionalChangeConfig,
-        prepared_input: AnalysisInput | None = None,
+        prepared_input: PreparedAnalysisInput | None = None,
     ) -> dict[str, object]:
         normalized = symbol.strip().upper()
-        claim = self._store.reserve_generated_analysis_target(
-            GeneratedAnalysisTarget(
-                normalized, "trend", timeframe.value,
-                ALGORITHM_VERSION, config_version,
-                settings={
-                    "short_horizon_bars": horizons.short,
-                    "medium_horizon_bars": horizons.medium,
-                    "long_horizon_bars": horizons.long,
-                    "include_preview": include_preview,
-                    "atr_period": pivot_config.atr_period,
-                    "atr_multiplier": pivot_config.atr_multiplier,
-                    "minimum_reversal_percent": pivot_config.minimum_reversal_percent,
-                },
-            ),
-            cutoff,
+        target = GeneratedAnalysisTarget(
+            normalized, "trend", timeframe.value,
+            ALGORITHM_VERSION, config_version,
+            settings={
+                "short_horizon_bars": horizons.short,
+                "medium_horizon_bars": horizons.medium,
+                "long_horizon_bars": horizons.long,
+                "include_preview": include_preview,
+                "atr_period": pivot_config.atr_period,
+                "atr_multiplier": pivot_config.atr_multiplier,
+                "minimum_reversal_percent": pivot_config.minimum_reversal_percent,
+            },
         )
+        try:
+            claim = self._store.reserve_generated_analysis_target(
+                target, cutoff,
+                expected_read_version=prepared_input.read_version if prepared_input is not None else None,
+            )
+        except AnalysisInputChangedError:
+            prepared_input = None
+            claim = self._store.reserve_generated_analysis_target(target, cutoff)
         return self._execute_claim(
-            claim, horizons, cutoff, include_preview, pivot_config, prepared_input
+            claim, horizons, cutoff, include_preview, pivot_config,
+            prepared_input.value if prepared_input is not None else None,
         )
 
     def process_claim(self, claim: ClaimedAnalysisTarget) -> dict[str, object]:

@@ -121,6 +121,30 @@ class AnalysisInput:
     instrument: AnalysisInstrumentContext
 
 
+@dataclass(frozen=True, slots=True)
+class PreparedAnalysisInput:
+    value: AnalysisInput
+    read_version: tuple[int, int, int]
+
+    def validate_final(self, symbol: str, timeframe: AnalysisTimeframe,
+                       horizons: AnalysisHorizons, cutoff: date, include_preview: bool) -> None:
+        value = self.value
+        if (include_preview or value.mode is not AnalysisInputMode.FINAL
+                or value.symbol != symbol.strip().upper() or value.timeframe != timeframe
+                or value.horizons != horizons or value.as_of_date != cutoff
+                or value.provisional_date is not None or value.provisional_source is not None
+                or value.provisional_provider_time is not None
+                or (value.latest_final_date is not None and value.latest_final_date > cutoff)):
+            raise ValueError("prepared input must match dated final analysis")
+        previous_end = None
+        for bar in value.bars:
+            if (bar.contains_provisional or bar.period_start > bar.period_end
+                    or bar.period_end > cutoff
+                    or (previous_end is not None and bar.period_start <= previous_end)):
+                raise ValueError("prepared input contains provisional, overlapping or future bars")
+            previous_end = bar.period_end
+
+
 class AnalysisInputStore(Protocol):
     def get_recent_daily_bars(
         self, symbol: str, end_date: date, limit: int

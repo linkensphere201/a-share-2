@@ -7,7 +7,7 @@ from datetime import date
 from enum import StrEnum
 from typing import NotRequired, TypedDict, cast
 
-from stock_harness.analysis_inputs import AnalysisHorizons, AnalysisTimeframe, AnalysisInput
+from stock_harness.analysis_inputs import AnalysisHorizons, AnalysisTimeframe, PreparedAnalysisInput
 from stock_harness.models import StoredDailyBar
 from stock_harness.pattern_analysis_scan import DailyStructureScan, scan_daily_structure
 from stock_harness.sqlite_store import SQLiteMarketDataStore
@@ -46,7 +46,7 @@ class PatternAnalysisRequest:
     as_of_date: date | None = None
     profile: PatternAnalysisProfile = PatternAnalysisProfile.FULL
     pivot_config: DirectionalChangeConfig = DirectionalChangeConfig()
-    prepared_input: AnalysisInput | None = None
+    prepared_input: PreparedAnalysisInput | None = None
 
     def validate(self) -> None:
         if not self.symbol.strip():
@@ -57,11 +57,13 @@ class PatternAnalysisRequest:
             raise ValueError("pattern-analysis config version is required")
         self.horizons.validate()
         if self.prepared_input is not None:
-            value = self.prepared_input
+            value = self.prepared_input.value
             if (value.symbol != self.symbol.strip().upper() or value.as_of_date != self.as_of_date
                     or self.timeframes != (value.timeframe,) or value.horizons != self.horizons
                     or self.include_preview or self.profile is not PatternAnalysisProfile.FULL):
                 raise ValueError("prepared input does not match analysis request")
+            self.prepared_input.validate_final(self.symbol, value.timeframe, self.horizons,
+                                               self.as_of_date, self.include_preview)
 
 
 class PatternAnalysisService:
