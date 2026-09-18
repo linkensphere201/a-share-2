@@ -39,6 +39,7 @@ from stock_harness.sqlite_mapping import (
     _source_profile,
 )
 from stock_harness.sqlite_runtime import InterprocessWriterLock, ThreadOnlyWriterLock, Transaction
+from stock_harness.sqlite_initialization import InitializationStep
 from stock_harness.sqlite_analysis_store import SQLiteAnalysisStoreMixin
 from stock_harness.sqlite_chat_store import SQLiteChatStoreMixin
 from stock_harness.sqlite_custom_group_store import SQLiteCustomGroupStoreMixin
@@ -135,16 +136,42 @@ class SQLiteMarketDataStore(
             timeout=busy_timeout_ms / 1000,
         )
         self._connection.row_factory = sqlite3.Row
-        self._configure()
-        self._futures_storage_ready = False
-        self._futures_storage_error = None
-        if read_only:
-            self._futures_storage_ready = bool(self._connection.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='futures_daily_bars'"
-            ).fetchone())
-        else:
-            from stock_harness.sqlite_initialization import initialize_database
-            initialize_database(self)
+        try:
+            self._configure()
+            self._futures_storage_ready = False
+            self._futures_storage_error = None
+            if read_only:
+                self._futures_storage_ready = bool(self._connection.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='futures_daily_bars'"
+                ).fetchone())
+            else:
+                from stock_harness.sqlite_initialization import initialize_database
+                initialize_database(self._connection, self._writer_lock, self._initialization_steps())
+        except BaseException:
+            self._connection.close()
+            raise
+
+    def _initialization_steps(self) -> tuple[InitializationStep, ...]:
+        # Legacy migrations retain their order and transaction/state ownership.
+        return (
+            InitializationStep("chat-policy", self._ensure_chat_policy_version),
+            InitializationStep("chat-sessions", self._ensure_chat_conversation_sessions),
+            InitializationStep("chat-typed-contexts", self._ensure_chat_typed_contexts),
+            InitializationStep("chat-workspace-contexts", self._ensure_chat_workspace_contexts),
+            InitializationStep("chat-context-index", self._ensure_chat_context_index),
+            InitializationStep("chat-template", self._ensure_chat_template_version),
+            InitializationStep("futures", self._ensure_futures_schema),
+            InitializationStep("custom-index-volume", self._ensure_custom_index_volume),
+            InitializationStep("custom-group-roles", self._ensure_custom_group_member_roles),
+            InitializationStep("market-snapshot", self._ensure_market_snapshot_metrics),
+            InitializationStep("analysis-target-settings", self._ensure_generated_analysis_target_settings),
+            InitializationStep("analysis-scenario-type", self._ensure_generated_analysis_scenario_type),
+            InitializationStep("screener-states", self._ensure_screener_candidate_states),
+            InitializationStep("active-market-value", self._ensure_active_market_value_diagnostics),
+            InitializationStep("signal-observation", self._ensure_signal_observation_columns),
+            InitializationStep("board-theme", self.ensure_board_theme_registry),
+            InitializationStep("pinyin-backfill", self._backfill_pinyin_aliases),
+        )
 
     def _ensure_generated_analysis_scenario_type(self) -> None:
         """Extend the immutable generated-item vocabulary without rewriting runs."""
