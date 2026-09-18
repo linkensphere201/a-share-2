@@ -24,6 +24,7 @@ from stock_harness.low_base_pullback import (
     ALGORITHM_VERSION as LOW_BASE_VERSION, CONFIG as LOW_BASE_CONFIG, LAUNCH_TYPE as LOW_BASE_TYPE,
 )
 from stock_harness.screener_result_tags import attach_recognition_tags
+from stock_harness.screener_strategies import get_strategy, strategy_definitions
 from stock_harness.long_platform_pattern import (
     STRATEGY_ID as PLATFORM_STRATEGY_ID, ALGORITHM_VERSION as PLATFORM_VERSION,
     KIND as PLATFORM_KIND, CONFIG as PLATFORM_CONFIG,
@@ -78,47 +79,7 @@ class ScreenerService:
 
     @staticmethod
     def strategies() -> list[dict[str, object]]:
-        return [{
-            "strategy_id": PLATFORM_STRATEGY_ID, "name": "长期横盘平台", "version": PLATFORM_VERSION,
-            "window": 250, "states": ["shape-match"], "final_bars_only": True,
-        }, {
-            "strategy_id": STRATEGY_ID,
-            "name": "大斜边突破",
-            "version": STRATEGY_VERSION,
-            "periods": [MajorLinePeriod.HALF_YEAR.value, MajorLinePeriod.YEAR.value],
-            "states": [item.value for item in SCREENABLE_STATES],
-            "final_bars_only": True,
-        }, {
-            "strategy_id": ACCUMULATION_STRATEGY_ID,
-            "name": "20日堆量蓄势",
-            "version": ACCUMULATION_STRATEGY_VERSION,
-            "window": 20,
-            "context_window": 80,
-            "states": [ACCUMULATION_STATE],
-            "final_bars_only": True,
-        }, {
-            "strategy_id": LOW_BASE_STRATEGY_ID,
-            "name": "低位平台回踩",
-            "version": LOW_BASE_VERSION,
-            "window": LOW_BASE_CONFIG.observation_window_sessions,
-            "states": ["pullback-observation", "pullback-confirmed"],
-            "final_bars_only": True,
-        }, {
-            "strategy_id": BULL_FLAG_STRATEGY_ID, "name": "牛旗盘整",
-            "version": BULL_FLAG_VERSION, "window": BULL_FLAG_CONFIG.max_launch_age,
-            "states": ["pullback-observation"], "final_bars_only": True,
-        }, {
-            "strategy_id": PULLBACK_STRATEGY_ID,
-            "name": "强势股首次回踩",
-            "version": PULLBACK_STRATEGY_VERSION,
-            "window": PULLBACK_CONFIG.observation_window_sessions,
-            "states": ["pullback-observation", "pullback-confirmed"],
-            "final_bars_only": True,
-        }, {
-            "strategy_id": DEEP_DRAWDOWN_STRATEGY_ID, "name": "深跌缩量整理",
-            "version": DEEP_DRAWDOWN_VERSION, "window": 60,
-            "states": [DEEP_DRAWDOWN_STATE], "final_bars_only": True,
-        }]
+        return strategy_definitions()
 
     def start_run(
         self,
@@ -213,8 +174,8 @@ class ScreenerService:
         self, run_id: str, cutoff: date, periods: Sequence[MajorLinePeriod],
         states: Sequence[MajorLineState], max_results: int, strategy_id: str,
     ) -> None:
-        if strategy_id in (PULLBACK_STRATEGY_ID, LOW_BASE_STRATEGY_ID, BULL_FLAG_STRATEGY_ID, DEEP_DRAWDOWN_STRATEGY_ID, PLATFORM_STRATEGY_ID):
-            self._execute_first_pullback(run_id, cutoff, max_results, strategy_id)
+        if get_strategy(strategy_id).structure is not None:
+            self._execute_shape_strategy(run_id, cutoff, max_results, strategy_id)
             return
         if strategy_id == ACCUMULATION_STRATEGY_ID:
             self._execute_volume_accumulation(run_id, cutoff, max_results)
@@ -314,7 +275,7 @@ class ScreenerService:
             (time.perf_counter() - started) * 1000,
         )
 
-    def _execute_first_pullback(self, run_id: str, cutoff: date, max_results: int,
+    def _execute_shape_strategy(self, run_id: str, cutoff: date, max_results: int,
                                 strategy_id: str = PULLBACK_STRATEGY_ID) -> None:
         started = time.perf_counter()
         if strategy_id == DEEP_DRAWDOWN_STRATEGY_ID and cutoff < date.fromisoformat(REFERENCE_END):
@@ -332,15 +293,8 @@ class ScreenerService:
                     horizons=DEFAULT_HORIZONS, config_version=_strategy_version(strategy_id),
                     include_preview=False, as_of_date=cutoff,
                 )
-                analysis = (
-                    self._analysis.analyze_deep_drawdown_candidate(request)
-                    if strategy_id == DEEP_DRAWDOWN_STRATEGY_ID
-                    else self._analysis.analyze_low_base_candidate(request)
-                    if strategy_id == LOW_BASE_STRATEGY_ID
-                    else self._analysis.analyze_screening_candidate(
-                        request, "long-platform" if strategy_id == PLATFORM_STRATEGY_ID else "bull-flag" if strategy_id == BULL_FLAG_STRATEGY_ID else "first-pullback",
-                    )
-                )
+                strategy = get_strategy(strategy_id)
+                analysis = strategy.analyze(self._analysis, request)
                 if analysis is None:
                     raise LookupError("no matching shared structure")
                 if analysis["status"] != "succeeded":
@@ -348,7 +302,7 @@ class ScreenerService:
                 for item in analysis["items"]:
                     evidence = item["payload"]
                     if (item["item_type"] != "zone"
-                        or evidence.get("kind") != (PLATFORM_KIND if strategy_id == PLATFORM_STRATEGY_ID else DEEP_DRAWDOWN_KIND if strategy_id == DEEP_DRAWDOWN_STRATEGY_ID else BULL_FLAG_KIND if strategy_id == BULL_FLAG_STRATEGY_ID else "first-pullback-range")
+                        or evidence.get("kind") != strategy.kind
                         or ((evidence.get("launch_type") == LOW_BASE_TYPE) != (strategy_id == LOW_BASE_STRATEGY_ID))
                         or not evidence.get("screen_eligible")
                         or evidence.get("stage") not in {"pullback-observation", "pullback-confirmed", DEEP_DRAWDOWN_STATE}
@@ -357,7 +311,7 @@ class ScreenerService:
                     candidates.append({
                         "symbol": instrument["symbol"], "state": evidence["stage"],
                         "score": evidence["score"], "line_item_id": item["item_id"],
-                        "line_code": "LONG-PLATFORM" if strategy_id == PLATFORM_STRATEGY_ID else "DEEP-DRAWDOWN" if strategy_id == DEEP_DRAWDOWN_STRATEGY_ID else "BULL-FLAG" if strategy_id == BULL_FLAG_STRATEGY_ID else "LOW-BASE-PULLBACK" if strategy_id == LOW_BASE_STRATEGY_ID else "FIRST-PULLBACK",
+                        "line_code": strategy.line_code,
                         "analysis_run_id": analysis["run_id"],
                         "evidence": evidence,
                     })
@@ -478,56 +432,11 @@ class ScreenerService:
 
 
 def _strategy_version(strategy_id: str) -> str:
-    if strategy_id == PLATFORM_STRATEGY_ID:
-        return PLATFORM_VERSION
-    if strategy_id == DEEP_DRAWDOWN_STRATEGY_ID:
-        return DEEP_DRAWDOWN_VERSION
-    if strategy_id == BULL_FLAG_STRATEGY_ID:
-        return BULL_FLAG_VERSION
-    if strategy_id == LOW_BASE_STRATEGY_ID:
-        return LOW_BASE_VERSION
-    if strategy_id == PULLBACK_STRATEGY_ID:
-        return PULLBACK_STRATEGY_VERSION
-    if strategy_id == STRATEGY_ID:
-        return STRATEGY_VERSION
-    if strategy_id == ACCUMULATION_STRATEGY_ID:
-        return ACCUMULATION_STRATEGY_VERSION
-    raise ValueError(f"unknown screener strategy: {strategy_id}")
+    return get_strategy(strategy_id).version
 
 
 def _parameters(strategy_id, periods, states, max_results: int) -> dict[str, object]:
-    if strategy_id == PLATFORM_STRATEGY_ID:
-        return {"max_results": max_results, "final_bars_only": True, "states": ["shape-match"],
-                "pattern_parameters": asdict(PLATFORM_CONFIG), "analysis_config": PLATFORM_VERSION}
-    if strategy_id == DEEP_DRAWDOWN_STRATEGY_ID:
-        return {"max_results": max_results, "final_bars_only": True, "window": 60,
-                "states": [DEEP_DRAWDOWN_STATE], "minimum_score": MIN_SCORE,
-                "reference_symbol": REFERENCE_SYMBOL, "reference_start": REFERENCE_START,
-                "reference_end": REFERENCE_END, "analysis_config": DEEP_DRAWDOWN_VERSION}
-    if strategy_id == BULL_FLAG_STRATEGY_ID:
-        return {"max_results": max_results, "final_bars_only": True,
-                "window": BULL_FLAG_CONFIG.max_launch_age, "states": ["pullback-observation"],
-                "pattern_parameters": asdict(BULL_FLAG_CONFIG), "analysis_config": BULL_FLAG_VERSION}
-    if strategy_id == LOW_BASE_STRATEGY_ID:
-        return {"max_results": max_results, "final_bars_only": True,
-                "window": LOW_BASE_CONFIG.observation_window_sessions,
-                "states": ["pullback-observation", "pullback-confirmed"],
-                "pattern_parameters": asdict(LOW_BASE_CONFIG), "analysis_config": LOW_BASE_VERSION}
-    if strategy_id == PULLBACK_STRATEGY_ID:
-        return {"max_results": max_results, "final_bars_only": True,
-                "window": PULLBACK_CONFIG.observation_window_sessions,
-                "states": ["pullback-observation", "pullback-confirmed"],
-                "analysis_config": PULLBACK_STRATEGY_VERSION}
-    if strategy_id == ACCUMULATION_STRATEGY_ID:
-        return {
-            "window": 20, "context_window": 80,
-            "max_results": max_results, "final_bars_only": True,
-        }
-    return {
-        "periods": [item.value for item in periods],
-        "states": [item.value for item in states],
-        "max_results": max_results, "final_bars_only": True,
-    }
+    return get_strategy(strategy_id).parameters(periods, states, max_results)
 
 
 def _local_structure(bars) -> dict[str, object]:

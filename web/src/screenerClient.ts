@@ -1,4 +1,10 @@
-export type ScreenerStrategyId = 'major-descending-breakout' | 'volume-accumulation-20d' | 'strong-first-pullback' | 'low-base-platform-pullback' | 'bull-flag-consolidation' | 'deep-drawdown-consolidation' | 'long-consolidation-platform'
+export type ScreenerStrategyId = string
+export type ScreenerStrategy = { strategy_id: string; name: string; version: string; states: string[] }
+
+export async function listScreenerStrategies(signal?: AbortSignal): Promise<ScreenerStrategy[]> {
+  const payload = await json<{ items: ScreenerStrategy[] }>(await fetch('/api/screener/strategies', { signal }))
+  return payload.items
+}
 export type ScreenerState = 'critical-breakout' | 'breakout-retest' | 'broken-out' | 'accumulating' | 'pullback-observation' | 'pullback-confirmed' | 'shape-match'
 export type ScreenerPeriod = '3m' | '6m' | '1y'
 

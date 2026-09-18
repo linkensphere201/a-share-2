@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, model_validator, field_validator
 
 
 CustomGroupRole = Literal[
@@ -223,9 +223,14 @@ class TrendReviewUpdateInput(BaseModel):
 
 
 class ScreenerRunInput(BaseModel):
-    strategy_id: Literal[
-        "major-descending-breakout", "volume-accumulation-20d", "strong-first-pullback", "low-base-platform-pullback", "bull-flag-consolidation", "deep-drawdown-consolidation", "long-consolidation-platform"
-    ] = "major-descending-breakout"
+    strategy_id: str = "major-descending-breakout"
+
+    @field_validator("strategy_id")
+    @classmethod
+    def registered_strategy(cls, value: str) -> str:
+        from stock_harness.screener_strategies import get_strategy
+        get_strategy(value)
+        return value
     periods: list[Literal["6m", "1y"]] = Field(
         default_factory=lambda: ["6m", "1y"], min_length=1,
     )

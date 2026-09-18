@@ -9,7 +9,7 @@ import { accumulationStageLabel, accumulationPatternLabel, accumulationStyleLabe
 import { useAnalysisOverlayVisibility, useAnalysisLayers } from './AnalysisOverlayToggle'
 import { logError, logInfo } from './eventLogger'
 import {
-  deleteScreenerRun, listScreenerCandidates, listScreenerRuns,
+  deleteScreenerRun, listScreenerCandidates, listScreenerRuns, listScreenerStrategies,
   loadScreenerRun, startScreenerRun,
   type ScreenerCandidate, type ScreenerPeriod, type ScreenerRun, type ScreenerState,
   type ScreenerStrategyId,
@@ -66,6 +66,16 @@ export function ScreenerWorkspace({
   const [selected, setSelected] = useState<ScreenerCandidate>()
   const [analysis, setAnalysis] = useState<TrendAnalysisRun | null>(null)
   const [strategyId, setStrategyId] = useState<ScreenerStrategyId>('major-descending-breakout')
+  const [availableStrategies, setAvailableStrategies] = useState(strategyLabels)
+  useEffect(() => {
+    const controller = new AbortController()
+    listScreenerStrategies(controller.signal).then(values => {
+      if (!controller.signal.aborted && values?.length) {
+        setAvailableStrategies(Object.fromEntries(values.map(value => [value.strategy_id, value.name])))
+      }
+    }).catch(() => { /* Retain the legacy catalog when connected to an older desktop. */ })
+    return () => controller.abort()
+  }, [])
   const [periods, setPeriods] = useState<ScreenerPeriod[]>(['6m', '1y'])
   const [states, setStates] = useState<ScreenerState[]>(['critical-breakout', 'breakout-retest', 'broken-out'])
   const [maxResults, setMaxResults] = useState(200)
@@ -291,12 +301,12 @@ export function ScreenerWorkspace({
   return <main className="screener-workspace">
     <header className="screener-toolbar">
       <button className="icon-button" title="返回工作台" aria-label="返回工作台" onClick={onClose}><ArrowLeft size={16}/></button>
-      <span className="screener-title"><Filter size={17}/>选股器 <small>{strategyLabels[strategyId]}</small></span>
+      <span className="screener-title"><Filter size={17}/>选股器 <small>{availableStrategies[strategyId] ?? strategyId}</small></span>
       <label className="screener-limit">策略<select value={strategyId} onChange={event => {
         setStrategyId(event.target.value as ScreenerStrategyId)
         setResultStateFilter('all')
       }}>
-        {Object.entries(strategyLabels).map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+        {Object.entries(availableStrategies).map(([id, label]) => <option key={id} value={id}>{label}</option>)}
       </select></label>
       {strategyId === 'major-descending-breakout' && <fieldset><legend>周期</legend>{(['6m', '1y'] as ScreenerPeriod[]).map(item =>
         <label key={item}><input type="checkbox" checked={periods.includes(item)} onChange={() => toggle(item, periods, setPeriods)}/>{periodLabels[item]}</label>)}</fieldset>}
