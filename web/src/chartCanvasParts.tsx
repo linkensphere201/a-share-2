@@ -565,6 +565,11 @@ export function MeasurementOverlay({
         {measurement.comparable
           ? <strong className={tone}>涨跌 {formatChangePercent(measurement.changePercent)}</strong>
           : <strong className="roll-warning">跨 {measurement.rollEventCount} 次换月 · 区间涨跌不可比</strong>}
+        {measurement.turnover && <>
+          <span>{measurement.turnover.available === measurement.turnover.total ? '累计换手' : '已知日合计'}<b>{measurement.turnover.available ? `${measurement.turnover.sum.toFixed(2)}%` : '--'}</b></span>
+          <span>日均换手（有效日）<b>{measurement.turnover.average == null ? '--' : `${measurement.turnover.average.toFixed(2)}%`}</b></span>
+          <small>自由流通 · 数据 {measurement.turnover.available}/{measurement.turnover.total} 日</small>
+        </>}
       </div>
     </div>
   )

@@ -106,7 +106,7 @@ export function projectMeasurement(
   const endY = candles.priceToCoordinate(measurement.close)
   if (startX === null || endX === null || startY === null || endY === null) return undefined
   const height = chart.panes()[0]?.getHeight() ?? host.clientHeight
-  const labelWidth = Math.min(168, Math.max(132, host.clientWidth - 16))
+  const labelWidth = Math.min(232, Math.max(0, host.clientWidth - 16))
   const midpointX = (startX + endX) / 2
   const midpointY = (startY + endY) / 2
   return {
@@ -117,7 +117,7 @@ export function projectMeasurement(
     endX,
     endY,
     labelLeft: clamp(midpointX + 8, 8, Math.max(8, host.clientWidth - labelWidth - 8)),
-    labelTop: clamp(midpointY - 24, 36, Math.max(36, height - 66)),
+    labelTop: clamp(midpointY - 24, 8, Math.max(8, height - (measurement.turnover ? 128 : 80))),
   }
 }
 

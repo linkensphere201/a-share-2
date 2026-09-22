@@ -37,6 +37,7 @@ export type RangeMeasurement = {
   comparable: boolean
   elapsedDays: number
   kLineCount: number
+  turnover?: { sum: number; average: number | null; available: number; total: number }
 }
 
 export type PriceGap = {
@@ -307,8 +308,14 @@ export function createRangeMeasurement(
   last: DailyBar,
   kLineCount: number,
   rollEventCount = 0,
+  dailyBars?: DailyBar[],
 ): RangeMeasurement {
   const from = first.period_start ?? first.trade_date
+  const selected = dailyBars?.filter(bar => bar.trade_date >= from && bar.trade_date <= last.trade_date)
+  const rates = selected?.filter(bar => bar.bar_state !== 'intraday')
+    .map(bar => bar.turnover_rate_f)
+    .filter((rate): rate is number => rate != null && Number.isFinite(rate) && rate >= 0) ?? []
+  const sum = rates.reduce((total, rate) => total + rate, 0)
   return {
     from,
     to: last.trade_date,
@@ -321,6 +328,10 @@ export function createRangeMeasurement(
     comparable: rollEventCount === 0,
     elapsedDays: calendarDaysBetween(from, last.trade_date),
     kLineCount,
+    ...(selected ? { turnover: {
+      sum, average: rates.length ? sum / rates.length : null,
+      available: rates.length, total: selected.length,
+    } } : {}),
   }
 }
 

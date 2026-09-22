@@ -1593,6 +1593,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .measurement-duration { fill: #c6ccd5; font-size: 10px; paint-order: stroke; stroke: #0d1014; stroke-width: 3px; }
 .chart-measurement-readout {
   position: absolute;
+  width: 232px;
+  box-sizing: border-box;
   max-width: calc(100% - 16px);
   display: grid;
   gap: 1px;

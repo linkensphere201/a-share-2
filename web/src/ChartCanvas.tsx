@@ -1580,6 +1580,8 @@ export function ChartCanvas({
     )).length
     setMeasurement(createRangeMeasurement(
       rangeSelection.first, rangeSelection.last, rangeSelection.count, rollEventCount,
+      instrumentKind === 'stock' || barsRef.current.some(bar => bar.turnover_rate_f !== undefined)
+        ? barsRef.current : undefined,
     ))
     setRangeSelection(undefined)
     setSelectionBox(undefined)
