@@ -39,6 +39,22 @@ def _active_market_value_input_digest(
 
 
 class SQLiteActiveMarketValueStoreMixin:
+    def get_daily_turnover_rates(
+        self, symbol: str, start_date: date, end_date: date,
+    ) -> dict[date, float]:
+        """Return exact-date free-float turnover percentages, without filling gaps."""
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT feature.trade_date, feature.turnover_rate_f
+                FROM active_market_value_features AS feature
+                JOIN instruments AS instrument USING (instrument_id)
+                WHERE instrument.symbol = ? AND feature.trade_date BETWEEN ? AND ?
+                """,
+                (symbol.upper(), _date_key(start_date), _date_key(end_date)),
+            ).fetchall()
+        return {_date_from_key(int(row[0])): float(row[1]) for row in rows}
+
     def _ensure_active_market_value_diagnostics(self) -> None:
         daily_columns = {
             str(row[1]) for row in self._connection.execute(

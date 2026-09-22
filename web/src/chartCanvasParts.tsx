@@ -598,6 +598,7 @@ export function ChartReadout({ value, instrumentName, futures, middleAveragePeri
       {futures && value.previous_settlement != null && <span className="futures-detail">昨结 <b>{formatPrice(value.previous_settlement)}</b></span>}
       {futures && value.settlement != null && <span className="futures-detail">结算 <b>{formatPrice(value.settlement)}</b></span>}
       <span>量 <b>{formatVolume(value.volume)}</b></span>
+      {!futures && value.turnover_rate_f !== undefined && <span title="Tushare daily_basic：自由流通股本口径，单位 %">换手率（自由流通） <b>{value.turnover_rate_f != null && Number.isFinite(value.turnover_rate_f) ? `${value.turnover_rate_f.toFixed(2)}%` : '--'}</b></span>}
       {futures && value.amount != null && <span className="futures-detail">额 <b>{formatVolume(value.amount)}</b></span>}
       {futures && value.open_interest != null && <span className="futures-detail">持仓 <b>{formatVolume(value.open_interest)}</b></span>}
       {futures && value.open_interest_change != null && <span className="futures-detail">增仓 <b className={value.open_interest_change >= 0 ? 'rise' : 'fall'}>{formatSignedVolume(value.open_interest_change)}</b></span>}

@@ -7,6 +7,7 @@ export type DailyBar = {
   low: number
   close: number
   volume: number
+  turnover_rate_f?: number | null
   amount?: number | null
   previous_close?: number | null
   settlement?: number | null
@@ -167,6 +168,7 @@ export function aggregateBars(bars: DailyBar[], bucket: number): RenderBar[] {
       low: Math.min(...group.map(item => item.low)),
       close: last.close,
       volume: group.reduce((sum, item) => sum + item.volume, 0),
+      turnover_rate_f: group.length === 1 ? last.turnover_rate_f : undefined,
       ...(group.some(item => item.roll_event) ? { roll_event: true } : {}),
       source: first.source === last.source ? first.source : 'mixed',
     })

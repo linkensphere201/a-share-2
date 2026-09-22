@@ -481,10 +481,15 @@ def create_market_router() -> APIRouter:
                 } for row in futures_rows],
             }
         rows = selected_store.get_daily_bars(normalized, start_date, end_date)
+        is_stock = instrument["kind"] == InstrumentKind.STOCK.value
+        turnover = selected_store.get_daily_turnover_rates(
+            normalized, rows[0].trade_date, rows[-1].trade_date,
+        ) if is_stock and rows else {}
         items = [{
             "trade_date": row.trade_date, "open": row.open, "high": row.high,
             "low": row.low, "close": row.close, "volume": row.volume,
             "source": row.source, "bar_state": "final",
+            **({"turnover_rate_f": turnover.get(row.trade_date)} if is_stock else {}),
         } for row in rows]
         service = runtime(request).intraday_service
         provisional = service.get(normalized) if service else None
@@ -505,6 +510,7 @@ def create_market_router() -> APIRouter:
                     "source": provisional["source"], "bar_state": "intraday",
                     "stale": provisional["stale"],
                     "provider_time": provisional["provider_time"],
+                    **({"turnover_rate_f": None} if is_stock else {}),
                 })
         return {"symbol": normalized, "items": items}
 
