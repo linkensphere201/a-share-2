@@ -65,7 +65,7 @@ from stock_harness.trend_context import (
 )
 
 
-ALGORITHM_VERSION = "trend-causal-replay-v46"
+ALGORITHM_VERSION = "trend-causal-replay-v47"
 LOGGER = logging.getLogger(__name__)
 
 
