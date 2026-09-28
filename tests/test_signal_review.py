@@ -65,9 +65,17 @@ def test_signal_review_snapshots_preserve_revisions_and_diffs() -> None:
     )
     assert second["revision"] == 2
     assert second["prior_run_id"] == first["run_id"]
+    scored_item = _item("000001.SZ", "retained")
+    scored_item["payload"].update({
+        "metrics": {"large": [1] * 1000}, "comparison": {"old": "snapshot"},
+        "rendered_summary": "full summary",
+        "score_result": {"total_score": 83, "grade": "A", "eligible": True,
+                         "rank": 1, "verdict": "pass", "summary": "score summary",
+                         "risk_summary": "risk", "system_payload": {"large": [2] * 1000}},
+    })
     store.complete_signal_review_run(
         str(second["run_id"]),
-        items=[_item("000001.SZ", "retained"), _item("000002.SZ", "added", rank=2)],
+        items=[scored_item, _item("000002.SZ", "added", rank=2)],
         summary={"note": "second"}, input_digest="digest-2",
     )
 
@@ -79,6 +87,28 @@ def test_signal_review_snapshots_preserve_revisions_and_diffs() -> None:
     items = store.list_signal_review_items(str(second["run_id"]))
     assert [item["symbol"] for item in items] == ["000001.SZ", "000002.SZ"]
     assert items[0]["evidence"][0]["alias"] == "S1"
+    statements = []
+    store._connection.set_trace_callback(statements.append)
+    summaries = store.list_signal_review_items(str(second["run_id"]), summary=True)
+    store._connection.set_trace_callback(None)
+    assert summaries[0]["evidence"] == []
+    assert summaries[0]["evidence_complete"] is False
+    assert summaries[0]["symbol"] == items[0]["symbol"]
+    assert "score_result" not in summaries[0]["payload"]
+    assert "metrics" not in summaries[0]["payload"]
+    assert summaries[0]["payload"]["list_score"] == {
+        "total_score": 83, "grade": "A", "eligible": True, "rank": 1,
+        "verdict": "pass", "summary": "score summary", "risk_summary": "risk",
+    }
+    assert summaries[0]["payload"]["list_score"]["eligible"] is True
+    assert not any("FROM signal_review_evidence" in sql for sql in statements)
+    assert store.get_signal_review_item(str(second["run_id"]), items[0]["item_id"]) == items[0]
+    with TestClient(create_app(store=store)) as client:
+        url = f"/api/signals/runs/{second['run_id']}/items"
+        assert client.get(url).json()["items"] == items
+        compact = client.get(url, params={"summary": True, "limit": 1}).json()
+        assert compact == {"items": summaries[:1], "total": 2}
+        assert client.get(f"{url}/{items[0]['item_id']}").json() == items[0]
 
     newer = store.create_signal_review_run(
         signal_id=WEEKLY_RECOGNITION_SIGNAL,

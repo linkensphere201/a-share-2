@@ -11,7 +11,7 @@ import { AddToListMenu, type AddToListMenuState, type ListInstrument, type Targe
 import type { ThemeDefinition } from './themeStore'
 import {
   listBoardObservations, listSignalAttention, listSignalDefinitions, listSignalItems,
-  listSignalRuns, listSignalScores, loadObservationPool, loadSignalRun, setSignalAttention, startSignalRun,
+  listSignalRuns, listSignalScores, loadObservationPool, loadSignalRun, loadSignalItem, setSignalAttention, startSignalRun,
   type BoardDailyObservation, type SignalAttention, type SignalChangeType,
   type ObservationPoolItem, type ObservationPoolSnapshot, type ObservationPoolSource,
   type SignalDefinition, type SignalEvidence, type SignalItem, type SignalProfile,
@@ -97,10 +97,23 @@ export function SignalReviewWorkspace({ theme, onClose, targetLists = [], onAddI
   const [pendingEffectiveDate, setPendingEffectiveDate] = useState<string>()
   const [runContextMenu, setRunContextMenu] = useState<SignalRunContextMenu>()
   const [items, setItems] = useState<SignalItem[]>([])
-  const [selectedItem, setSelectedItem] = useState<SignalItem>()
+  const [selectedItemSummary, setSelectedItem] = useState<SignalItem>()
+  const [itemDetail, setItemDetail] = useState<{ key: string; value: SignalItem }>()
+  const itemDetailKey = selectedRun && selectedItemSummary
+    ? `${selectedRun.run_id}:${selectedItemSummary.item_id}` : undefined
+  const selectedItem = itemDetail?.key === itemDetailKey ? itemDetail?.value : selectedItemSummary
   const [profile, setProfile] = useState<ProfileFilter>('all')
   const [change, setChange] = useState<ChangeFilter>('all')
   const [error, setError] = useState('')
+  useEffect(() => {
+    setSelectedItem(undefined)
+    setItems([])
+    setItemDetail(undefined)
+  }, [selectedRun?.run_id])
+  useResultQuery(selectedItemSummary?.evidence_complete === false ? itemDetailKey : undefined,
+    signal => loadSignalItem(selectedRun!.run_id, selectedItemSummary!.item_id, signal),
+    value => setItemDetail({ key: itemDetailKey!, value }),
+    reason => setError(String(reason)))
   const [chatOpen, setChatOpen] = useState(false)
   const [highlightedEvidenceId, setHighlightedEvidenceId] = useState<string>()
   const [scenarioHighlightedItemId, setScenarioHighlightedItemId] = useState<string>()
@@ -186,6 +199,7 @@ export function SignalReviewWorkspace({ theme, onClose, targetLists = [], onAddI
     if (!selectedRun) { setItems([]); setSelectedItem(undefined); return }
     const controller = new AbortController()
     listSignalItems(selectedRun.run_id, controller.signal).then(value => {
+      if (controller.signal.aborted) return
       setItems(value)
       setSelectedItem(current => historySelection
         ? value.find(item => item.item_key === historySelection.entityKey || item.symbol === historySelection.symbol)
@@ -352,8 +366,8 @@ export function SignalReviewWorkspace({ theme, onClose, targetLists = [], onAddI
     const profileOrder = (value: SignalProfile) => value === 'market' ? 0
       : value === 'attention' || value === 'recent' ? 1 : 2
     return profileOrder(left.profile) - profileOrder(right.profile)
-      || (right.payload.score_result?.total_score ?? right.score * 100)
-        - (left.payload.score_result?.total_score ?? left.score * 100)
+      || (right.payload.score_result?.total_score ?? right.payload.list_score?.total_score ?? right.score * 100)
+        - (left.payload.score_result?.total_score ?? left.payload.list_score?.total_score ?? left.score * 100)
       || left.symbol.localeCompare(right.symbol)
   }), [items, profile, change])
   const scoresBySystem = useMemo(() => {
@@ -799,7 +813,7 @@ export function SignalReviewWorkspace({ theme, onClose, targetLists = [], onAddI
           </div>
           <div className="signal-result-head"><span>评分</span><span>标的</span><span>{daily ? '状态' : '板块'}</span><span>变化</span></div>
           <div className="signal-scroll">{selectedRun?.status === 'failed' && <div className="signal-empty compact error">{selectedRun.error}</div>}{filtered.map(item => <button key={item.item_id} onContextMenu={event => openResultMenu(event, item)} className={`${selectedItem?.item_id === item.item_id ? 'active ' : ''}${item.active ? '' : 'inactive'}`} onClick={() => { setSelectedItem(item); setSelectedObservation(undefined); setSelectedPoolItem(undefined); setSelectedEvidenceId(undefined); setHighlightedEvidenceId(undefined) }}>
-            <ScoreBadge score={item.payload.score_result} fallback={item.score * 100} rank={item.rank}/><span><span className="instrument-name-line"><b>{item.name}</b><MarketBoardBadge instrument={item}/></span><small>{item.symbol}</small></span>{daily
+            <ScoreBadge score={item.payload.score_result ?? item.payload.list_score} fallback={item.score * 100} rank={item.rank}/><span><span className="instrument-name-line"><b>{item.name}</b><MarketBoardBadge instrument={item}/></span><small>{item.symbol}</small></span>{daily
               ? <SignalStateCell states={item.payload.state_codes} fallback={profileLabels[item.profile]}/>
               : <span>{item.payload.board_count ?? 0}<small>{profileLabels[item.profile]}</small></span>}
             <span className={`change ${item.change_type}`}>{changeLabels[item.change_type]}</span>
@@ -813,7 +827,7 @@ export function SignalReviewWorkspace({ theme, onClose, targetLists = [], onAddI
           : selectedAnalysisScore ? `${scoreSystemLabel(selectedAnalysisScore.system_id)} · 独立评分 ${selectedAnalysisScore.total_score.toFixed(1)}`
           : selectedItem ? `${profileLabels[selectedItem.profile]} · 得分 ${(selectedItem.score * 100).toFixed(1)} · 置信 ${(selectedItem.confidence * 100).toFixed(1)}` : `${selectedObservation?.effective_date} · 一级固定分析`}</small>{selectedObservation
           ? <button className="icon-button" title={pinned ? '取消手工固定' : '加入手工观察池'} aria-label={pinned ? '取消手工固定' : '加入手工观察池'} onClick={() => void togglePinned()}>{pinned ? <PinOff size={13}/> : <Pin size={13}/>}</button>
-          : null}</header>
+          : null}{selectedItem?.evidence_complete === false && <small role="status">正在加载详情…</small>}</header>
         {criticalAlert && <div className={`signal-critical-alert ${criticalAlert.tone}`}>
           <span>{criticalAlert.title}<small>{criticalAlert.facts}</small></span>
           <span>{criticalAlert.reason}<small>{criticalAlert.condition}</small></span>
@@ -1205,7 +1219,7 @@ function PoolEvidence({ item, selectedSourceId, onSourceActivate }: {
 }
 
 function ScoreBadge({ score, fallback, rank }: {
-  score?: SignalScoreResult
+  score?: Pick<SignalScoreResult, 'total_score' | 'grade' | 'eligible' | 'rank' | 'verdict' | 'summary' | 'risk_summary'>
   fallback?: number
   rank?: number
 }) {

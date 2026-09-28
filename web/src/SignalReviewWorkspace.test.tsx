@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
 import { SignalReviewWorkspace, stateDetailLabels } from './SignalReviewWorkspace'
@@ -30,12 +30,45 @@ afterEach(() => {
 })
 
 describe('SignalReviewWorkspace', () => {
+  it('opens charts before lazy evidence and ignores detail from an old selection', async () => {
+    const pending = new Map<string, { resolve: (value: Response) => void; signal?: AbortSignal | null }>()
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url === '/api/signals/definitions') return response({ items: [definition] })
+      if (url.includes('/api/signals/runs?')) return response({ items: [run] })
+      if (url.endsWith('/items?summary=true')) return response({
+        items: items.map(item => ({ ...item, evidence: [], evidence_complete: false })),
+      })
+      if (url.includes('/scores?')) return response({ items: [] })
+      if (url.includes('/items/')) return new Promise<Response>(resolve => {
+        pending.set(url.split('/').at(-1)!, { resolve, signal: init?.signal })
+      })
+      throw new Error(`unexpected URL ${url}`)
+    }))
+    const user = userEvent.setup()
+    render(<SignalReviewWorkspace theme={themes[0]} onClose={() => undefined}/>)
+    const first = await screen.findByText('000001.SZ')
+    expect(pending.size).toBe(0)
+    await user.click(first.closest('button')!)
+    expect(screen.getByTestId('signal-chart').dataset.symbol).toBe('000001.SZ')
+    expect(screen.getByRole('status').textContent).toContain('正在加载')
+    await vi.waitFor(() => expect(pending.has('item-1')).toBe(true))
+    await user.click(screen.getByText('000002.SZ').closest('button')!)
+    await vi.waitFor(() => expect(pending.has('item-2')).toBe(true))
+    expect(pending.get('item-1')!.signal?.aborted).toBe(true)
+    await act(async () => { pending.get('item-2')!.resolve(await response(items[1])) })
+    expect(screen.queryByRole('status')).toBeNull()
+    await act(async () => { pending.get('item-1')!.resolve(await response(items[0])) })
+    expect(screen.getByTestId('signal-chart').dataset.symbol).toBe('000002.SZ')
+    expect(screen.queryByText('[S1]')).toBeNull()
+  })
+
   it('adds the right-clicked result without opening its chart, and reports duplicates', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
       if (url === '/api/signals/definitions') return response({ items: [definition] })
       if (url.includes('/api/signals/runs?')) return response({ items: [run] })
-      if (url.endsWith('/items')) return response({ items })
+      if (url.endsWith('/items?summary=true')) return response({ items })
       if (url.includes('/scores?')) return response({ items: [] })
       throw new Error(`unexpected URL ${url}`)
     }))
@@ -104,7 +137,7 @@ describe('SignalReviewWorkspace', () => {
       const url = String(input)
       if (url === '/api/signals/definitions') return response({ items: [definition] })
       if (url.includes('/api/signals/runs?')) return response({ items: [run] })
-      if (url.endsWith('/items')) return response({ items })
+      if (url.endsWith('/items?summary=true')) return response({ items })
       if (url.includes('/scores?')) return response({ items: [] })
       throw new Error(`unexpected URL ${url}`)
     })
@@ -171,7 +204,7 @@ describe('SignalReviewWorkspace', () => {
       const url = String(input)
       if (url === '/api/signals/definitions') return response({ items: [definition] })
       if (url.includes('/api/signals/runs?')) return response({ items: [newerRun, run] })
-      if (url.endsWith('/items')) return response({ items })
+      if (url.endsWith('/items?summary=true')) return response({ items })
       if (url.includes('/scores?')) return response({ items: [] })
       if (url.includes('/api/signals/weekly-board-recognition/runs') && init?.method === 'POST') {
         expect(JSON.parse(String(init.body))).toEqual({ effective_date: '2026-09-04' })
@@ -211,7 +244,7 @@ describe('SignalReviewWorkspace', () => {
       if (url.includes('/api/signals/weekly-board-recognition/runs') && init?.method === 'POST') {
         return pendingStart
       }
-      if (url.endsWith('/items')) return response({ items: [] })
+      if (url.endsWith('/items?summary=true')) return response({ items: [] })
       throw new Error(`unexpected URL ${url}`)
     }))
     const user = userEvent.setup()
@@ -234,7 +267,7 @@ describe('SignalReviewWorkspace', () => {
       const url = String(input)
       if (url === '/api/signals/definitions') return response({ items: [definition] })
       if (url.includes('/api/signals/runs?')) return response({ items: [run] })
-      if (url.endsWith('/items')) return response({ items })
+      if (url.endsWith('/items?summary=true')) return response({ items })
       if (url.includes('/scores?')) return response({ items: [] })
       if (url === '/api/ai/codex/status') return response({
         codex: { available: true, authenticated: true, experimental: true },
@@ -317,7 +350,7 @@ describe('SignalReviewWorkspace', () => {
       const url = String(input)
       if (url === '/api/signals/definitions') return response({ items: [dailyDefinition] })
       if (url.includes('/api/signals/runs?')) return response({ items: [dailyRun] })
-      if (url.endsWith('/items')) return response({ items: [] })
+      if (url.endsWith('/items?summary=true')) return response({ items: [] })
       if (url.includes('/scores?')) return response({ items: [] })
       if (url.includes('/board-observations?')) return response({ items: [observation], total: 1 })
       if (url.endsWith('/attention') && init?.method !== 'PUT') return response({ items: pinned ? [{
@@ -372,7 +405,7 @@ describe('SignalReviewWorkspace', () => {
       if (url === '/api/signals/definitions') return response({ items: [dailyDefinition] })
       if (url.includes('/api/signals/runs?')) return response({ items: [dailyRun] })
       if (url === '/api/signals/runs/run-0') return response({ ...dailyRun, run_id: 'run-0', revision: 1 })
-      if (url.endsWith('/items')) return response({ items: [] })
+      if (url.endsWith('/items?summary=true')) return response({ items: [] })
       if (url.includes('/scores?')) return response({ items: scores })
       if (url.endsWith('/attention')) return response({ items: [] })
       if (url.includes('/board-observations?')) return response({ items: observations, total: 2 })
@@ -430,7 +463,7 @@ describe('SignalReviewWorkspace', () => {
       const url = String(input)
       if (url === '/api/signals/definitions') return response({ items: [dailyDefinition] })
       if (url.includes('/api/signals/runs?')) return response({ items: [dailyRun] })
-      if (url.endsWith('/items')) return response({ items: [] })
+      if (url.endsWith('/items?summary=true')) return response({ items: [] })
       if (url.includes('/scores?')) return response({ items: [meanScore, noSetupScore] })
       if (url.endsWith('/attention')) return response({ items: [] })
       if (url.includes('/board-observations?')) return response({ items: [], total: 0 })
@@ -471,7 +504,7 @@ describe('SignalReviewWorkspace', () => {
       const url = String(input)
       if (url === '/api/signals/definitions') return response({ items: [dailyDefinition] })
       if (url.includes('/api/signals/runs?')) return response({ items: [dailyRun] })
-      if (url.endsWith('/items')) return response({ items: [] })
+      if (url.endsWith('/items?summary=true')) return response({ items: [] })
       if (url.includes('/scores?')) return response({ items: [trend, leading] })
       if (url.endsWith('/attention')) return response({ items: [] })
       if (url.includes('/board-observations?')) return response({
@@ -515,7 +548,7 @@ describe('SignalReviewWorkspace', () => {
       const url = String(input)
       if (url === '/api/signals/definitions') return response({ items: [dailyDefinition] })
       if (url.includes('/api/signals/runs?')) return response({ items: [dailyRun] })
-      if (url.endsWith('/items')) return response({ items: [] })
+      if (url.endsWith('/items?summary=true')) return response({ items: [] })
       if (url.includes('/scores?')) return response({ items: [leading] })
       if (url.endsWith('/attention')) return response({ items: [] })
       if (url.includes('/board-observations?')) return response({ items: observations, total: 1 })
@@ -547,7 +580,7 @@ describe('SignalReviewWorkspace', () => {
       const url = String(input)
       if (url === '/api/signals/definitions') return response({ items: [dailyDefinition] })
       if (url.includes('/api/signals/runs?')) return response({ items: [dailyRun] })
-      if (url.endsWith('/items')) return response({ items: [] })
+      if (url.endsWith('/items?summary=true')) return response({ items: [] })
       if (url.includes('/scores?')) return response({ items: [hotspot] })
       if (url.endsWith('/attention')) return response({ items: [] })
       if (url.includes('/board-observations?')) return response({
@@ -579,7 +612,7 @@ describe('SignalReviewWorkspace', () => {
       const url = String(input)
       if (url === '/api/signals/definitions') return response({ items: [dailyDefinition] })
       if (url.includes('/api/signals/runs?')) return response({ items: [dailyRun] })
-      if (url.endsWith('/items')) return response({ items: [] })
+      if (url.endsWith('/items?summary=true')) return response({ items: [] })
       if (url.includes('/scores?')) return response({ items: [hotspot] })
       if (url.endsWith('/attention')) return response({ items: [] })
       if (url.includes('/board-observations?')) return response({
@@ -620,7 +653,7 @@ describe('SignalReviewWorkspace', () => {
       const url = String(input)
       if (url === '/api/signals/definitions') return response({ items: [dailyDefinition] })
       if (url.includes('/api/signals/runs?')) return response({ items: [dailyRun] })
-      if (url.endsWith('/items')) return response({ items: [dailyItem] })
+      if (url.endsWith('/items?summary=true')) return response({ items: [dailyItem] })
       if (url.includes('/scores?')) return response({ items: [] })
       if (url.endsWith('/attention')) return response({ items: [] })
       if (url === '/api/analysis/runs/deep-1') return response({ run_id: 'deep-1', items: [{
@@ -701,7 +734,7 @@ describe('SignalReviewWorkspace', () => {
       const url = String(input)
       if (url === '/api/signals/definitions') return response({ items: [dailyDefinition] })
       if (url.includes('/api/signals/runs?')) return response({ items: [dailyRun] })
-      if (url.endsWith('/items')) return response({ items: [forestry] })
+      if (url.endsWith('/items?summary=true')) return response({ items: [forestry] })
       if (url.includes('/scores?')) return response({ items: [] })
       if (url.endsWith('/attention')) return response({ items: [] })
       if (url.includes('/board-observations?')) return response({ items: [], total: 0 })
@@ -765,7 +798,7 @@ describe('SignalReviewWorkspace', () => {
       const url = String(input)
       if (url === '/api/signals/definitions') return response({ items: [dailyDefinition] })
       if (url.includes('/api/signals/runs?')) return response({ items: [dailyRun] })
-      if (url.endsWith('/items')) return response({ items: [] })
+      if (url.endsWith('/items?summary=true')) return response({ items: [] })
       if (url.includes('/scores?')) return response({ items: [] })
       if (url.endsWith('/attention')) return response({ items: [] })
       if (url === '/api/observation-pools/runs/run-1/stock') return response(pool)

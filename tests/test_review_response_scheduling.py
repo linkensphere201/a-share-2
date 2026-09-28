@@ -12,15 +12,15 @@ from stock_harness.models import DailyBar, Instrument, InstrumentKind
 from stock_harness.sqlite_store import SQLiteMarketDataStore
 
 
-@pytest.mark.parametrize("endpoint", ["items", "board-observations"])
+@pytest.mark.parametrize("endpoint", ["items", "items?summary=true", "board-observations"])
 def test_large_review_response_is_encoded_off_event_loop(endpoint, monkeypatch):
     with SQLiteMarketDataStore(":memory:") as store:
         store.upsert_instruments([Instrument("000001.SZ", "test", InstrumentKind.STOCK, "SZ")])
         store.upsert_daily_bars("tushare", [DailyBar("000001.SZ", date(2026, 9, 17), 10, 11, 9, 10, 100)])
         monkeypatch.setattr(store, "get_signal_review_run", lambda _: {"run_id": "review"})
         payload = {"symbol": "000001.SZ", "payload": {"evidence": [{"value": i} for i in range(100)]}}
-        if endpoint == "items":
-            monkeypatch.setattr(store, "list_signal_review_items", lambda *args: [payload])
+        if endpoint.startswith("items"):
+            monkeypatch.setattr(store, "list_signal_review_items", lambda *args, **kwargs: [payload])
             monkeypatch.setattr(store, "count_signal_review_items", lambda *args: 1)
         else:
             payload = {**payload, "effective_date": date(2026, 9, 17)}

@@ -84,6 +84,7 @@ export type SignalEvidence = {
 }
 
 export type SignalItem = {
+  evidence_complete?: boolean
   item_id: string
   item_key: string
   rank: number
@@ -97,6 +98,7 @@ export type SignalItem = {
   score: number
   confidence: number
   payload: {
+    list_score?: Pick<SignalScoreResult, 'total_score' | 'grade' | 'eligible' | 'rank' | 'verdict' | 'summary' | 'risk_summary'>
     board_count?: number
     rank_one_count?: number
     board_names?: string[]
@@ -443,8 +445,14 @@ export async function loadSignalRun(runId: string, signal?: AbortSignal): Promis
 
 export async function listSignalItems(runId: string, signal?: AbortSignal): Promise<SignalItem[]> {
   return (await json<{ items: SignalItem[] }>(
-    await fetch(`/api/signals/runs/${encodeURIComponent(runId)}/items`, { signal }),
+    await fetch(`/api/signals/runs/${encodeURIComponent(runId)}/items?summary=true`, { signal }),
   )).items
+}
+
+export async function loadSignalItem(runId: string, itemId: string, signal?: AbortSignal): Promise<SignalItem> {
+  return json<SignalItem>(await fetch(
+    `/api/signals/runs/${encodeURIComponent(runId)}/items/${encodeURIComponent(itemId)}`, { signal },
+  ))
 }
 
 export async function listSignalScores(

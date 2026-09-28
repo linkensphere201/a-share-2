@@ -91,6 +91,7 @@ def create_analysis_router() -> APIRouter:
         run_id: str, request: Request,
         limit: int = Query(default=5000, ge=1, le=5000),
         offset: int = Query(default=0, ge=0),
+        summary: bool = False,
     ) -> Response:
         selected_store = store(request)
         if selected_store.get_signal_review_run(run_id) is None:
@@ -98,7 +99,7 @@ def create_analysis_router() -> APIRouter:
         # Stored evidence is already JSON-compatible. Encode in the worker so
         # a large review cannot monopolize the chart API's event loop.
         return JSONResponse({
-            "items": selected_store.list_signal_review_items(run_id, limit, offset),
+            "items": selected_store.list_signal_review_items(run_id, limit, offset, summary=summary),
             "total": selected_store.count_signal_review_items(run_id),
         })
 

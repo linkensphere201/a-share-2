@@ -471,22 +471,39 @@ class SQLiteSignalReviewStoreMixin:
 
     def list_signal_review_items(
         self, run_id: str, limit: int | None = None, offset: int = 0,
+        *, summary: bool = False,
     ) -> list[dict[str, object]]:
         if limit is not None and limit <= 0:
             raise ValueError("limit must be positive")
         if offset < 0:
             raise ValueError("offset must be non-negative")
         paging = " LIMIT ? OFFSET ?" if limit is not None else ""
+        payload = "item.payload_json"
+        if summary:
+            score_fields = ("total_score", "grade", "eligible", "rank", "verdict", "summary", "risk_summary")
+            score = ", ".join(
+                "'eligible', json(CASE json_extract(item.payload_json, '$.score_result.eligible') "
+                "WHEN 1 THEN 'true' WHEN 0 THEN 'false' ELSE 'null' END)"
+                if field == "eligible" else
+                f"'{field}', json_extract(item.payload_json, '$.score_result.{field}')"
+                for field in score_fields
+            )
+            payload = (
+                "json_set(json_remove(item.payload_json, '$.metrics', '$.comparison', "
+                "'$.rendered_summary', '$.score_result'), '$.list_score', "
+                f"CASE WHEN json_type(item.payload_json, '$.score_result') = 'object' "
+                f"THEN json_object({score}) ELSE NULL END)"
+            )
         parameters: tuple[object, ...] = (
             (run_id, limit, offset) if limit is not None else (run_id,)
         )
         with self._lock:
             rows = self._connection.execute(
-                """
+                f"""
                 SELECT item.item_id, item.item_key, item.rank, instrument.symbol,
                        instrument.name, instrument.kind, instrument.exchange,
                        item.profile, item.change_type, item.active, item.score,
-                       item.confidence, item.payload_json
+                       item.confidence, {payload}
                 FROM signal_review_items AS item
                 JOIN instruments AS instrument USING (instrument_id)
                 WHERE item.run_id = ?
@@ -503,7 +520,7 @@ class SQLiteSignalReviewStoreMixin:
                 WHERE run_id = ? AND item_id IN ({placeholders})
                 ORDER BY item_id, position
                 """, (run_id, *item_ids),
-            ).fetchall() if item_ids else []
+            ).fetchall() if item_ids and not summary else []
         evidence: dict[str, list[dict[str, object]]] = {}
         for row in evidence_rows:
             evidence.setdefault(str(row[0]), []).append({
@@ -518,6 +535,7 @@ class SQLiteSignalReviewStoreMixin:
             "change_type": str(row[8]), "active": bool(row[9]),
             "score": float(row[10]), "confidence": float(row[11]),
             "payload": json.loads(str(row[12])), "evidence": evidence.get(str(row[0]), []),
+            **({"evidence_complete": False} if summary else {}),
         } for row in rows]
 
     def count_signal_review_items(self, run_id: str) -> int:
