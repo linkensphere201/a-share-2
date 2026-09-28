@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from datetime import date
 import logging
 import threading
 import time
 from typing import Sequence
+from uuid import uuid4
 
 from stock_harness.analysis_inputs import (
     AnalysisHorizons, AnalysisInputMode, AnalysisInputService, AnalysisTimeframe,
@@ -95,6 +97,128 @@ class ScreenerService:
                 return {**run, "execution_state": job[1],
                         "queue_position": queued.index(str(run["run_id"])) + 1 if job[1] == "queued" else 0}
         return run
+
+    def start_all(self, max_results: int = 200, as_of_date: date | None = None) -> dict[str, object]:
+        """Admit idle catalog strategies at one cutoff, then share compatible scans."""
+        if not 1 <= max_results <= 500:
+            raise ValueError("max_results must be between 1 and 500")
+        runs, skipped = [], []
+        batch_id = str(uuid4())
+        periods = (MajorLinePeriod.HALF_YEAR, MajorLinePeriod.YEAR)
+        with self._lock:
+            if self._stopping.is_set():
+                raise ScreenerBusyError("screener is shutting down")
+            cutoff = as_of_date or self._store.get_latest_stock_daily_bar_date()
+            if cutoff is None:
+                raise ValueError("no completed stock daily bars are available")
+            busy = {job[0] for job in self._jobs.values()}
+            for definition in self.strategies():
+                strategy_id = str(definition["strategy_id"])
+                if strategy_id in busy:
+                    skipped.append({"strategy_id": strategy_id, "reason": "already-running"})
+                    continue
+                strategy = get_strategy(strategy_id)
+                try:
+                    strategy.validate_cutoff(cutoff)
+                except ValueError:
+                    skipped.append({"strategy_id": strategy_id, "reason": "cutoff-unavailable"})
+                    continue
+                try:
+                    run = self._store.create_screener_run(strategy_id, strategy.version, cutoff, {
+                        **strategy.parameters(periods, SCREENABLE_STATES, max_results), "batch_id": batch_id,
+                    })
+                except Exception:
+                    LOGGER.exception("screener_batch_admission_failed strategy=%s", strategy_id)
+                    skipped.append({"strategy_id": strategy_id, "reason": "creation-failed"})
+                    continue
+                runs.append(run)
+                self._jobs[str(run["run_id"])] = (strategy_id, "queued")
+            shapes = [run for run in runs if get_strategy(str(run["strategy_id"])).execution == 'shape']
+            groups = ([shapes] if shapes else []) + [[run] for run in runs if run not in shapes]
+            for group in groups:
+                try:
+                    if get_strategy(str(group[0]["strategy_id"])).execution == 'shape':
+                        self._executor.submit(self._run_shape_batch_guarded, group, cutoff, max_results)
+                    else:
+                        run = group[0]
+                        self._executor.submit(self._run_guarded, str(run["run_id"]), cutoff,
+                                              periods, SCREENABLE_STATES, max_results, str(run["strategy_id"]))
+                except Exception as error:
+                    for run in group:
+                        self._jobs.pop(str(run["run_id"]), None)
+                        self._store.fail_screener_run(str(run["run_id"]), str(error))
+        return {"batch_id": batch_id, "as_of_date": cutoff,
+                "items": [self.describe_run(self._store.get_screener_run(str(run["run_id"])) or run)
+                          for run in runs], "skipped": skipped}
+
+    def _run_shape_batch_guarded(self, runs: list[dict[str, object]], cutoff: date, max_results: int) -> None:
+        try:
+            with self._lock:
+                for run in runs:
+                    self._jobs[str(run["run_id"])] = (str(run["strategy_id"]), "running")
+            self._check_stopping()
+            self._execute_shape_batch(runs, cutoff, max_results)
+        except Exception as error:
+            LOGGER.exception("screener_shape_batch_failed")
+            for run in runs:
+                current = self._store.get_screener_run(str(run["run_id"]))
+                if current and current["status"] == "running":
+                    self._store.fail_screener_run(str(run["run_id"]), str(error))
+        finally:
+            with self._lock:
+                for run in runs:
+                    self._jobs.pop(str(run["run_id"]), None)
+
+    def _execute_shape_batch(self, runs: list[dict[str, object]], cutoff: date, max_results: int) -> None:
+        started = time.perf_counter()
+        universe = self._store.list_active_stock_symbols_for_screening()
+        active = {str(run["run_id"]): get_strategy(str(run["strategy_id"])) for run in runs}
+        candidates = {run_id: [] for run_id in active}
+        for run_id in active:
+            self._store.update_screener_progress(run_id, universe_count=len(universe), scanned_count=0)
+        for index, instrument in enumerate(universe, 1):
+            self._check_stopping()
+            if not active:
+                break
+            base = PatternAnalysisRequest(
+                symbol=instrument["symbol"], timeframes=(AnalysisTimeframe.DAILY,),
+                horizons=DEFAULT_HORIZONS, config_version="screener-batch-input-v1",
+                include_preview=False, as_of_date=cutoff,
+            )
+            try:
+                prepared = self._analysis.prepare_screening_subject(base)
+            except (ValueError, LookupError):
+                prepared = None
+            if prepared is not None:
+                for run_id, strategy in list(active.items()):
+                    self._check_stopping()
+                    if not strategy.allows_symbol(instrument["symbol"]):
+                        continue
+                    try:
+                        analysis = strategy.analyze(self._analysis, replace(
+                            base, config_version=strategy.analysis_config, prepared_input=prepared,
+                        ))
+                        candidates[run_id].extend(_shape_candidates(strategy, instrument, analysis, cutoff))
+                    except (ValueError, LookupError) as error:
+                        LOGGER.debug("screener_symbol_skipped run_id=%s symbol=%s reason=%s",
+                                     run_id, instrument["symbol"], error)
+                    except Exception as error:
+                        LOGGER.exception("screener_batch_strategy_failed run_id=%s", run_id)
+                        self._store.fail_screener_run(run_id, str(error))
+                        active.pop(run_id)
+            if index % 10 == 0 or index == len(universe):
+                for run_id in active:
+                    self._store.update_screener_progress(run_id, universe_count=len(universe), scanned_count=index)
+        for run_id, strategy in active.items():
+            self._check_stopping()
+            try:
+                candidates[run_id].sort(key=strategy.selection.rank_key)
+                self._store.complete_screener_run(run_id, candidates[run_id][:max_results], retention=10)
+            except Exception as error:
+                self._store.fail_screener_run(run_id, str(error))
+                LOGGER.exception("screener_batch_completion_failed run_id=%s", run_id)
+        LOGGER.info("screener_shape_batch_completed strategies=%s universe=%s duration_ms=%.1f",
+                    len(runs), len(universe), (time.perf_counter() - started) * 1000)
 
     def close(self) -> None:
         with self._lock:
@@ -270,21 +394,7 @@ class ScreenerService:
                     include_preview=False, as_of_date=cutoff,
                 )
                 analysis = strategy.analyze(self._analysis, request)
-                if analysis is None:
-                    raise LookupError("no matching shared structure")
-                if analysis["status"] != "succeeded":
-                    raise RuntimeError(f"pattern analysis failed: {instrument['symbol']}")
-                for item in analysis["items"]:
-                    evidence = item["payload"]
-                    if not selection.matches(item, cutoff):
-                        continue
-                    candidates.append({
-                        "symbol": instrument["symbol"], "state": evidence["stage"],
-                        "score": evidence["score"], "line_item_id": item["item_id"],
-                        "line_code": strategy.line_code,
-                        "analysis_run_id": analysis["run_id"],
-                        "evidence": evidence,
-                    })
+                candidates.extend(_shape_candidates(strategy, instrument, analysis, cutoff))
             except (ValueError, LookupError) as error:
                 LOGGER.debug("screener_symbol_skipped run_id=%s symbol=%s reason=%s",
                              run_id, instrument["symbol"], error)
@@ -395,6 +505,19 @@ class ScreenerService:
             run_id, cutoff, len(universe), len(matches), len(retained),
             (time.perf_counter() - started) * 1000,
         )
+
+
+def _shape_candidates(strategy, instrument, analysis, cutoff):
+    if analysis is None:
+        return []
+    if analysis["status"] != "succeeded":
+        raise RuntimeError(f"pattern analysis failed: {instrument['symbol']}")
+    return [{
+        "symbol": instrument["symbol"], "state": item["payload"]["stage"],
+        "score": item["payload"]["score"], "line_item_id": item["item_id"],
+        "line_code": strategy.line_code, "analysis_run_id": analysis["run_id"],
+        "evidence": item["payload"],
+    } for item in analysis["items"] if strategy.selection.matches(item, cutoff)]
 
 
 def _strategy_version(strategy_id: str) -> str:

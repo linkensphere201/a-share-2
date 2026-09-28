@@ -98,6 +98,14 @@ class PatternAnalysisService:
             prepared_input=request.prepared_input,
         ))
 
+    def prepare_screening_subject(self, request: PatternAnalysisRequest) -> PreparedAnalysisInput:
+        """Share final input within one symbol's batch, never across dated scans."""
+        request.validate()
+        if (request.timeframes != (AnalysisTimeframe.DAILY,) or request.include_preview
+                or request.as_of_date is None or request.profile is not PatternAnalysisProfile.FULL):
+            raise ValueError("screening requires dated final daily full analysis")
+        return self._delegate.prepare_screening_subject(request.symbol, request.as_of_date, request.horizons)
+
     def analyze_low_base_candidate(
         self, request: PatternAnalysisRequest,
     ) -> PatternAnalysisResult | None:
@@ -108,7 +116,8 @@ class PatternAnalysisService:
                 or request.profile is not PatternAnalysisProfile.FULL):
             raise ValueError("low-base screening requires dated final daily full analysis")
         prepared = self._delegate.prepare_screening_input(
-            request.symbol, request.as_of_date, request.horizons, "low-base")
+            request.symbol, request.as_of_date, request.horizons, "low-base",
+            prepared_input=request.prepared_input)
         if prepared is None:
             return None
         return self.analyze(replace(request, prepared_input=prepared))[0]
@@ -122,7 +131,8 @@ class PatternAnalysisService:
                 or request.profile is not PatternAnalysisProfile.FULL):
             raise ValueError("deep-drawdown screening requires dated final daily full analysis")
         prepared = self._delegate.prepare_screening_input(
-            request.symbol, request.as_of_date, request.horizons, "deep-drawdown")
+            request.symbol, request.as_of_date, request.horizons, "deep-drawdown",
+            prepared_input=request.prepared_input)
         if prepared is None:
             return None
         return self.analyze(replace(request, prepared_input=prepared))[0]
@@ -141,7 +151,7 @@ class PatternAnalysisService:
             raise ValueError(f"unsupported screening structure: {structure}")
         prepared = self._delegate.prepare_screening_input(
             request.symbol, request.as_of_date, request.horizons, structure,
-            periods=periods, states=states,
+            periods=periods, states=states, prepared_input=request.prepared_input,
         )
         if prepared is None:
             return None

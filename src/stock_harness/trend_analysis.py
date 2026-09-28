@@ -93,14 +93,25 @@ class TrendAnalysisService:
         return self.prepare_screening_input(symbol, cutoff, horizons, structure,
                                             periods=periods, states=states) is not None
 
-    def prepare_screening_input(
-        self, symbol: str, cutoff: date, horizons: AnalysisHorizons, structure: str,
-        *, periods: tuple[str, ...] = (), states: tuple[str, ...] = (),
-    ) -> PreparedAnalysisInput | None:
+    def prepare_screening_subject(
+        self, symbol: str, cutoff: date, horizons: AnalysisHorizons,
+    ) -> PreparedAnalysisInput:
         read_version = self._store.analysis_read_version()
         original = self._inputs.build(
             symbol, cutoff, AnalysisTimeframe.DAILY, AnalysisInputMode.FINAL, horizons,
         )
+        return PreparedAnalysisInput(original, read_version)
+
+    def prepare_screening_input(
+        self, symbol: str, cutoff: date, horizons: AnalysisHorizons, structure: str,
+        *, periods: tuple[str, ...] = (), states: tuple[str, ...] = (),
+        prepared_input: PreparedAnalysisInput | None = None,
+    ) -> PreparedAnalysisInput | None:
+        if prepared_input is not None:
+            prepared_input.validate_final(symbol, AnalysisTimeframe.DAILY, horizons, cutoff, False)
+        if prepared_input is None or prepared_input.read_version != self._store.analysis_read_version():
+            prepared_input = self.prepare_screening_subject(symbol, cutoff, horizons)
+        original = prepared_input.value
         value, _ = _qualify_roll_input(original)
         if structure == "low-base":
             matched = _low_base_item(value) is not None
@@ -116,7 +127,7 @@ class TrendAnalysisService:
             matched = bool(item is not None and item.payload.get("screen_eligible")
                            and item.payload.get("stage") in {"pullback-observation", "pullback-confirmed", "shape-match"}
                            and item.payload.get("as_of_date") == cutoff.isoformat())
-        return PreparedAnalysisInput(original, read_version) if matched else None
+        return prepared_input if matched else None
 
     def recalculate(
         self,

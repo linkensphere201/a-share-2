@@ -15,6 +15,7 @@ from stock_harness.analysis_results import AnalysisNamespace
 from stock_harness.api_models import (
     AiAnalysisReportInput,
     ScreenerRunInput,
+    ScreenerBatchInput,
     SignalAttentionInput,
     SignalReviewRunInput,
     TrendAnalysisInput,
@@ -229,6 +230,15 @@ def create_analysis_router() -> APIRouter:
                 payload.as_of_date,
                 payload.strategy_id,
             )
+        except ScreenerBusyError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @router.post("/api/screener/batches", status_code=status.HTTP_202_ACCEPTED)
+    def start_screener_batch(payload: ScreenerBatchInput, request: Request) -> dict[str, object]:
+        try:
+            return request.app.state.screener.start_all(payload.max_results, payload.as_of_date)
         except ScreenerBusyError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
         except ValueError as error:
