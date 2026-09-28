@@ -24,6 +24,51 @@ afterEach(() => {
 })
 
 describe('ScreenerWorkspace', () => {
+  it('submits all strategies once and immediately shows pending and independent runs', async () => {
+    let finish!: (value: Response) => void
+    const batchRuns = ['major-descending-breakout', 'bull-flag-consolidation'].map((strategy, index) => ({
+      ...run, run_id: `batch-${index}`, strategy_id: strategy, status: 'running', execution_state: 'queued',
+      parameters: { max_results: 50, batch_id: 'batch-id' }, candidate_count: 0, scanned_count: 0,
+    }))
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url === '/api/screener/batches') return new Promise<Response>(resolve => { finish = resolve })
+      if (url.includes('/candidates')) return response({ items: [] })
+      if (url.includes('/runs/batch-')) return response(batchRuns.find(r => url.endsWith(r.run_id)))
+      if (url.includes('/strategies')) return response({ items: [] })
+      return response({ items: [] })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+    renderScreener()
+    await user.selectOptions(screen.getByLabelText('上限'), '50')
+    await user.click(screen.getByRole('button', { name: '全部选股' }))
+    expect(screen.getByRole('status').textContent).toContain('全部策略')
+    expect(screen.getByRole('button', { name: '开始选股' }).hasAttribute('disabled')).toBe(true)
+    await user.click(screen.getByRole('button', { name: '全部选股' }))
+    expect(fetchMock.mock.calls.filter(([url]) => url === '/api/screener/batches')).toHaveLength(1)
+    const request = fetchMock.mock.calls.find(([url]) => url === '/api/screener/batches')!
+    expect(JSON.parse(String(request[1]?.body))).toEqual({ max_results: 50 })
+    await act(async () => { finish(await response({ batch_id: 'batch-id', as_of_date: run.as_of_date,
+      items: batchRuns, skipped: [{ strategy_id: 'strong-first-pullback', reason: 'already-running' }],
+    }, 202)) })
+    expect(screen.queryByRole('status')).toBeNull()
+    expect(screen.getByText(/已提交 2 个策略/).textContent).toContain('强势股首次回踩（已在运行）')
+    expect(screen.getByText(/牛旗盘整 · 排队中/)).toBeTruthy()
+    expect(screen.getByRole('button', { name: '全部选股' }).hasAttribute('disabled')).toBe(true)
+  })
+
+  it('allows retry after batch creation fails', async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL) => String(input) === '/api/screener/batches'
+      ? response({ detail: 'batch unavailable' }, 503) : response({ items: [] }))
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+    renderScreener()
+    await user.click(screen.getByRole('button', { name: '全部选股' }))
+    await screen.findByText(/batch unavailable/)
+    expect(screen.getByRole('button', { name: '全部选股' }).hasAttribute('disabled')).toBe(false)
+  })
+
   it('loads summary pages then fetches evidence only for the selected candidate', async () => {
     const summary = { ...candidate, evidence_complete: false, evidence: {
       kind: 'deep-drawdown-range', as_of_date: '2026-09-16',
@@ -101,6 +146,7 @@ describe('ScreenerWorkspace', () => {
   })
   it('allows other strategies, prevents duplicates and polls all running and queued tasks', async () => {
     let finished = false
+    let listReads = 0
     const jobs = [
       { ...run, run_id: 'major-active', status: 'running', execution_state: 'running', scanned_count: 20 },
       { ...run, run_id: 'flag-active', strategy_id: 'bull-flag-consolidation', status: 'running', execution_state: 'running', scanned_count: 30 },
@@ -114,11 +160,9 @@ describe('ScreenerWorkspace', () => {
         return response(created, 202)
       }
       if (url.includes('/candidates')) return response({ items: [] })
-      if (url.includes('/runs?')) return response({ items: jobs.map(job => finished && job.run_id === 'flag-active' ? { ...job, status: 'succeeded' } : job) })
-      const job = jobs.find(job => url.endsWith(`/${job.run_id}`))
-      if (job) {
-        if (job.run_id === 'flag-active') { finished = true; return response({ ...job, status: 'succeeded' }) }
-        return response(job)
+      if (url.includes('/runs?')) {
+        finished = ++listReads > 1
+        return response({ items: jobs.map(job => finished && job.run_id === 'flag-active' ? { ...job, status: 'succeeded' } : job) })
       }
       throw new Error(url)
     })
@@ -132,12 +176,11 @@ describe('ScreenerWorkspace', () => {
     await user.click(screen.getByRole('button', { name: '开始选股' }))
     await screen.findByText(/低位平台回踩 · 排队中/)
     expect((screen.getByRole('button', { name: '开始选股' }) as HTMLButtonElement).disabled).toBe(true)
-    await waitFor(() => {
-      for (const id of ['major-active', 'flag-active', 'pullback-queued', 'low-queued']) {
-        expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith(`/${id}`))).toBe(true)
-      }
-    }, { timeout: 3000 })
-    await screen.findByText(/牛旗盘整 · 1 个标的/)
+    await waitFor(() => expect(screen.getByText(/牛旗盘整 · 1 个标的/)).toBeTruthy(), { timeout: 3000 })
+    expect(listReads).toBeGreaterThan(1)
+    for (const id of ['major-active', 'flag-active', 'pullback-queued', 'low-queued']) {
+      expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith(`/${id}`))).toBe(false)
+    }
     expect(screen.getByText(/低位平台回踩 · 排队中/).closest('button')?.className).toContain('active')
   })
   it('runs the fixed deep-drawdown shape without template or trade controls', async () => {
@@ -252,9 +295,10 @@ describe('ScreenerWorkspace', () => {
   it('keeps polling the active run while an older result is selected', async () => {
     const active = { ...run, run_id: 'active', as_of_date: '2026-09-02', status: 'running' }
     let completed = false
+    let listReads = 0
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
-      if (url.endsWith('/active')) { completed = true; return response({ ...active, status: 'succeeded' }) }
+      if (url.includes('/runs?')) completed = ++listReads > 1
       if (url.includes('/candidates')) return response({ items: [] })
       return response({ items: [{ ...active, status: completed ? 'succeeded' : 'running' }, run] })
     }))

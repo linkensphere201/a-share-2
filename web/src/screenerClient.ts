@@ -14,6 +14,7 @@ export type ScreenerRun = {
   strategy_version: string
   as_of_date: string
   parameters: {
+    batch_id?: string
     periods?: ScreenerPeriod[]
     states?: ScreenerState[]
     window?: number
@@ -161,6 +162,20 @@ async function json<T>(response: Response): Promise<T> {
   let detail = `HTTP ${response.status}`
   try { detail = (await response.json() as { detail?: string }).detail ?? detail } catch { /* no JSON */ }
   throw new Error(detail)
+}
+
+export type ScreenerBatch = {
+  batch_id: string
+  as_of_date: string
+  items: ScreenerRun[]
+  skipped: { strategy_id: string; reason: 'already-running' | 'cutoff-unavailable' | 'creation-failed' }[]
+}
+
+export async function startScreenerBatch(maxResults: number): Promise<ScreenerBatch> {
+  return json<ScreenerBatch>(await fetch('/api/screener/batches', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ max_results: maxResults }),
+  }))
 }
 
 export async function listScreenerRuns(signal?: AbortSignal): Promise<ScreenerRun[]> {

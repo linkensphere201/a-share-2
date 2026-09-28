@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, ChevronLeft, ChevronRight, Filter, ListPlus, Play, RefreshCw, Trash2, X } from 'lucide-react'
+import { ArrowLeft, ChevronLeft, ChevronRight, Filter, ListPlus, Play, ListStart, RefreshCw, Trash2, X } from 'lucide-react'
 import { ChartCanvas } from './ChartCanvas'
 import { MarketBoardBadge } from './MarketBoardBadge'
 import { fetchInstrumentBoardMemberships, type InstrumentBoardMembership } from './boardTags'
@@ -13,7 +13,7 @@ import { useAnalysisOverlayVisibility, useAnalysisLayers } from './AnalysisOverl
 import { logError, logInfo } from './eventLogger'
 import {
   deleteScreenerRun, listScreenerCandidates, listScreenerRuns, listScreenerStrategies,
-  loadScreenerRun, startScreenerRun, loadScreenerCandidate,
+  startScreenerRun, startScreenerBatch, loadScreenerCandidate,
   type ScreenerCandidate, type ScreenerPeriod, type ScreenerRun, type ScreenerState,
   type ScreenerStrategyId,
 } from './screenerClient'
@@ -96,10 +96,12 @@ export function ScreenerWorkspace({
   const [notice, setNotice] = useState('')
   const [contextMenu, setContextMenu] = useState<ScreenerContextMenu>()
   const [startingStrategy, setStartingStrategy] = useState<ScreenerStrategyId | null>(null)
+  const [startingAll, setStartingAll] = useState(false)
   const startingRef = useRef(false)
   const runListEpoch = useRef(0)
   const runningRunIds = runs.filter(run => run.status === 'running').map(run => run.run_id).sort().join(',')
   const strategyBusy = runs.some(run => run.status === 'running' && run.strategy_id === strategyId)
+  const batchBusy = runs.some(run => run.status === 'running' && run.parameters.batch_id)
 
   const stateCandidates = useMemo(() => candidates.filter(item =>
     (resultStateFilter === 'all' || item.state === resultStateFilter)
@@ -200,13 +202,8 @@ export function ScreenerWorkspace({
     setSelected(filteredCandidates[0])
   }, [filteredCandidates, selected?.symbol])
 
-  useSerialPolling(runningRunIds || undefined, 1000, async signal => {
-    const updates = await Promise.all(runningRunIds.split(',').map(id => loadScreenerRun(id, signal)))
-    if (signal.aborted) return
-    setSelectedRun(selected => updates.find(item => item.run_id === selected?.run_id) ?? selected)
-    setRuns(values => values.map(item => updates.find(update => update.run_id === item.run_id) ?? item))
-    if (updates.some(item => item.status !== 'running')) await refreshRuns(undefined, signal)
-  }, value => setError(String(value)))
+  useSerialPolling(runningRunIds || undefined, 1000,
+    signal => refreshRuns(undefined, signal), value => setError(String(value)))
 
   useResultQuery(selectedSummary?.evidence_complete === false ? detailKey : undefined,
     signal => loadScreenerCandidate(selectedRun!.run_id, selectedSummary!.rank, signal),
@@ -248,6 +245,30 @@ export function ScreenerWorkspace({
     } finally {
       startingRef.current = false
       setStartingStrategy(null)
+    }
+  }
+
+  const startAll = async () => {
+    if (startingRef.current || batchBusy) return
+    startingRef.current = true
+    setStartingAll(true)
+    setError('')
+    setNotice('')
+    try {
+      const batch = await startScreenerBatch(maxResults)
+      runListEpoch.current++
+      setRuns(values => [...batch.items, ...values.filter(item => !batch.items.some(run => run.run_id === item.run_id))]
+        .sort((a, b) => Number(b.status === 'running') - Number(a.status === 'running')).slice(0, 10))
+      if (batch.items.length) setSelectedRun(batch.items[0])
+      const skipped = batch.skipped.map(item => `${strategyLabel(item.strategy_id)}（${
+        item.reason === 'already-running' ? '已在运行' : item.reason === 'cutoff-unavailable' ? '日期不可用' : '创建失败'}）`)
+      setNotice(`已提交 ${batch.items.length} 个策略 · ${batch.as_of_date}${skipped.length ? `；跳过：${skipped.join('、')}` : ''}`)
+      logInfo('screener', '批量选股已提交', { batchId: batch.batch_id, count: batch.items.length })
+    } catch (value) {
+      setError(value instanceof Error ? value.message : String(value))
+    } finally {
+      startingRef.current = false
+      setStartingAll(false)
     }
   }
 
@@ -302,9 +323,13 @@ export function ScreenerWorkspace({
       <label className="screener-limit">上限<select value={maxResults} onChange={event => setMaxResults(Number(event.target.value))}>
         {[50, 100, 200, 500].map(value => <option key={value}>{value}</option>)}
       </select></label>
-      <button className="primary-button" aria-busy={startingStrategy !== null} disabled={startingStrategy !== null || (strategyId === 'major-descending-breakout' && (!periods.length || !states.length)) || strategyBusy} onClick={start}>
+      <div className="screener-actions"><button className="primary-button" aria-busy={startingStrategy !== null} disabled={startingAll || startingStrategy !== null || (strategyId === 'major-descending-breakout' && (!periods.length || !states.length)) || strategyBusy} onClick={start}>
         {startingStrategy !== null || strategyBusy ? <RefreshCw size={14} className="spin"/> : <Play size={14}/>}开始选股
       </button>
+      <button className="primary-button" title="按各策略默认条件运行全部策略，沿用当前结果上限；跳过已在运行的策略" aria-busy={startingAll}
+        disabled={startingAll || startingStrategy !== null || batchBusy} onClick={startAll}>
+        {startingAll ? <RefreshCw size={14} className="spin"/> : <ListStart size={14}/>}全部选股
+      </button></div>
     </header>
     {error && <div className="screener-error">{error}</div>}
     {notice && <button className="screener-notice" onClick={() => setNotice('')}>{notice}</button>}
@@ -312,10 +337,10 @@ export function ScreenerWorkspace({
       <aside className="screener-runs">
         <header>每轮选股结果 <span>{runs.length}/10</span></header>
         <div className="screener-scroll">
-          {startingStrategy !== null && <div className="screener-starting" role="status">
-            <RefreshCw size={14} className="spin"/><span>正在创建选股任务<small>{strategyLabel(startingStrategy)}</small></span>
+          {(startingStrategy !== null || startingAll) && <div className="screener-starting" role="status">
+            <RefreshCw size={14} className="spin"/><span>正在创建选股任务<small>{startingAll ? '全部策略' : strategyLabel(startingStrategy!)}</small></span>
           </div>}
-          {runs.length === 0 && startingStrategy === null && <div className="screener-empty compact">暂无历史结果</div>}{runs.map(run => <button key={run.run_id} className={selectedRun?.run_id === run.run_id ? 'active' : ''} onClick={() => setSelectedRun(run)} onContextMenu={event => {
+          {runs.length === 0 && startingStrategy === null && !startingAll && <div className="screener-empty compact">暂无历史结果</div>}{runs.map(run => <button key={run.run_id} className={selectedRun?.run_id === run.run_id ? 'active' : ''} onClick={() => setSelectedRun(run)} onContextMenu={event => {
           event.preventDefault()
           setContextMenu({ kind: 'run', ...menuPosition(event.clientX, event.clientY), run })
         }}>
