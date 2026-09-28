@@ -51,6 +51,12 @@ export type ScreenerCandidate = {
   line_code: string
   analysis_run_id: string
   evidence: {
+    robust_pullback_volume_ratio?: number
+    retained_advance_fraction?: number
+    retention_events?: number
+    median_volume_expansion?: number
+    robust_volume_expansion?: number
+    volume_persistence?: number
     platform_type?: 'low-base' | 'continuation' | 'neutral'
     platform_stage?: 'near-upper' | 'tightening'
     recent_range_percent?: number

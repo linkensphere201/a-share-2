@@ -137,7 +137,7 @@ class PatternAnalysisService:
                 or request.include_preview or request.as_of_date is None
                 or request.profile is not PatternAnalysisProfile.FULL):
             raise ValueError("screening requires dated final daily full analysis")
-        if structure not in {"bull-flag", "first-pullback", "major-descending", "long-platform"}:
+        if structure not in {"bull-flag", "first-pullback", "major-descending", "long-platform", "low-accumulation"}:
             raise ValueError(f"unsupported screening structure: {structure}")
         prepared = self._delegate.prepare_screening_input(
             request.symbol, request.as_of_date, request.horizons, structure,

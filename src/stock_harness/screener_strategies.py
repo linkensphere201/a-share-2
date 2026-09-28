@@ -11,6 +11,10 @@ if TYPE_CHECKING:
     from stock_harness.pattern_analysis import PatternAnalysisRequest, PatternAnalysisResult, PatternAnalysisService
 
 from stock_harness.analysis_inputs import AnalysisHorizons
+from stock_harness.low_accumulation_pattern import (
+    STRATEGY_ID as LOW_ACCUMULATION_ID, ALGORITHM_VERSION as LOW_ACCUMULATION_VERSION,
+    CONFIG as LOW_ACCUMULATION_CONFIG, KIND as LOW_ACCUMULATION_KIND,
+)
 from stock_harness.major_descending_lines import MajorLinePeriod, MajorLineState
 from stock_harness.first_pullback_pattern import CONFIG as PULLBACK_CONFIG
 from stock_harness.low_base_pullback import (
@@ -50,6 +54,9 @@ SCREENABLE_STATES = (
 
 def _definitions() -> list[dict[str, object]]:
     return [{
+        "strategy_id": LOW_ACCUMULATION_ID, "name": "低位吸筹平台", "version": LOW_ACCUMULATION_VERSION,
+        "window": 60, "states": ["shape-match"], "final_bars_only": True,
+    }, {
         "strategy_id": PLATFORM_STRATEGY_ID, "name": "长期横盘平台", "version": PLATFORM_VERSION,
         "window": 250, "states": ["shape-match"], "final_bars_only": True,
     }, {
@@ -93,6 +100,9 @@ def _definitions() -> list[dict[str, object]]:
 
 
 def _parameter_defaults(strategy_id, periods, states, max_results: int) -> dict[str, object]:
+    if strategy_id == LOW_ACCUMULATION_ID:
+        return {"max_results": max_results, "final_bars_only": True, "states": ["shape-match"],
+                "pattern_parameters": asdict(LOW_ACCUMULATION_CONFIG), "analysis_config": LOW_ACCUMULATION_VERSION}
     if strategy_id == PLATFORM_STRATEGY_ID:
         return {"max_results": max_results, "final_bars_only": True, "states": ["shape-match"],
                 "pattern_parameters": asdict(PLATFORM_CONFIG), "analysis_config": PLATFORM_VERSION}
@@ -209,6 +219,7 @@ class ScreenerStrategy:
 
 
 _SHAPES = {
+    LOW_ACCUMULATION_ID: ShapeSelection("low-accumulation", LOW_ACCUMULATION_KIND, "LOW-ACCUMULATION"),
     PLATFORM_STRATEGY_ID: ShapeSelection("long-platform", PLATFORM_KIND, "LONG-PLATFORM"),
     DEEP_DRAWDOWN_STRATEGY_ID: ShapeSelection("deep-drawdown", DEEP_DRAWDOWN_KIND, "DEEP-DRAWDOWN"),
     BULL_FLAG_STRATEGY_ID: ShapeSelection("bull-flag", BULL_FLAG_KIND, "BULL-FLAG"),

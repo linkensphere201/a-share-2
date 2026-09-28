@@ -18,6 +18,7 @@ export function candidatePeriodLabel(value: ScreenerCandidate) {
     : `${value.evidence.platform_sessions ?? 20}日`
 }
 export function candidateStageLabel(value: ScreenerCandidate) {
+  if (value.evidence.kind === 'low-accumulation-range') return '低位平台承接'
   if (value.evidence.kind === 'long-platform-range') return value.evidence.platform_stage === 'near-upper' ? '临近上沿' : '平台收紧'
   if (value.evidence.kind === 'deep-drawdown-range') return '形态相似'
   if (value.evidence.kind === 'bull-flag-range') return '旗面盘整中'

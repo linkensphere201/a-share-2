@@ -46,6 +46,32 @@ describe('ScreenerWorkspace', () => {
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('summary=true'))).toBe(true)
   })
 
+  it('registers low accumulation and presents the five platform dimensions', async () => {
+    const platformRun = { ...run, strategy_id: 'low-accumulation-platform' }
+    const platform = { ...candidate, state: 'shape-match', evidence: {
+      kind: 'low-accumulation-range', start_date: '2026-08-01', end_date: '2026-09-17',
+      platform_sessions: 30, platform_volume_ratio: 1.6, volume_persistence: .8,
+      robust_volume_expansion: 1.5, center_drift_percent: 2, floor_lift_percent: 1,
+      pullback_volume_ratio: .7, retained_advance_fraction: .8, retention_events: 5,
+    } }
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'POST') return response(platformRun, 202)
+      if (String(input).includes('/candidates')) return response({ items: [platform] })
+      if (String(input).includes('/api/analysis/')) return response(analysis)
+      return response({ items: [platformRun] })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+    renderScreener()
+    await screen.findByText('持续放量天数占比')
+    expect(screen.getByText('1.60x')).toBeTruthy()
+    expect(screen.getByText('量价承接候选，不确认主力吸筹')).toBeTruthy()
+    await user.selectOptions(screen.getByLabelText('策略'), 'low-accumulation-platform')
+    await user.click(screen.getByRole('button', { name: '开始选股' }))
+    const post = fetchMock.mock.calls.find(([, init]) => init?.method === 'POST')!
+    expect(JSON.parse(String(post[1]?.body)).strategy_id).toBe('low-accumulation-platform')
+  })
+
   it('registers long platforms and shows structural evidence without trade targets', async () => {
     const platformRun = { ...run, strategy_id: 'long-consolidation-platform' }
     const platform = { ...candidate, state: 'shape-match', evidence: {

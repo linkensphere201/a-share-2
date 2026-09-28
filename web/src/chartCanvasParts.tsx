@@ -353,6 +353,8 @@ export function GeneratedAnalysisOverlay({
               ? `回踩形态区 ${formatPrice(item.lower)}-${formatPrice(item.upper)} · 评分 ${item.score.toFixed(1)}`
               : item.kind === 'bull-flag-range'
               ? `牛旗盘整区 ${formatPrice(item.lower)}-${formatPrice(item.upper)} · 评分 ${item.score.toFixed(1)}`
+              : item.kind === 'low-accumulation-range'
+              ? `低位吸筹平台 ${formatPrice(item.lower)}-${formatPrice(item.upper)} · 评分 ${item.score.toFixed(1)}`
               : item.kind === 'long-platform-range'
               ? `长期横盘平台 ${formatPrice(item.lower)}-${formatPrice(item.upper)} · 评分 ${item.score.toFixed(1)}`
               : item.kind === 'deep-drawdown-range'

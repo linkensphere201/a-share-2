@@ -112,7 +112,7 @@ def _core_zone_ids(items: Sequence[GeneratedAnalysisItem]) -> list[str]:
         if item.item_type is not GeneratedItemType.ZONE:
             continue
         kind = str(item.payload.get("kind", ""))
-        if kind in {"key-level", "estimated-volume-at-price", "accumulation-range", "first-pullback-range", "bull-flag-range", "deep-drawdown-range", "long-platform-range"}:
+        if kind in {"key-level", "estimated-volume-at-price", "accumulation-range", "first-pullback-range", "bull-flag-range", "deep-drawdown-range", "long-platform-range", "low-accumulation-range"}:
             by_kind.setdefault(kind, []).append(item)
     selected = []
     for kind in sorted(by_kind):

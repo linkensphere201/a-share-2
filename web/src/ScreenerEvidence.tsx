@@ -5,6 +5,19 @@ import { accumulationStageLabel, accumulationPatternLabel, accumulationStyleLabe
 export function ScreenerEvidence({ selected }: { selected?: ScreenerCandidate }) {
   if (!selected || selected.evidence_complete === false) return null
   return <>
+        {selected.evidence.kind === 'low-accumulation-range' && <footer className="screener-evidence">
+          <span><small>止跌平台</small>{selected.evidence.start_date} ~ {selected.evidence.end_date} · {selected.evidence.platform_sessions} 日</span>
+          <span><small>前期跌幅</small>{selected.evidence.decline_return_percent?.toFixed(2)}%</span>
+          <span><small>平台均量 / 前20日中位量</small>{selected.evidence.platform_volume_ratio?.toFixed(2)}x</span>
+          <span><small>持续放量天数占比</small>{((selected.evidence.volume_persistence ?? 0) * 100).toFixed(0)}%</span>
+          <span><small>去最大量日后量比</small>{selected.evidence.robust_volume_expansion?.toFixed(2)}x</span>
+          <span><small>平台重心抬升</small>{selected.evidence.center_drift_percent?.toFixed(2)}%</span>
+          <span><small>下沿抬升</small>{selected.evidence.floor_lift_percent?.toFixed(2)}%</span>
+          <span><small>下跌 / 上涨日均量</small>{selected.evidence.pullback_volume_ratio?.toFixed(2)}x</span>
+          <span><small>上涨保留检验通过率 · 样本数</small>{((selected.evidence.retained_advance_fraction ?? 0) * 100).toFixed(0)}% · {selected.evidence.retention_events}</span>
+          <span><small>反证检查</small>未触发破位、明显放量下跌或反复回吐</span>
+          <span><small>判断口径</small>量价承接候选，不确认主力吸筹</span>
+        </footer>}
         {selected.state === 'accumulating' && <footer className="screener-evidence">
           <span><small>形态阶段</small>{accumulationStageLabel(selected.evidence.stage)}</span>
           {selected.evidence.compact_platform && <>

@@ -5,7 +5,7 @@ from stock_harness.screener_strategies import STRATEGIES, get_strategy, strategy
 
 
 def test_catalog_parameters_are_isolated_and_all_shapes_have_adapters():
-    assert len(STRATEGIES) == 7
+    assert len(STRATEGIES) == 8
     definitions = strategy_definitions()
     definitions[0]["name"] = "mutated"
     assert strategy_definitions()[0]["name"] != "mutated"

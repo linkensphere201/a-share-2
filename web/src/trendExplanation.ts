@@ -135,6 +135,11 @@ function firstPullbackWindowText(payload: Record<string, unknown>): string {
 
 function explainZone(item: AnalysisItem, allItems: AnalysisItem[]): TrendExplanationItem {
   const payload = item.payload
+  if (payload.kind === 'low-accumulation-range') return {
+    analysisItemId: item.item_id, title: '低位吸筹平台 · 量价承接候选',
+    detail: `${stringValue(payload.start_date) ?? '-'} 至 ${stringValue(payload.end_date) ?? '-'}，${numberValue(payload.platform_sessions) ?? '-'}个交易日；平台量比 ${formatRatio(payload.platform_volume_ratio)}x；重心抬升 ${formatPercent(payload.center_drift_percent)}；下跌/上涨日均量 ${formatRatio(payload.pullback_volume_ratio)}x。仅描述止跌、持续温和放量和承接特征，不确认主力吸筹。`,
+    score: numberValue(payload.score),
+  }
   if (payload.kind === 'long-platform-range') return {
     analysisItemId: item.item_id, title: `长期横盘平台 · ${payload.platform_stage === 'near-upper' ? '临近上沿' : '平台收紧'}`,
     detail: `${stringValue(payload.start_date) ?? '-'} 至 ${stringValue(payload.end_date) ?? '-'}，${numberValue(payload.platform_sessions) ?? '-'}个交易日；平台振幅 ${formatPercent(payload.platform_range_percent)}，近20日振幅 ${formatPercent(payload.recent_range_percent)}；近20日/前段均量 ${formatRatio(payload.recent_history_volume_ratio)}x；重心漂移 ${formatPercent(payload.center_drift_percent)}。仅描述整理结构，不证明资金吸筹。`,

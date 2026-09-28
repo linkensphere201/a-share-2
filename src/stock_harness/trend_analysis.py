@@ -15,6 +15,7 @@ from stock_harness.accumulation_pattern import ANALYSIS_LOOKBACK, detect_accumul
 from stock_harness.first_pullback_pattern import detect_first_pullback
 from stock_harness.low_base_pullback import detect_low_base_pullback
 from stock_harness.bull_flag_pattern import detect_bull_flag
+from stock_harness.low_accumulation_pattern import detect_low_accumulation
 from stock_harness.long_platform_pattern import detect_long_platform
 from stock_harness.deep_drawdown_pattern import WINDOW as DEEP_DRAWDOWN_WINDOW, detect_deep_drawdown
 from stock_harness.analysis_inputs import (
@@ -65,7 +66,7 @@ from stock_harness.trend_context import (
 )
 
 
-ALGORITHM_VERSION = "trend-causal-replay-v47"
+ALGORITHM_VERSION = "trend-causal-replay-v48"
 LOGGER = logging.getLogger(__name__)
 
 
@@ -113,7 +114,7 @@ class TrendAnalysisService:
         else:
             item = _pullback_item(value, structure)
             matched = bool(item is not None and item.payload.get("screen_eligible")
-                           and item.payload.get("stage") in {"pullback-observation", "pullback-confirmed"}
+                           and item.payload.get("stage") in {"pullback-observation", "pullback-confirmed", "shape-match"}
                            and item.payload.get("as_of_date") == cutoff.isoformat())
         return PreparedAnalysisInput(original, read_version) if matched else None
 
@@ -700,7 +701,8 @@ def _low_base_item(analysis_input: AnalysisInput) -> GeneratedAnalysisItem | Non
 
 
 def _pullback_item(value: AnalysisInput, structure: str) -> GeneratedAnalysisItem | None:
-    detectors = {"bull-flag": detect_bull_flag, "first-pullback": detect_first_pullback}
+    detectors = {"bull-flag": detect_bull_flag, "first-pullback": detect_first_pullback,
+                 "low-accumulation": detect_low_accumulation}
     detector = detectors[structure]
     if value.timeframe is not AnalysisTimeframe.DAILY or value.instrument.kind != "stock":
         return None
@@ -781,6 +783,9 @@ def _generated_items(
     )]
     if analysis_input.timeframe is AnalysisTimeframe.DAILY:
         if analysis_input.instrument.kind == "stock":
+            low_accumulation = _pullback_item(analysis_input, "low-accumulation")
+            if low_accumulation is not None:
+                items.append(low_accumulation)
             platform = _long_platform_item(analysis_input)
             if platform is not None:
                 items.append(platform)
