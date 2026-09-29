@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Activity, BarChart3, BookOpen, Filter, FolderKanban, Gauge, LayoutGrid, MessageSquare, Palette, PanelRightClose, Radar, RefreshCw, Settings2 } from 'lucide-react'
+import { Activity, BarChart3, BookOpen, Filter, FlaskConical, FolderKanban, Gauge, LayoutGrid, MessageSquare, Palette, PanelRightClose, Radar, RefreshCw, Settings2 } from 'lucide-react'
 import type { PriceMode, VisibleRange } from './chartTypes'
 import { InstrumentEditor } from './InstrumentEditor'
 import { CustomIndexManager } from './CustomIndexManager'
@@ -55,6 +55,9 @@ import {
 const SignalReviewWorkspace = lazy(async () => ({
   default: (await import('./SignalReviewWorkspace')).SignalReviewWorkspace,
 }))
+const TradeSimulationWorkspace = lazy(async () => ({
+  default: (await import('./TradeSimulationWorkspace')).TradeSimulationWorkspace,
+}))
 const LearningWorkspace = lazy(async () => ({
   default: (await import('./LearningWorkspace')).LearningWorkspace,
 }))
@@ -84,6 +87,7 @@ export function StockWorkspace() {
   const [customIndexManagerOpen, setCustomIndexManagerOpen] = useState(false)
   const [screenerOpen, setScreenerOpen] = useState(false)
   const [signalReviewOpen, setSignalReviewOpen] = useState(false)
+  const [simulationOpen, setSimulationOpen] = useState(() => new URLSearchParams(window.location.search).get('view') === 'trade-simulation')
   const [learningOpen, setLearningOpen] = useState(false)
   const [instrumentEditor, setInstrumentEditor] = useState<{ windowId?: string; tab: 'instruments' | 'groups' }>()
   const [resolvedWindowSymbols, setResolvedWindowSymbols] = useState<Record<string, string[]>>({})
@@ -678,6 +682,11 @@ export function StockWorkspace() {
         targetLists={screenerTargetLists} onAddInstrumentToList={addResultToList}/>
     </Suspense>
   }
+  if (simulationOpen) {
+    return <Suspense fallback={<main className="workspace-module-loading">正在加载模拟测试</main>}>
+      <TradeSimulationWorkspace onClose={() => setSimulationOpen(false)}/>
+    </Suspense>
+  }
   if (learningOpen) {
     return <Suspense fallback={<main className="workspace-module-loading">正在加载交易系统学习模块</main>}>
       <LearningWorkspace onClose={() => setLearningOpen(false)}/>
@@ -700,6 +709,7 @@ export function StockWorkspace() {
           <div className="toolbar-actions">
             <button className="command-button" title="选股器" aria-label="选股器" onClick={() => setScreenerOpen(true)}><Filter size={15}/>选股器</button>
             <button className="command-button" title="信号复盘" aria-label="信号复盘" onClick={() => setSignalReviewOpen(true)}><Radar size={15}/>信号复盘</button>
+            <button className="command-button" title="模拟测试" aria-label="模拟测试" onClick={() => setSimulationOpen(true)}><FlaskConical size={15}/>模拟测试</button>
             <button className="command-button" title="交易系统学习" aria-label="交易系统学习" onClick={() => setLearningOpen(true)}><BookOpen size={15}/>交易系统学习</button>
             <select aria-label="切换窗口组" value={activeGroup.id} onChange={event => {
               const groupId = event.target.value

@@ -19,6 +19,7 @@ from stock_harness.api_analysis_routes import create_analysis_router
 from stock_harness.api_chat_routes import create_chat_router
 from stock_harness.api_market_routes import create_market_router
 from stock_harness.api_learning_routes import create_learning_router
+from stock_harness.api_simulation_routes import create_simulation_router
 from stock_harness.api_models import (
     AiAnalysisFrameworkInput,
     AiAnalysisReferenceInput,
@@ -194,6 +195,7 @@ def create_app(
         return {"status": "ok"}
 
     app.include_router(create_analysis_router())
+    app.include_router(create_simulation_router())
     app.include_router(create_chat_router())
     app.include_router(create_operations_router())
     app.include_router(create_market_router())

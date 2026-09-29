@@ -2239,6 +2239,11 @@ input::placeholder, textarea::placeholder { color: var(--theme-muted); opacity: 
   .screener-chart-pane > header { flex-wrap: wrap; }
 }
 
+@media (max-width: 1400px) {
+  .toolbar-actions { overflow-x: auto; justify-content: flex-start; }
+  .toolbar-actions > * { flex-shrink: 0; }
+  .workspace-identity { flex-shrink: 0; }
+}
 @media (max-width: 1100px) {
   .toolbar { min-width: 0; overflow: hidden; }
   .workspace-brand strong, .security small { display: none; }
