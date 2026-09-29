@@ -17,6 +17,7 @@ from stock_harness.low_base_pullback import detect_low_base_pullback
 from stock_harness.bull_flag_pattern import detect_bull_flag
 from stock_harness.low_accumulation_pattern import detect_low_accumulation
 from stock_harness.long_platform_pattern import detect_long_platform
+from stock_harness.box_breakout_pattern import detect_box_breakout
 from stock_harness.deep_drawdown_pattern import WINDOW as DEEP_DRAWDOWN_WINDOW, detect_deep_drawdown
 from stock_harness.analysis_inputs import (
     AnalysisHorizons,
@@ -66,7 +67,7 @@ from stock_harness.trend_context import (
 )
 
 
-ALGORITHM_VERSION = "trend-causal-replay-v48"
+ALGORITHM_VERSION = "trend-causal-replay-v49"
 LOGGER = logging.getLogger(__name__)
 
 
@@ -119,6 +120,8 @@ class TrendAnalysisService:
             matched = _deep_drawdown_item(original) is not None
         elif structure == "long-platform":
             matched = _long_platform_item(value) is not None
+        elif structure == "box-breakout":
+            matched = _long_platform_item(value, breakout=True) is not None
         elif structure == "major-descending":
             matched = any(line.period.value in periods and line.state.value in states
                           for line in detect_major_descending_lines(value.bars, include_candidates=True))
@@ -679,11 +682,11 @@ def _deep_drawdown_item(value: AnalysisInput) -> GeneratedAnalysisItem | None:
     )
 
 
-def _long_platform_item(value: AnalysisInput) -> GeneratedAnalysisItem | None:
+def _long_platform_item(value: AnalysisInput, *, breakout: bool = False) -> GeneratedAnalysisItem | None:
     if (value.timeframe is not AnalysisTimeframe.DAILY or value.instrument.kind != "stock"
             or not value.bars or value.bars[-1].period_end != value.as_of_date):
         return None
-    evidence = detect_long_platform(value.bars)
+    evidence = (detect_box_breakout if breakout else detect_long_platform)(value.bars)
     if evidence is None:
         return None
     start = date.fromisoformat(str(evidence["start_date"]))
@@ -693,7 +696,7 @@ def _long_platform_item(value: AnalysisInput) -> GeneratedAnalysisItem | None:
         return None
     evidence["price_basis"] = value.price_basis
     return GeneratedAnalysisItem(
-        item_id=f"long-platform-{evidence['start_date']}",
+        item_id=f"{'box-breakout' if breakout else 'long-platform'}-{evidence['start_date']}",
         item_type=GeneratedItemType.ZONE, payload=evidence,
     )
 
@@ -800,6 +803,9 @@ def _generated_items(
             platform = _long_platform_item(analysis_input)
             if platform is not None:
                 items.append(platform)
+            box_breakout = _long_platform_item(analysis_input, breakout=True)
+            if box_breakout is not None:
+                items.append(box_breakout)
             deep_drawdown = _deep_drawdown_item(analysis_input)
             if deep_drawdown is not None:
                 items.append(deep_drawdown)

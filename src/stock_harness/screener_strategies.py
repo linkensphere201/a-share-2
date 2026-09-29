@@ -11,6 +11,10 @@ if TYPE_CHECKING:
     from stock_harness.pattern_analysis import PatternAnalysisRequest, PatternAnalysisResult, PatternAnalysisService
 
 from stock_harness.analysis_inputs import AnalysisHorizons
+from stock_harness.box_breakout_pattern import (
+    STRATEGY_ID as BOX_STRATEGY_ID, ALGORITHM_VERSION as BOX_VERSION,
+    KIND as BOX_KIND, CONFIG as BOX_CONFIG, PLATFORM_CONFIG as BOX_PLATFORM_CONFIG,
+)
 from stock_harness.low_accumulation_pattern import (
     STRATEGY_ID as LOW_ACCUMULATION_ID, ALGORITHM_VERSION as LOW_ACCUMULATION_VERSION,
     CONFIG as LOW_ACCUMULATION_CONFIG, KIND as LOW_ACCUMULATION_KIND,
@@ -54,6 +58,9 @@ SCREENABLE_STATES = (
 
 def _definitions() -> list[dict[str, object]]:
     return [{
+        "strategy_id": BOX_STRATEGY_ID, "name": "平台箱体突破", "version": BOX_VERSION,
+        "window": 250, "states": ["broken-out", "breakout-retest"], "final_bars_only": True,
+    }, {
         "strategy_id": LOW_ACCUMULATION_ID, "name": "低位吸筹平台", "version": LOW_ACCUMULATION_VERSION,
         "window": 60, "states": ["shape-match"], "final_bars_only": True,
     }, {
@@ -100,6 +107,10 @@ def _definitions() -> list[dict[str, object]]:
 
 
 def _parameter_defaults(strategy_id, periods, states, max_results: int) -> dict[str, object]:
+    if strategy_id == BOX_STRATEGY_ID:
+        return {"max_results": max_results, "final_bars_only": True,
+                "states": ["broken-out", "breakout-retest"], "pattern_parameters": asdict(BOX_CONFIG),
+                "platform_parameters": asdict(BOX_PLATFORM_CONFIG), "analysis_config": BOX_VERSION}
     if strategy_id == LOW_ACCUMULATION_ID:
         return {"max_results": max_results, "final_bars_only": True, "states": ["shape-match"],
                 "pattern_parameters": asdict(LOW_ACCUMULATION_CONFIG), "analysis_config": LOW_ACCUMULATION_VERSION}
@@ -144,13 +155,14 @@ class ShapeSelection:
     kind: str
     line_code: str
     low_base: bool = False
+    stages: frozenset[str] = frozenset({'pullback-observation', 'pullback-confirmed', DEEP_DRAWDOWN_STATE})
 
     def matches(self, item: dict[str, Any], cutoff: date) -> bool:
         evidence = item['payload']
         return (item['item_type'] == 'zone' and evidence.get('kind') == self.kind
                 and ((evidence.get('launch_type') == LOW_BASE_TYPE) == self.low_base)
                 and bool(evidence.get('screen_eligible'))
-                and evidence.get('stage') in {'pullback-observation', 'pullback-confirmed', DEEP_DRAWDOWN_STATE}
+                and evidence.get('stage') in self.stages
                 and evidence.get('as_of_date') == cutoff.isoformat())
 
     def rank_key(self, candidate: dict[str, Any]) -> tuple[float, bool, float, str]:
@@ -219,6 +231,8 @@ class ScreenerStrategy:
 
 
 _SHAPES = {
+    BOX_STRATEGY_ID: ShapeSelection("box-breakout", BOX_KIND, "BOX-BREAKOUT",
+                                   stages=frozenset({"broken-out", "breakout-retest"})),
     LOW_ACCUMULATION_ID: ShapeSelection("low-accumulation", LOW_ACCUMULATION_KIND, "LOW-ACCUMULATION"),
     PLATFORM_STRATEGY_ID: ShapeSelection("long-platform", PLATFORM_KIND, "LONG-PLATFORM"),
     DEEP_DRAWDOWN_STRATEGY_ID: ShapeSelection("deep-drawdown", DEEP_DRAWDOWN_KIND, "DEEP-DRAWDOWN"),

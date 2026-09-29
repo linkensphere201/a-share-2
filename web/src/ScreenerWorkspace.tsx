@@ -26,6 +26,7 @@ import {
 import type { ThemeDefinition } from './themeStore'
 
 const strategyLabels: Record<ScreenerStrategyId, string> = {
+  'platform-box-breakout': '平台箱体突破',
   'low-accumulation-platform': '低位吸筹平台',
   'long-consolidation-platform': '长期横盘平台',
   'major-descending-breakout': '大斜边突破',
@@ -353,7 +354,7 @@ export function ScreenerWorkspace({
         {selectedRun?.status === 'running' && <div className="screener-progress"><i style={{ width: `${progress}%` }}/></div>}
         <div className="screener-quick-filters" role="group" aria-label="结果快速过滤">
           <button className={resultStateFilter === 'all' ? 'active' : ''} aria-label="快速过滤：全部" onClick={() => setResultStateFilter('all')}>全部 <small>{candidates.length}</small></button>
-          {(['low-accumulation-platform', 'long-consolidation-platform', 'deep-drawdown-consolidation'].includes(selectedRun?.strategy_id ?? '') ? ['shape-match'] as ScreenerState[] : selectedRun?.strategy_id === 'bull-flag-consolidation' ? ['pullback-observation'] as ScreenerState[] : selectedRun?.strategy_id === 'volume-accumulation-20d' ? ['accumulating'] as ScreenerState[] : ['strong-first-pullback', 'low-base-platform-pullback'].includes(selectedRun?.strategy_id ?? '') ? pullbackStates : trendStates).map(state => <button
+          {(selectedRun?.strategy_id === 'platform-box-breakout' ? ['broken-out', 'breakout-retest'] as ScreenerState[] : ['low-accumulation-platform', 'long-consolidation-platform', 'deep-drawdown-consolidation'].includes(selectedRun?.strategy_id ?? '') ? ['shape-match'] as ScreenerState[] : selectedRun?.strategy_id === 'bull-flag-consolidation' ? ['pullback-observation'] as ScreenerState[] : selectedRun?.strategy_id === 'volume-accumulation-20d' ? ['accumulating'] as ScreenerState[] : ['strong-first-pullback', 'low-base-platform-pullback'].includes(selectedRun?.strategy_id ?? '') ? pullbackStates : trendStates).map(state => <button
             key={state}
             className={resultStateFilter === state ? 'active' : ''}
             aria-label={`快速过滤：${selectedRun?.strategy_id === 'long-consolidation-platform' ? '平台收紧' : selectedRun?.strategy_id === 'bull-flag-consolidation' ? '旗面盘整中' : stateLabels[state]}`}

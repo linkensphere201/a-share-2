@@ -5,6 +5,17 @@ import { accumulationStageLabel, accumulationPatternLabel, accumulationStyleLabe
 export function ScreenerEvidence({ selected }: { selected?: ScreenerCandidate }) {
   if (!selected || selected.evidence_complete === false) return null
   return <>
+        {selected.evidence.kind === 'box-breakout-range' && <footer className="screener-evidence">
+          <span><small>形态阶段</small>{candidateStageLabel(selected)}</span>
+          <span><small>箱体区间</small>{selected.evidence.start_date} ~ {selected.evidence.platform_end_date}</span>
+          <span><small>平台时长</small>{selected.evidence.platform_sessions} 个交易日</span>
+          <span><small>箱底 / 箱顶</small>{selected.evidence.lower?.toFixed(2)} / {selected.evidence.upper?.toFixed(2)}</span>
+          <span><small>突破日期</small>{selected.evidence.launch_date} · {selected.evidence.breakout_age_sessions} 个交易日前</span>
+          <span><small>突破量 / 前20日均量</small>{selected.evidence.breakout_volume_ratio?.toFixed(2)}x</span>
+          <span><small>最新量 / 突破日量</small>{selected.evidence.retest_breakout_volume_ratio?.toFixed(2)}x</span>
+          <span><small>距箱顶</small>{signed(selected.evidence.breakout_distance_percent ?? 0)}%</span>
+          <span><small>箱顶测试次数</small>{selected.evidence.upper_touch_count}</span>
+        </footer>}
         {selected.evidence.kind === 'low-accumulation-range' && <footer className="screener-evidence">
           <span><small>止跌平台</small>{selected.evidence.start_date} ~ {selected.evidence.end_date} · {selected.evidence.platform_sessions} 日</span>
           <span><small>前期跌幅</small>{selected.evidence.decline_return_percent?.toFixed(2)}%</span>
@@ -113,7 +124,7 @@ export function ScreenerEvidence({ selected }: { selected?: ScreenerCandidate })
           </>}
           <span><small>证据边界</small>仅日线量价；板块共振、分时承接未验证</span>
         </footer>}
-        {selected && selected.state !== 'shape-match' && selected.state !== 'accumulating' && !pullbackStates.includes(selected.state) && <footer className="screener-evidence">
+        {selected && selected.evidence.kind !== 'box-breakout-range' && selected.state !== 'shape-match' && selected.state !== 'accumulating' && !pullbackStates.includes(selected.state) && <footer className="screener-evidence">
           <span><small>边界</small>{selected.evidence.projected_price?.toFixed(2)}</span>
           <span><small>收盘</small>{latestClose(selected).toFixed(2)}</span>
           <span><small>距斜边</small>{signed(selected.evidence.distance_percent ?? 0)}%</span>

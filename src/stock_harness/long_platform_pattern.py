@@ -24,6 +24,7 @@ class LongPlatformConfig:
     maximum_volume_ratio: float = .95
     directional_return: float = .03
     maximum_directional_efficiency: float = .65
+    minimum_boundary_touches: int = 0
 
 
 CONFIG = LongPlatformConfig()
@@ -35,9 +36,10 @@ def _slope(values):
         (i - center) ** 2 for i in range(len(values)))
 
 
-def detect_long_platform(bars: tuple[AnalysisBar, ...] | list[AnalysisBar]) -> dict[str, object] | None:
-    bars = tuple(bars[-CONFIG.maximum_sessions - 60:])
-    if len(bars) < CONFIG.minimum_sessions:
+def detect_long_platform(bars: tuple[AnalysisBar, ...] | list[AnalysisBar], *,
+                         config: LongPlatformConfig = CONFIG) -> dict[str, object] | None:
+    bars = tuple(bars[-config.maximum_sessions - 60:])
+    if len(bars) < config.minimum_sessions:
         return None
     if any(not b.period_complete or b.contains_provisional or b.contains_roll_event
            or not all(isfinite(v) and v > 0 for v in (b.open, b.high, b.low, b.close, b.volume))
@@ -45,21 +47,28 @@ def detect_long_platform(bars: tuple[AnalysisBar, ...] | list[AnalysisBar]) -> d
         return None
     if any(a.period_end >= b.period_start for a, b in zip(bars, bars[1:])):
         return None
-    recent = bars[-CONFIG.recent_sessions:]
+    recent = bars[-config.recent_sessions:]
     recent_range = max(b.high for b in recent) / min(b.low for b in recent) - 1
-    if recent_range > CONFIG.maximum_recent_range:
+    if recent_range > config.maximum_recent_range:
         return None
     # Longest qualifying interval owns the geometry; no fixed calendar start.
-    for size in range(min(len(bars), CONFIG.maximum_sessions), CONFIG.minimum_sessions - 1, -1):
+    for size in range(min(len(bars), config.maximum_sessions), config.minimum_sessions - 1, -1):
         window = bars[-size:]
-        history = window[:-CONFIG.recent_sessions]
+        history = window[:-config.recent_sessions]
         upper, lower = max(b.high for b in history), min(b.low for b in history)
         width = upper / lower - 1
-        if not .01 <= width <= CONFIG.maximum_range:
+        if not .01 <= width <= config.maximum_range:
             continue
+        if config.minimum_boundary_touches:
+            tolerance = (upper - lower) * .10
+            upper_touches = [i for i, b in enumerate(window) if b.high >= upper - tolerance]
+            lower_touches = [i for i, b in enumerate(window) if b.low <= lower + tolerance]
+            if any(len(touches) < config.minimum_boundary_touches or touches[-1] - touches[0] < 3
+                   for touches in (upper_touches, lower_touches)):
+                continue
         if any(b.high > upper or b.low < lower for b in recent):
             continue
-        if recent_range > width * CONFIG.maximum_range_ratio:
+        if recent_range > width * config.maximum_range_ratio:
             continue
         closes = [b.close for b in window]
         center_drift = fmean(closes[-20:]) / fmean(closes[:20]) - 1
@@ -67,14 +76,14 @@ def detect_long_platform(bars: tuple[AnalysisBar, ...] | list[AnalysisBar]) -> d
         path = sum(abs(b - a) for a, b in zip(closes, closes[1:]))
         efficiency = abs(closes[-1] - closes[0]) / path if path else 0.
         change = closes[-1] / closes[0] - 1
-        if (abs(center_drift) > CONFIG.maximum_center_drift
-                or abs(fitted_drift) > CONFIG.maximum_fitted_drift
-                or (abs(change) > CONFIG.directional_return and efficiency > CONFIG.maximum_directional_efficiency)):
+        if (abs(center_drift) > config.maximum_center_drift
+                or abs(fitted_drift) > config.maximum_fitted_drift
+                or (abs(change) > config.directional_return and efficiency > config.maximum_directional_efficiency)):
             continue
         volume_ratio = fmean(b.volume for b in recent) / fmean(b.volume for b in history)
         # A single historical spike must not manufacture apparent contraction.
         median_volume_ratio = median(b.volume for b in recent) / median(b.volume for b in history)
-        if max(volume_ratio, median_volume_ratio) > CONFIG.maximum_volume_ratio:
+        if max(volume_ratio, median_volume_ratio) > config.maximum_volume_ratio:
             continue
         before = bars[:len(bars) - size][-60:]
         prior_change = before[-1].close / before[0].close - 1 if len(before) >= 20 else None
@@ -92,7 +101,7 @@ def detect_long_platform(bars: tuple[AnalysisBar, ...] | list[AnalysisBar]) -> d
                        fmean(b.close for b in bars[-period-10:-10]) - 1) * 100, 4)
                 if len(bars) >= period + 10 else None)
         score = (30 + 20 * (1 - recent_range / width) + 15 * (1 - min(1., volume_ratio))
-                 + 15 * (1 - min(1., abs(center_drift) / CONFIG.maximum_center_drift))
+                 + 15 * (1 - min(1., abs(center_drift) / config.maximum_center_drift))
                  + 10 * min(1., size / 250) + (10 * min(1., max(0., demand - 1)) if demand is not None else 0))
         return {
             "kind": KIND, "algorithm_version": ALGORITHM_VERSION, "display_name": "Long consolidation platform",
@@ -111,7 +120,7 @@ def detect_long_platform(bars: tuple[AnalysisBar, ...] | list[AnalysisBar]) -> d
             "prior_return_percent": round(prior_change * 100, 4) if prior_change is not None else None,
             "context_sessions": len(before), "small_body_fraction": round(sum(
                 abs(b.close - b.open) <= b.close * .015 for b in recent) / len(recent), 4),
-            **ma_slopes, "parameters": asdict(CONFIG),
+            **ma_slopes, "parameters": asdict(config),
             "uncertainty": "Provisional price-volume structure, not institutional accumulation or a return forecast.",
         }
     return None

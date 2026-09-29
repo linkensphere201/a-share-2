@@ -5,7 +5,7 @@ from stock_harness.screener_strategies import STRATEGIES, get_strategy, strategy
 
 
 def test_catalog_parameters_are_isolated_and_all_shapes_have_adapters():
-    assert len(STRATEGIES) == 8
+    assert len(STRATEGIES) == 9
     definitions = strategy_definitions()
     definitions[0]["name"] = "mutated"
     assert strategy_definitions()[0]["name"] != "mutated"
@@ -31,7 +31,7 @@ def test_descriptor_metadata_cannot_be_mutated_through_public_catalog():
 def test_shape_matching_and_ranking_preserve_existing_rules(strategy):
     cutoff = date(2026, 9, 17)
     selection = strategy.selection
-    evidence = {'kind': selection.kind, 'stage': 'pullback-observation',
+    evidence = {'kind': selection.kind, 'stage': sorted(selection.stages)[0],
                 'screen_eligible': True, 'as_of_date': cutoff.isoformat()}
     if selection.low_base:
         evidence['launch_type'] = 'low-base-platform'

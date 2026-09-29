@@ -19,6 +19,7 @@ from test_screener_concurrency import wait_until
 from test_screener_performance import source_bars
 from test_long_platform_pattern import sample as long_platform_bars
 from test_low_accumulation_pattern import fixture as low_accumulation_bars
+from test_box_breakout_pattern import fixture as box_bars
 
 
 SHAPES = [s for s in STRATEGIES.values() if s.execution == 'shape']
@@ -113,9 +114,11 @@ def create_shape_runs(store, cutoff):
     'bull-flag-consolidation', 'strong-first-pullback', 'low-base-platform-pullback',
     'deep-drawdown-consolidation',
     'long-consolidation-platform', 'low-accumulation-platform',
+    'platform-box-breakout',
 ])
 def test_batch_matches_individual_scores_order_and_saved_evidence(fixture_strategy):
-    bars = (long_platform_bars() if fixture_strategy == 'long-consolidation-platform' else
+    bars = (box_bars() if fixture_strategy == 'platform-box-breakout' else
+            long_platform_bars() if fixture_strategy == 'long-consolidation-platform' else
             low_accumulation_bars() if fixture_strategy == 'low-accumulation-platform' else
             source_bars(fixture_strategy))
     results = []

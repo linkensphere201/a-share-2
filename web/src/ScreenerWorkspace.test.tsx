@@ -24,6 +24,36 @@ afterEach(() => {
 })
 
 describe('ScreenerWorkspace', () => {
+  it('registers box breakout and displays dated boundaries and breakout evidence', async () => {
+    const boxRun = { ...run, strategy_id: 'platform-box-breakout' }
+    const box = { ...candidate, state: 'breakout-retest', evidence: {
+      kind: 'box-breakout-range', stage: 'breakout-retest', start_date: '2026-05-01',
+      end_date: '2026-09-17', platform_end_date: '2026-09-14', platform_sessions: 100,
+      lower: 9.4, upper: 10.6, launch_date: '2026-09-15', breakout_age_sessions: 2,
+      breakout_volume_ratio: 1.8, retest_breakout_volume_ratio: .6,
+      breakout_distance_percent: 1.5, upper_touch_count: 5,
+    } }
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'POST') return response(boxRun, 202)
+      if (String(input).includes('/candidates')) return response({ items: [box] })
+      if (String(input).includes('/api/analysis/')) return response(analysis)
+      return response({ items: [boxRun] })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+    renderScreener()
+    await screen.findByText('箱底 / 箱顶')
+    expect(screen.getByText('9.40 / 10.60')).toBeTruthy()
+    expect(screen.getByText('1.80x')).toBeTruthy()
+    expect(screen.queryByText('距斜边')).toBeNull()
+    expect(screen.queryByText('目标位')).toBeNull()
+    expect(screen.queryByRole('button', { name: '快速过滤：临界突破' })).toBeNull()
+    await user.selectOptions(screen.getByLabelText('策略'), 'platform-box-breakout')
+    await user.click(screen.getByRole('button', { name: '开始选股' }))
+    const post = fetchMock.mock.calls.find(([, init]) => init?.method === 'POST')!
+    expect(JSON.parse(String(post[1]?.body)).strategy_id).toBe('platform-box-breakout')
+  })
+
   it('submits all strategies once and immediately shows pending and independent runs', async () => {
     let finish!: (value: Response) => void
     const batchRuns = ['major-descending-breakout', 'bull-flag-consolidation'].map((strategy, index) => ({

@@ -135,6 +135,11 @@ function firstPullbackWindowText(payload: Record<string, unknown>): string {
 
 function explainZone(item: AnalysisItem, allItems: AnalysisItem[]): TrendExplanationItem {
   const payload = item.payload
+  if (payload.kind === 'box-breakout-range') return {
+    analysisItemId: item.item_id, title: `平台箱体突破 · ${payload.stage === 'breakout-retest' ? '箱顶缩量回踩' : '放量突破'}`,
+    detail: `${stringValue(payload.start_date) ?? '-'} 至 ${stringValue(payload.platform_end_date) ?? '-'}，${numberValue(payload.platform_sessions) ?? '-'}个交易日；箱底 ${formatPrice(payload.lower)}，箱顶 ${formatPrice(payload.upper)}；突破日 ${stringValue(payload.launch_date) ?? '-'}，突破量比 ${formatRatio(payload.breakout_volume_ratio)}x；最新收盘距箱顶 ${formatPercent(payload.breakout_distance_percent)}。`,
+    score: numberValue(payload.score),
+  }
   if (payload.kind === 'low-accumulation-range') return {
     analysisItemId: item.item_id, title: '低位吸筹平台 · 量价承接候选',
     detail: `${stringValue(payload.start_date) ?? '-'} 至 ${stringValue(payload.end_date) ?? '-'}，${numberValue(payload.platform_sessions) ?? '-'}个交易日；平台量比 ${formatRatio(payload.platform_volume_ratio)}x；重心抬升 ${formatPercent(payload.center_drift_percent)}；下跌/上涨日均量 ${formatRatio(payload.pullback_volume_ratio)}x。仅描述止跌、持续温和放量和承接特征，不确认主力吸筹。`,

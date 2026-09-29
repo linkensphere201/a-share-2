@@ -52,6 +52,14 @@ export type ScreenerCandidate = {
   line_code: string
   analysis_run_id: string
   evidence: {
+    platform_end_date?: string
+    breakout_age_sessions?: number
+    breakout_volume_ratio?: number
+    retest_breakout_volume_ratio?: number
+    breakout_distance_percent?: number
+    upper_touch_count?: number
+    lower?: number
+    upper?: number
     robust_pullback_volume_ratio?: number
     retained_advance_fraction?: number
     retention_events?: number
