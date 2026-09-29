@@ -1,6 +1,7 @@
 """Bounded, stateless single-position scenario lab. Never a historical backtest."""
 
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
+from collections.abc import Callable
 from datetime import date
 from hashlib import sha256
 import json
@@ -37,6 +38,7 @@ class SessionInput(BaseModel):
 
 class SimulationInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    strategy_id: str = Field(default=POLICY_ID, min_length=1, max_length=80)
     label: str = Field(default="Manual scenario", min_length=1, max_length=80)
     signal_session: date
     capital: Positive = 100_000
@@ -60,10 +62,9 @@ class SimulationInput(BaseModel):
         return self
 
 
-def simulate(payload: SimulationInput) -> dict[str, object]:
+def _simulate_trend(payload: SimulationInput) -> dict[str, object]:
     """Uses user-declared sessions/eligibility, not unverified application data."""
     snapshot = payload.model_dump(mode="json")
-    digest = sha256(json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     plan = build_price_plan(payload.signal_session, payload.sessions[0].session,
                             upper=payload.upper, lower=payload.lower, close=payload.signal_close,
                             atr20=payload.atr20, target=payload.target)
@@ -144,7 +145,7 @@ def simulate(payload: SimulationInput) -> dict[str, object]:
         drawdown = max(drawdown, 1 - point["equity"] / high)
     return {
         "strategy_id": POLICY_ID, "engine_version": "single-position-scenario-v1",
-        "mode": "manual-scenario-not-historical-backtest", "input_digest": digest,
+        "mode": "manual-scenario-not-historical-backtest",
         "input": snapshot, "plan": asdict(plan), "status": status,
         "planned_quantity": quantity, "events": events, "equity": equity,
         "summary": {"final_equity": equity[-1]["equity"], "net_return": equity[-1]["equity"] / payload.capital - 1,
@@ -157,8 +158,8 @@ def simulate(payload: SimulationInput) -> dict[str, object]:
     }
 
 
-def example_scenarios() -> list[dict[str, object]]:
-    base = dict(label="合成情景：目标退出", signal_session="2000-01-03", capital=100000,
+def _trend_scenarios() -> list[dict[str, object]]:
+    base = dict(strategy_id=POLICY_ID, label="合成情景：目标退出", signal_session="2000-01-03", capital=100000,
                 upper=10, lower=9.5, signal_close=10.2, atr20=.4, target=12.5,
                 median_amount20=100000000, lot_size=100, fee_bps=10, slippage_bps=5,
                 eligibility_assumed=True)
@@ -173,3 +174,46 @@ def example_scenarios() -> list[dict[str, object]]:
             row(4, 10.25, 9.5), row(5, 9., 9., 9.), row(6, 8.5, 8.6, 8.)]},
         {**base, "label": "合成情景：跳空放弃", "sessions": [row(4, 11, 11.1), row(5, 11.1, 11.2)]},
     ]
+
+
+@dataclass(frozen=True, slots=True)
+class SimulationStrategy:
+    strategy_id: str
+    name: str
+    version: str
+    run: Callable[[SimulationInput], dict[str, object]]
+    examples: Callable[[], list[dict[str, object]]]
+
+
+STRATEGIES = {
+    POLICY_ID: SimulationStrategy(POLICY_ID, "趋势突破型", "trend-trade-v1",
+                                  _simulate_trend, _trend_scenarios),
+}
+
+
+def _strategy(strategy_id: str) -> SimulationStrategy:
+    if strategy_id not in STRATEGIES:
+        raise ValueError(f"unsupported simulation strategy: {strategy_id}")
+    return STRATEGIES[strategy_id]
+
+
+def strategy_catalog() -> list[dict[str, object]]:
+    return [{"strategy_id": item.strategy_id, "name": item.name, "version": item.version,
+             "mode": "manual-scenario-not-historical-backtest", "scenarios": item.examples()}
+            for item in STRATEGIES.values()]
+
+
+def example_scenarios(strategy_id: str = POLICY_ID) -> list[dict[str, object]]:
+    return _strategy(strategy_id).examples()
+
+
+def simulate(payload: SimulationInput) -> dict[str, object]:
+    strategy = _strategy(payload.strategy_id)
+    result = strategy.run(payload)
+    result.update(strategy_id=strategy.strategy_id, strategy_name=strategy.name,
+                  strategy_version=strategy.version)
+    # Versioned identity prevents different execution policies sharing one run key.
+    identity = {"input": result["input"], "strategy_id": strategy.strategy_id,
+                "strategy_version": strategy.version, "engine_version": result["engine_version"]}
+    result["input_digest"] = sha256(json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    return result

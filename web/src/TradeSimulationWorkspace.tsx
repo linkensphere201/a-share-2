@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { ArrowLeft, Download, FlaskConical, Play, Plus, RefreshCw, Trash2 } from 'lucide-react'
-import { loadSimulationScenarios, runTradeSimulation, type SimulationInput, type SimulationResult, type SimulationSession } from './tradeSimulationClient'
+import { loadSimulationStrategies, runTradeSimulation, type SimulationInput, type SimulationResult, type SimulationSession, type SimulationStrategy } from './tradeSimulationClient'
 import './tradeSimulation.css'
 
 const blankSession = (): SimulationSession => ({ session: '', open: 0, close: null, atr20: null,
   lower_limit: 0, upper_limit: 0, tradable: true, verified: true, market_risk_off: false })
-const initial: SimulationInput = { label: '手工情景', signal_session: '', capital: 100000, upper: 0, lower: 0,
+const initial: SimulationInput = { strategy_id: 'trend-trade-v1', label: '手工情景', signal_session: '', capital: 100000, upper: 0, lower: 0,
   signal_close: 0, atr20: 0, target: 0, median_amount20: 100000000, lot_size: 100, fee_bps: 10,
   slippage_bps: 5, eligibility_assumed: false, sessions: [blankSession(), blankSession()] }
 const statuses: Record<string, string> = { held: '持仓中', 'exit-pending': '待退出', closed: '已平仓', expired: '入场过期', 'not-entered': '未开仓' }
@@ -27,7 +27,9 @@ const format = (value: number | null | undefined) => value == null ? '—' : val
 
 export function TradeSimulationWorkspace({ onClose }: { onClose: () => void }) {
   const [input, setInput] = useState<SimulationInput>(initial)
-  const [examples, setExamples] = useState<SimulationInput[]>([])
+  const [strategies, setStrategies] = useState<SimulationStrategy[]>([])
+  const strategy = strategies.find(item => item.strategy_id === input.strategy_id)
+  const examples = strategy?.scenarios ?? []
   const [reload, setReload] = useState(0)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -38,7 +40,11 @@ export function TradeSimulationWorkspace({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     const controller = new AbortController()
     setError('')
-    loadSimulationScenarios(controller.signal).then(value => setExamples(value.items)).catch(reason => {
+    loadSimulationStrategies(controller.signal).then(value => {
+      setStrategies(value.items)
+      setInput(current => value.items.some(item => item.strategy_id === current.strategy_id) || !value.items.length
+        ? current : { ...initial, strategy_id: value.items[0].strategy_id })
+    }).catch(reason => {
       if (!controller.signal.aborted) setError(String(reason.message ?? reason))
     })
     return () => controller.abort()
@@ -49,7 +55,7 @@ export function TradeSimulationWorkspace({ onClose }: { onClose: () => void }) {
     setInput(current => ({ ...current, sessions: current.sessions.map((row, i) => i === index ? { ...row, ...patch } : row) }))
   }
   async function run() {
-    if (request.current) return
+    if (request.current || !strategy) return
     const controller = new AbortController()
     request.current = controller
     setBusy(true); setError('')
@@ -70,19 +76,23 @@ export function TradeSimulationWorkspace({ onClose }: { onClose: () => void }) {
     if (!selected) return
     const url = URL.createObjectURL(new Blob([JSON.stringify(selected, null, 2)], { type: 'application/json' }))
     const anchor = document.createElement('a')
-    anchor.href = url; anchor.download = `trend-trade-v1-${selected.input_digest.slice(0, 12)}.json`; anchor.click()
+    anchor.href = url; anchor.download = `${selected.strategy_id}-${selected.input_digest.slice(0, 12)}.json`; anchor.click()
     setTimeout(() => URL.revokeObjectURL(url), 1000)
   }
 
   return <main className="trade-lab">
     <header className="trade-lab-toolbar">
       <button title="返回主界面" aria-label="返回主界面" onClick={onClose}><ArrowLeft size={17}/></button>
-      <h1><FlaskConical size={19}/>模拟测试</h1><span>趋势-trade-v1</span>
+      <h1><FlaskConical size={19}/>模拟测试</h1><span>{strategy?.name ?? '策略未就绪'}</span>
       <strong className="trade-lab-badge">手工情景 · 非历史回测</strong>
       <button title="导出当前结果" aria-label="导出当前结果" disabled={!selected || busy} onClick={download}><Download size={17}/></button>
     </header>
     <div className="trade-lab-body">
       <aside className="trade-lab-settings">
+        <label>执行策略<select aria-label="执行策略" value={strategy ? input.strategy_id : ''} disabled={busy || !strategies.length} onChange={e => {
+          setInput({ ...initial, strategy_id: e.target.value, sessions: [blankSession(), blankSession()] })
+          setSelected(undefined); setError('')
+        }}>{!strategies.length && <option value="">暂无可用策略</option>}{strategies.map(item => <option key={item.strategy_id} value={item.strategy_id}>{item.name}（{item.version}）</option>)}</select></label>
         <h2>冻结交易计划</h2>
         <div className="trade-lab-examples"><select aria-label="载入合成测试情景" disabled={busy} value="" onChange={e => {
           const value = examples[Number(e.target.value)]
@@ -96,12 +106,12 @@ export function TradeSimulationWorkspace({ onClose }: { onClose: () => void }) {
             <div className="trade-lab-input-grid">{numberFields.map(([key, label]) => <label key={key}>{label}<input required type="number" min={key.includes('bps') ? 0 : .000001} step="any" value={input[key]} onChange={e => setInput({ ...input, [key]: Number(e.target.value) })}/></label>)}</div>
             <label className="trade-lab-check"><input type="checkbox" checked={input.eligibility_assumed} onChange={e => setInput({ ...input, eligibility_assumed: e.target.checked })}/>假设市场、板块和个股资格已通过</label>
           </fieldset>
-          <button className="trade-lab-run" type="submit" disabled={busy || input.sessions.some(row => !row.session)}><Play size={16}/>{busy ? '模拟中…' : '运行模拟'}</button>
+          <button className="trade-lab-run" type="submit" disabled={busy || !strategy || input.sessions.some(row => !row.session)}><Play size={16}/>{busy ? '模拟中…' : '运行模拟'}</button>
         </form>
         <p className="trade-lab-warning">未核验真实形态、历史交易日和资格；不含复权、组合调度及账户暂停。结果不代表策略盈利能力。</p>
         <h2>本次会话记录</h2>
         <nav className="trade-lab-history" aria-label="模拟记录">{results.length ? results.map(result => <button key={result.input_digest} className={selected === result ? 'active' : ''} onClick={() => setSelected(result)}>
-          <span>{result.input.label}</span><small>{statuses[result.status]} · {(result.summary.net_return * 100).toFixed(2)}%</small>
+          <span>{result.input.label}</span><small>{result.strategy_name} · {statuses[result.status]} · {(result.summary.net_return * 100).toFixed(2)}%</small>
         </button>) : <span className="trade-lab-muted">暂无记录</span>}</nav>
       </aside>
       <section className="trade-lab-main">
@@ -117,7 +127,7 @@ export function TradeSimulationWorkspace({ onClose }: { onClose: () => void }) {
             </tr>)}</tbody></table></div>
         </section>
         {selected ? <section className="trade-lab-result" aria-label="模拟结果">
-          <header><h2>{selected.input.label}</h2><span>{statuses[selected.status]}</span><small>{selected.input_digest.slice(0, 12)}</small></header>
+          <header><h2>{selected.input.label}</h2><span>{statuses[selected.status]}</span><span>{selected.strategy_name} · {selected.strategy_version}</span><small>{selected.input_digest.slice(0, 12)}</small></header>
           <div className="trade-lab-metrics">
             <div><span>账户净变化</span><strong>{(selected.summary.net_return * 100).toFixed(2)}%</strong></div>
             <div><span>最大回撤</span><strong>{(selected.summary.max_drawdown * 100).toFixed(2)}%</strong></div>

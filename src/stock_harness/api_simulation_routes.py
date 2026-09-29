@@ -2,11 +2,15 @@
 
 from fastapi import APIRouter, HTTPException
 
-from stock_harness.trade_simulation import SimulationInput, example_scenarios, simulate
+from stock_harness.trade_simulation import SimulationInput, example_scenarios, simulate, strategy_catalog
 
 
 def create_simulation_router() -> APIRouter:
     router = APIRouter()
+
+    @router.get("/api/trade-simulation/strategies")
+    def strategies():
+        return {"items": strategy_catalog()}
 
     @router.get("/api/trade-simulation/scenarios")
     def scenarios():

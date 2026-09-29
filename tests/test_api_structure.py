@@ -2,6 +2,7 @@ from stock_harness.api import create_app
 
 
 EXPECTED_API_OPERATIONS = {
+    ("GET", "/api/trade-simulation/strategies", "200"),
     ("GET", "/api/trade-simulation/scenarios", "200"),
     ("POST", "/api/trade-simulation/run", "200"),
     ("GET", "/api/health", "200"),

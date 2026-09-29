@@ -98,3 +98,37 @@ def test_api_validates_sequence_bounds_and_geometry():
             assert api.post('/api/trade-simulation/run', json={**examples[0], **patch}).status_code == 422
         examples[0]['sessions'][1]['session'] = examples[0]['sessions'][0]['session']
         assert api.post('/api/trade-simulation/run', json=examples[0]).status_code == 422
+
+
+def test_catalog_and_explicit_strategy_identity_with_legacy_default():
+    with client() as api:
+        catalog = api.get('/api/trade-simulation/strategies').json()['items']
+        assert [(s['strategy_id'], s['name']) for s in catalog] == [('trend-trade-v1', '趋势突破型')]
+        data = catalog[0]['scenarios'][0]
+        explicit = api.post('/api/trade-simulation/run', json=data).json()
+        del data['strategy_id']
+        legacy = api.post('/api/trade-simulation/run', json=data).json()
+        assert explicit['input_digest'] == legacy['input_digest']
+        assert explicit['strategy_name'] == '趋势突破型'
+        assert explicit['strategy_version'] == 'trend-trade-v1'
+        response = api.post('/api/trade-simulation/run', json={**data, 'strategy_id': 'unknown'})
+        assert response.status_code == 422
+
+
+def test_registry_dispatches_selected_policy_and_versions_run_identity(monkeypatch):
+    from dataclasses import replace
+    from stock_harness.trade_simulation import STRATEGIES
+    original = STRATEGIES['trend-trade-v1']
+    called = []
+
+    def alternate(payload):
+        called.append(payload.strategy_id)
+        return original.run(payload)
+
+    monkeypatch.setitem(STRATEGIES, 'test-policy', replace(original, strategy_id='test-policy', version='test-v1', run=alternate))
+    result = run(strategy_id='test-policy')
+    assert called == ['test-policy']
+    assert result['strategy_id'] == 'test-policy'
+    assert result['input_digest'] != run()['input_digest']
+    monkeypatch.setitem(STRATEGIES, 'test-policy', replace(STRATEGIES['test-policy'], version='test-v2'))
+    assert run(strategy_id='test-policy')['input_digest'] != result['input_digest']

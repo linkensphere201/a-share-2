@@ -3,6 +3,8 @@ import { expect, test } from '@playwright/test'
 test('manual scenario lab opens independently and records deferred exits', async ({ page }) => {
   await page.goto('/?view=trade-simulation')
   await expect(page.getByText('手工情景 · 非历史回测')).toBeVisible()
+  await expect(page.getByRole('combobox', { name: '执行策略' })).toHaveValue('trend-trade-v1')
+  await expect(page.getByRole('option', { name: '趋势突破型（trend-trade-v1）' })).toBeAttached()
   await page.getByRole('combobox', { name: '载入合成测试情景' }).selectOption('1')
   await page.getByRole('button', { name: '运行模拟', exact: true }).click()
   await expect(page.getByRole('cell', { name: '延迟成交', exact: true })).toBeVisible()
