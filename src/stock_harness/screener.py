@@ -213,7 +213,7 @@ class ScreenerService:
             self._check_stopping()
             try:
                 candidates[run_id].sort(key=strategy.selection.rank_key)
-                self._store.complete_screener_run(run_id, candidates[run_id][:max_results], retention=10)
+                self._store.complete_screener_run(run_id, candidates[run_id][:max_results])
             except Exception as error:
                 self._store.fail_screener_run(run_id, str(error))
                 LOGGER.exception("screener_batch_completion_failed run_id=%s", run_id)
@@ -365,7 +365,7 @@ class ScreenerService:
             key=lambda item: (_state_priority(MajorLineState(item["state"])), item["score"]), reverse=True
         )
         retained = candidates[:max_results]
-        self._store.complete_screener_run(run_id, retained, retention=10)
+        self._store.complete_screener_run(run_id, retained)
         LOGGER.info(
             "screener_run_completed run_id=%s as_of=%s universe=%s matches=%s retained=%s duration_ms=%.1f",
             run_id, cutoff, len(universe), len(candidates), len(retained),
@@ -404,7 +404,7 @@ class ScreenerService:
                 LOGGER.info("screener_first_pullback_progress run_id=%s scanned=%s universe=%s matches=%s",
                             run_id, index, len(universe), len(candidates))
         candidates.sort(key=selection.rank_key)
-        self._store.complete_screener_run(run_id, candidates[:max_results], retention=10)
+        self._store.complete_screener_run(run_id, candidates[:max_results])
         LOGGER.info("screener_first_pullback_completed run_id=%s matches=%s duration_ms=%.1f",
                     run_id, len(candidates), (time.perf_counter() - started) * 1000)
 
@@ -495,7 +495,7 @@ class ScreenerService:
                 "analysis_run_id": analysis["run_id"],
                 "evidence": signal.evidence,
             })
-        self._store.complete_screener_run(run_id, retained, retention=10)
+        self._store.complete_screener_run(run_id, retained)
         LOGGER.info(
             "screener_accumulation_analysis_completed run_id=%s retained=%s duration_ms=%.1f",
             run_id, len(retained), (time.perf_counter() - ranking_finished) * 1000,

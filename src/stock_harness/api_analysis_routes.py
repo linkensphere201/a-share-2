@@ -246,10 +246,11 @@ def create_analysis_router() -> APIRouter:
 
     @router.get("/api/screener/runs")
     def list_screener_runs(
-        request: Request, limit: int = Query(default=10, ge=1, le=10)
+        request: Request, limit: int = Query(default=10, ge=1, le=100),
+        offset: int = Query(default=0, ge=0),
     ) -> dict[str, object]:
         return {"items": [request.app.state.screener.describe_run(run)
-                          for run in store(request).list_screener_runs(limit)]}
+                          for run in store(request).list_screener_runs(limit, offset)]}
 
     @router.get("/api/screener/runs/{run_id}")
     def get_screener_run(run_id: str, request: Request) -> dict[str, object]:

@@ -105,11 +105,9 @@ class SQLiteScreenerStoreMixin:
                 raise ValueError("screener run is not running")
 
     def complete_screener_run(
-        self, run_id: str, candidates: Sequence[dict[str, object]], retention: int = 10
+        self, run_id: str, candidates: Sequence[dict[str, object]]
     ) -> dict[str, object]:
         now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
-        if retention < 1:
-            raise ValueError("screener retention must be positive")
         with self._lock, self._transaction():
             status = self._connection.execute(
                 "SELECT status FROM screener_runs WHERE run_id = ?", (run_id,)
@@ -144,21 +142,6 @@ class SQLiteScreenerStoreMixin:
                 """,
                 (len(candidates), now_ms, run_id),
             )
-            old_rows = self._connection.execute(
-                """
-                SELECT run_id FROM screener_runs
-                WHERE status IN ('succeeded', 'failed') AND run_id <> ?
-                ORDER BY started_at_ms DESC, run_id DESC
-                LIMIT -1 OFFSET ?
-                """,
-                (run_id, max(retention - 1, 0)),
-            ).fetchall()
-            if old_rows:
-                placeholders = ",".join("?" for _ in old_rows)
-                self._connection.execute(
-                    f"DELETE FROM screener_runs WHERE run_id IN ({placeholders})",
-                    tuple(str(row[0]) for row in old_rows),
-                )
         return self.get_screener_run(run_id)  # type: ignore[return-value]
 
     def fail_screener_run(self, run_id: str, error: str) -> None:
@@ -187,7 +170,9 @@ class SQLiteScreenerStoreMixin:
             )
             return cursor.rowcount
 
-    def list_screener_runs(self, limit: int = 10) -> list[dict[str, object]]:
+    def list_screener_runs(self, limit: int = 10, offset: int = 0) -> list[dict[str, object]]:
+        if limit < 1 or offset < 0:
+            raise ValueError("screener history requires positive limit and nonnegative offset")
         with self._lock:
             rows = self._connection.execute(
                 """
@@ -195,9 +180,9 @@ class SQLiteScreenerStoreMixin:
                        parameters_json, status, universe_count, scanned_count,
                        candidate_count, error, started_at_ms, completed_at_ms
                 FROM screener_runs
-                ORDER BY (status = 'running') DESC, started_at_ms DESC, run_id DESC LIMIT ?
+                ORDER BY (status = 'running') DESC, started_at_ms DESC, run_id DESC LIMIT ? OFFSET ?
                 """,
-                (limit,),
+                (limit, offset),
             ).fetchall()
         return [_run_row(row) for row in rows]
 

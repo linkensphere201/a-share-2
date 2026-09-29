@@ -1,7 +1,18 @@
 import { afterEach, expect, it, vi } from 'vitest'
-import { listScreenerCandidates, loadScreenerCandidate } from './screenerClient'
+import { listScreenerCandidates, loadScreenerCandidate, listScreenerRuns } from './screenerClient'
 
 afterEach(() => vi.unstubAllGlobals())
+
+it('reads history beyond ten runs using bounded pages', async () => {
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(new Response(JSON.stringify({ items: Array.from({ length: 100 }, (_, i) => ({ run_id: `run-${i}` })) })))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ items: [{ run_id: 'old-run' }] })))
+  vi.stubGlobal('fetch', fetchMock)
+  const result = await listScreenerRuns(undefined, 150)
+  expect(result).toHaveLength(101)
+  expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/screener/runs?limit=100&offset=0', { signal: undefined })
+  expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/screener/runs?limit=50&offset=100', { signal: undefined })
+})
 
 it('reads successive bounded summary pages and keeps detail requests separate', async () => {
   const fetchMock = vi.fn()

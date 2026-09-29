@@ -186,9 +186,15 @@ export async function startScreenerBatch(maxResults: number): Promise<ScreenerBa
   }))
 }
 
-export async function listScreenerRuns(signal?: AbortSignal): Promise<ScreenerRun[]> {
-  const payload = await json<{ items: ScreenerRun[] }>(await fetch('/api/screener/runs?limit=10', { signal }))
-  return payload.items
+export async function listScreenerRuns(signal?: AbortSignal, limit = 50): Promise<ScreenerRun[]> {
+  const values: ScreenerRun[] = []
+  for (let offset = 0; offset < limit; offset += 100) {
+    const pageSize = Math.min(100, limit - offset)
+    const payload = await json<{ items: ScreenerRun[] }>(await fetch(`/api/screener/runs?limit=${pageSize}&offset=${offset}`, { signal }))
+    values.push(...payload.items)
+    if (payload.items.length < pageSize) break
+  }
+  return [...new Map(values.map(value => [value.run_id, value])).values()]
 }
 
 export async function loadScreenerRun(runId: string, signal?: AbortSignal): Promise<ScreenerRun> {

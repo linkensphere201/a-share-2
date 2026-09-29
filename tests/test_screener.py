@@ -189,16 +189,26 @@ def test_major_screener_respects_full_analysis_for_reported_300102_failure(monke
         assert store.list_screener_candidates(str(run["run_id"])) == []
 
 
-def test_screener_retains_only_ten_finished_runs():
+def test_screener_keeps_all_finished_runs_and_pages_history():
     store, days = _store_with_major_edge()
     try:
-        for _ in range(11):
+        ids = []
+        for _ in range(25):
             run = store.create_screener_run("strategy", "v1", days[-1], {})
             store.update_screener_progress(
                 str(run["run_id"]), universe_count=0, scanned_count=0
             )
-            store.complete_screener_run(str(run["run_id"]), [], retention=10)
-        assert len(store.list_screener_runs(10)) == 10
+            ids.append(str(run["run_id"]))
+            store.complete_screener_run(str(run["run_id"]), [])
+        assert len(store.list_screener_runs(100)) == 25
+        assert all(store.get_screener_run(run_id) is not None for run_id in ids)
+        pages = [store.list_screener_runs(10, offset) for offset in (0, 10, 20)]
+        assert [len(page) for page in pages] == [10, 10, 5]
+        assert {row['run_id'] for page in pages for row in page} == set(ids)
+        with TestClient(create_app(store)) as client:
+            assert len(client.get('/api/screener/runs?limit=100').json()['items']) == 25
+            assert len(client.get('/api/screener/runs?limit=10&offset=20').json()['items']) == 5
+            assert client.get('/api/screener/runs?offset=-1').status_code == 422
     finally:
         store.close()
 

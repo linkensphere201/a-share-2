@@ -24,6 +24,25 @@ afterEach(() => {
 })
 
 describe('ScreenerWorkspace', () => {
+  it('loads older history beyond the initial fifty without losing selection', async () => {
+    const history = Array.from({ length: 55 }, (_, index) => ({ ...run, run_id: `history-${index}` }))
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/api/screener/runs?')) {
+        const params = new URL(url, 'http://localhost').searchParams
+        const offset = Number(params.get('offset') ?? 0)
+        return response({ items: history.slice(offset, offset + Number(params.get('limit'))) })
+      }
+      return response({ items: [] })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    renderScreener()
+    await screen.findByText('已加载 50 轮')
+    fireEvent.click(screen.getByRole('button', { name: '加载更早结果' }))
+    await screen.findByText('已加载 55 轮')
+    expect(screen.queryByRole('button', { name: '加载更早结果' })).toBeNull()
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/history-0/candidates'))).toBe(true)
+  })
   it('registers box breakout and displays dated boundaries and breakout evidence', async () => {
     const boxRun = { ...run, strategy_id: 'platform-box-breakout' }
     const box = { ...candidate, state: 'breakout-retest', evidence: {
@@ -538,7 +557,7 @@ describe('ScreenerWorkspace', () => {
     const user = userEvent.setup()
     renderScreener()
 
-    await screen.findByText('0/10')
+    await screen.findByText('已加载 0 轮')
     await user.click(screen.getByRole('button', { name: '开始选股' }))
 
     const request = fetchMock.mock.calls.find(call => call[1]?.method === 'POST')
@@ -565,7 +584,7 @@ describe('ScreenerWorkspace', () => {
     const user = userEvent.setup()
     renderScreener()
 
-    await screen.findByText('0/10')
+    await screen.findByText('已加载 0 轮')
     await user.selectOptions(screen.getByLabelText('策略'), 'volume-accumulation-20d')
     expect(screen.queryByText('周期')).toBeNull()
     expect(screen.queryByText('状态')).toBeNull()
@@ -587,7 +606,7 @@ describe('ScreenerWorkspace', () => {
     const user = userEvent.setup()
     renderScreener()
 
-    await screen.findByText('0/10')
+    await screen.findByText('已加载 0 轮')
     await user.selectOptions(screen.getByLabelText('策略'), 'volume-accumulation-20d')
     expect(screen.queryByRole('button', { name: /剔除池/ })).toBeNull()
     expect(screen.queryByRole('dialog', { name: /剔除池/ })).toBeNull()
