@@ -765,7 +765,7 @@ export function StockWorkspace() {
         </header>
         <div className="market-strip">
           <span>{activeGroup.name}</span>
-          {activeChart && <><span>日线</span><span>不复权</span>
+          {activeChart && <><span>不复权</span>
             <div className="coordinate-tabs" aria-label="价格坐标">
               <button className={activeChart.chart.priceMode === 'normal' ? 'active' : ''} onClick={() => setPriceMode('normal')}>普通</button>
               <button className={activeChart.chart.priceMode === 'log' ? 'active' : ''} onClick={() => setPriceMode('log')}>对数</button>

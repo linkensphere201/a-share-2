@@ -11,6 +11,7 @@ import { barsInRenderPeriod, chooseAnchor, orientTrendLineAnchors, replaceTrendL
 import type { ThemeDefinition } from './themeStore'
 import type { GeneratedAnalysisItem, TrendAnalysisRun } from './trendAnalysisClient'
 import { dailyBarsUrl, useChartDailyBars } from './useChartDailyBars'
+import { monthlyBars, type ChartPeriod } from './chartPeriod'
 import { useChartDrawings } from './useChartDrawings'
 import { useChartTrendAnalysis } from './useChartTrendAnalysis'
 import {
@@ -312,6 +313,8 @@ export function ChartCanvas({
   analysisSystemProjection,
   highlightedSystemProjectionId,
 }: ChartCanvasProps) {
+  const [period, setPeriod] = useState<ChartPeriod>('daily')
+  const monthly = period === 'monthly'
   const middleAveragePeriod = middleMovingAveragePeriod(symbol)
   const middleAveragePeriodRef = useRef(middleAveragePeriod)
   middleAveragePeriodRef.current = middleAveragePeriod
@@ -437,8 +440,8 @@ export function ChartCanvas({
     })
   }, [setDrawingIdentity, symbol])
   const {
-    bars,
-    barsRef,
+    bars: dailyBars,
+    barsRef: dailyBarsRef,
     state,
     refreshing: manualRefreshing,
     refreshFeedback: manualRefreshFeedback,
@@ -448,20 +451,31 @@ export function ChartCanvas({
     asOfDate,
     onLoadStart: onDailyLoadStart,
     onBeforePreserve: onBeforePreserveBars,
-    onBarsChanged,
+    onBarsChanged: () => undefined,
     onCoverageChange,
     onInstrumentIdentity,
   })
+  const bars = useMemo(() => monthly ? monthlyBars(dailyBars) : dailyBars, [dailyBars, monthly])
+  const barsRef = useRef(bars)
+  barsRef.current = bars
+  useEffect(() => { onBarsChanged(bars) }, [bars, onBarsChanged])
+  useEffect(() => {
+    pendingViewportRef.current = undefined
+    emittedVisibleRangeRef.current = undefined
+    skipRangeResetRef.current = false
+    resetDrawingInteraction()
+    onDailyLoadStart()
+  }, [period, resetDrawingInteraction, onDailyLoadStart])
   const {
     analysis: trendAnalysis,
     displayed: displayedTrendAnalysis,
     preview: trendAnalysisPreview,
   } = useChartTrendAnalysis({
     symbol,
-    enabled: trendAnalysisEnabled,
-    override: trendAnalysisOverride,
-    supplementalItems: supplementalAnalysisItems,
-    supplementalOnly: supplementalAnalysisOnly,
+    enabled: !monthly && trendAnalysisEnabled,
+    override: monthly ? null : trendAnalysisOverride,
+    supplementalItems: monthly ? [] : supplementalAnalysisItems,
+    supplementalOnly: !monthly && supplementalAnalysisOnly,
   })
 
   const averages = useMemo(() => ({
@@ -474,7 +488,7 @@ export function ChartCanvas({
   const macd = useMemo(() => calculateMacd(bars), [bars])
 
   useEffect(() => { coverageCallbackRef.current = onCoverageChange }, [onCoverageChange])
-  useEffect(() => { visibleRangeCallbackRef.current = onVisibleRangeChange }, [onVisibleRangeChange])
+  useEffect(() => { visibleRangeCallbackRef.current = monthly ? undefined : onVisibleRangeChange }, [onVisibleRangeChange, monthly])
   useEffect(() => { paneRatiosCallbackRef.current = onPaneRatiosChange }, [onPaneRatiosChange])
   useEffect(() => setToolbarCollapsed(persistedToolbarCollapsed), [persistedToolbarCollapsed])
   useEffect(() => {
@@ -1120,13 +1134,24 @@ export function ChartCanvas({
       syncPriceScaleRef.current()
       return
     }
-    if (initialVisibleRange) {
+    if (initialVisibleRange && !monthly) {
       const emitted = emittedVisibleRangeRef.current
       if (emitted?.from === initialVisibleRange.from && emitted.to === initialVisibleRange.to) return
       chart.timeScale().setVisibleRange(initialVisibleRange)
       refitPriceViewportRef.current()
       window.requestAnimationFrame(() => recalculateLodRef.current())
       return
+    }
+    if (monthly) {
+      const last = bars.at(-1)!.trade_date
+      const from = range === 'ALL' ? bars[0].trade_date
+        : range === '1M' ? subtractMonths(last, 1) : subtractYears(last, Number.parseInt(range, 10))
+      const firstIndex = Math.max(0, bars.findIndex(bar => bar.trade_date >= from))
+      const frame = window.requestAnimationFrame(() => {
+        chart.timeScale().setVisibleLogicalRange({ from: firstIndex - 0.5, to: bars.length - 0.5 })
+        refitPriceViewportRef.current()
+      })
+      return () => window.cancelAnimationFrame(frame)
     }
     if (range === 'ALL') {
       chart.timeScale().fitContent()
@@ -1139,7 +1164,7 @@ export function ChartCanvas({
     chart.timeScale().setVisibleRange({ from, to: last })
     refitPriceViewportRef.current()
     window.requestAnimationFrame(() => recalculateLodRef.current())
-  }, [bars, range, initialVisibleRange?.from, initialVisibleRange?.to])
+  }, [bars, range, monthly, initialVisibleRange?.from, initialVisibleRange?.to])
 
   const handleSelectionStart = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 2 || !chartRef.current) return
@@ -1580,8 +1605,8 @@ export function ChartCanvas({
     )).length
     setMeasurement(createRangeMeasurement(
       rangeSelection.first, rangeSelection.last, rangeSelection.count, rollEventCount,
-      instrumentKind === 'stock' || barsRef.current.some(bar => bar.turnover_rate_f !== undefined)
-        ? barsRef.current : undefined,
+      instrumentKind === 'stock' || dailyBarsRef.current.some(bar => bar.turnover_rate_f !== undefined)
+        ? dailyBarsRef.current : undefined,
     ))
     setRangeSelection(undefined)
     setSelectionBox(undefined)
@@ -1615,7 +1640,7 @@ export function ChartCanvas({
     lodBucket,
   )
   const projectedDrawings = projectTrendLines(
-    trendIsolation ? [] : drawings,
+    trendIsolation || monthly ? [] : drawings,
     renderedBarListRef.current,
     chartRef.current,
     candleRef.current,
@@ -1668,7 +1693,7 @@ export function ChartCanvas({
     displayedTrendAnalysis, breakoutStateVisible,
   )
   const meanReversionGeometry = projectMeanReversion(
-    analysisSystemProjection,
+    monthly ? undefined : analysisSystemProjection,
     chartRef.current,
     candleRef.current ?? closeLineRef.current,
     hostRef.current,
@@ -1724,6 +1749,11 @@ export function ChartCanvas({
         data-testid="chart-unified-toolbar"
         onPointerDown={event => event.stopPropagation()}
       >
+        <div className="chart-period-tabs" role="group" aria-label="K线周期">
+          <button className={!monthly ? 'active' : ''} aria-pressed={!monthly} onClick={() => setPeriod('daily')}>日线</button>
+          <button className={monthly ? 'active' : ''} aria-pressed={monthly} onClick={() => setPeriod('monthly')}
+            title="自然月聚合；本月截至最新交易日；均线和MACD按月计算">月线</button>
+        </div>
         <div className="chart-drawing-toolbar-actions" aria-hidden={toolbarCollapsed}>
         <button
           className={manualRefreshing ? 'refreshing' : manualRefreshFeedback?.kind ?? ''}
@@ -1752,7 +1782,7 @@ export function ChartCanvas({
           title="绘制趋势线"
           aria-label="绘制趋势线"
           aria-pressed={drawingTool === 'trend-line'}
-          disabled={!drawingTargetKey}
+          disabled={monthly || !drawingTargetKey}
           onClick={() => {
             setDrawingTool('trend-line')
             setSelectedDrawingId(undefined)
@@ -1782,6 +1812,7 @@ export function ChartCanvas({
           className={drawingManagerOpen ? 'active' : ''}
           title="趋势线管理"
           aria-label="趋势线管理"
+          disabled={monthly}
           aria-pressed={drawingManagerOpen}
           onClick={() => setDrawingManagerOpen(value => !value)}
         ><Settings2 size={13}/></button>
@@ -1836,7 +1867,7 @@ export function ChartCanvas({
         onAnchorMoveEnd={event => finishTrendLineAnchorMove(event)}
         onAnchorMoveCancel={event => finishTrendLineAnchorMove(event, true)}
       />
-      {trendAnalysisEnabled && displayedTrendAnalysis && (
+      {!monthly && trendAnalysisEnabled && displayedTrendAnalysis && (
         <GeneratedAnalysisOverlay
           pivots={generatedPivots}
           lines={generatedTrendLines}
@@ -1864,6 +1895,7 @@ export function ChartCanvas({
         />
       )}
       {readout && <ChartReadout
+        monthly={monthly}
         value={readout}
         instrumentName={instrumentName}
         futures={instrumentKind === 'futures-contract' || instrumentKind === 'futures-continuous'}

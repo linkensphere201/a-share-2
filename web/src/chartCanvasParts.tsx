@@ -577,11 +577,12 @@ export function MeasurementOverlay({
   )
 }
 
-export function ChartReadout({ value, instrumentName, futures, middleAveragePeriod = 20 }: {
+export function ChartReadout({ value, instrumentName, futures, middleAveragePeriod = 20, monthly = false }: {
   value: Readout
   instrumentName?: string
   futures: boolean
   middleAveragePeriod?: number
+  monthly?: boolean
 }) {
   const candleTone = value.changePercent === undefined
     ? value.close >= value.open ? 'rise' : 'fall'
@@ -596,13 +597,13 @@ export function ChartReadout({ value, instrumentName, futures, middleAveragePeri
         ? <span className={value.stale ? 'live-badge stale' : 'live-badge'}>{value.stale ? '盘中延迟' : '盘中'}</span>
         : futures && <span className="final-badge">正式</span>}
       {futures && value.roll_event && <span className="roll-badge">换月</span>}
-      <span>{value.trade_date}</span>
+      <span>{monthly ? `月线 · 截至 ${value.trade_date}` : value.trade_date}</span>
       <span>开 <b>{formatPrice(value.open)}</b></span>
       <span>高 <b>{formatPrice(value.high)}</b></span>
       <span>低 <b>{formatPrice(value.low)}</b></span>
       <span>收 <b className={candleTone}>{formatPrice(value.close)}</b></span>
       <span>{futures ? '结算涨跌' : '涨跌'} <b className={changeTone}>{formatChangePercent(value.changePercent)}</b></span>
-      {futures && value.previous_settlement != null && <span className="futures-detail">昨结 <b>{formatPrice(value.previous_settlement)}</b></span>}
+      {futures && value.previous_settlement != null && <span className="futures-detail">{monthly ? '上月结算' : '昨结'} <b>{formatPrice(value.previous_settlement)}</b></span>}
       {futures && value.settlement != null && <span className="futures-detail">结算 <b>{formatPrice(value.settlement)}</b></span>}
       <span>量 <b>{formatVolume(value.volume)}</b></span>
       {!futures && value.turnover_rate_f !== undefined && <span title="Tushare daily_basic：自由流通股本口径，单位 %">换手率（自由流通） <b>{value.turnover_rate_f != null && Number.isFinite(value.turnover_rate_f) ? `${value.turnover_rate_f.toFixed(2)}%` : '--'}</b></span>}

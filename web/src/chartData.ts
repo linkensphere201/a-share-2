@@ -2,6 +2,7 @@ import type { LineData, Time } from 'lightweight-charts'
 
 export type DailyBar = {
   trade_date: string
+  period_start?: string
   open: number
   high: number
   low: number
@@ -154,7 +155,7 @@ function millisecondsUntil(now: Date, hour: number, minute: number): number {
 }
 
 export function aggregateBars(bars: DailyBar[], bucket: number): RenderBar[] {
-  if (bucket <= 1) return bars.map(item => ({ ...item, period_start: item.trade_date }))
+  if (bucket <= 1) return bars.map(item => ({ ...item, period_start: item.period_start ?? item.trade_date }))
   const output: RenderBar[] = []
   for (let start = 0; start < bars.length; start += bucket) {
     const group = bars.slice(start, start + bucket)
@@ -163,7 +164,7 @@ export function aggregateBars(bars: DailyBar[], bucket: number): RenderBar[] {
     output.push({
       ...last,
       trade_date: last.trade_date,
-      period_start: first.trade_date,
+      period_start: first.period_start ?? first.trade_date,
       open: first.open,
       high: Math.max(...group.map(item => item.high)),
       low: Math.min(...group.map(item => item.low)),
@@ -341,7 +342,10 @@ export function clamp(value: number, minimum: number, maximum: number): number {
 
 export function previousCloseByDate(bars: DailyBar[]): Map<string, number> {
   const output = new Map<string, number>()
-  for (let index = 1; index < bars.length; index += 1) output.set(bars[index].trade_date, bars[index - 1].close)
+  for (let index = 1; index < bars.length; index += 1) {
+    output.set(bars[index].trade_date, bars[index - 1].close)
+    if (bars[index].period_start) output.set(bars[index].period_start!, bars[index - 1].close)
+  }
   return output
 }
 
