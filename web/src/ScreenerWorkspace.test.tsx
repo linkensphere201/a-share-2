@@ -25,13 +25,14 @@ afterEach(() => {
 
 describe('ScreenerWorkspace', () => {
   it('loads older history beyond the initial fifty without losing selection', async () => {
-    const history = Array.from({ length: 55 }, (_, index) => ({ ...run, run_id: `history-${index}` }))
+    const history = Array.from({ length: 55 }, (_, index) => ({ ...run, run_id: `history-${index}`, started_at_ms: 1000 - index }))
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
-      if (url.includes('/api/screener/runs?')) {
+      if (url.includes('/api/screener/history?')) {
         const params = new URL(url, 'http://localhost').searchParams
-        const offset = Number(params.get('offset') ?? 0)
-        return response({ items: history.slice(offset, offset + Number(params.get('limit'))) })
+        const offset = params.get('cursor') ? 50 : 0
+        return response({ items: history.slice(offset, offset + Number(params.get('limit'))),
+          has_more: offset === 0, next_cursor: offset === 0 ? 'fixture-cursor' : null })
       }
       return response({ items: [] })
     })
@@ -209,7 +210,7 @@ describe('ScreenerWorkspace', () => {
         return response(created, 202)
       }
       if (url.includes('/candidates')) return response({ items: [] })
-      if (url.includes('/runs?')) {
+      if (url.includes('/history?') || url.includes('/activity?')) {
         finished = ++listReads > 1
         return response({ items: jobs.map(job => finished && job.run_id === 'flag-active' ? { ...job, status: 'succeeded' } : job) })
       }
@@ -347,7 +348,7 @@ describe('ScreenerWorkspace', () => {
     let listReads = 0
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
-      if (url.includes('/runs?')) completed = ++listReads > 1
+      if (url.includes('/history?') || url.includes('/activity?')) completed = ++listReads > 1
       if (url.includes('/candidates')) return response({ items: [] })
       return response({ items: [{ ...active, status: completed ? 'succeeded' : 'running' }, run] })
     }))
@@ -430,7 +431,7 @@ describe('ScreenerWorkspace', () => {
         { ...candidate, rank: 3, symbol: '000003.SZ', name: '双板块标的', recognition: { ...recognition, tags: [] } },
       ] })
       if (url.includes('/api/analysis/runs/')) return response(analysis)
-      if (url.includes('/api/screener/runs?')) return response({ items: [{ ...run, candidate_count: 3 }] })
+      if (url.includes('/api/screener/history?')) return response({ items: [{ ...run, candidate_count: 3 }] })
       throw new Error(`unexpected URL ${url}`)
     })
     vi.stubGlobal('fetch', fetchMock)
@@ -479,7 +480,7 @@ describe('ScreenerWorkspace', () => {
         { ...candidate, rank: 2, symbol: '000002.SZ', name: '普通标的', state: 'broken-out', recognition: { ...recognition, tags: [] } },
       ] })
       if (url.includes('/api/analysis/runs/')) return response(analysis)
-      if (url.includes('/api/screener/runs?')) return response({ items: [{ ...run, candidate_count: 2 }] })
+      if (url.includes('/api/screener/history?')) return response({ items: [{ ...run, candidate_count: 2 }] })
       throw new Error(`unexpected URL ${url}`)
     })
     vi.stubGlobal('fetch', fetchMock)
@@ -503,7 +504,7 @@ describe('ScreenerWorkspace', () => {
       const url = String(input)
       if (url.includes('/candidates')) return response({ items: [candidate] })
       if (url.includes('/api/analysis/runs/analysis-1')) return response(analysis)
-      if (url.includes('/api/screener/runs?')) return response({ items: [run] })
+      if (url.includes('/api/screener/history?')) return response({ items: [run] })
       throw new Error(`unexpected URL ${url}`)
     }))
 
@@ -531,7 +532,7 @@ describe('ScreenerWorkspace', () => {
       const url = String(input)
       if (url.includes('/candidates')) return response({ items: [candidate, brokenOut] })
       if (url.includes('/api/analysis/runs/')) return response(analysis)
-      if (url.includes('/api/screener/runs?')) return response({ items: [{ ...run, candidate_count: 2 }] })
+      if (url.includes('/api/screener/history?')) return response({ items: [{ ...run, candidate_count: 2 }] })
       throw new Error(`unexpected URL ${url}`)
     }))
     const user = userEvent.setup()
@@ -549,7 +550,7 @@ describe('ScreenerWorkspace', () => {
   it('starts a new run with the selected periods and states', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
-      if (url.includes('/api/screener/runs?')) return response({ items: [] })
+      if (url.includes('/api/screener/history?')) return response({ items: [] })
       if (url === '/api/screener/runs' && init?.method === 'POST') return response({ ...run, status: 'running' }, 202)
       throw new Error(`unexpected URL ${url}`)
     })
@@ -572,7 +573,7 @@ describe('ScreenerWorkspace', () => {
   it('runs volume accumulation as an independent strategy', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
-      if (url.includes('/api/screener/runs?')) return response({ items: [] })
+      if (url.includes('/api/screener/history?')) return response({ items: [] })
       if (url === '/api/screener/runs' && init?.method === 'POST') return response({
         ...run,
         strategy_id: 'volume-accumulation-20d',
@@ -600,7 +601,7 @@ describe('ScreenerWorkspace', () => {
   it('does not expose the retired exclusion pool for accumulation screening', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
-      if (url.includes('/api/screener/runs?')) return response({ items: [] })
+      if (url.includes('/api/screener/history?')) return response({ items: [] })
       throw new Error(`unexpected URL ${url}`)
     }))
     const user = userEvent.setup()
@@ -617,7 +618,7 @@ describe('ScreenerWorkspace', () => {
       const url = String(input)
       if (url.includes('/candidates')) return response({ items: [candidate] })
       if (url.includes('/api/analysis/runs/')) return response(analysis)
-      if (url.includes('/api/screener/runs?')) return response({ items: [run] })
+      if (url.includes('/api/screener/history?')) return response({ items: [run] })
       if (url === '/api/screener/runs/run-1' && init?.method === 'DELETE') {
         return Promise.resolve(new Response(null, { status: 204 }))
       }
@@ -644,7 +645,7 @@ describe('ScreenerWorkspace', () => {
       const url = String(input)
       if (url.includes('/candidates')) return response({ items: [candidate] })
       if (url.includes('/api/analysis/runs/')) return response(analysis)
-      if (url.includes('/api/screener/runs?')) return response({ items: [run] })
+      if (url.includes('/api/screener/history?')) return response({ items: [run] })
       throw new Error(`unexpected URL ${url}`)
     }))
     const add = vi.fn(() => true)

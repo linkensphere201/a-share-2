@@ -252,6 +252,22 @@ def create_analysis_router() -> APIRouter:
         return {"items": [request.app.state.screener.describe_run(run)
                           for run in store(request).list_screener_runs(limit, offset)]}
 
+    @router.get("/api/screener/history")
+    def screener_history(request: Request, limit: int = Query(default=50, ge=1, le=100),
+                         cursor: str | None = Query(default=None, max_length=150)) -> dict[str, object]:
+        try:
+            page = store(request).list_screener_history(limit, cursor)
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        page["items"] = [request.app.state.screener.describe_run(run) for run in page["items"]]
+        return page
+
+    @router.get("/api/screener/activity")
+    def screener_activity(request: Request,
+                          run_id: list[str] = Query(default=[], max_length=100)) -> dict[str, object]:
+        return {"items": [request.app.state.screener.describe_run(run)
+                          for run in store(request).list_screener_activity(run_id)]}
+
     @router.get("/api/screener/runs/{run_id}")
     def get_screener_run(run_id: str, request: Request) -> dict[str, object]:
         result = store(request).get_screener_run(run_id)

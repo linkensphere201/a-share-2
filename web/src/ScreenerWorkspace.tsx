@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowLeft, ChevronLeft, ChevronRight, Filter, ListPlus, Play, ListStart, RefreshCw, Trash2, X } from 'lucide-react'
 import { ChartCanvas } from './ChartCanvas'
 import { MarketBoardBadge } from './MarketBoardBadge'
@@ -8,11 +8,12 @@ import { TrendExplanationPanel } from './TrendExplanationPanel'
 import { accumulationStyleLabel, lowBaseMaturityLabel } from './trendExplanation'
 import { candidatePeriodLabel, candidateStageLabel, pullbackStates, periodLabels, stateLabels } from './screenerPresentation'
 import { ScreenerEvidence } from './ScreenerEvidence'
-import { useResultQuery, useSerialPolling } from './useResultQuery'
+import { useResultQuery } from './useResultQuery'
+import { selectedRunKey, useScreenerHistory } from './useScreenerHistory'
 import { useAnalysisOverlayVisibility, useAnalysisLayers } from './AnalysisOverlayToggle'
 import { logError, logInfo } from './eventLogger'
 import {
-  deleteScreenerRun, listScreenerCandidates, listScreenerRuns, listScreenerStrategies,
+  deleteScreenerRun, listScreenerCandidates, listScreenerStrategies,
   startScreenerRun, startScreenerBatch, loadScreenerCandidate,
   type ScreenerCandidate, type ScreenerPeriod, type ScreenerRun, type ScreenerState,
   type ScreenerStrategyId,
@@ -37,7 +38,6 @@ const strategyLabels: Record<ScreenerStrategyId, string> = {
   'deep-drawdown-consolidation': '深跌缩量整理',
 }
 const trendStates: ScreenerState[] = ['critical-breakout', 'breakout-retest', 'broken-out']
-const selectedRunKey = 'stock-harness.screener.selected-run.v1'
 const selectedCandidateKey = 'stock-harness.screener.selected-candidate.v1'
 type ResultStateFilter = ScreenerState | 'all'
 export type ScreenerTargetList = { id: string; title: string; instrumentCount: number }
@@ -56,8 +56,9 @@ export function ScreenerWorkspace({
   targetLists: ScreenerTargetList[]
   onAddCandidateToList: (windowId: string, candidate: ScreenerCandidate) => boolean
 }) {
-  const [runs, setRuns] = useState<ScreenerRun[]>([])
-  const [selectedRun, setSelectedRun] = useState<ScreenerRun>()
+  const [error, setError] = useState('')
+  const { runs, selectedRun, setSelectedRun, loading: historyLoading, hasMore,
+    loadMore, add: addRuns, remove: removeHistoryRun } = useScreenerHistory(value => setError(String(value)))
   const [candidates, setCandidates] = useState<ScreenerCandidate[]>([])
   const [selectedSummary, setSelected] = useState<ScreenerCandidate>()
   const [detail, setDetail] = useState<{ key: string; value: ScreenerCandidate }>()
@@ -93,16 +94,11 @@ export function ScreenerWorkspace({
   const [boardQuery, setBoardQuery] = useState('')
   const [boardStatus, setBoardStatus] = useState<'loading' | 'ready' | 'error'>('ready')
   const [boardRetry, setBoardRetry] = useState(0)
-  const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [contextMenu, setContextMenu] = useState<ScreenerContextMenu>()
   const [startingStrategy, setStartingStrategy] = useState<ScreenerStrategyId | null>(null)
   const [startingAll, setStartingAll] = useState(false)
   const startingRef = useRef(false)
-  const runListEpoch = useRef(0)
-  const [historyLimit, setHistoryLimit] = useState(50)
-  const [historyLoading, setHistoryLoading] = useState(false)
-  const runningRunIds = runs.filter(run => run.status === 'running').map(run => run.run_id).sort().join(',')
   const strategyBusy = runs.some(run => run.status === 'running' && run.strategy_id === strategyId)
   const batchBusy = runs.some(run => run.status === 'running' && run.parameters.batch_id)
 
@@ -145,25 +141,6 @@ export function ScreenerWorkspace({
       candidates.filter(item => item.state === state).length,
     ]),
   ) as Record<ScreenerState, number>, [candidates])
-
-  const refreshRuns = useCallback(async (preferredId?: string, signal?: AbortSignal) => {
-    const epoch = runListEpoch.current
-    const values = await listScreenerRuns(signal, historyLimit)
-    if (epoch !== runListEpoch.current || signal?.aborted) return
-    setRuns(values)
-    setSelectedRun(current => values.find(item => item.run_id === (
-      preferredId ?? current?.run_id ?? window.localStorage.getItem(selectedRunKey)
-    )) ?? values[0])
-  }, [historyLimit])
-
-  useEffect(() => {
-    const controller = new AbortController()
-    setHistoryLoading(true)
-    refreshRuns(undefined, controller.signal).catch(value => {
-      if (!controller.signal.aborted) setError(String(value))
-    }).finally(() => { if (!controller.signal.aborted) setHistoryLoading(false) })
-    return () => controller.abort()
-  }, [refreshRuns])
 
   useEffect(() => {
     if (!selectedRun) { setCandidates([]); setSelected(undefined); return }
@@ -212,9 +189,6 @@ export function ScreenerWorkspace({
     setSelected(filteredCandidates[0])
   }, [filteredCandidates, selected?.symbol])
 
-  useSerialPolling(runningRunIds || undefined, 1000,
-    signal => refreshRuns(undefined, signal), value => setError(String(value)))
-
   useResultQuery(selectedSummary?.evidence_complete === false ? detailKey : undefined,
     signal => loadScreenerCandidate(selectedRun!.run_id, selectedSummary!.rank, signal),
     value => setDetail({ key: detailKey!, value }), value => setError(String(value)))
@@ -243,10 +217,7 @@ export function ScreenerWorkspace({
     setError('')
     try {
       const run = await startScreenerRun({ strategy_id: strategyId, periods, states, max_results: maxResults })
-      runListEpoch.current++
-      setRuns(values => [run, ...values.filter(item => item.run_id !== run.run_id)]
-        .sort((a, b) => Number(b.status === 'running') - Number(a.status === 'running')))
-      setSelectedRun(run)
+      addRuns([run])
       logInfo('screener', '选股任务已启动', { runId: run.run_id, strategyId })
     } catch (value) {
       const message = value instanceof Error ? value.message : String(value)
@@ -266,10 +237,7 @@ export function ScreenerWorkspace({
     setNotice('')
     try {
       const batch = await startScreenerBatch(maxResults)
-      runListEpoch.current++
-      setRuns(values => [...batch.items, ...values.filter(item => !batch.items.some(run => run.run_id === item.run_id))]
-        .sort((a, b) => Number(b.status === 'running') - Number(a.status === 'running')))
-      if (batch.items.length) setSelectedRun(batch.items[0])
+      addRuns(batch.items)
       const skipped = batch.skipped.map(item => `${strategyLabel(item.strategy_id)}（${
         item.reason === 'already-running' ? '已在运行' : item.reason === 'cutoff-unavailable' ? '日期不可用' : '创建失败'}）`)
       setNotice(`已提交 ${batch.items.length} 个策略 · ${batch.as_of_date}${skipped.length ? `；跳过：${skipped.join('、')}` : ''}`)
@@ -288,13 +256,8 @@ export function ScreenerWorkspace({
     setError('')
     try {
       await deleteScreenerRun(run.run_id)
-      const remaining = runs.filter(item => item.run_id !== run.run_id)
-      setRuns(remaining)
-      if (selectedRun?.run_id === run.run_id) {
-        setSelectedRun(remaining[0])
-        if (remaining[0]) window.localStorage.setItem(selectedRunKey, remaining[0].run_id)
-        else window.localStorage.removeItem(selectedRunKey)
-      }
+      removeHistoryRun(run.run_id)
+      if (window.localStorage.getItem(selectedRunKey) === run.run_id) window.localStorage.removeItem(selectedRunKey)
       setContextMenu(undefined)
       setNotice(`已删除 ${formatRunDate(run.as_of_date)}`)
       logInfo('screener', '选股结果已删除', { runId: run.run_id })
@@ -345,7 +308,7 @@ export function ScreenerWorkspace({
     {notice && <button className="screener-notice" onClick={() => setNotice('')}>{notice}</button>}
     <section className="screener-grid">
       <aside className="screener-runs">
-        <header>每轮选股结果 <span>已加载 {runs.length} 轮</span></header>
+        <header>每轮选股结果 <span>已加载 {runs.length} 轮</span><button className="icon-button" title="刷新选股历史" aria-label="刷新选股历史" disabled={historyLoading} onClick={() => void loadMore(true)}><RefreshCw size={14}/></button></header>
         <div className="screener-scroll">
           {(startingStrategy !== null || startingAll) && <div className="screener-starting" role="status">
             <RefreshCw size={14} className="spin"/><span>正在创建选股任务<small>{startingAll ? '全部策略' : strategyLabel(startingStrategy!)}</small></span>
@@ -357,10 +320,7 @@ export function ScreenerWorkspace({
           <span>{formatRunDate(run.as_of_date)}</span><small>{strategyLabel(run.strategy_id)} · {run.status === 'running' ? run.execution_state === 'queued' ? `排队中 · 第${run.queue_position ?? 1}位` : `${run.scanned_count}/${run.universe_count}` : run.status === 'failed' ? '失败' : `${run.candidate_count} 个标的`}</small>
           <i className={run.status}/>
         </button>)}</div>
-        {runs.length >= historyLimit && <button disabled={historyLoading} onClick={() => {
-          runListEpoch.current++
-          setHistoryLimit(value => value + 50)
-        }}>{historyLoading ? '加载中…' : '加载更早结果'}</button>}
+        {hasMore && <button disabled={historyLoading} onClick={() => void loadMore()}>{historyLoading ? '加载中…' : '加载更早结果'}</button>}
       </aside>
       <section className="screener-results">
         <header><span>选股结果</span><small>{selectedRun?.as_of_date ?? '尚未运行'} · {selectedRun?.status === 'running' ? selectedRun.execution_state === 'queued' ? '排队中' : `扫描 ${progress}%` : `${candidates.length} 个`}</small></header>

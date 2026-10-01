@@ -199,6 +199,50 @@ class SQLiteScreenerStoreMixin:
             ).fetchone()
         return _run_row(row) if row else None
 
+    def list_screener_history(self, limit: int = 50, cursor: str | None = None) -> dict[str, object]:
+        if not 1 <= limit <= 100:
+            raise ValueError("history limit must be between 1 and 100")
+        params: list[object] = []
+        clause = ""
+        if cursor is not None:
+            try:
+                stamp, run_id = cursor.split(":", 1)
+                started = int(stamp)
+                if started < 0 or not run_id or len(run_id) > 100:
+                    raise ValueError
+            except ValueError as error:
+                raise ValueError("invalid screener history cursor") from error
+            clause = "WHERE (started_at_ms, run_id) < (?, ?)"
+            params.extend([started, run_id])
+        with self._lock:
+            rows = self._connection.execute(
+                f"""SELECT run_id, strategy_id, strategy_version, as_of_date,
+                           parameters_json, status, universe_count, scanned_count,
+                           candidate_count, error, started_at_ms, completed_at_ms
+                    FROM screener_runs {clause}
+                    ORDER BY started_at_ms DESC, run_id DESC LIMIT ?""",
+                (*params, limit + 1),
+            ).fetchall()
+        items = [_run_row(row) for row in rows[:limit]]
+        more = len(rows) > limit
+        return {"items": items, "has_more": more,
+                "next_cursor": f"{items[-1]['started_at_ms']}:{items[-1]['run_id']}" if more else None}
+
+    def list_screener_activity(self, known_run_ids: Sequence[str] = ()) -> list[dict[str, object]]:
+        if len(known_run_ids) > 100:
+            raise ValueError("at most 100 known runs can be polled")
+        placeholders = ",".join("?" for _ in known_run_ids)
+        known = f" OR run_id IN ({placeholders})" if known_run_ids else ""
+        with self._lock:
+            rows = self._connection.execute(
+                f"""SELECT run_id, strategy_id, strategy_version, as_of_date,
+                           parameters_json, status, universe_count, scanned_count,
+                           candidate_count, error, started_at_ms, completed_at_ms
+                    FROM screener_runs WHERE status = 'running'{known}
+                    ORDER BY started_at_ms DESC, run_id DESC LIMIT 200""", tuple(known_run_ids),
+            ).fetchall()
+        return [_run_row(row) for row in rows]
+
     def get_latest_succeeded_screener_run(
         self, on_or_before: date, strategy_id: str | None = None,
     ) -> dict[str, object] | None:

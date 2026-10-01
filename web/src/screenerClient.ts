@@ -201,6 +201,19 @@ export async function loadScreenerRun(runId: string, signal?: AbortSignal): Prom
   return json<ScreenerRun>(await fetch(`/api/screener/runs/${encodeURIComponent(runId)}`, { signal }))
 }
 
+export type ScreenerHistoryPage = { items: ScreenerRun[]; has_more: boolean; next_cursor: string | null }
+
+export async function listScreenerHistory(cursor?: string, signal?: AbortSignal): Promise<ScreenerHistoryPage> {
+  const params = new URLSearchParams({ limit: '50' })
+  if (cursor) params.set('cursor', cursor)
+  return json<ScreenerHistoryPage>(await fetch(`/api/screener/history?${params}`, { signal }))
+}
+
+export async function listScreenerActivity(ids: string[], signal?: AbortSignal): Promise<ScreenerRun[]> {
+  const params = new URLSearchParams(ids.map(id => ['run_id', id]))
+  return (await json<{ items: ScreenerRun[] }>(await fetch(`/api/screener/activity?${params}`, { signal }))).items
+}
+
 export async function deleteScreenerRun(runId: string): Promise<void> {
   const response = await fetch(`/api/screener/runs/${encodeURIComponent(runId)}`, {
     method: 'DELETE',

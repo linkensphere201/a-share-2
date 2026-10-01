@@ -820,6 +820,10 @@ CREATE TABLE IF NOT EXISTS screener_runs (
 
 CREATE INDEX IF NOT EXISTS screener_runs_latest
 ON screener_runs(started_at_ms DESC);
+CREATE INDEX IF NOT EXISTS screener_runs_history_cursor
+ON screener_runs(started_at_ms DESC, run_id DESC);
+CREATE INDEX IF NOT EXISTS screener_runs_activity
+ON screener_runs(status, started_at_ms DESC, run_id DESC);
 
 CREATE TABLE IF NOT EXISTS screener_candidates (
     run_id TEXT NOT NULL,
