@@ -1,6 +1,7 @@
 """Explicit user-triggered trend analysis coordination."""
 
 from __future__ import annotations
+from stock_harness.performance import measured
 
 from dataclasses import asdict, replace
 from datetime import date, timedelta
@@ -103,6 +104,7 @@ class TrendAnalysisService:
         )
         return PreparedAnalysisInput(original, read_version)
 
+    @measured("prefilter")
     def prepare_screening_input(
         self, symbol: str, cutoff: date, horizons: AnalysisHorizons, structure: str,
         *, periods: tuple[str, ...] = (), states: tuple[str, ...] = (),
@@ -363,6 +365,7 @@ class TrendAnalysisService:
             )
             raise
 
+    @measured("context")
     def _build_context_evidence(
         self,
         subject_input: AnalysisInput,
@@ -729,6 +732,7 @@ def _pullback_item(value: AnalysisInput, structure: str) -> GeneratedAnalysisIte
     )
 
 
+@measured("detector")
 def _compute_items(analysis_input, horizons, pivot_config, context_payload, roll_qualification):
     """Pure result construction shared by persisted and isolated replay runs."""
     items = _generated_items(analysis_input, horizons, pivot_config,

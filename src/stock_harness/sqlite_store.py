@@ -1,6 +1,7 @@
 """SQLite hot store optimized for daily batch updates and symbol-range reads."""
 
 from __future__ import annotations
+from stock_harness.performance import MeasuredRLock
 
 import sqlite3
 import threading
@@ -127,7 +128,7 @@ class SQLiteMarketDataStore(
             self._writer_lock = InterprocessWriterLock(
                 Path(path_text + ".writer.lock"), busy_timeout_ms / 1000
             )
-        self._lock = threading.RLock()
+        self._lock = MeasuredRLock()
         self._connection = sqlite3.connect(
             Path(path).resolve().as_uri() + "?mode=ro" if read_only else path_text,
             uri=read_only,

@@ -1,6 +1,7 @@
 """StockHarness FastAPI application composition root."""
 
 from __future__ import annotations
+from stock_harness.performance import observe, snapshot
 
 from collections.abc import Callable
 from contextlib import asynccontextmanager
@@ -180,6 +181,7 @@ def create_app(
             )
             raise
         elapsed_ms = (time.perf_counter() - started) * 1000
+        observe("api", elapsed_ms / 1000, int(response.headers.get("content-length", "0")))
         if elapsed_ms >= 2000:
             LOGGER.warning(
                 "api_slow_request method=%s path=%s status=%s elapsed_ms=%.1f",
@@ -193,6 +195,10 @@ def create_app(
     @app.get("/api/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/api/performance")
+    def performance_metrics() -> dict[str, object]:
+        return {"scope": "process-lifetime", "stages": snapshot()}
 
     app.include_router(create_analysis_router())
     app.include_router(create_simulation_router())

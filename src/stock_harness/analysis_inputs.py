@@ -1,6 +1,7 @@
 """Causal, chart-independent inputs for registered trading systems."""
 
 from __future__ import annotations
+from stock_harness.performance import measured
 
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
@@ -216,6 +217,7 @@ class AnalysisInputService:
         self._calendar_source = calendar_source
         self._futures_calendar_source = futures_calendar_source
 
+    @measured("input")
     def build(
         self,
         symbol: str,

@@ -1,6 +1,7 @@
 """Transaction and interprocess writer-lock primitives for SQLite."""
 
 from __future__ import annotations
+from stock_harness.performance import observe
 
 import sqlite3
 import sys
@@ -20,7 +21,9 @@ class Transaction:
         self.writer_lock = writer_lock
 
     def __enter__(self) -> None:
+        started = time.perf_counter()
         self.writer_lock.__enter__()
+        observe("writer-lock", time.perf_counter() - started)
         try:
             self.connection.execute("BEGIN IMMEDIATE")
         except BaseException:

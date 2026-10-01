@@ -1,6 +1,7 @@
 """Generated-analysis and human-review SQLite storage mixin."""
 
 from __future__ import annotations
+from stock_harness.performance import measured
 
 from collections.abc import Sequence
 from datetime import date, datetime, timezone
@@ -686,6 +687,7 @@ class SQLiteAnalysisStoreMixin:
             )
             return self._connection.total_changes > before
 
+    @measured("persistence")
     def complete_generated_analysis_run(
         self,
         run_id: str,
