@@ -1,4 +1,5 @@
-import { useResultQuery, useSerialPolling } from './useResultQuery'
+import { useResultQuery } from './useResultQuery'
+import { useSignalRunHistory } from './useSignalRunHistory'
 import {
   useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent,
   type PointerEvent as ReactPointerEvent,
@@ -11,7 +12,7 @@ import { AddToListMenu, type AddToListMenuState, type ListInstrument, type Targe
 import type { ThemeDefinition } from './themeStore'
 import {
   listBoardObservations, listSignalAttention, listSignalDefinitions, listSignalItems,
-  listSignalRuns, listSignalScores, loadObservationPool, loadSignalRun, loadSignalItem, setSignalAttention, startSignalRun, cancelSignalRun,
+  listSignalScores, loadObservationPool, loadSignalRun, loadSignalItem, setSignalAttention, startSignalRun, cancelSignalRun,
   type BoardDailyObservation, type SignalAttention, type SignalChangeType,
   type ObservationPoolItem, type ObservationPoolSnapshot, type ObservationPoolSource,
   type SignalDefinition, type SignalEvidence, type SignalItem, type SignalProfile,
@@ -91,10 +92,9 @@ export function SignalReviewWorkspace({ theme, onClose, targetLists = [], onAddI
   }
   const [definitions, setDefinitions] = useState<SignalDefinition[]>([])
   const [selectedDefinition, setSelectedDefinition] = useState<SignalDefinition>()
-  const [runs, setRuns] = useState<SignalRun[]>([])
-  const activeRun = runs.find(item => item.status === 'running')
+  const [error, setError] = useState('')
+  const { runs, selectedRun, activeRun, setSelectedRun, addRun } = useSignalRunHistory(selectedDefinition?.signal_id, reason => setError(String(reason)))
   const [cancellingRun, setCancellingRun] = useState<string>()
-  const [selectedRun, setSelectedRun] = useState<SignalRun>()
   const [startingRun, setStartingRun] = useState(false)
   const [pendingEffectiveDate, setPendingEffectiveDate] = useState<string>()
   const [runContextMenu, setRunContextMenu] = useState<SignalRunContextMenu>()
@@ -106,7 +106,6 @@ export function SignalReviewWorkspace({ theme, onClose, targetLists = [], onAddI
   const selectedItem = itemDetail?.key === itemDetailKey ? itemDetail?.value : selectedItemSummary
   const [profile, setProfile] = useState<ProfileFilter>('all')
   const [change, setChange] = useState<ChangeFilter>('all')
-  const [error, setError] = useState('')
   useEffect(() => {
     setSelectedItem(undefined)
     setItems([])
@@ -178,22 +177,12 @@ export function SignalReviewWorkspace({ theme, onClose, targetLists = [], onAddI
   useEffect(() => {
     const controller = new AbortController()
     listSignalDefinitions(controller.signal).then(value => {
+      if (controller.signal.aborted) return
       setDefinitions(value)
       setSelectedDefinition(current => current ?? value[0])
     }).catch(reason => { if (reason.name !== 'AbortError') setError(String(reason)) })
     return () => controller.abort()
   }, [])
-
-  useEffect(() => {
-    if (!selectedDefinition) return
-    const controller = new AbortController()
-    listSignalRuns(selectedDefinition.signal_id, controller.signal).then(value => {
-      const ordered = orderSignalRuns(value)
-      setRuns(ordered)
-      setSelectedRun(current => ordered.find(item => item.run_id === current?.run_id) ?? ordered[0])
-    }).catch(reason => { if (reason.name !== 'AbortError') setError(String(reason)) })
-    return () => controller.abort()
-  }, [selectedDefinition])
 
   useEffect(() => {
     setHighlightedEvidenceId(undefined)
@@ -233,16 +222,6 @@ export function SignalReviewWorkspace({ theme, onClose, targetLists = [], onAddI
       .finally(() => { if (!controller.signal.aborted) setScoreLoading(undefined) })
     return () => controller.abort()
   }, [selectedRun?.run_id, selectedRun?.status, scoreUniverse])
-
-  useSerialPolling(activeRun && selectedDefinition
-    ? `${selectedDefinition.signal_id}:${activeRun.run_id}` : undefined, 1200, async signal => {
-    const next = await loadSignalRun(activeRun!.run_id, signal)
-    if (signal.aborted) return
-    const runs = await listSignalRuns(selectedDefinition!.signal_id, signal)
-    if (signal.aborted) return
-    setSelectedRun(current => current?.run_id === next.run_id ? next : current)
-    setRuns(orderSignalRuns(runs))
-  }, reason => setError(String(reason)))
 
   useEffect(() => {
     if (!selectedDefinition || selectedDefinition.cadence !== 'daily') {
@@ -542,8 +521,7 @@ export function SignalReviewWorkspace({ theme, onClose, targetLists = [], onAddI
     try {
       setError('')
       const next = await startSignalRun(selectedDefinition.signal_id, effectiveDate)
-      setRuns(current => orderSignalRuns([next, ...current]))
-      setSelectedRun(next)
+      addRun(next)
       logInfo('signal-review', effectiveDate ? '历史复盘重跑任务已创建' : '本期复盘任务已创建', {
         signal_id: selectedDefinition.signal_id,
         effective_date: next.effective_date,
@@ -601,9 +579,7 @@ export function SignalReviewWorkspace({ theme, onClose, targetLists = [], onAddI
     try {
       const historicalRun = await loadSignalRun(runId)
       setHistorySelection({ symbol, entityKey })
-      setSelectedRun(historicalRun)
-      setRuns(current => current.some(item => item.run_id === runId)
-        ? current : orderSignalRuns([...current, historicalRun]))
+      addRun(historicalRun)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason))
     }
@@ -911,15 +887,6 @@ function signalRunMenuPosition(x: number, y: number) {
     x: Math.max(8, Math.min(x, window.innerWidth - 210)),
     y: Math.max(8, Math.min(y, window.innerHeight - 100)),
   }
-}
-
-function orderSignalRuns(values: SignalRun[]) {
-  return [...values].sort((left, right) => (
-    right.effective_date.localeCompare(left.effective_date)
-    || right.revision - left.revision
-    || right.started_at_ms - left.started_at_ms
-    || right.run_id.localeCompare(left.run_id)
-  ))
 }
 
 type SignalViewEmptyExplanation = {

@@ -6,6 +6,7 @@ import {
   type LatestDailyRefreshFeedback,
 } from './latestDailyRefreshClient'
 import { useIntradayDailyPolling } from './useIntradayDailyPolling'
+import { observeFrontend } from './frontendPerformance'
 
 type InstrumentIdentity = {
   instrumentKind: string
@@ -91,6 +92,7 @@ export function useChartDailyBars({
 
   useEffect(() => {
     const controller = new AbortController()
+    const startedAt = performance.now()
     callbackRef.current.onLoadStart()
     setState('loading')
     fetch(dailyBarsUrl(symbol, asOfDate), { signal: controller.signal })
@@ -113,6 +115,7 @@ export function useChartDailyBars({
           })
         }
         replaceBars(body.items)
+        observeFrontend('chart-data', performance.now() - startedAt)
         setState('ready')
         const rows = publishCoverage(body.items)
         logInfo('chart', '日线数据加载完成', { symbol, rows })

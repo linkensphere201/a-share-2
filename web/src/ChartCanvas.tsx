@@ -7,7 +7,9 @@ import {
   type TrendLineAnchor,
   type TrendLineDrawing,
 } from './drawingStore'
-import { barsInRenderPeriod, chooseAnchor, orientTrendLineAnchors, replaceTrendLineAnchor, translateTrendLineAnchors, type LineGeometry, type TrendLineOrientation } from './trendLines'
+import { orientTrendLineAnchors, replaceTrendLineAnchor, translateTrendLineAnchors, type LineGeometry, type TrendLineOrientation } from './trendLines'
+import { resolveChartDrawingAnchor, resolveChartTradingIndex } from './chartDrawingInteraction'
+import { projectChartSeries, settleChartSeries } from './chartSeriesProjection'
 import type { ThemeDefinition } from './themeStore'
 import type { GeneratedAnalysisItem, TrendAnalysisRun } from './trendAnalysisClient'
 import { dailyBarsUrl, useChartDailyBars } from './useChartDailyBars'
@@ -35,10 +37,8 @@ import {
   projectTrendLines,
 } from './chartProjection'
 import {
-  aggregateBars,
   calculateChangePercent,
   calculateMacd,
-  candleColor,
   chooseLodBucket,
   clamp,
   createRangeMeasurement,
@@ -82,7 +82,6 @@ import {
   type IChartApi,
   type IPaneApi,
   type ISeriesApi,
-  type LineData,
   type Time,
 } from 'lightweight-charts'
 import type { ChartPaneRatios } from './workspace'
@@ -1039,44 +1038,16 @@ export function ChartCanvas({
 
   useEffect(() => {
     applyBucketRef.current = (bucket, preserve) => {
+      const startedAt = performance.now()
       const revision = ++seriesRevisionRef.current
-      const renderedBars = aggregateBars(bars, bucket)
-      const colors = new Map(renderedBars.map(item => [
-        item.trade_date,
-        candleColor(item, previousCloseByDateRef.current.get(item.period_start)),
-      ]))
-      const candles: CandlestickData<Time>[] = renderedBars.map(item => {
-        const color = colors.get(item.trade_date)!
-        return {
-          time: item.trade_date,
-          open: item.open,
-          high: item.high,
-          low: item.low,
-          close: item.close,
-          color,
-          borderColor: color,
-          wickColor: color,
-        }
-      })
-      const volumes: HistogramData<Time>[] = renderedBars.map(item => ({
-        time: item.trade_date,
-        value: item.volume,
-        color: `${colors.get(item.trade_date)!}99`,
-      }))
-      const times = new Set(renderedBars.map(item => item.trade_date))
+      const { renderedBars, candles, volumes, closes, settlements, openInterest, times } =
+        projectChartSeries(bars, bucket, previousCloseByDateRef.current)
       suppressLodRef.current = true
       candleRef.current?.setData(candles)
-      closeLineRef.current?.setData(renderedBars.map(item => ({
-        time: item.trade_date,
-        value: item.close,
-      } satisfies LineData<Time>)))
-      settlementLineRef.current?.setData(renderedBars.flatMap(item => item.settlement == null
-        ? []
-        : [{ time: item.trade_date, value: item.settlement } satisfies LineData<Time>]))
+      closeLineRef.current?.setData(closes)
+      settlementLineRef.current?.setData(settlements)
       volumeRef.current?.setData(volumes)
-      openInterestRef.current?.setData(renderedBars.flatMap(item => item.open_interest == null
-        ? []
-        : [{ time: item.trade_date, value: item.open_interest, color: '#4f91b8aa' } satisfies HistogramData<Time>]))
+      openInterestRef.current?.setData(openInterest)
       ma5Ref.current?.setData(averages.ma5.filter(item => times.has(String(item.time))))
       ma20Ref.current?.setData(averages.ma20.filter(item => times.has(String(item.time))))
       ma60Ref.current?.setData(averages.ma60.filter(item => times.has(String(item.time))))
@@ -1093,8 +1064,7 @@ export function ChartCanvas({
       bucketRef.current = bucket
       setLodBucket(bucket)
       setOverlayRevision(value => value + 1)
-      window.requestAnimationFrame(() => {
-        if (revision !== seriesRevisionRef.current) return
+      settleChartSeries(startedAt, () => revision === seriesRevisionRef.current, () => {
         if (preserve) {
           chartRef.current?.timeScale().setVisibleLogicalRange(remapLogicalRange(
             preserve.logical,
@@ -1103,11 +1073,7 @@ export function ChartCanvas({
           ))
         }
         syncPriceScaleRef.current()
-        window.requestAnimationFrame(() => {
-          if (revision !== seriesRevisionRef.current) return
-          suppressLodRef.current = false
-        })
-      })
+      }, () => { suppressLodRef.current = false })
     }
     applyBucketRef.current(1, pendingViewportRef.current)
     pendingViewportRef.current = undefined
@@ -1323,49 +1289,11 @@ export function ChartCanvas({
   }
 
   const resolveDrawingAnchor = (x: number, y: number): TrendLineAnchor | undefined => {
-    const chart = chartRef.current
-    const candles = candleRef.current
-    if (!chart || !candles || renderedBarListRef.current.length === 0) return undefined
-    let nearest: RenderBar | undefined
-    let nearestX = 0
-    let nearestDistance = Number.POSITIVE_INFINITY
-    for (const period of renderedBarListRef.current) {
-      const periodX = chart.timeScale().timeToCoordinate(period.trade_date)
-      if (periodX === null) continue
-      const distance = Math.abs(periodX - x)
-      if (distance < nearestDistance) {
-        nearest = period
-        nearestX = periodX
-        nearestDistance = distance
-      }
-    }
-    const price = candles.coordinateToPrice(y)
-    if (!nearest || price === null || !Number.isFinite(price)) return undefined
-    const fallback: TrendLineAnchor = { date: nearest.trade_date, price, snap: 'free' }
-    const candidates = barsInRenderPeriod(nearest, barsRef.current).flatMap(bar => {
-      const highY = candles.priceToCoordinate(bar.high)
-      const lowY = candles.priceToCoordinate(bar.low)
-      return [
-        ...(highY === null ? [] : [{ date: bar.trade_date, price: bar.high, snap: 'high' as const, x: nearestX, y: highY }]),
-        ...(lowY === null ? [] : [{ date: bar.trade_date, price: bar.low, snap: 'low' as const, x: nearestX, y: lowY }]),
-      ]
-    })
-    return chooseAnchor(x, y, fallback, candidates)
+    return resolveChartDrawingAnchor(x, y, chartRef.current, candleRef.current, renderedBarListRef.current, barsRef.current)
   }
 
   const resolveTradingDateIndexAtX = (x: number): number | undefined => {
-    const chart = chartRef.current
-    if (!chart || barsRef.current.length === 0 || renderedBarListRef.current.length === 0) return undefined
-    const logical = chart.timeScale().coordinateToLogical(x)
-    if (logical === null) return undefined
-    const renderedIndex = clamp(Math.round(Number(logical)), 0, renderedBarListRef.current.length - 1)
-    const nearestDate = renderedBarListRef.current[renderedIndex].trade_date
-    const exact = barsRef.current.findIndex(bar => bar.trade_date === nearestDate)
-    if (exact >= 0) return exact
-    return barsRef.current.reduce((nearest, bar, index) => (
-      Math.abs(Date.parse(bar.trade_date) - Date.parse(nearestDate!))
-        < Math.abs(Date.parse(barsRef.current[nearest].trade_date) - Date.parse(nearestDate!)) ? index : nearest
-    ), 0)
+    return resolveChartTradingIndex(x, chartRef.current, renderedBarListRef.current, barsRef.current)
   }
 
   const handleDrawingStart = (event: ReactPointerEvent<HTMLDivElement>) => {

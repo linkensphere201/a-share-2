@@ -109,6 +109,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .screener-results > .screener-scroll { flex: 1; min-height: 0; }
 .screener-runs > header, .screener-results > header, .screener-chart-pane > header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 12px; border-bottom: 1px solid var(--theme-border); color: var(--theme-text-strong); font-size: 12px; }
 .screener-runs > header span, .screener-results > header small, .screener-chart-pane > header small { color: var(--theme-muted); font-size: 10px; font-weight: 400; }
+.screener-history-heading { display: flex; flex-direction: column; gap: 2px; min-width: 0; line-height: 14px; }
+.screener-runs > header > .icon-button { flex: 0 0 30px; width: 30px; height: 30px; }
 .screener-scroll { min-height: 0; overflow: auto; }
 .screener-runs .screener-scroll button { position: relative; width: 100%; display: grid; gap: 4px; padding: 10px 24px 10px 12px; text-align: left; color: var(--theme-text); background: transparent; border: 0; border-bottom: 1px solid var(--theme-border); }
 .screener-runs button:hover, .screener-runs button.active, .screener-results button:hover, .screener-results button.active { background: var(--theme-hover); }

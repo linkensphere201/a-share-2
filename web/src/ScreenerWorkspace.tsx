@@ -308,7 +308,7 @@ export function ScreenerWorkspace({
     {notice && <button className="screener-notice" onClick={() => setNotice('')}>{notice}</button>}
     <section className="screener-grid">
       <aside className="screener-runs">
-        <header>每轮选股结果 <span>已加载 {runs.length} 轮</span><button className="icon-button" title="刷新选股历史" aria-label="刷新选股历史" disabled={historyLoading} onClick={() => void loadMore(true)}><RefreshCw size={14}/></button></header>
+        <header><div className="screener-history-heading">每轮选股结果<span>已加载 {runs.length} 轮</span></div><button className="icon-button" title="刷新选股历史" aria-label="刷新选股历史" disabled={historyLoading} onClick={() => void loadMore(true)}><RefreshCw size={14}/></button></header>
         <div className="screener-scroll">
           {(startingStrategy !== null || startingAll) && <div className="screener-starting" role="status">
             <RefreshCw size={14} className="spin"/><span>正在创建选股任务<small>{startingAll ? '全部策略' : strategyLabel(startingStrategy!)}</small></span>
