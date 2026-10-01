@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { logWarning } from './eventLogger'
 import {
   loadTrendAnalysis,
@@ -21,31 +21,34 @@ export function useChartTrendAnalysis({
   supplementalItems = [],
   supplementalOnly = false,
 }: ChartTrendAnalysisOptions) {
-  const [analysis, setAnalysis] = useState<TrendAnalysisRun | null>(null)
-  const [preview, setPreview] = useState(false)
+  const owner = useMemo(() => ({ symbol }), [symbol, enabled, override])
+  const ownerRef = useRef(owner)
+  ownerRef.current = owner
+  const [result, setResult] = useState<{
+    owner: typeof owner; analysis: TrendAnalysisRun | null; preview: boolean
+  }>()
+  const analysis = override ?? (enabled && result?.owner === owner ? result.analysis : null)
+  const preview = !override && enabled && result?.owner === owner ? result.preview : false
 
   useEffect(() => {
     if (override !== undefined && override !== null) {
-      setAnalysis(override)
-      setPreview(false)
       return
     }
     if (!enabled) {
-      setAnalysis(null)
-      setPreview(false)
       return
     }
     let controller: AbortController | undefined
     const reload = () => {
       controller?.abort()
-      controller = new AbortController()
-      void loadTrendAnalysis(symbol, 'daily', controller.signal).then(snapshot => {
-        setAnalysis(snapshot.effective)
-        setPreview(
-          snapshot.effective !== null
-          && snapshot.effective.run_id === snapshot.preview?.run_id
-        )
+      const request = new AbortController()
+      controller = request
+      const current = () => !request.signal.aborted && controller === request && ownerRef.current === owner
+      void loadTrendAnalysis(symbol, 'daily', request.signal).then(snapshot => {
+        if (!current()) return
+        setResult({ owner, analysis: snapshot.effective,
+          preview: snapshot.effective !== null && snapshot.effective.run_id === snapshot.preview?.run_id })
       }).catch(error => {
+        if (!current()) return
         if (error instanceof DOMException && error.name === 'AbortError') return
         logWarning('trading-system', '趋势分析结果读取失败', {
           symbol,
@@ -63,7 +66,7 @@ export function useChartTrendAnalysis({
       controller?.abort()
       window.removeEventListener('stock-harness:trend-analysis-updated', onUpdated)
     }
-  }, [enabled, override, symbol])
+  }, [enabled, override, symbol, owner])
 
   const displayed = useMemo(() => (
     analysis && supplementalItems.length > 0
