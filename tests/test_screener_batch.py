@@ -29,6 +29,7 @@ CUTOFF = date(2026, 9, 28)
 def test_batch_admission_skips_busy_and_isolates_failed_strategy(monkeypatch):
     with SQLiteMarketDataStore(':memory:') as store:
         store.upsert_instruments([Instrument('600001.SH', 'Test', InstrumentKind.STOCK, 'SH')])
+        store.upsert_daily_bars('test', [DailyBar('600001.SH', CUTOFF, 10, 11, 9, 10, 100)])
         service = ScreenerService(store)
         release = Event()
         monkeypatch.setattr(store, 'get_latest_stock_daily_bar_date', lambda: CUTOFF)
@@ -153,7 +154,9 @@ def test_batch_matches_individual_scores_order_and_saved_evidence(fixture_strate
 
 def test_negative_batch_builds_subject_once_per_symbol(monkeypatch):
     with SQLiteMarketDataStore(':memory:') as store:
-        setup_bars(store, source_bars('bull-flag-consolidation'), flat=True)
+        bars = source_bars('bull-flag-consolidation')
+        cutoff = bars[-1].period_end
+        setup_bars(store, bars, flat=True)
         service = ScreenerService(store)
         builds = []
         original = AnalysisInputService.build
@@ -162,8 +165,8 @@ def test_negative_batch_builds_subject_once_per_symbol(monkeypatch):
             return original(self, *args, **kwargs)
         monkeypatch.setattr(AnalysisInputService, 'build', counted)
         try:
-            runs = create_shape_runs(store, CUTOFF)
-            service._execute_shape_batch(runs, CUTOFF, 200)
+            runs = create_shape_runs(store, cutoff)
+            service._execute_shape_batch(runs, cutoff, 200)
             assert builds == ['600001.SH']
             assert all(store.get_screener_run(r['run_id'])['candidate_count'] == 0 for r in runs)
         finally:
@@ -192,6 +195,7 @@ def test_shared_subject_is_invalidated_by_database_change(monkeypatch):
 
 def test_batch_reduces_preparation_work_for_negative_universe(monkeypatch):
     bars = source_bars('bull-flag-consolidation')
+    cutoff = bars[-1].period_end
     counts = []
     for batch in (False, True):
         with SQLiteMarketDataStore(':memory:') as store:
@@ -208,16 +212,16 @@ def test_batch_reduces_preparation_work_for_negative_universe(monkeypatch):
             try:
                 with monkeypatch.context() as patch:
                     patch.setattr(AnalysisInputService, 'build', counted)
-                    runs = create_shape_runs(store, CUTOFF)
+                    runs = create_shape_runs(store, cutoff)
                     started = perf_counter()
                     if batch:
-                        service._execute_shape_batch(runs, CUTOFF, 200)
+                        service._execute_shape_batch(runs, cutoff, 200)
                     else:
                         for run in runs:
-                            service._execute_shape_strategy(run['run_id'], CUTOFF, 200, run['strategy_id'])
+                            service._execute_shape_strategy(run['run_id'], cutoff, 200, run['strategy_id'])
                     print(f'40 negative stocks, {len(runs)} shapes, batch={batch}: '
                           f'{perf_counter()-started:.3f}s, preparations={len(builds)}')
                     counts.append(len(builds))
             finally:
                 service.close()
-    assert counts == [40 * len(SHAPES), 40]
+    assert counts == [40 * len(runs), 40]

@@ -119,11 +119,14 @@ def test_historical_universe_uses_observed_session_not_current_lifecycle():
         try:
             for strategy in service.strategies():
                 run = service.run_sync([MajorLinePeriod.YEAR], list(MajorLineState), 10,
-                                       date(2026, 9, 20), strategy["strategy_id"])
+                                       session, strategy["strategy_id"])
                 assert run["universe_count"] == 1
                 assert str(run["as_of_date"]) == session.isoformat()
                 assert run["parameters"]["universe_version"] == "observed-session-v1"
-                assert run["parameters"]["requested_as_of_date"] == "2026-09-20"
+                assert run["parameters"]["requested_as_of_date"] == session.isoformat()
+            empty = service.run_sync([], [], 10, date(2026, 9, 20))
+            assert empty["universe_count"] == 0
+            assert str(empty["as_of_date"]) == "2026-09-20"
         finally:
             service.close()
 

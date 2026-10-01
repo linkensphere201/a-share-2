@@ -237,7 +237,7 @@ def test_absent_structure_skips_full_analysis_but_completes_progress(monkeypatch
         store.upsert_trading_dates("tushare", [b.trade_date for b in data])
         run = ScreenerService(store).run_sync([], [], 10, data[-1].trade_date, LOW_BASE_STRATEGY_ID)
         assert run["status"] == "succeeded"
-        assert run["scanned_count"] == run["universe_count"] == 2
+        assert run["scanned_count"] == run["universe_count"] == 1
         assert not store.list_screener_candidates(run["run_id"])
 
 

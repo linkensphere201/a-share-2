@@ -135,7 +135,7 @@ def test_negative_gate_skips_full_analysis_and_api_registers(monkeypatch):
     with SQLiteMarketDataStore(":memory:") as store:
         store.upsert_instruments([Instrument("600001.SH", "Empty", InstrumentKind.STOCK, "SH")])
         run = ScreenerService(store).run_sync([], [], 10, date(2026, 9, 17), STRATEGY_ID)
-        assert run["status"] == "succeeded" and run["scanned_count"] == 1 and run["candidate_count"] == 0
+        assert run["status"] == "succeeded" and run["scanned_count"] == 0 and run["candidate_count"] == 0
 
 
 def test_positive_gate_builds_subject_input_once(monkeypatch):

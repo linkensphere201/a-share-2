@@ -108,7 +108,7 @@ def test_saved_screener_chart_parity_and_future_isolation(future, monkeypatch):
         candidates = store.list_screener_candidates(run["run_id"])
         assert [c["symbol"] for c in candidates] == ["000001.SZ", "000002.SZ"]
         assert calls == ["000001.SZ", "000002.SZ"]
-        assert run["scanned_count"] == run["universe_count"] == 4
+        assert run["scanned_count"] == run["universe_count"] == 3
         for c in candidates:
             assert c["score"] == 100 and c["state"] == STATE
             saved = store.get_generated_analysis_run(c["analysis_run_id"])

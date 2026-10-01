@@ -223,8 +223,9 @@ class ScreenerService:
                     len(runs), len(universe), (time.perf_counter() - started) * 1000)
 
     def _cutoff(self, requested: date | None) -> date | None:
-        return (self._store.get_stock_screening_date(requested) if requested is not None
-                else self._store.get_latest_stock_daily_bar_date())
+        # Missing bars do not prove a closed exchange session. Never roll a dated
+        # request backward and silently report stale signals as current evidence.
+        return requested if requested is not None else self._store.get_latest_stock_daily_bar_date()
 
     def close(self) -> None:
         with self._lock:
