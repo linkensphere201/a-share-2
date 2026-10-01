@@ -476,10 +476,15 @@ class SQLiteAnalysisStoreMixin:
         return target_id
 
     def analysis_read_version(self) -> tuple[int, int, int]:
-        """Conservative connection-local stamp: local writes plus external commits."""
+        """Connection-bound source revision, including commits by other connections."""
         with self._lock:
+            if self._connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
+                                        "AND name='analysis_dependency_revision'").fetchone():
+                row = self._connection.execute("SELECT revision FROM analysis_dependency_revision WHERE singleton=1").fetchone()
+                return (id(self._connection), int(row[0]), 1)
+            # Read-only readers of pre-upgrade databases cannot install triggers.
             return (id(self._connection), self._connection.total_changes,
-                    int(self._connection.execute("PRAGMA data_version").fetchone()[0]))
+                    -int(self._connection.execute("PRAGMA data_version").fetchone()[0]))
 
     def reserve_generated_analysis_target(
         self, target: GeneratedAnalysisTarget, cutoff: date,

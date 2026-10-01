@@ -172,7 +172,12 @@ class SQLiteMarketDataStore(
             InitializationStep("signal-observation", self._ensure_signal_observation_columns),
             InitializationStep("board-theme", self.ensure_board_theme_registry),
             InitializationStep("pinyin-backfill", self._backfill_pinyin_aliases),
+            InitializationStep("analysis-dependency-revision", self._ensure_analysis_revision),
         )
+
+    def _ensure_analysis_revision(self) -> None:
+        from stock_harness.analysis_revision import install_analysis_revision
+        install_analysis_revision(self._connection, self._writer_lock)
 
     def _ensure_generated_analysis_scenario_type(self) -> None:
         """Extend the immutable generated-item vocabulary without rewriting runs."""
