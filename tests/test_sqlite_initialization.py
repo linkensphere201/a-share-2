@@ -48,7 +48,7 @@ def test_store_preserves_legacy_initialization_order():
             'chat-context-index', 'chat-template', 'futures', 'custom-index-volume',
             'custom-group-roles', 'market-snapshot', 'analysis-target-settings',
             'analysis-scenario-type', 'screener-states', 'active-market-value',
-            'signal-observation', 'board-theme', 'pinyin-backfill',
+            'signal-observation', 'board-theme', 'pinyin-backfill', 'analysis-dependency-revision',
         ]
         assert store._futures_storage_ready
 

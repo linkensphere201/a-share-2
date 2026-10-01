@@ -1057,15 +1057,14 @@ class SQLiteMarketDataStore(
         if not rows:
             return 0
         with self._lock, self._transaction():
-            before = self._connection.total_changes
-            self._connection.executemany(
+            cursor = self._connection.executemany(
                 """
                 INSERT OR IGNORE INTO instruments(symbol, name, kind, exchange, active)
                 VALUES (?, ?, ?, ?, ?)
                 """,
                 rows,
             )
-            return self._connection.total_changes - before
+            return cursor.rowcount
 
     def upsert_daily_bars(self, source: str, bars: Sequence[DailyBar]) -> WriteStats:
         started = time.perf_counter()
@@ -1097,8 +1096,7 @@ class SQLiteMarketDataStore(
             if existing is not None:
                 return int(existing[0])
             source_id = self._source_id(source)
-            before = self._connection.total_changes
-            self._connection.execute(
+            cursor = self._connection.execute(
                 """
                 UPDATE daily_bars
                 SET volume = volume * ?, updated_at_ms = ?
@@ -1106,7 +1104,7 @@ class SQLiteMarketDataStore(
                 """,
                 (multiplier, now_ms, source_id),
             )
-            affected = self._connection.total_changes - before
+            affected = cursor.rowcount
             self._connection.execute(
                 """
                 INSERT INTO data_migrations(
@@ -1249,8 +1247,7 @@ class SQLiteMarketDataStore(
         missing = sorted(symbols - symbol_ids.keys())
         if missing:
             raise ValueError("daily bars reference unknown instruments: " + ", ".join(missing[:5]))
-        before = self._connection.total_changes
-        self._connection.executemany(
+        cursor = self._connection.executemany(
             """
             INSERT INTO daily_bars(
                 instrument_id, trade_date, open, high, low, close,
@@ -1281,7 +1278,7 @@ class SQLiteMarketDataStore(
                 for bar in bars
             ),
         )
-        return self._connection.total_changes - before
+        return cursor.rowcount
 
     def get_symbol_sync_state(
         self, source: str, scope: str, symbol: str
@@ -1737,8 +1734,7 @@ class SQLiteMarketDataStore(
             if missing:
                 raise ValueError("adjustment factors reference unknown instruments: " + ", ".join(sorted(missing)))
             source_id = self._source_id(source)
-            before = self._connection.total_changes
-            self._connection.executemany(
+            cursor = self._connection.executemany(
                 """
                 INSERT INTO stock_adjustment_factors(
                     instrument_id, trade_date, factor, source_id, updated_at_ms
@@ -1755,7 +1751,7 @@ class SQLiteMarketDataStore(
                     for item in factors
                 ),
             )
-            return self._connection.total_changes - before
+            return cursor.rowcount
 
     def upsert_stock_trade_statuses(
         self, source: str, statuses: Sequence[StockTradeStatus]
@@ -1775,8 +1771,7 @@ class SQLiteMarketDataStore(
                     + ", ".join(sorted(missing))
                 )
             source_id = self._source_id(source)
-            before = self._connection.total_changes
-            self._connection.executemany(
+            cursor = self._connection.executemany(
                 """
                 INSERT INTO stock_trade_status(
                     instrument_id, trade_date, status, source_id, updated_at_ms
@@ -1795,7 +1790,7 @@ class SQLiteMarketDataStore(
                     for item in statuses
                 ),
             )
-            return self._connection.total_changes - before
+            return cursor.rowcount
 
     def search_instruments(
         self,

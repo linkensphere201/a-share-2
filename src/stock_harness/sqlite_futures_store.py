@@ -539,8 +539,7 @@ class SQLiteFuturesStoreMixin:
             if invalid_targets or invalid_mapped:
                 raise ValueError("futures daily storage received invalid instrument kinds")
             source_id = self._source_id(source)
-            before = self._connection.total_changes
-            self._connection.executemany(
+            cursor = self._connection.executemany(
                 """
                 INSERT INTO futures_daily_bars(
                     instrument_id, trading_day, provider_date, open, high, low,
@@ -600,9 +599,8 @@ class SQLiteFuturesStoreMixin:
                     for item in bars
                 ),
             )
-            changed = self._connection.total_changes - before
-            before_takeover = self._connection.total_changes
-            self._connection.execute(
+            changed = cursor.rowcount
+            takeover = self._connection.execute(
                 """
                 UPDATE futures_provisional_daily_bars
                 SET takeover_state = 'canonical-taken-over', updated_at_ms = ?
@@ -615,7 +613,7 @@ class SQLiteFuturesStoreMixin:
                 """,
                 (now_ms,),
             )
-            takeover_count = self._connection.total_changes - before_takeover
+            takeover_count = takeover.rowcount
         elapsed_ms = (time.perf_counter() - started) * 1000
         if takeover_count:
             LOGGER.info(
@@ -1102,8 +1100,7 @@ class SQLiteFuturesStoreMixin:
                     "unknown provisional futures contracts: "
                     + ", ".join(sorted(missing))
                 )
-            before = self._connection.total_changes
-            self._connection.execute(
+            cursor = self._connection.execute(
                 """
                 UPDATE futures_provisional_daily_bars
                 SET stale = 1, updated_at_ms = ?
@@ -1112,7 +1109,7 @@ class SQLiteFuturesStoreMixin:
                 """ + ",".join("?" for _ in instrument_ids) + ")",
                 (now_ms, source_id, *instrument_ids.values()),
             )
-            changed = self._connection.total_changes - before
+            changed = cursor.rowcount
         return changed
 
     def list_futures_provisional_audit(
