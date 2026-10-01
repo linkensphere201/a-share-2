@@ -112,8 +112,8 @@ describe('StockWorkspace', () => {
       detail: { groupId: 'group-primary', windowId: 'chart-primary' },
     }))
     await waitFor(() => expect(screen.getByTestId('chart-canvas')).toBeTruthy())
-    expect(JSON.parse(window.localStorage.getItem(workspaceStorageKey) ?? '{}')
-      .groups[0].windows[1].presentation.mode).toBe('docked')
+    await waitFor(() => expect(JSON.parse(window.localStorage.getItem(workspaceStorageKey) ?? '{}')
+      .groups[0].windows[1].presentation.mode).toBe('docked'))
   })
 
   it('renders only the requested layout leaf in a pop-out host', () => {
