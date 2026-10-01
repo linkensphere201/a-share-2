@@ -19,20 +19,16 @@ class BoardAggregatePool:
         self._executor: ThreadPoolExecutor | None = None
         self._stores: list[SQLiteMarketDataStore] = []
         if workers == 4 and str(source.path) != ":memory:":
-            self._stores = [
-                SQLiteMarketDataStore(
-                    source.path,
-                    cache_size_kib=8_192,
-                    mmap_size_mib=source.mmap_size_mib,
-                    temp_store="FILE",
-                    busy_timeout_ms=source.busy_timeout_ms,
-                    read_only=True,
-                )
-                for _ in range(3)
-            ]
-            self._executor = ThreadPoolExecutor(
-                max_workers=3, thread_name_prefix="hotspot-replay",
-            )
+            try:
+                for _ in range(3):
+                    self._stores.append(SQLiteMarketDataStore(
+                        source.path, cache_size_kib=8_192, mmap_size_mib=source.mmap_size_mib,
+                        temp_store="FILE", busy_timeout_ms=source.busy_timeout_ms, read_only=True,
+                    ))
+                self._executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="hotspot-replay")
+            except BaseException:
+                self.close()
+                raise
 
     @property
     def worker_count(self) -> int:

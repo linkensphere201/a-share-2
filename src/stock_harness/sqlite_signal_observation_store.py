@@ -8,6 +8,7 @@ import json
 
 from stock_harness.models import StockDailyLimit, StoredDailyBar
 from stock_harness.sqlite_mapping import _date_from_key, _date_key
+from stock_harness.sqlite_runtime import read_snapshot
 
 
 class SQLiteSignalObservationStoreMixin:
@@ -688,6 +689,12 @@ class SQLiteSignalObservationStoreMixin:
         self, symbols: Sequence[str], end_date: date, limit: int,
     ) -> tuple[dict[str, list[StoredDailyBar]], dict[str, str]]:
         """Read bounded stock bars and anchor adjustment factors at ``end_date``."""
+        with self._lock, read_snapshot(self._connection):
+            return self._get_recent_causally_adjusted_stock_bars_many(symbols, end_date, limit)
+
+    def _get_recent_causally_adjusted_stock_bars_many(
+        self, symbols: Sequence[str], end_date: date, limit: int,
+    ) -> tuple[dict[str, list[StoredDailyBar]], dict[str, str]]:
         raw = self.get_recent_daily_bars_many(symbols, end_date, limit)
         populated = [bars for bars in raw.values() if bars]
         if not populated:

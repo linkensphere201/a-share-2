@@ -7,8 +7,20 @@ import sqlite3
 import sys
 import threading
 import time
-from contextlib import AbstractContextManager
+from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
+
+
+@contextmanager
+def read_snapshot(connection: sqlite3.Connection):
+    owned = not connection.in_transaction
+    if owned:
+        connection.execute("BEGIN")
+    try:
+        yield
+    finally:
+        if owned:
+            connection.execute("ROLLBACK")
 
 
 class Transaction:

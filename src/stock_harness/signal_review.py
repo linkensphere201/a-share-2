@@ -1,6 +1,8 @@
 """Manual signal-review execution with immutable, comparable snapshots."""
 
 from __future__ import annotations
+from contextvars import ContextVar
+from stock_harness.background_reads import background_reader
 
 from collections import defaultdict
 from dataclasses import asdict
@@ -126,6 +128,7 @@ class SignalReviewCancelled(RuntimeError):
 class SignalReviewService:
     def __init__(self, store: SQLiteMarketDataStore) -> None:
         self._store = store
+        self._reader = ContextVar("review_reader", default=store)
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
         self._closing = False
@@ -237,19 +240,24 @@ class SignalReviewService:
             effective_date=effective_date,
             parameters=_daily_run_parameters() if daily else _run_parameters(),
         )
-        if daily:
-            self._execute_daily(str(run["run_id"]), effective_date)
-        else:
-            self._execute(str(run["run_id"]), effective_date)
+        self._dispatch(str(run["run_id"]), effective_date, signal_id)
         return self._store.get_signal_review_run(str(run["run_id"]))  # type: ignore[return-value]
+
+    def _dispatch(self, run_id: str, cutoff: date, signal_id: str) -> None:
+        with background_reader(self._store) as reader:
+            token = self._reader.set(reader)
+            try:
+                if signal_id == DAILY_MARKET_BOARD_SIGNAL:
+                    self._execute_daily(run_id, cutoff)
+                else:
+                    self._execute(run_id, cutoff)
+            finally:
+                self._reader.reset(token)
 
     def _run_guarded(self, run_id: str, cutoff: date, signal_id: str) -> None:
         try:
             self._check_stopping()
-            if signal_id == DAILY_MARKET_BOARD_SIGNAL:
-                self._execute_daily(run_id, cutoff)
-            else:
-                self._execute(run_id, cutoff)
+            self._dispatch(run_id, cutoff, signal_id)
         except SignalReviewCancelled as error:
             self._store.fail_signal_review_run(run_id, str(error), cancelled=True)
             LOGGER.info("signal_review_cancelled run_id=%s", run_id)
@@ -270,7 +278,7 @@ class SignalReviewService:
                 aggregate_pool.calculate(cutoff, check_stopping=self._check_stopping)
             )
         self._check_stopping()
-        benchmark = self._store.get_recent_daily_bars(
+        benchmark = self._reader.get().get_recent_daily_bars(
             "000001.SH", cutoff, DAILY_LOOKBACK_BARS,
         )
         run = self._store.get_signal_review_run(run_id)
@@ -300,7 +308,7 @@ class SignalReviewService:
         for offset in range(0, len(boards), 100):
             self._check_stopping()
             page = boards[offset:offset + 100]
-            series = self._store.get_recent_daily_bars_many(
+            series = self._reader.get().get_recent_daily_bars_many(
                 [str(board["symbol"]) for board in page], cutoff, DAILY_LOOKBACK_BARS,
             )
             batch = [
@@ -634,7 +642,7 @@ class SignalReviewService:
             str(prior_pool_run["run_id"]), "stock",
         ) if prior_pool_run else None
         member_scan = build_board_member_scan_snapshot(
-            self._store, run_id, cutoff, board_pool, prior_member_scan,
+            self._reader.get(), run_id, cutoff, board_pool, prior_member_scan,
             progress=lambda total, done: self._progress(
                 run_id, "stock-member-scan", total, done,
             ),
@@ -642,7 +650,7 @@ class SignalReviewService:
         summary["board_member_scan_count"] = member_scan["summary"]["item_count"]
         summary["board_member_eligible_count"] = member_scan["summary"]["eligible_count"]
         independent_records = scan_full_market_independent_strength(
-            self._store, cutoff,
+            self._reader.get(), cutoff,
             progress=lambda total, done: self._progress(
                 run_id, "independent-stock-scan", total, done,
             ),
@@ -971,13 +979,13 @@ class SignalReviewService:
         correction: dict[str, dict[str, object]],
         recent: dict[str, list[dict[str, object]]],
     ) -> list[dict[str, object]]:
-        benchmark_bars = self._store.get_recent_daily_bars(
+        benchmark_bars = self._reader.get().get_recent_daily_bars(
             "000001.SH", cutoff, DAILY_LOOKBACK_BARS,
         )
         market_observations = {}
         for symbol in ("000001.SH", "SHAMV.A"):
             bars = benchmark_bars if symbol == "000001.SH" else (
-                self._store.get_recent_daily_bars(symbol, cutoff, DAILY_LOOKBACK_BARS)
+                self._reader.get().get_recent_daily_bars(symbol, cutoff, DAILY_LOOKBACK_BARS)
             )
             market_observations[symbol] = analyze_daily_series(
                 symbol, bars, cutoff, benchmark_bars=benchmark_bars,
@@ -1058,7 +1066,7 @@ class SignalReviewService:
         for index, board in enumerate(boards, 1):
             self._check_stopping()
             members = [
-                item for item in self._store.list_board_members(str(board["symbol"]), 5000)
+                item for item in self._reader.get().list_board_members(str(board["symbol"]), 5000)
                 if item.get("available") is not False and item.get("kind") == "stock"
                 and not is_risk_name(str(item.get("name") or ""))
             ]
@@ -1073,7 +1081,7 @@ class SignalReviewService:
         self._progress(run_id, "stock-features", total, 0)
         for index, symbol in enumerate(sorted(stocks), 1):
             self._check_stopping()
-            bars = [_bar_payload(item) for item in self._store.get_daily_bars(
+            bars = [_bar_payload(item) for item in self._reader.get().get_daily_bars(
                 symbol, start_date, cutoff
             )]
             feature = calculate_stock_features(symbol, bars)
@@ -1093,7 +1101,7 @@ class SignalReviewService:
                 features[str(item["symbol"])] for item in memberships[symbol]
                 if str(item["symbol"]) in features
             ]
-            board_bars = [_bar_payload(item) for item in self._store.get_daily_bars(
+            board_bars = [_bar_payload(item) for item in self._reader.get().get_daily_bars(
                 symbol, start_date, cutoff
             )]
             board_returns = compact_returns(board_bars)
