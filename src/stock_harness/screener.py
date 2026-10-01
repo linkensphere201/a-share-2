@@ -192,22 +192,23 @@ class ScreenerService:
             except (ValueError, LookupError):
                 prepared = None
             if prepared is not None:
-                for run_id, strategy in list(active.items()):
-                    self._check_stopping()
-                    if not strategy.allows_symbol(instrument["symbol"]):
-                        continue
-                    try:
-                        analysis = strategy.analyze(self._analysis, replace(
-                            base, config_version=strategy.analysis_config, prepared_input=prepared,
-                        ))
-                        candidates[run_id].extend(_shape_candidates(strategy, instrument, analysis, cutoff))
-                    except (ValueError, LookupError) as error:
-                        LOGGER.debug("screener_symbol_skipped run_id=%s symbol=%s reason=%s",
-                                     run_id, instrument["symbol"], error)
-                    except Exception as error:
-                        LOGGER.exception("screener_batch_strategy_failed run_id=%s", run_id)
-                        self._store.fail_screener_run(run_id, str(error))
-                        active.pop(run_id)
+                with self._analysis.shared_computation():
+                    for run_id, strategy in list(active.items()):
+                        self._check_stopping()
+                        if not strategy.allows_symbol(instrument["symbol"]):
+                            continue
+                        try:
+                            analysis = strategy.analyze(self._analysis, replace(
+                                base, config_version=strategy.analysis_config, prepared_input=prepared,
+                            ))
+                            candidates[run_id].extend(_shape_candidates(strategy, instrument, analysis, cutoff))
+                        except (ValueError, LookupError) as error:
+                            LOGGER.debug("screener_symbol_skipped run_id=%s symbol=%s reason=%s",
+                                         run_id, instrument["symbol"], error)
+                        except Exception as error:
+                            LOGGER.exception("screener_batch_strategy_failed run_id=%s", run_id)
+                            self._store.fail_screener_run(run_id, str(error))
+                            active.pop(run_id)
             if index % 10 == 0 or index == len(universe):
                 for run_id in active:
                     self._store.update_screener_progress(run_id, universe_count=len(universe), scanned_count=index)

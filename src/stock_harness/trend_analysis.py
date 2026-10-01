@@ -3,14 +3,17 @@
 from __future__ import annotations
 from stock_harness.performance import measured
 
-from dataclasses import asdict, replace
+from contextlib import contextmanager
+from contextvars import ContextVar
+from copy import deepcopy
+from dataclasses import asdict, dataclass, replace
 from datetime import date, timedelta
 import hashlib
 import json
 import logging
 import threading
 import time
-from typing import Sequence
+from typing import Iterator, Sequence
 
 from stock_harness.accumulation_pattern import ANALYSIS_LOOKBACK, detect_accumulation_pattern
 from stock_harness.first_pullback_pattern import detect_first_pullback
@@ -72,10 +75,28 @@ ALGORITHM_VERSION = "trend-causal-replay-v49"
 LOGGER = logging.getLogger(__name__)
 
 
+@dataclass
+class _SharedComputation:
+    context: dict[str, object]
+    items: list[GeneratedAnalysisItem] | None = None
+
+
 class TrendAnalysisService:
     def __init__(self, store: SQLiteMarketDataStore) -> None:
         self._store = store
         self._inputs = AnalysisInputService(store)
+        self._computations: ContextVar[dict[tuple, _SharedComputation] | None] = ContextVar(
+            "analysis_batch_computations", default=None,
+        )
+
+    @contextmanager
+    def shared_computation(self) -> Iterator[None]:
+        """Bound reuse to the caller's batch, isolated from other worker threads."""
+        token = self._computations.set({})
+        try:
+            yield
+        finally:
+            self._computations.reset(token)
 
     def has_low_base_structure(
         self, symbol: str, cutoff: date, horizons: AnalysisHorizons,
@@ -296,6 +317,7 @@ class TrendAnalysisService:
         started = time.perf_counter()
         run_id: str | None = None
         try:
+            revision = self._store.analysis_read_version()
             analysis_input = prepared_input or self._inputs.build(
                 normalized,
                 cutoff,
@@ -306,9 +328,18 @@ class TrendAnalysisService:
             if not analysis_input.bars:
                 raise ValueError(f"no analysis bars available for {normalized}")
             detector_input, roll_qualification = _qualify_roll_input(analysis_input)
-            context_payload = self._build_context_evidence(
-                detector_input, cutoff, timeframe, horizons
+            cache = self._computations.get()
+            key = (revision, claim.algorithm_version,
+                   _input_digest(analysis_input, None, horizons, pivot_config))
+            shared = cache.get(key) if cache is not None else None
+            context_payload = deepcopy(shared.context) if shared is not None else self._build_context_evidence(
+                detector_input, cutoff, timeframe, horizons,
             )
+            if shared is None and cache is not None and revision == self._store.analysis_read_version():
+                if len(cache) >= 8:
+                    cache.clear()
+                shared = _SharedComputation(deepcopy(context_payload))
+                cache[key] = shared
             namespace = (
                 AnalysisNamespace.PREVIEW
                 if analysis_input.provisional_date is not None
@@ -337,7 +368,12 @@ class TrendAnalysisService:
             run = self._store.begin_generated_analysis_run(spec)
             run_id = run.run_id
             if not run.reused:
-                items = _compute_items(detector_input, horizons, pivot_config, context_payload, roll_qualification)
+                if shared is not None and shared.items is not None:
+                    items = deepcopy(shared.items)
+                else:
+                    items = _compute_items(detector_input, horizons, pivot_config, context_payload, roll_qualification)
+                    if shared is not None:
+                        shared.items = deepcopy(items)
                 self._store.complete_generated_analysis_run(
                     run.run_id,
                     items,

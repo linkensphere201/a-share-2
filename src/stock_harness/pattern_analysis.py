@@ -72,6 +72,10 @@ class PatternAnalysisService:
     def __init__(self, store: SQLiteMarketDataStore) -> None:
         self._delegate = TrendAnalysisService(store)
 
+    def shared_computation(self):
+        """Share immutable computation, not strategy-specific persisted results."""
+        return self._delegate.shared_computation()
+
     @staticmethod
     def scan_daily(bars: tuple[StoredDailyBar, ...] | list[StoredDailyBar]) -> DailyStructureScan:
         return scan_daily_structure(bars)

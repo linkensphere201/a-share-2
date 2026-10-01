@@ -1,7 +1,9 @@
 """Synthetic, repeatable cold/warm baseline. Never opens the user's database."""
 from datetime import date, timedelta
 from dataclasses import replace
+from contextlib import nullcontext
 import json
+import sys
 from time import perf_counter
 from stock_harness.models import Instrument, InstrumentKind, DailyBar, AdjustmentFactor
 from stock_harness.pattern_analysis import PatternAnalysisRequest, PatternAnalysisService
@@ -11,7 +13,7 @@ from stock_harness.performance import snapshot
 from stock_harness.sqlite_store import SQLiteMarketDataStore
 
 
-def main():
+def main(shared=False):
     with SQLiteMarketDataStore(":memory:") as store:
         symbol = "000001.SZ"
         store.upsert_instruments([Instrument(symbol, "Synthetic", InstrumentKind.STOCK, "SZ")])
@@ -35,13 +37,14 @@ def main():
                 strategy.analyze(service, request)
             # Force two complete graph publications even when the synthetic shape
             # gates reject, so the baseline also covers detection and persistence.
-            for config in ("benchmark-full-a", "benchmark-full-b"):
-                service.analyze(replace(request, config_version=config))
+            with service.shared_computation() if shared else nullcontext():
+                for config in ("benchmark-full-a", "benchmark-full-b"):
+                    service.analyze(replace(request, config_version=config))
             after = snapshot()
-            print(json.dumps({"mode": mode, "elapsed_ms": (perf_counter() - started) * 1000,
+            print(json.dumps({"mode": mode, "shared": shared, "elapsed_ms": (perf_counter() - started) * 1000,
                 "stages": {key: {field: value[field] - before.get(key, {}).get(field, 0)
                     for field in ("count", "total_ms")} for key, value in after.items()}}, sort_keys=True))
 
 
 if __name__ == "__main__":
-    main()
+    main(shared="--shared" in sys.argv)
