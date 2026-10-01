@@ -70,12 +70,13 @@ class ScreenerService:
                 raise ScreenerBusyError("screener is shutting down")
             if any(job[0] == strategy_id for job in self._jobs.values()):
                 raise ScreenerBusyError("this strategy is already running or queued")
-            cutoff = as_of_date or self._store.get_latest_stock_daily_bar_date()
+            cutoff = self._cutoff(as_of_date)
             if cutoff is None:
                 raise ValueError("no completed stock daily bars are available")
             run = self._store.create_screener_run(
                 strategy_id, _strategy_version(strategy_id), cutoff,
-                _parameters(strategy_id, periods, states, max_results),
+                {**_parameters(strategy_id, periods, states, max_results),
+                 "requested_as_of_date": as_of_date.isoformat() if as_of_date else None},
             )
             run_id = str(run["run_id"])
             self._jobs[run_id] = (strategy_id, "queued")
@@ -108,7 +109,7 @@ class ScreenerService:
         with self._lock:
             if self._stopping.is_set():
                 raise ScreenerBusyError("screener is shutting down")
-            cutoff = as_of_date or self._store.get_latest_stock_daily_bar_date()
+            cutoff = self._cutoff(as_of_date)
             if cutoff is None:
                 raise ValueError("no completed stock daily bars are available")
             busy = {job[0] for job in self._jobs.values()}
@@ -125,7 +126,8 @@ class ScreenerService:
                     continue
                 try:
                     run = self._store.create_screener_run(strategy_id, strategy.version, cutoff, {
-                        **strategy.parameters(periods, SCREENABLE_STATES, max_results), "batch_id": batch_id,
+                        **_parameters(strategy_id, periods, SCREENABLE_STATES, max_results), "batch_id": batch_id,
+                        "requested_as_of_date": as_of_date.isoformat() if as_of_date else None,
                     })
                 except Exception:
                     LOGGER.exception("screener_batch_admission_failed strategy=%s", strategy_id)
@@ -171,7 +173,7 @@ class ScreenerService:
 
     def _execute_shape_batch(self, runs: list[dict[str, object]], cutoff: date, max_results: int) -> None:
         started = time.perf_counter()
-        universe = self._store.list_active_stock_symbols_for_screening()
+        universe = self._store.list_active_stock_symbols_for_screening(cutoff)
         active = {str(run["run_id"]): get_strategy(str(run["strategy_id"])) for run in runs}
         candidates = {run_id: [] for run_id in active}
         for run_id in active:
@@ -220,6 +222,10 @@ class ScreenerService:
         LOGGER.info("screener_shape_batch_completed strategies=%s universe=%s duration_ms=%.1f",
                     len(runs), len(universe), (time.perf_counter() - started) * 1000)
 
+    def _cutoff(self, requested: date | None) -> date | None:
+        return (self._store.get_stock_screening_date(requested) if requested is not None
+                else self._store.get_latest_stock_daily_bar_date())
+
     def close(self) -> None:
         with self._lock:
             self._stopping.set()
@@ -238,9 +244,14 @@ class ScreenerService:
         as_of_date: date,
         strategy_id: str = STRATEGY_ID,
     ) -> dict[str, object]:
+        requested = as_of_date
+        as_of_date = self._cutoff(as_of_date)
+        if as_of_date is None:
+            raise ValueError("no completed stock daily bars are available at the cutoff")
         run = self._store.create_screener_run(
             strategy_id, _strategy_version(strategy_id), as_of_date,
-            _parameters(strategy_id, periods, states, max_results),
+            {**_parameters(strategy_id, periods, states, max_results),
+             "requested_as_of_date": requested.isoformat()},
         )
         try:
             self._execute(
@@ -286,7 +297,7 @@ class ScreenerService:
         states: Sequence[MajorLineState], max_results: int,
     ) -> None:
         started = time.perf_counter()
-        universe = self._store.list_active_stock_symbols_for_screening()
+        universe = self._store.list_active_stock_symbols_for_screening(cutoff)
         state_set = set(states).intersection(SCREENABLE_STATES)
         period_set = {period.value for period in periods}
         candidates: list[dict[str, object]] = []
@@ -380,7 +391,7 @@ class ScreenerService:
         if selection is None:
             raise ValueError(f"{strategy_id} has no saved shape selection")
         strategy.validate_cutoff(cutoff)
-        universe = self._store.list_active_stock_symbols_for_screening()
+        universe = self._store.list_active_stock_symbols_for_screening(cutoff)
         candidates = []
         self._store.update_screener_progress(run_id, universe_count=len(universe), scanned_count=0)
         for index, instrument in enumerate(universe, 1):
@@ -412,7 +423,7 @@ class ScreenerService:
         self, run_id: str, cutoff: date, max_results: int,
     ) -> None:
         started = time.perf_counter()
-        universe = self._store.list_active_stock_symbols_for_screening()
+        universe = self._store.list_active_stock_symbols_for_screening(cutoff)
         matches: list[tuple[dict[str, str], VolumeAccumulationSignal]] = []
         self._store.update_screener_progress(
             run_id, universe_count=len(universe), scanned_count=0,
@@ -525,7 +536,11 @@ def _strategy_version(strategy_id: str) -> str:
 
 
 def _parameters(strategy_id, periods, states, max_results: int) -> dict[str, object]:
-    return get_strategy(strategy_id).parameters(periods, states, max_results)
+    return {**get_strategy(strategy_id).parameters(periods, states, max_results),
+            "universe_version": "observed-session-v1",
+            "universe_basis": "formal-stock-bars-on-effective-session",
+            "universe_limitations": ["missing-or-suspended-bars-excluded", "current-display-names",
+                                     "observed-coverage-not-complete-lifecycle-history"]}
 
 
 def _local_structure(bars) -> dict[str, object]:

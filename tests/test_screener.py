@@ -99,6 +99,35 @@ def test_latest_screening_date_uses_bounded_index_probes_and_only_active_stocks(
             store._connection.set_progress_handler(None, 0)
 
 
+def test_historical_universe_uses_observed_session_not_current_lifecycle():
+    with SQLiteMarketDataStore(":memory:") as store:
+        store.upsert_instruments([
+            Instrument("600001.SH", "Later delisted", InstrumentKind.STOCK, "SH", active=False),
+            Instrument("600002.SH", "Suspended or missing", InstrumentKind.STOCK, "SH"),
+            Instrument("600003.SH", "Future listing", InstrumentKind.STOCK, "SH"),
+        ])
+        session = date(2026, 9, 18)
+        store.upsert_daily_bars("test", [
+            DailyBar("600001.SH", session, 10, 11, 9, 10, 100),
+            DailyBar("600002.SH", date(2026, 9, 17), 10, 11, 9, 10, 100),
+            DailyBar("600003.SH", date(2026, 9, 21), 10, 11, 9, 10, 100),
+        ])
+        assert store.get_stock_screening_date(date(2026, 9, 20)) == session
+        assert store.get_stock_screening_date(date(2000, 1, 1)) is None
+        assert [item["symbol"] for item in store.list_active_stock_symbols_for_screening(session)] == ["600001.SH"]
+        service = ScreenerService(store)
+        try:
+            for strategy in service.strategies():
+                run = service.run_sync([MajorLinePeriod.YEAR], list(MajorLineState), 10,
+                                       date(2026, 9, 20), strategy["strategy_id"])
+                assert run["universe_count"] == 1
+                assert str(run["as_of_date"]) == session.isoformat()
+                assert run["parameters"]["universe_version"] == "observed-session-v1"
+                assert run["parameters"]["requested_as_of_date"] == "2026-09-20"
+        finally:
+            service.close()
+
+
 def test_screener_persists_candidate_and_exact_linked_analysis():
     store, days = _store_with_major_edge()
     try:

@@ -314,6 +314,17 @@ class SQLiteScreenerStoreMixin:
             ).fetchall()
         return [{"symbol": str(row[0]), "name": str(row[1]), "exchange": str(row[2])} for row in rows]
 
+    def get_stock_screening_date(self, cutoff: date) -> date | None:
+        """Latest observed stock session at/before cutoff, independent of current lifecycle."""
+        with self._lock:
+            row = self._connection.execute(
+                """SELECT max((SELECT bar.trade_date FROM daily_bars AS bar
+                    WHERE bar.instrument_id = instrument.instrument_id AND bar.trade_date <= ?
+                    ORDER BY bar.trade_date DESC LIMIT 1)) FROM instruments AS instrument
+                    WHERE instrument.kind = 'stock'""", (_date_key(cutoff),),
+            ).fetchone()
+        return _date_from_key(int(row[0])) if row and row[0] is not None else None
+
     def get_latest_stock_daily_bar_date(self) -> date | None:
         with self._lock:
             row = self._connection.execute(
