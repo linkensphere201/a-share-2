@@ -104,6 +104,7 @@ export function useChartDailyBars({
         }>
       })
       .then(body => {
+        if (controller.signal.aborted) return
         if (body.instrument_kind) {
           callbackRef.current.onInstrumentIdentity({
             instrumentKind: body.instrument_kind,
@@ -117,7 +118,7 @@ export function useChartDailyBars({
         logInfo('chart', '日线数据加载完成', { symbol, rows })
       })
       .catch(error => {
-        if ((error as Error).name !== 'AbortError') {
+        if (!controller.signal.aborted && (error as Error).name !== 'AbortError') {
           setState('error')
           logWarning('chart', '日线数据加载失败', { symbol, error })
         }
@@ -172,6 +173,7 @@ export function useChartDailyBars({
     setRefreshing(true)
     refreshLatestDailyBar(symbol, new Date(), controller.signal)
       .then(result => {
+        if (controller.signal.aborted) return
         if (result.mode === 'provisional') {
           const live = result.items[0]
           if (live) replaceBars(mergeProvisionalBar(barsRef.current, live), true)
@@ -211,7 +213,7 @@ export function useChartDailyBars({
         }
       })
       .catch(error => {
-        if ((error as Error).name !== 'AbortError') {
+        if (!controller.signal.aborted && (error as Error).name !== 'AbortError') {
           showRefreshFeedback('fallback', '刷新失败，已保留现有图表数据')
           const now = Date.now()
           if (now - warningAtRef.current >= 60_000) {

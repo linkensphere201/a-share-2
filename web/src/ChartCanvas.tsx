@@ -344,6 +344,7 @@ export function ChartCanvas({
   const lineMoveDragRef = useRef<TrendLineMoveDrag | undefined>(undefined)
   const lineAnchorDragRef = useRef<TrendLineAnchorDrag | undefined>(undefined)
   const bucketRef = useRef(1)
+  const seriesRevisionRef = useRef(0)
   const applyBucketRef = useRef<(bucket: number, preserve?: ViewportSnapshot) => void>(() => undefined)
   const recalculateLodRef = useRef<() => void>(() => undefined)
   const syncPriceScaleRef = useRef<() => void>(() => undefined)
@@ -468,15 +469,16 @@ export function ChartCanvas({
   }, [period, resetDrawingInteraction, onDailyLoadStart])
   const {
     analysis: trendAnalysis,
-    displayed: displayedTrendAnalysis,
+    displayed: dailyDisplayedTrendAnalysis,
     preview: trendAnalysisPreview,
   } = useChartTrendAnalysis({
     symbol,
-    enabled: !monthly && trendAnalysisEnabled,
-    override: monthly ? null : trendAnalysisOverride,
-    supplementalItems: monthly ? [] : supplementalAnalysisItems,
-    supplementalOnly: !monthly && supplementalAnalysisOnly,
+    enabled: trendAnalysisEnabled,
+    override: trendAnalysisOverride,
+    supplementalItems: supplementalAnalysisItems,
+    supplementalOnly: supplementalAnalysisOnly,
   })
+  const displayedTrendAnalysis = monthly ? null : dailyDisplayedTrendAnalysis
 
   const averages = useMemo(() => ({
     ma5: movingAverage(bars, 5),
@@ -1037,6 +1039,7 @@ export function ChartCanvas({
 
   useEffect(() => {
     applyBucketRef.current = (bucket, preserve) => {
+      const revision = ++seriesRevisionRef.current
       const renderedBars = aggregateBars(bars, bucket)
       const colors = new Map(renderedBars.map(item => [
         item.trade_date,
@@ -1091,6 +1094,7 @@ export function ChartCanvas({
       setLodBucket(bucket)
       setOverlayRevision(value => value + 1)
       window.requestAnimationFrame(() => {
+        if (revision !== seriesRevisionRef.current) return
         if (preserve) {
           chartRef.current?.timeScale().setVisibleLogicalRange(remapLogicalRange(
             preserve.logical,
@@ -1100,12 +1104,14 @@ export function ChartCanvas({
         }
         syncPriceScaleRef.current()
         window.requestAnimationFrame(() => {
+          if (revision !== seriesRevisionRef.current) return
           suppressLodRef.current = false
         })
       })
     }
     applyBucketRef.current(1, pendingViewportRef.current)
     pendingViewportRef.current = undefined
+    return () => { seriesRevisionRef.current += 1 }
   }, [bars, averages, macd])
 
   useEffect(() => {
@@ -1113,7 +1119,7 @@ export function ChartCanvas({
     pricePanDragRef.current = undefined
     priceRefitPendingRef.current = true
     chartRef.current?.priceScale('right', 0).setAutoScale(true)
-  }, [symbol, asOfDate])
+  }, [symbol, asOfDate, period])
 
   useEffect(() => {
     priceModeRef.current = priceMode
