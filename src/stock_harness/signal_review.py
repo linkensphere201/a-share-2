@@ -119,12 +119,18 @@ class SignalReviewBusyError(RuntimeError):
     pass
 
 
+class SignalReviewCancelled(RuntimeError):
+    pass
+
+
 class SignalReviewService:
     def __init__(self, store: SQLiteMarketDataStore) -> None:
         self._store = store
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
         self._closing = False
+        self._stop = threading.Event()
+        self._active_run_id: str | None = None
         recovered = store.recover_interrupted_signal_review_runs()
         if recovered:
             LOGGER.warning("signal_review_interrupted_runs_recovered count=%s", recovered)
@@ -177,6 +183,8 @@ class SignalReviewService:
                 effective_date=cutoff,
                 parameters=_daily_run_parameters() if daily else _run_parameters(),
             )
+            self._stop.clear()
+            self._active_run_id = str(run["run_id"])
             self._thread = threading.Thread(
                 target=self._run_guarded,
                 args=(str(run["run_id"]), cutoff, signal_id),
@@ -186,14 +194,36 @@ class SignalReviewService:
             return run
 
     def close(self) -> None:
-        """Drain the accepted review before its shared store is closed."""
+        """Stop at the next cooperative boundary, then drain storage users."""
         with self._lock:
             self._closing = True
+            self._stop.set()
             worker = self._thread
         if worker is not None:
             worker.join()
 
+    def cancel(self, run_id: str) -> bool:
+        with self._lock:
+            if self._active_run_id != run_id:
+                return False
+            self._stop.set()
+            return True
+
+    def _check_stopping(self) -> None:
+        if self._stop.is_set():
+            raise SignalReviewCancelled("signal review cancelled at a cooperative boundary")
+
+    def _publish(self, run_id: str, **kwargs) -> None:
+        # Linearize cancel against final publication. Once publication owns this
+        # lock, cancellation cannot promise to retract a committed result.
+        with self._lock:
+            self._check_stopping()
+            self._store.complete_signal_review_run(run_id, **kwargs)
+            if self._active_run_id == run_id:
+                self._active_run_id = None
+
     def run_sync(self, signal_id: str, effective_date: date) -> dict[str, object]:
+        self._check_stopping()
         if signal_id not in {WEEKLY_RECOGNITION_SIGNAL, DAILY_MARKET_BOARD_SIGNAL}:
             raise ValueError(f"unknown signal: {signal_id}")
         daily = signal_id == DAILY_MARKET_BOARD_SIGNAL
@@ -215,21 +245,31 @@ class SignalReviewService:
 
     def _run_guarded(self, run_id: str, cutoff: date, signal_id: str) -> None:
         try:
+            self._check_stopping()
             if signal_id == DAILY_MARKET_BOARD_SIGNAL:
                 self._execute_daily(run_id, cutoff)
             else:
                 self._execute(run_id, cutoff)
+        except SignalReviewCancelled as error:
+            self._store.fail_signal_review_run(run_id, str(error), cancelled=True)
+            LOGGER.info("signal_review_cancelled run_id=%s", run_id)
         except Exception as error:
             self._store.fail_signal_review_run(run_id, str(error))
             LOGGER.exception("signal_review_run_failed run_id=%s", run_id)
+        finally:
+            with self._lock:
+                if self._active_run_id == run_id:
+                    self._active_run_id = None
 
     def _execute_daily(self, run_id: str, cutoff: date) -> None:
+        self._check_stopping()
         started = time.perf_counter()
         boards = self._boards()
         with BoardAggregatePool(self._store, 4) as aggregate_pool:
             hotspot_snapshots, board_breadth, capacity_snapshots = (
-                aggregate_pool.calculate(cutoff)
+                aggregate_pool.calculate(cutoff, check_stopping=self._check_stopping)
             )
+        self._check_stopping()
         benchmark = self._store.get_recent_daily_bars(
             "000001.SH", cutoff, DAILY_LOOKBACK_BARS,
         )
@@ -258,6 +298,7 @@ class SignalReviewService:
         hotspot_features: dict[str, dict[str, object]] = {}
         self._progress(run_id, "board-observations", len(boards), 0)
         for offset in range(0, len(boards), 100):
+            self._check_stopping()
             page = boards[offset:offset + 100]
             series = self._store.get_recent_daily_bars_many(
                 [str(board["symbol"]) for board in page], cutoff, DAILY_LOOKBACK_BARS,
@@ -304,32 +345,16 @@ class SignalReviewService:
             done = min(offset + len(page), len(boards))
             self._progress(run_id, "board-observations", len(boards), done)
 
-        attention_registry = {
-            str(item["symbol"]): item
-            for item in self._store.list_signal_attention(DAILY_MARKET_BOARD_SIGNAL)
-        }
-        for observation in observations:
-            symbol = str(observation["symbol"])
-            if bool(observation["attention_eligible"]):
-                self._store.promote_signal_attention(
-                    DAILY_MARKET_BOARD_SIGNAL, symbol, cutoff,
-                    [str(item) for item in observation["attention_reasons"]],
-                )
-        active_symbols = {
-            str(observation["symbol"]) for observation in observations
-            if bool(observation["attention_eligible"])
-        }
         cooldown_through = _cooldown_through(self._store, cutoff, 5)
-        for symbol, registry in attention_registry.items():
-            if symbol in active_symbols or bool(registry.get("manual_pinned")):
-                continue
-            self._store.advance_signal_attention_lifecycle(
-                DAILY_MARKET_BOARD_SIGNAL, symbol, cutoff, cooldown_through,
-            )
-
+        attention_update = dict(signal_id=DAILY_MARKET_BOARD_SIGNAL, effective_date=cutoff,
+            cooldown_through=cooldown_through, promotions={
+                str(observation["symbol"]): [str(item) for item in observation["attention_reasons"]]
+                for observation in observations if bool(observation["attention_eligible"])
+            })
+        self._check_stopping()
         attention_registry = {
             str(item["symbol"]): item
-            for item in self._store.list_signal_attention(DAILY_MARKET_BOARD_SIGNAL)
+            for item in self._store.preview_review_attention(**attention_update)
         }
         promoted = [
             observation for observation in observations
@@ -363,6 +388,7 @@ class SignalReviewService:
                 comparison=observation["comparison"],
             )
 
+        self._check_stopping()
         scorers = default_scorer_registry()
         analysis_systems = _review_analysis_system_registry(scorers)
         board_names = {str(board["symbol"]): str(board["name"]) for board in boards}
@@ -397,6 +423,7 @@ class SignalReviewService:
             leading_system.version,
         )
         observation_systems = _board_observation_system_registry()
+        self._check_stopping()
         system_executions = observation_systems.execute_all(ObservationSystemContext(
             observations=observations,
             prior_scores={
@@ -421,6 +448,7 @@ class SignalReviewService:
         system_execution_by_id = {
             execution.system_id: execution for execution in system_executions
         }
+        self._check_stopping()
         trend_execution = analysis_systems.execute(
             TREND_BREAKOUT_SCORER,
             AnalysisSystemContext(
@@ -456,6 +484,7 @@ class SignalReviewService:
             for item in self._store.list_signal_review_items(str(context_run["run_id"])):
                 if item.get("profile") == "market":
                     recent_market_items[str(item["item_key"])].append(item)
+        self._check_stopping()
         emotion = self._store.calculate_market_emotion_snapshot(run_id, cutoff)
         items = self._daily_market_items(
             cutoff, previous_items, emotion, prior_session_items,
@@ -468,6 +497,7 @@ class SignalReviewService:
             ), MARKET_REGIME_SCORER,
             scorers.get(MARKET_REGIME_SCORER).version,
         )
+        self._check_stopping()
         market_execution = analysis_systems.execute(
             MARKET_REGIME_SCORER,
             AnalysisSystemContext(
@@ -558,9 +588,7 @@ class SignalReviewService:
                 for observation in promoted
             ),
             "displayed_item_count": sum(bool(item["active"]) for item in items),
-            "attention_registry_count": len(self._store.list_signal_attention(
-                DAILY_MARKET_BOARD_SIGNAL,
-            )),
+            "attention_registry_count": len(attention_registry),
             "emotion": emotion,
             "scoring_systems": scorers.definitions(),
             "observation_systems": observation_systems.definitions(),
@@ -597,7 +625,7 @@ class SignalReviewService:
         ) if prior_pool_run else None
         board_pool = _build_board_pool_snapshot(
             self._store, run_id, cutoff, trend_scores,
-            self._store.list_signal_attention(DAILY_MARKET_BOARD_SIGNAL),
+            list(attention_registry.values()),
             prior_pool, hotspot_scores=hotspot_scores,
             leading_scores=leading_scores,
         )
@@ -649,6 +677,7 @@ class SignalReviewService:
             ), STOCK_OPPORTUNITY_SCORER,
             scorers.get(STOCK_OPPORTUNITY_SCORER).version,
         )
+        self._check_stopping()
         stock_execution = analysis_systems.execute(
             STOCK_OPPORTUNITY_SCORER,
             AnalysisSystemContext(
@@ -686,6 +715,7 @@ class SignalReviewService:
             ), MEAN_REVERSION_SYSTEM_ID,
             mean_system.definition.version,
         )
+        self._check_stopping()
         mean_execution = analysis_systems.execute(MEAN_REVERSION_SYSTEM_ID, AnalysisSystemContext(
             entities_by_scope={
                 "market": [
@@ -745,7 +775,7 @@ class SignalReviewService:
             },
             "evidence": [],
         }])
-        self._store.complete_signal_review_run(
+        self._publish(
             run_id, items=items, summary=summary, input_digest=digest,
             scores=[
                 *trend_scores, *hotspot_scores, *leading_scores,
@@ -753,6 +783,7 @@ class SignalReviewService:
             ],
             pool_snapshots=[board_pool, stock_pool],
             hotspot_wave_snapshots=hotspot_wave_snapshots,
+            attention_update=attention_update,
         )
         LOGGER.info(
             "daily_signal_review_completed run_id=%s date=%s observations=%s promoted=%s elapsed_ms=%.1f",
@@ -791,6 +822,7 @@ class SignalReviewService:
         confirmed = reused = failed = 0
         self._progress(run_id, "stock-m4-analysis", len(selected), 0)
         for index, item in enumerate(selected, 1):
+            self._check_stopping()
             symbol = str(item["symbol"])
             payload = item.get("payload")
             if not isinstance(payload, dict):
@@ -881,6 +913,7 @@ class SignalReviewService:
         service = PatternAnalysisService(self._store)
         self._progress(run_id, "board-deep-analysis", len(selected), 0)
         for index, observation in enumerate(selected, 1):
+            self._check_stopping()
             symbol = str(observation["symbol"])
             if observation.get("coverage_state") != "complete":
                 state = "rejected-insufficient-coverage"
@@ -1015,6 +1048,7 @@ class SignalReviewService:
         return items
 
     def _execute(self, run_id: str, cutoff: date) -> None:
+        self._check_stopping()
         started = time.perf_counter()
         boards = self._boards()
         memberships: dict[str, list[dict[str, object]]] = {}
@@ -1022,6 +1056,7 @@ class SignalReviewService:
         total = len(boards)
         self._progress(run_id, "memberships", total, 0)
         for index, board in enumerate(boards, 1):
+            self._check_stopping()
             members = [
                 item for item in self._store.list_board_members(str(board["symbol"]), 5000)
                 if item.get("available") is not False and item.get("kind") == "stock"
@@ -1037,6 +1072,7 @@ class SignalReviewService:
         features = {}
         self._progress(run_id, "stock-features", total, 0)
         for index, symbol in enumerate(sorted(stocks), 1):
+            self._check_stopping()
             bars = [_bar_payload(item) for item in self._store.get_daily_bars(
                 symbol, start_date, cutoff
             )]
@@ -1051,6 +1087,7 @@ class SignalReviewService:
         self._progress(run_id, "board-ranking", total, 0)
         ranked_boards = 0
         for index, board in enumerate(boards, 1):
+            self._check_stopping()
             symbol = str(board["symbol"])
             member_features = [
                 features[str(item["symbol"])] for item in memberships[symbol]
@@ -1127,7 +1164,7 @@ class SignalReviewService:
             "membership_semantics": "current membership snapshot; not point-in-time history",
             "elapsed_seconds": round(time.perf_counter() - started, 3),
         }
-        self._store.complete_signal_review_run(
+        self._publish(
             run_id, items=items, summary={
                 **summary, "scoring_systems": scorers.definitions(),
                 "scoring_errors": ([{
@@ -1148,6 +1185,7 @@ class SignalReviewService:
         for classification in ("concept", "industry"):
             offset = 0
             while True:
+                self._check_stopping()
                 page = self._store.search_instruments(
                     classification=classification, active=True, limit=500, offset=offset,
                 )
@@ -1160,6 +1198,7 @@ class SignalReviewService:
         return [result[key] for key in sorted(result)]
 
     def _progress(self, run_id: str, phase: str, total: int, done: int) -> None:
+        self._check_stopping()
         self._store.update_signal_review_progress(
             run_id, phase=phase, work_total=total, work_done=done,
         )

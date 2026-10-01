@@ -443,6 +443,10 @@ export async function loadSignalRun(runId: string, signal?: AbortSignal): Promis
   return json<SignalRun>(await fetch(`/api/signals/runs/${encodeURIComponent(runId)}`, { signal }))
 }
 
+export async function cancelSignalRun(runId: string): Promise<void> {
+  await json(await fetch(`/api/signals/runs/${encodeURIComponent(runId)}/cancel`, { method: 'POST' }))
+}
+
 export async function listSignalItems(runId: string, signal?: AbortSignal): Promise<SignalItem[]> {
   return (await json<{ items: SignalItem[] }>(
     await fetch(`/api/signals/runs/${encodeURIComponent(runId)}/items?summary=true`, { signal }),

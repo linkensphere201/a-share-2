@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from collections.abc import Callable
 from datetime import date
 
 from stock_harness.sqlite_store import SQLiteMarketDataStore
@@ -37,29 +38,31 @@ class BoardAggregatePool:
     def worker_count(self) -> int:
         return 3 if self._executor is not None else 1
 
-    def calculate(self, effective: date) -> tuple[
+    def calculate(self, effective: date, *, check_stopping: Callable[[], None] = lambda: None) -> tuple[
         dict[str, dict[str, object]],
         dict[str, dict[str, object]],
         dict[str, dict[str, object]],
     ]:
-        if self._executor is None:
-            return (
-                self._source.calculate_board_hotspot_snapshots(effective),
-                self._source.calculate_board_breadth_snapshots(effective),
-                self._source.calculate_board_capacity_snapshots(effective),
-            )
         methods = (
             "calculate_board_hotspot_snapshots",
             "calculate_board_breadth_snapshots",
             "calculate_board_capacity_snapshots",
         )
-        futures = tuple(
-            self._executor.submit(getattr(store, method), effective)
-            for store, method in zip(self._stores, methods, strict=True)
-        )
-        return tuple(
-            future.result() for future in futures
-        )  # type: ignore[return-value]
+        results = []
+        if self._executor is None:
+            for method in methods:
+                check_stopping()
+                results.append(getattr(self._source, method)(effective))
+        else:
+            futures = []
+            for store, method in zip(self._stores, methods, strict=True):
+                check_stopping()
+                futures.append(self._executor.submit(getattr(store, method), effective))
+            for future in futures:
+                check_stopping()
+                results.append(future.result())
+        check_stopping()
+        return tuple(results)  # type: ignore[return-value]
 
     def close(self) -> None:
         if self._executor is not None:

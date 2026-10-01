@@ -3,7 +3,7 @@ import {
   useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from 'react'
-import { ArrowLeft, Boxes, Eye, Layers3, ListFilter, MessageSquare, Pin, PinOff, Play, Radar, RefreshCw, RotateCcw, Search } from 'lucide-react'
+import { ArrowLeft, Boxes, Eye, Layers3, ListFilter, MessageSquare, Pin, PinOff, Play, Radar, RefreshCw, RotateCcw, Search, Square } from 'lucide-react'
 import { ChartCanvas } from './ChartCanvas'
 import { AnalysisOverlayToggle, useAnalysisOverlayVisibility, useAnalysisLayers } from './AnalysisOverlayToggle'
 import { MarketBoardBadge } from './MarketBoardBadge'
@@ -11,7 +11,7 @@ import { AddToListMenu, type AddToListMenuState, type ListInstrument, type Targe
 import type { ThemeDefinition } from './themeStore'
 import {
   listBoardObservations, listSignalAttention, listSignalDefinitions, listSignalItems,
-  listSignalRuns, listSignalScores, loadObservationPool, loadSignalRun, loadSignalItem, setSignalAttention, startSignalRun,
+  listSignalRuns, listSignalScores, loadObservationPool, loadSignalRun, loadSignalItem, setSignalAttention, startSignalRun, cancelSignalRun,
   type BoardDailyObservation, type SignalAttention, type SignalChangeType,
   type ObservationPoolItem, type ObservationPoolSnapshot, type ObservationPoolSource,
   type SignalDefinition, type SignalEvidence, type SignalItem, type SignalProfile,
@@ -92,6 +92,8 @@ export function SignalReviewWorkspace({ theme, onClose, targetLists = [], onAddI
   const [definitions, setDefinitions] = useState<SignalDefinition[]>([])
   const [selectedDefinition, setSelectedDefinition] = useState<SignalDefinition>()
   const [runs, setRuns] = useState<SignalRun[]>([])
+  const activeRun = runs.find(item => item.status === 'running')
+  const [cancellingRun, setCancellingRun] = useState<string>()
   const [selectedRun, setSelectedRun] = useState<SignalRun>()
   const [startingRun, setStartingRun] = useState(false)
   const [pendingEffectiveDate, setPendingEffectiveDate] = useState<string>()
@@ -232,13 +234,13 @@ export function SignalReviewWorkspace({ theme, onClose, targetLists = [], onAddI
     return () => controller.abort()
   }, [selectedRun?.run_id, selectedRun?.status, scoreUniverse])
 
-  useSerialPolling(selectedRun?.status === 'running' && selectedDefinition
-    ? `${selectedDefinition.signal_id}:${selectedRun.run_id}` : undefined, 1200, async signal => {
-    const next = await loadSignalRun(selectedRun!.run_id, signal)
+  useSerialPolling(activeRun && selectedDefinition
+    ? `${selectedDefinition.signal_id}:${activeRun.run_id}` : undefined, 1200, async signal => {
+    const next = await loadSignalRun(activeRun!.run_id, signal)
     if (signal.aborted) return
     const runs = await listSignalRuns(selectedDefinition!.signal_id, signal)
     if (signal.aborted) return
-    setSelectedRun(next)
+    setSelectedRun(current => current?.run_id === next.run_id ? next : current)
     setRuns(orderSignalRuns(runs))
   }, reason => setError(String(reason)))
 
@@ -508,7 +510,6 @@ export function SignalReviewWorkspace({ theme, onClose, targetLists = [], onAddI
     : false
   const progress = selectedRun?.work_total
     ? Math.round(selectedRun.work_done / selectedRun.work_total * 100) : 0
-  const activeRun = runs.find(item => item.status === 'running')
   const activeProgress = activeRun?.work_total
     ? Math.round(activeRun.work_done / activeRun.work_total * 100) : 0
   const runBusy = startingRun || Boolean(activeRun)
@@ -702,6 +703,12 @@ export function SignalReviewWorkspace({ theme, onClose, targetLists = [], onAddI
           ? pendingEffectiveDate ? `正在重跑 ${pendingEffectiveDate}` : '正在创建本期任务'
           : activeRun ? `${phaseLabels[activeRun.phase] ?? activeRun.phase} ${activeProgress}%` : '运行本期信号'}</span>
       </button>
+      {activeRun && <button className="icon-button" title={cancellingRun === activeRun.run_id ? '正在停止复盘' : '停止复盘'} aria-label="停止复盘" disabled={cancellingRun === activeRun.run_id} onClick={async () => {
+        const id = activeRun.run_id
+        setCancellingRun(id)
+        try { await cancelSignalRun(id) }
+        catch (reason) { setError(String(reason)); setCancellingRun(undefined) }
+      }}><Square size={14}/></button>}
     </header>
     {listNotice && <div className="signal-score-loading" role="status" style={{ bottom: 52, maxWidth: 'calc(100vw - 24px)', overflowWrap: 'anywhere' }}>{listNotice}</div>}
     {error && <button className="signal-error" onClick={() => setError('')}>{error}</button>}
@@ -720,7 +727,7 @@ export function SignalReviewWorkspace({ theme, onClose, targetLists = [], onAddI
           setRunContextMenu({ ...signalRunMenuPosition(event.clientX, event.clientY), run: item })
         }}>
           <span>{item.effective_date} <i>R{item.revision}</i></span>
-          <small>{item.status === 'running' ? `${phaseLabels[item.phase] ?? item.phase} ${progress}%` : item.status === 'failed' ? '执行失败' : `${item.item_count} 项`}</small>
+          <small>{item.status === 'running' ? `${phaseLabels[item.phase] ?? item.phase} ${progress}%` : item.phase === 'cancelled' ? '已取消' : item.status === 'failed' ? '执行失败' : `${item.item_count} 项`}</small>
           <em className={item.status}/>
         </button>)}</div>
       </aside>

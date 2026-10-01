@@ -920,9 +920,15 @@ class SQLiteSignalObservationStoreMixin:
         self, signal_id: str, symbol: str, effective_date: date,
         reasons: Sequence[str],
     ) -> None:
+        with self._lock, self._transaction():
+            self._promote_signal_attention(signal_id, symbol, effective_date, reasons)
+
+    def _promote_signal_attention(
+        self, signal_id: str, symbol: str, effective_date: date, reasons: Sequence[str],
+    ) -> None:
         normalized = symbol.upper()
         now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
-        with self._lock, self._transaction():
+        with self._lock:
             identity = self._canonical_instrument_identity(normalized)
             if identity is None:
                 raise ValueError(f"unknown attention instrument: {symbol}")
@@ -957,9 +963,15 @@ class SQLiteSignalObservationStoreMixin:
         self, signal_id: str, symbol: str, effective_date: date,
         cooldown_through: date,
     ) -> dict[str, object] | None:
+        with self._lock, self._transaction():
+            return self._advance_signal_attention_lifecycle(signal_id, symbol, effective_date, cooldown_through)
+
+    def _advance_signal_attention_lifecycle(
+        self, signal_id: str, symbol: str, effective_date: date, cooldown_through: date,
+    ) -> dict[str, object] | None:
         normalized = symbol.upper()
         now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
-        with self._lock, self._transaction():
+        with self._lock:
             row = self._connection.execute(
                 """
                 SELECT registry.instrument_id, registry.status,
@@ -995,6 +1007,29 @@ class SQLiteSignalObservationStoreMixin:
                  _json(reasons), now_ms, signal_id, int(row[0])),
             )
         return self.get_signal_attention(signal_id, normalized)
+
+    def _apply_review_attention(self, signal_id: str, effective_date: date,
+                                cooldown_through: date, promotions: dict[str, list[str]]) -> None:
+        """Caller owns the publication transaction; preserve concurrent manual pins."""
+        for symbol, reasons in promotions.items():
+            self._promote_signal_attention(signal_id, symbol, effective_date, reasons)
+        for entry in self.list_signal_attention(signal_id):
+            symbol = str(entry["symbol"])
+            if symbol not in promotions and not entry["manual_pinned"]:
+                self._advance_signal_attention_lifecycle(signal_id, symbol, effective_date, cooldown_through)
+
+    def preview_review_attention(self, signal_id: str, effective_date: date,
+                                 cooldown_through: date, promotions: dict[str, list[str]]) -> list[dict[str, object]]:
+        # Reuse the exact lifecycle SQL without publishing tentative state. Other
+        # connections cannot see these writes; rollback precedes releasing the lock.
+        with self._lock, self._transaction():
+            self._connection.execute("SAVEPOINT review_attention_preview")
+            try:
+                self._apply_review_attention(signal_id, effective_date, cooldown_through, promotions)
+                return self.list_signal_attention(signal_id)
+            finally:
+                self._connection.execute("ROLLBACK TO review_attention_preview")
+                self._connection.execute("RELEASE review_attention_preview")
 
     def list_signal_attention(
         self, signal_id: str, *, include_inactive: bool = False,

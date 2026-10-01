@@ -30,6 +30,31 @@ afterEach(() => {
 })
 
 describe('SignalReviewWorkspace', () => {
+  it('requests cancellation once and shows the distinct cancelled outcome', async () => {
+    let cancelled = false
+    const active = { ...run, status: 'running', phase: 'stock-features' }
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url === '/api/signals/definitions') return response({ items: [definition] })
+      if (url.endsWith('/cancel') && init?.method === 'POST') {
+        cancelled = true
+        return response({ cancellation_requested: true }, 202)
+      }
+      const current = cancelled ? { ...run, status: 'failed', phase: 'cancelled', error: 'cancelled' } : active
+      if (url.includes('/api/signals/runs?')) return response({ items: [current] })
+      if (url.endsWith(`/runs/${run.run_id}`)) return response(current)
+      return response({ items: [] })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    render(<SignalReviewWorkspace theme={themes[0]} onClose={() => undefined}/>)
+    const stop = await screen.findByRole('button', { name: '停止复盘' })
+    fireEvent.click(stop)
+    fireEvent.click(stop)
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/cancel'))).toHaveLength(1)
+    await screen.findByText('已取消', {}, { timeout: 2500 })
+    expect(screen.queryByRole('button', { name: '停止复盘' })).toBeNull()
+  })
+
   it('opens charts before lazy evidence and ignores detail from an old selection', async () => {
     const pending = new Map<string, { resolve: (value: Response) => void; signal?: AbortSignal | null }>()
     vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {

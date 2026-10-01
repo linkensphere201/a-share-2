@@ -80,6 +80,14 @@ def create_analysis_router() -> APIRouter:
     ) -> dict[str, object]:
         return {"items": store(request).list_signal_review_runs(signal_id, limit)}
 
+    @router.post("/api/signals/runs/{run_id}/cancel", status_code=status.HTTP_202_ACCEPTED)
+    def cancel_signal_run(run_id: str, request: Request) -> dict[str, object]:
+        if request.app.state.signal_review.cancel(run_id):
+            return {"run_id": run_id, "cancellation_requested": True}
+        if store(request).get_signal_review_run(run_id) is None:
+            raise HTTPException(status_code=404, detail="signal review run not found")
+        raise HTTPException(status_code=409, detail="signal review is no longer cancellable")
+
     @router.get("/api/signals/runs/{run_id}")
     def get_signal_run(run_id: str, request: Request) -> dict[str, object]:
         result = store(request).get_signal_review_run(run_id)

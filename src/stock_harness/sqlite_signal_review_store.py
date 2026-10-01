@@ -161,6 +161,7 @@ class SQLiteSignalReviewStoreMixin:
         scores: Sequence[dict[str, object]] = (),
         pool_snapshots: Sequence[dict[str, object]] = (),
         hotspot_wave_snapshots: Sequence[dict[str, object]] = (),
+        attention_update: dict[str, object] | None = None,
     ) -> dict[str, object]:
         now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
         counts = {name: sum(item["change_type"] == name for item in items)
@@ -177,6 +178,8 @@ class SQLiteSignalReviewStoreMixin:
             ).fetchone()
             if status is None or str(status[0]) != "running":
                 raise ValueError("signal review run is not running")
+            if attention_update is not None:
+                self._apply_review_attention(**attention_update)
             self._insert_observation_pool_snapshots(run_id, pool_snapshots)
             self._insert_hotspot_wave_snapshots(run_id, hotspot_wave_snapshots, now_ms)
             score_symbols = {str(value["symbol"]).upper() for value in scores}
@@ -412,15 +415,15 @@ class SQLiteSignalReviewStoreMixin:
             },
         } for row in rows]
 
-    def fail_signal_review_run(self, run_id: str, error: str) -> None:
+    def fail_signal_review_run(self, run_id: str, error: str, *, cancelled: bool = False) -> None:
         now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
         with self._lock, self._transaction():
             self._connection.execute(
                 """
                 UPDATE signal_review_runs
-                SET status = 'failed', phase = 'failed', error = ?, completed_at_ms = ?
+                SET status = 'failed', phase = ?, error = ?, completed_at_ms = ?
                 WHERE run_id = ? AND status = 'running'
-                """, (" ".join(error.split())[:2000], now_ms, run_id),
+                """, ("cancelled" if cancelled else "failed", " ".join(error.split())[:2000], now_ms, run_id),
             )
 
     def recover_interrupted_signal_review_runs(self) -> int:
