@@ -211,7 +211,7 @@ def _fit_window(
             pivots[0].pivot_date, lower_start, pivots[-1].pivot_date, lower_end, lower_slope
         ),
         completion_state=resolve_pattern_completion_state(
-            events.breakout_date, events.invalidation_date
+            events.breakout_date, events.invalidation_date, events.expired_date
         ),
         breakout_direction=breakout_direction,
         breakout_date=events.breakout_date,

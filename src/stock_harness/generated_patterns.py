@@ -14,6 +14,7 @@ from stock_harness.breakout_state import (
     StructuralEventKind,
     evaluate_breakout,
     evaluate_latest_boundary_event,
+    evaluate_pattern_boundaries,
     resolve_pattern_completion_state,
 )
 from stock_harness.classic_patterns import detect_double_patterns
@@ -299,8 +300,18 @@ def _append_consolidations(
             lower_previous,
             preview,
         )
-        boundary = upper_latest if monitor_up else lower_latest
-        prior_boundary = upper_previous if monitor_up else lower_previous
+        lifecycle = evaluate_pattern_boundaries(
+            bars, available_date=pattern.available_date,
+            upper_price_at=lambda i: _project(pattern.upper_boundary, i - start),
+            lower_price_at=lambda i: _project(pattern.lower_boundary, i - start),
+            buffer_percent=profile.consolidation_config().breakout_buffer_percent,
+        )
+        completion_state = resolve_pattern_completion_state(
+            lifecycle.breakout_date, lifecycle.invalidation_date, lifecycle.expired_date,
+        )
+        boundary = lifecycle.trigger_boundary or (upper_latest if monitor_up else lower_latest)
+        prior_boundary = lifecycle.trigger_boundary or (upper_previous if monitor_up else lower_previous)
+        stop = lifecycle.structural_stop or (lower_latest if monitor_up else upper_latest)
         item_id = _item_id(horizon, pattern.pattern_type.value, index)
         items.append(GeneratedAnalysisItem(
             item_id=item_id,
@@ -312,7 +323,7 @@ def _append_consolidations(
                     pattern.start_date, pattern.end_date, pattern.available_date,
                     pattern.pivots, completion_state,
                     pattern.breakout_date,
-                    lower_latest if monitor_up else upper_latest,
+                    stop,
                     pattern.invalidation_date, pattern.score,
                     pattern.score_components, pattern.volume_ratio, pattern.primary,
                 ),
@@ -322,13 +333,16 @@ def _append_consolidations(
                     "lower": _boundary_payload(pattern.lower_boundary),
                 },
                 "neckline_price": boundary,
+                "lifecycle_version": "bounded-frozen-breakout-v1",
+                "boundary_basis": "frozen-at-breakout" if lifecycle.trigger_index is not None else "forming-geometry",
+                "expired_date": _iso(lifecycle.expired_date),
             },
         ))
         _append_latest_event(
             items, item_id, bars, monitor_up, boundary, prior_boundary, preview,
             completion_state=completion_state,
             breakout_date=pattern.breakout_date,
-            invalidation_date=pattern.invalidation_date,
+            invalidation_date=lifecycle.invalidation_date,
         )
 
 
@@ -364,8 +378,17 @@ def _append_diamonds(
             lower_previous,
             preview,
         )
-        boundary = upper_latest if monitor_up else lower_latest
-        prior_boundary = upper_previous if monitor_up else lower_previous
+        lifecycle = evaluate_pattern_boundaries(
+            bars, available_date=pattern.available_date,
+            upper_price_at=lambda i: _project(pattern.upper_active, i - upper_start),
+            lower_price_at=lambda i: _project(pattern.lower_active, i - lower_start),
+        )
+        completion_state = resolve_pattern_completion_state(
+            lifecycle.breakout_date, lifecycle.invalidation_date, lifecycle.expired_date,
+        )
+        boundary = lifecycle.trigger_boundary or (upper_latest if monitor_up else lower_latest)
+        prior_boundary = lifecycle.trigger_boundary or (upper_previous if monitor_up else lower_previous)
+        stop = lifecycle.structural_stop or (lower_latest if monitor_up else upper_latest)
         item_id = _item_id(horizon, pattern.pattern_type.value, index)
         items.append(GeneratedAnalysisItem(
             item_id=item_id,
@@ -377,7 +400,7 @@ def _append_diamonds(
                     pattern.start_date, pattern.end_date, pattern.available_date,
                     pattern.pivots, completion_state,
                     pattern.breakout_date,
-                    lower_latest if monitor_up else upper_latest,
+                    stop,
                     pattern.invalidation_date, pattern.score,
                     pattern.score_components, pattern.volume_ratio, pattern.primary,
                 ),
@@ -390,13 +413,16 @@ def _append_diamonds(
                 },
                 "neckline_price": boundary,
                 "context_change_percent": pattern.context_change_percent,
+                "lifecycle_version": "bounded-frozen-breakout-v1",
+                "boundary_basis": "frozen-at-breakout" if lifecycle.trigger_index is not None else "forming-geometry",
+                "expired_date": _iso(lifecycle.expired_date),
             },
         ))
         _append_latest_event(
             items, item_id, bars, monitor_up, boundary, prior_boundary, preview,
             completion_state=completion_state,
             breakout_date=pattern.breakout_date,
-            invalidation_date=pattern.invalidation_date,
+            invalidation_date=lifecycle.invalidation_date,
         )
 
 
@@ -515,7 +541,10 @@ def _append_latest_event(
         kind_override = None
         date_override = None
         reason_override = None
-        if completion_state == "confirmed" and breakout_date is not None:
+        if completion_state == "stale":
+            state_override = "stale"
+            reason_override = "bounded geometry expired before a valid breakout"
+        elif completion_state == "confirmed" and breakout_date is not None:
             if event.kind is StructuralEventKind.NO_CHANGE:
                 kind_override = (
                     StructuralEventKind.UPWARD_BREAKOUT

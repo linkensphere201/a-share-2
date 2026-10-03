@@ -43,6 +43,33 @@ def test_strong_upward_breakout_triggers_and_confirms_on_same_bar():
     assert result.trigger_date == result.confirmation_date == bars[-1].period_end
 
 
+def test_crossed_rails_expire_without_late_breakout():
+    bars = _bars([(10, 10.1, 9.9, 10, 100)] * 8)
+    result = evaluate_pattern_boundaries(
+        bars, available_date=bars[0].period_end,
+        upper_price_at=lambda i: 11 - i * .4,
+        lower_price_at=lambda i: 9 + i * .4,
+    )
+    assert result.expired_date == bars[3].period_end
+    assert result.breakout_date is None
+
+
+def test_breakout_freezes_stop_and_does_not_revive_after_failure():
+    bars = _bars([(11.2, 11.3, 11, 11.2, 100)] * 5
+                 + [(8, 8.1, 7.9, 8, 100), (12, 12.1, 11.9, 12, 100)])
+    kwargs = dict(available_date=bars[0].period_end,
+                  upper_price_at=lambda i: 11 - i * .4,
+                  lower_price_at=lambda i: 9 + i * .4)
+    before = evaluate_pattern_boundaries(bars[:5], **kwargs)
+    assert before.breakout_date == bars[0].period_end
+    assert before.structural_stop == 9
+    assert before.trigger_boundary == 11
+    assert before.invalidation_date is None
+    after = evaluate_pattern_boundaries(bars, **kwargs)
+    assert after.invalidation_date == bars[5].period_end
+    assert after.trigger_boundary == before.trigger_boundary
+
+
 def test_weak_trigger_that_closes_back_inside_is_retained_as_failed():
     bars = _bars([
         (9.9, 10.1, 9.8, 10.0, 100),

@@ -43,15 +43,21 @@ class PatternBoundaryEvents:
     breakout_date: date | None
     trigger_index: int | None
     invalidation_date: date | None
+    expired_date: date | None = None
+    trigger_boundary: float | None = None
+    structural_stop: float | None = None
 
 
 def resolve_pattern_completion_state(
     breakout_date: date | None,
     invalidation_date: date | None,
+    expired_date: date | None = None,
 ) -> str:
     """Map detector event dates to the shared persisted pattern state."""
     if invalidation_date is not None:
         return "invalidated"
+    if expired_date is not None:
+        return "stale"
     if breakout_date is not None:
         return "confirmed"
     return "forming"
@@ -72,26 +78,32 @@ def evaluate_pattern_boundaries(
     breakout_date: date | None = None
     trigger_index: int | None = None
     invalidation_date: date | None = None
+    expired_date: date | None = None
+    trigger_boundary: float | None = None
+    structural_stop: float | None = None
     for index, bar in enumerate(bars):
         if bar.period_end < available_date:
             continue
         upper = upper_price_at(index)
         lower = lower_price_at(index)
-        if upper <= 0 or lower <= 0 or upper < lower:
-            continue
         if direction is None:
+            if upper <= 0 or lower <= 0 or upper <= lower:
+                expired_date = bar.period_end
+                break
             if bar.close > upper * (1 + buffer_percent):
                 direction = BreakoutDirection.UP
                 breakout_date = bar.period_end
                 trigger_index = index
+                trigger_boundary, structural_stop = upper, lower
             elif bar.close < lower * (1 - buffer_percent):
                 direction = BreakoutDirection.DOWN
                 breakout_date = bar.period_end
                 trigger_index = index
+                trigger_boundary, structural_stop = lower, upper
         elif (
-            direction is BreakoutDirection.UP and bar.close < lower
+            direction is BreakoutDirection.UP and bar.close < structural_stop
         ) or (
-            direction is BreakoutDirection.DOWN and bar.close > upper
+            direction is BreakoutDirection.DOWN and bar.close > structural_stop
         ):
             invalidation_date = bar.period_end
             break
@@ -100,6 +112,9 @@ def evaluate_pattern_boundaries(
         breakout_date=breakout_date,
         trigger_index=trigger_index,
         invalidation_date=invalidation_date,
+        expired_date=expired_date,
+        trigger_boundary=trigger_boundary,
+        structural_stop=structural_stop,
     )
 
 
