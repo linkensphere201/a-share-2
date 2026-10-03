@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import date
 from typing import Sequence
 
@@ -343,6 +343,7 @@ def _append_consolidations(
             completion_state=completion_state,
             breakout_date=pattern.breakout_date,
             invalidation_date=lifecycle.invalidation_date,
+            structural_stop=stop,
         )
 
 
@@ -423,6 +424,7 @@ def _append_diamonds(
             completion_state=completion_state,
             breakout_date=pattern.breakout_date,
             invalidation_date=lifecycle.invalidation_date,
+            structural_stop=stop,
         )
 
 
@@ -474,6 +476,7 @@ def _append_reversals(
             completion_state=completion_state,
             breakout_date=pattern.breakout_date,
             invalidation_date=pattern.invalidation_date,
+            structural_stop=pattern.invalidation_price,
         )
 
 
@@ -526,6 +529,7 @@ def _append_latest_event(
     completion_state: str | None = None,
     breakout_date: date | None = None,
     invalidation_date: date | None = None,
+    structural_stop: float | None = None,
 ) -> None:
     if len(bars) < 2:
         return
@@ -562,14 +566,17 @@ def _append_latest_event(
         elif completion_state == "invalidated" and invalidation_date is not None:
             state_override = "invalidated"
             date_override = invalidation_date
-        items.extend(_latest_event_items(
+        generated = _latest_event_items(
             parent_item_id,
             event,
             state_override=state_override,
             kind_override=kind_override,
             date_override=date_override,
             reason_override=reason_override,
-        ))
+        )
+        items.extend(replace(item, payload={**item.payload, "invalidation_level": structural_stop})
+                     if structural_stop is not None and item.item_type is GeneratedItemType.EVIDENCE
+                     else item for item in generated)
 
 
 def _select_bounded_pattern_direction(

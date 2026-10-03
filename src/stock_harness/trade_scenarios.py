@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+from math import isfinite
 from typing import Sequence
 
 
@@ -124,8 +125,6 @@ def calculate_risk_reward(
     *,
     precision: int = 6,
 ) -> float | None:
-    from math import isfinite
-
     if not all(isfinite(value) and value > 0 for value in (entry_price, invalidation_price, target_price)):
         return None
     if direction is TradeDirection.LONG:

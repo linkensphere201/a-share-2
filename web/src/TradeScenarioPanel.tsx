@@ -43,6 +43,7 @@ export function TradeScenarioPanel({
         checked={visible} onChange={onVisibleChange}>目标区域与盈亏比</AnalysisOverlayToggle>}
     </h3>
     <div className="trade-scenario-summary">
+      {scenario.qualificationBlocked && <p role="status">复权依据不完整，仅保留价格参考，不判定盈亏比达标。</p>}
       <button
         className="trade-scenario-setup"
         onPointerEnter={() => onHighlightItemChange(setupEvidence)}

@@ -58,7 +58,20 @@ def build_structural_map(
 
     for item in items:
         payload = item.payload
-        if item.item_type is GeneratedItemType.ZONE:
+        if (item.item_type is GeneratedItemType.ANCHOR
+                and payload.get("horizon") in {"medium", "long"}
+                and payload.get("tentative") is False
+                and isinstance(payload.get("confirmed_date"), str)):
+            price = _number(payload.get("price"))
+            kind = payload.get("kind")
+            if price is not None and price > 0 and kind in {"high", "low"}:
+                boundaries.append(StructuralBoundary(
+                    item.item_id, f"confirmed-pivot-{kind}",
+                    "resistance" if kind == "high" else "support",
+                    str(payload["horizon"]), price, price, .5,
+                    evidence_date=payload["confirmed_date"],
+                ))
+        elif item.item_type is GeneratedItemType.ZONE:
             # V1 is a research/screener zone, not a validated trade-scenario boundary.
             if payload.get("kind") in {"first-pullback-range", "bull-flag-range", "long-platform-range", "low-accumulation-range", "box-breakout-range"}:
                 continue

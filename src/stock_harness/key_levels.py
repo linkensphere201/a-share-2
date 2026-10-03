@@ -320,9 +320,9 @@ def estimate_daily_volume_profile(
             estimated_share=share,
             evidence_dates=evidence_dates,
             score=round(share, 6),
-            recent_fraction_60=sum(v for d, v in contributions.items() if age_by_date[d] < 60) / zone_volume,
-            recent_fraction_120=sum(v for d, v in contributions.items() if age_by_date[d] < 120) / zone_volume,
-            recent_fraction_250=sum(v for d, v in contributions.items() if age_by_date[d] < 250) / zone_volume,
+            recent_fraction_60=min(1.0, sum(v for d, v in contributions.items() if age_by_date[d] < 60) / zone_volume),
+            recent_fraction_120=min(1.0, sum(v for d, v in contributions.items() if age_by_date[d] < 120) / zone_volume),
+            recent_fraction_250=min(1.0, sum(v for d, v in contributions.items() if age_by_date[d] < 250) / zone_volume),
             latest_date=max(contributions),
         ))
     zones.sort(key=lambda item: item.estimated_volume, reverse=True)

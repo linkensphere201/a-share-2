@@ -375,6 +375,7 @@ describe('generated analysis overlay projection', () => {
 
   it('reads the primary pattern breakout summary without mixing layer visibility', () => {
     expect(readGeneratedBreakoutState(run, true)).toEqual({
+      sourceItemId: 'double-bottom',
       state: 'triggered', direction: 'up', boundaryPrice: 12,
       invalidationPrice: 9.5, triggerDate: '2026-08-18',
       confirmationDate: undefined, failureDate: undefined, preview: true,

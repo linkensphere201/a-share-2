@@ -1349,6 +1349,7 @@ def _stock_opportunity_classification(
     opportunity_eligible = (
         state in {"waiting-trigger", "triggered", "retest"}
         and bool(credible_targets)
+        and not (scenario or {}).get("qualification_blocked")
     )
     if recognized and opportunity_eligible:
         classification = "recognized-and-eligible"

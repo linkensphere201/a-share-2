@@ -25,6 +25,9 @@ class _TargetCandidate:
     basis: str
     source_item_ids: tuple[str, ...]
     score: float
+    lower: float
+    upper: float
+    boundaries: tuple[StructuralBoundary, ...]
 
 
 def build_structural_scenario_items(
@@ -241,6 +244,9 @@ def _build_scenario(
         setup.state, bars[-1].close, trigger_entry, atr, trigger_risk, direction
     )
     entry = bars[-1].close if state in {"triggered", "retest", "extended"} else trigger_entry
+    if (direction is TradeDirection.LONG and setup.invalidation_price >= entry
+            or direction is TradeDirection.SHORT and setup.invalidation_price <= entry):
+        return None
     risk = entry - invalidation if direction is TradeDirection.LONG else invalidation - entry
     if risk <= 0:
         return None
@@ -260,12 +266,13 @@ def _build_scenario(
             "stressed_risk_reward_ratio": stressed_rr,
             "evidence_item_ids": list(target.source_item_ids),
             "score": round(target.score, 6),
+            "zone": {"lower": target.lower, "upper": target.upper},
             "requires_break_of": [f"T{i}" for i in range(1, index)],
             "sources": [{"item_id": b.source_item_id, "kind": b.source_kind,
                          "lower": b.lower, "upper": b.upper,
                          "evidence_date": b.evidence_date,
                          "recent_fraction_120": b.recent_fraction_120}
-                        for b in boundaries if b.source_item_id in target.source_item_ids],
+                        for b in target.boundaries],
         })
     if not target_payloads and state not in {"invalidated", "no-entry"}:
         state = "no-entry"
@@ -323,7 +330,7 @@ def _build_scenario(
             "assumptions": [
                 f"trigger buffer is max({policy['buffer_atr']} ATR, 0.3% of boundary price)",
                 "targets use conservative near edges of independent structure clusters",
-                "stress RR includes 0.1% entry slippage and 0.2% target haircut",
+                "stress RR includes supply-scaled entry/target slippage and 0.1% adverse stop slippage",
             ],
             "uncertainty": [
                 "daily OHLCV structures are analytical estimates, not execution prices",
@@ -371,9 +378,14 @@ def _targets(
     for boundary in boundaries:
         if boundary.source_item_id == setup.source_item_id:
             continue
+        if (direction is TradeDirection.LONG and boundary.role == "support"
+                or direction is TradeDirection.SHORT and boundary.role == "resistance"):
+            continue
         price = (
             boundary.lower if direction is TradeDirection.LONG else boundary.upper
         )
+        if boundary.lower <= entry <= boundary.upper:
+            continue  # Current balance area is not a future directional target.
         if (
             direction is TradeDirection.LONG and price <= entry
             or direction is TradeDirection.SHORT and price >= entry
@@ -387,7 +399,8 @@ def _targets(
         raw.append(_TargetCandidate(
             price,
             boundary.source_kind,
-            (boundary.source_item_id,), boundary.score
+            (boundary.source_item_id,), boundary.score,
+            boundary.lower, boundary.upper, (boundary,),
         ))
     raw.sort(key=lambda value: value.price, reverse=direction is TradeDirection.SHORT)
     clusters: list[list[_TargetCandidate]] = []
@@ -396,7 +409,10 @@ def _targets(
         if any(source in used_sources for source in candidate.source_item_ids):
             continue
         used_sources.update(candidate.source_item_ids)
-        if clusters and abs(candidate.price - clusters[-1][0].price) <= tolerance:
+        if clusters and (
+            candidate.lower <= max(v.upper for v in clusters[-1]) + tolerance
+            and candidate.upper >= min(v.lower for v in clusters[-1]) - tolerance
+        ):
             clusters[-1].append(candidate)
         else:
             clusters.append([candidate])
@@ -409,7 +425,9 @@ def _targets(
         kinds = "+".join(sorted({value.basis for value in cluster}))
         result.append(_TargetCandidate(
             price, kinds, sources,
-            max(value.score for value in cluster) + min(0.2, 0.05 * (len(sources) - 1)),
+            max(value.score for value in cluster),
+            min(value.lower for value in cluster), max(value.upper for value in cluster),
+            tuple(b for value in cluster for b in value.boundaries),
         ))
     return result
 
@@ -487,11 +505,13 @@ def _stressed_risk_reward(
     if direction is TradeDirection.LONG:
         stressed_entry = entry * (1 + entry_slippage)
         stressed_target = target * (1 - target_haircut)
+        stressed_stop = invalidation * .999
     else:
         stressed_entry = entry * (1 - entry_slippage)
         stressed_target = target * (1 + target_haircut)
+        stressed_stop = invalidation * 1.001
     return calculate_risk_reward(
-        direction, stressed_entry, invalidation, stressed_target
+        direction, stressed_entry, stressed_stop, stressed_target
     )
 
 

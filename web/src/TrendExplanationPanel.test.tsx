@@ -50,11 +50,10 @@ describe('TrendExplanationPanel', () => {
     expect(screen.getByLabelText('盈亏比场景')).toBeTruthy()
     expect(screen.getByText('压力盈亏比')).toBeTruthy()
     expect(screen.getByText('2.01')).toBeTruthy()
-    expect(screen.getByText('收敛程度 75')).toBeTruthy()
+    expect(screen.queryByText('收敛程度 75')).toBeNull()
     expect(screen.getByText(/正式 · 2026-08-21 · 日线/)).toBeTruthy()
     expect(screen.getByText('突破与破位')).toBeTruthy()
-    expect(screen.getByText('分析证据')).toBeTruthy()
-    expect(screen.getByText('对称三角形 · 82分')).toBeTruthy()
+    expect(screen.queryByText('对称三角形 · 82分')).toBeNull()
     expect(screen.getAllByText('12.00')).toHaveLength(2)
     expect(screen.getByText('短期支撑：尚未向下破位')).toBeTruthy()
     const row = screen.getByText('短期上行支撑线').closest('article')!

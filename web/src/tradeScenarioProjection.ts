@@ -25,6 +25,7 @@ export type StructuralTradeScenario = {
   targets: StructuralScenarioTarget[]
   selectedTargetLabel?: string
   hasTradeSpace: boolean
+  qualificationBlocked?: boolean
   evidenceItemIds: string[]
   invalidationEvidenceItemIds: string[]
 }
@@ -105,6 +106,7 @@ export function readPrimaryStructuralScenario(
     hasTradeSpace: item.payload.has_trade_space === true && targets.some(
       target => target.stressedRiskRewardRatio !== undefined,
     ),
+    qualificationBlocked: item.payload.qualification_blocked === true,
     evidenceItemIds: stringArray(item.payload.evidence_item_ids),
     invalidationEvidenceItemIds: stringArray(item.payload.invalidation_evidence_item_ids),
   }
@@ -165,8 +167,11 @@ export function targetBasisLabel(value: string): string {
     if (item === 'estimated-volume-at-price') return '成交密集区'
     if (item === 'key-level') return '关键位'
     if (item.includes('range-high')) return '历史区间高点'
+    if (item === 'confirmed-pivot-high') return '已确认重要高点'
+    if (item === 'confirmed-pivot-low') return '已确认重要低点'
     if (item.includes('range-low')) return '历史区间低点'
-    if (item.includes('trend-line') || item.includes('-projection-')) return '趋势线投影'
+    if (item === 'trend-line') return '当前趋势线边界'
+    if (item.includes('-projection-')) return '历史版本趋势线外推'
     if (item.includes('pattern')) return '形态边界'
     if (item.includes('gap')) return '缺口边界'
     return '结构边界'

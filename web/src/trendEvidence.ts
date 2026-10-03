@@ -24,8 +24,14 @@ export function readTrendEvidence(
 ): TrendEvidenceView | undefined {
   if (!run) return undefined
   const patterns = run.items.filter(item => item.item_type === 'pattern')
-  const primary = patterns.find(item => item.payload.primary === true) ?? patterns[0]
+  const primary = breakoutState?.sourceItemId
+    ? patterns.find(item => item.item_id === breakoutState.sourceItemId)
+    : patterns.find(item => item.payload.primary === true) ?? patterns[0]
   const eventEvidence = run.items.find(item => (
+    item.item_type === 'evidence' && breakoutState?.sourceItemId
+    && item.parent_item_id === breakoutState.sourceItemId
+    && ['latest-structural-event-summary', 'breakout-state-summary'].includes(String(item.payload.kind))
+  )) ?? run.items.find(item => (
     item.item_type === 'evidence'
     && item.payload.kind === 'latest-structural-event-summary'
     && item.payload.current_state !== 'ready'

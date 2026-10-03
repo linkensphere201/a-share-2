@@ -1123,7 +1123,15 @@ def _generated_items(
         ))
     ranked = rank_pattern_candidates(items)
     ranked.append(build_core_projection_item(ranked))
-    ranked.extend(build_structural_scenario_items(analysis_input.bars, ranked))
+    scenarios = build_structural_scenario_items(analysis_input.bars, ranked)
+    comparable = not any(w.code == "adjustment_factors_incomplete" for w in analysis_input.warnings)
+    ranked.extend(replace(item, payload={
+        **item.payload,
+        "price_basis": analysis_input.price_basis,
+        "price_comparability": "verified-input" if comparable else "unverified-adjustment",
+        "qualification_blocked": not comparable,
+        "has_trade_space": bool(item.payload.get("has_trade_space")) and comparable,
+    }) if item.item_type is GeneratedItemType.SCENARIO else item for item in scenarios)
     return ranked
 
 def _structural_event_items(

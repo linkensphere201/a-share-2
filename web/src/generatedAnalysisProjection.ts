@@ -1,4 +1,5 @@
 import { extendLineToBounds, type LineGeometry } from './trendLines'
+import { readPrimaryStructuralScenario } from './tradeScenarioProjection'
 import type { TrendAnalysisRun } from './trendAnalysisClient'
 import type { IChartApi, Time } from 'lightweight-charts'
 
@@ -54,6 +55,7 @@ export type GeneratedPatternGeometry = {
 }
 
 export type GeneratedBreakoutState = {
+  sourceItemId?: string
   state: 'forming' | 'ready' | 'triggered' | 'confirmed' | 'retesting' | 'continuing' | 'failed' | 'invalidated' | 'stale'
   direction: 'up' | 'down'
   boundaryPrice: number
@@ -490,7 +492,10 @@ export function readGeneratedBreakoutState(
     item.item_type === 'evidence'
     && item.payload.kind === 'latest-structural-event-summary'
   ))
-  const item = structuralCandidates.find(value => value.payload.current_state !== 'ready')
+  const scenario = readPrimaryStructuralScenario(run)
+  const owner = scenario?.evidenceItemIds[0]
+  const item = [...structuralCandidates, ...patternCandidates].find(value => owner && value.parent_item_id === owner)
+    ?? structuralCandidates.find(value => value.payload.current_state !== 'ready')
     ?? patternCandidates.find(value => (
     typeof value.parent_item_id === 'string' && primaryIds.has(value.parent_item_id)
     ))
@@ -510,6 +515,7 @@ export function readGeneratedBreakoutState(
     || typeof boundaryPrice !== 'number' || typeof invalidationPrice !== 'number') return undefined
   return {
     state: state as GeneratedBreakoutState['state'],
+    ...(typeof item.parent_item_id === 'string' ? { sourceItemId: item.parent_item_id } : {}),
     direction,
     boundaryPrice,
     invalidationPrice,

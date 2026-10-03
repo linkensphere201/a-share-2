@@ -227,7 +227,7 @@ def _trend_breakout_score(entity: Mapping[str, object]) -> dict[str, object]:
         _mapping(value) for value in _sequence(price_space.get("targets"))
         if isinstance(value, Mapping)
     ]
-    selected = next((target for target in targets[:1] if (
+    selected = next((target for target in targets[:1] if not price_space.get("qualification_blocked") and (
         _optional_number(target.get("stressed_risk_reward_ratio")) is not None
         and _number(target.get("stressed_risk_reward_ratio"), 0) >= 3.0
     )), None)
@@ -427,7 +427,7 @@ def _stock_opportunity_score(entity: Mapping[str, object]) -> dict[str, object]:
         _mapping(value) for value in _sequence(scenario.get("targets"))
         if isinstance(value, Mapping)
     ]
-    selected = next((target for target in targets[:1] if (
+    selected = next((target for target in targets[:1] if not scenario.get("qualification_blocked") and (
         _optional_number(target.get("stressed_risk_reward_ratio")) is not None
         and _number(target.get("stressed_risk_reward_ratio"), 0) >= 3.0
     )), None)

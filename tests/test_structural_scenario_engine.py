@@ -226,6 +226,40 @@ def test_overhead_supply_is_separate_uncertain_evidence() -> None:
     assert "not actual holder cost" in supply.payload["uncertainty"]
 
 
+def test_overlapping_target_zones_merge_without_double_scoring():
+    items = _items() + [GeneratedAnalysisItem("overlap", GeneratedItemType.ZONE, {
+        "kind": "key-level", "lower": 12.05, "upper": 12.4, "score": .7,
+    })]
+    p = next(i.payload for i in build_structural_scenario_items(_bars(), items)
+             if i.item_type is GeneratedItemType.SCENARIO)
+    assert len(p["targets"]) == 1
+    assert p["targets"][0]["zone"] == {"lower": 11.8, "upper": 12.4}
+    assert p["targets"][0]["score"] == .75
+
+
+def test_current_balance_area_is_not_reported_as_future_target():
+    items = _items() + [GeneratedAnalysisItem("inside", GeneratedItemType.ZONE, {
+        "kind": "key-level", "lower": 9.8, "upper": 10.6, "score": .8,
+    })]
+    p = next(i.payload for i in build_structural_scenario_items(_bars(), items)
+             if i.item_type is GeneratedItemType.SCENARIO)
+    assert all("inside" not in t["evidence_item_ids"] for t in p["targets"])
+    assert all(t["price"] > p["entry_price"] for t in p["targets"])
+
+
+def test_only_confirmed_nonfuture_important_pivots_become_targets():
+    items = _items() + [GeneratedAnalysisItem(name, GeneratedItemType.ANCHOR, {
+        "kind": "high", "horizon": "medium", "price": 10.7,
+        "tentative": tentative, "confirmed_date": confirmed,
+    }) for name, tentative, confirmed in (
+        ("future", False, "2026-03-01"), ("tentative", True, None),
+        ("confirmed", False, "2026-02-01"),
+    )]
+    p = next(i.payload for i in build_structural_scenario_items(_bars(), items)
+             if i.item_type is GeneratedItemType.SCENARIO)
+    assert p["targets"][0]["evidence_item_ids"] == ["confirmed"]
+
+
 def test_projection_can_select_long_scenario_when_primary_scenario_is_short() -> None:
     items = [{
         "item_id": "short-primary", "item_type": "scenario", "payload": {

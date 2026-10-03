@@ -48,3 +48,26 @@ it('returns a valid sparse view when no pattern or context exists', () => {
     source: 'official', timeframe: 'daily', scoreComponents: [], warnings: [],
   })
 })
+
+it('keeps pattern name and observations attached to the selected event owner', () => {
+  const run: TrendAnalysisRun = {
+    run_id: 'owner', as_of_date: '2026-09-30', completion_state: 'complete',
+    stale: false, stale_reasons: [], warnings: [], items: [
+      { item_id: 'wrong', item_type: 'pattern', payload: { primary: true, display_name: 'Wrong' } },
+      { item_id: 'right', item_type: 'pattern', payload: { display_name: 'Right' } },
+      { item_id: 'wrong-event', item_type: 'evidence', parent_item_id: 'wrong', payload: {
+        kind: 'latest-structural-event-summary', current_state: 'triggered', evidence: { relative_volume: 9 },
+      } },
+      { item_id: 'right-event', item_type: 'evidence', parent_item_id: 'right', payload: {
+        kind: 'latest-structural-event-summary', current_state: 'triggered', evidence: { relative_volume: 2 },
+      } },
+    ],
+  }
+  const result = readTrendEvidence(run, {
+    sourceItemId: 'right', state: 'triggered', direction: 'up',
+    boundaryPrice: 10, invalidationPrice: 9, preview: false,
+  })
+  expect(result?.patternName).toBe('Right')
+  expect(result?.observation.some(row => row.value === '2.00')).toBe(true)
+  expect(result?.observation.some(row => row.value === '9.00')).toBe(false)
+})
