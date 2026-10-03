@@ -150,8 +150,9 @@ def test_confirmed_triangle_keeps_its_downward_breakdown_direction(monkeypatch):
         if item.payload.get("kind") == "latest-structural-event-summary"
     )
     assert parent.payload["direction"] == "down"
-    assert parent.payload["neckline_price"] == 9.5
-    assert parent.payload["invalidation_price"] == 11.5
+    assert parent.payload["neckline_price"] == 9.4
+    assert parent.payload["invalidation_price"] == 11.6
+    assert parent.payload["boundary_basis"] == "frozen-at-breakout"
     assert summary.payload["event_kind"] == "downward-breakdown"
     assert summary.payload["direction"] == "down"
     assert summary.payload["current_state"] == "confirmed"

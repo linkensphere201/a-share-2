@@ -16,7 +16,7 @@ from stock_harness.structural_map import (
 from stock_harness.trade_scenarios import TradeDirection, calculate_risk_reward
 
 
-STRUCTURAL_SCENARIO_VERSION = "structural-trade-scenario-v3-current-entry"
+STRUCTURAL_SCENARIO_VERSION = "structural-trade-scenario-v4-owned-stop"
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,19 +38,32 @@ def build_structural_scenario_items(
     range_items = _range_reference_items(bars)
     supply_item = build_overhead_supply_item(bars, items)
     structural = build_structural_map(
-        [*items, *range_items, supply_item], bars[-1].close
+        [*items, *range_items, supply_item], bars[-1].close, bars[-1].period_end
     )
     atr = _latest_atr(bars)
     scenarios = []
-    for rank, setup in enumerate(structural.setups[:3], start=1):
+    rejected = []
+    for setup in structural.setups:
+        if setup.state in {"invalidated", "failed", "stale"}:
+            rejected.append({"setup_id": setup.source_item_id, "reason": "inactive-structure"})
+            continue
         scenario = _build_scenario(
             bars, structural.boundaries, setup, atr,
             supply_score=float(supply_item.payload["score"]),
-            rank=rank, minimum_risk_reward=minimum_risk_reward,
+            rank=len(scenarios) + 1, minimum_risk_reward=minimum_risk_reward,
         )
         if scenario is not None:
             scenarios.append(scenario)
-    return [*range_items, supply_item, *scenarios]
+        else:
+            rejected.append({"setup_id": setup.source_item_id, "reason": "missing-or-invalid-owned-stop"})
+        if len(scenarios) == 3:
+            break
+    diagnostics = GeneratedAnalysisItem(
+        "structural-scenario-diagnostics", GeneratedItemType.EVIDENCE,
+        {"kind": "structural-scenario-diagnostics", "rejected": rejected,
+         "contract_version": STRUCTURAL_SCENARIO_VERSION},
+    )
+    return [*range_items, supply_item, *scenarios, diagnostics]
 
 
 def build_coarse_structural_scenario_items(
@@ -215,7 +228,7 @@ def _build_scenario(
     invalidation, invalidation_sources = _invalidation(
         boundaries, setup, trigger_entry, direction, buffer
     )
-    if invalidation is None:
+    if invalidation is None or invalidation <= 0:
         return None
     trigger_risk = (
         trigger_entry - invalidation
@@ -247,13 +260,16 @@ def _build_scenario(
             "stressed_risk_reward_ratio": stressed_rr,
             "evidence_item_ids": list(target.source_item_ids),
             "score": round(target.score, 6),
+            "requires_break_of": [f"T{i}" for i in range(1, index)],
+            "sources": [{"item_id": b.source_item_id, "kind": b.source_kind,
+                         "lower": b.lower, "upper": b.upper,
+                         "evidence_date": b.evidence_date,
+                         "recent_fraction_120": b.recent_fraction_120}
+                        for b in boundaries if b.source_item_id in target.source_item_ids],
         })
     if not target_payloads and state not in {"invalidated", "no-entry"}:
         state = "no-entry"
-    primary_target = next((target for target in target_payloads if (
-        isinstance(target["stressed_risk_reward_ratio"], (int, float))
-        and float(target["stressed_risk_reward_ratio"]) >= minimum_risk_reward
-    )), target_payloads[0] if target_payloads else None)
+    primary_target = target_payloads[0] if target_payloads else None
     evidence_ids = tuple(dict.fromkeys((
         setup.source_item_id,
         SUPPLY_ITEM_ID,
@@ -288,11 +304,14 @@ def _build_scenario(
             "targets": target_payloads,
             "selected_target_label": primary_target["label"] if primary_target else None,
             "minimum_risk_reward": minimum_risk_reward,
-            "has_trade_space": primary_target is not None and any(
-                isinstance(target["stressed_risk_reward_ratio"], (int, float))
-                and float(target["stressed_risk_reward_ratio"]) >= minimum_risk_reward
-                for target in target_payloads
+            "has_trade_space": primary_target is not None and (
+                isinstance(primary_target["stressed_risk_reward_ratio"], (int, float))
+                and float(primary_target["stressed_risk_reward_ratio"]) >= minimum_risk_reward
             ),
+            "qualification_basis": "nearest-valid-obstacle",
+            "stop_contract": {"setup_id": setup.source_item_id,
+                              "anchor_price": setup.invalidation_price,
+                              "buffer": buffer, "as_of_date": bars[-1].period_end.isoformat()},
             "setup_basis": f"{setup.horizon} {setup.family} structural boundary",
             "confirmation_rule": policy["confirmation_rule"],
             "entry_policy": policy["name"],
@@ -300,7 +319,7 @@ def _build_scenario(
                 "current-close-after-trigger"
                 if entry != trigger_entry else "planned-trigger-price"
             ),
-            "invalidation_basis": "nearest independent structural support/resistance",
+            "invalidation_basis": "setup-owned-structural-anchor-with-buffer",
             "assumptions": [
                 f"trigger buffer is max({policy['buffer_atr']} ATR, 0.3% of boundary price)",
                 "targets use conservative near edges of independent structure clusters",
@@ -332,29 +351,12 @@ def _invalidation(
         or (direction is TradeDirection.SHORT and explicit > entry)
     ):
         return (
-            max(0.000001, explicit - buffer)
+            explicit - buffer
             if direction is TradeDirection.LONG
             else explicit + buffer,
             (setup.source_item_id,),
         )
-    candidates = [boundary for boundary in boundaries if (
-        boundary.source_item_id != setup.source_item_id
-        and (
-            direction is TradeDirection.LONG
-            and boundary.role in {"support", "neutral"}
-            and boundary.upper < entry
-            or direction is TradeDirection.SHORT
-            and boundary.role in {"resistance", "neutral"}
-            and boundary.lower > entry
-        )
-    )]
-    if not candidates:
-        return None, ()
-    if direction is TradeDirection.LONG:
-        selected = max(candidates, key=lambda value: value.upper)
-        return max(0.000001, selected.lower - buffer), (selected.source_item_id,)
-    selected = min(candidates, key=lambda value: value.lower)
-    return selected.upper + buffer, (selected.source_item_id,)
+    return None, ()
 
 
 def _targets(
@@ -369,23 +371,22 @@ def _targets(
     for boundary in boundaries:
         if boundary.source_item_id == setup.source_item_id:
             continue
-        checkpoint = {"short": 5, "medium": 10, "long": 20}.get(setup.horizon, 10)
-        projected = boundary.center + boundary.slope_per_bar * checkpoint
         price = (
-            projected if boundary.slope_per_bar
-            else boundary.lower if direction is TradeDirection.LONG else boundary.upper
+            boundary.lower if direction is TradeDirection.LONG else boundary.upper
         )
         if (
-            direction is TradeDirection.LONG and price <= entry + tolerance
-            or direction is TradeDirection.SHORT and price >= entry - tolerance
+            direction is TradeDirection.LONG and price <= entry
+            or direction is TradeDirection.SHORT and price >= entry
+        ):
+            continue
+        if boundary.source_kind == "trend-line" and (
+            direction is TradeDirection.LONG and boundary.role != "resistance"
+            or direction is TradeDirection.SHORT and boundary.role != "support"
         ):
             continue
         raw.append(_TargetCandidate(
             price,
-            (
-                f"{boundary.source_kind}-projection-{checkpoint}d"
-                if boundary.slope_per_bar else boundary.source_kind
-            ),
+            boundary.source_kind,
             (boundary.source_item_id,), boundary.score
         ))
     raw.sort(key=lambda value: value.price, reverse=direction is TradeDirection.SHORT)

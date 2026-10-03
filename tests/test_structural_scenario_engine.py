@@ -88,7 +88,7 @@ def test_builds_traceable_structural_scenario_and_clusters_targets() -> None:
     scenario = next(item for item in generated if item.item_type is GeneratedItemType.SCENARIO)
     payload = scenario.payload
 
-    assert payload["contract_version"] == "structural-trade-scenario-v3-current-entry"
+    assert payload["contract_version"] == "structural-trade-scenario-v4-owned-stop"
     assert payload["direction"] == "long"
     assert payload["state"] == "waiting-trigger"
     assert payload["entry_price"] > 10.2
@@ -167,9 +167,42 @@ def test_retest_policy_and_projected_line_target_are_explicit() -> None:
     assert payload["entry_policy"] == "observed-retest-hold"
     assert "touched the broken boundary" in payload["confirmation_rule"]
     assert any(
-        target["basis"] == "trend-line-projection-10d"
+        target["basis"] == "trend-line" and target["price"] == 11.5
         for target in payload["targets"]
     )
+
+
+def test_invalid_owned_stop_cannot_fall_back_to_unrelated_support() -> None:
+    items = _items()
+    event = items[1]
+    items[1] = GeneratedAnalysisItem(event.item_id, event.item_type,
+                                   {**event.payload, "invalidation_level": 15}, event.parent_item_id)
+    generated = build_structural_scenario_items(_bars(), items)
+    assert not any(item.item_type is GeneratedItemType.SCENARIO for item in generated)
+    diagnostic = next(item for item in generated if item.item_id == "structural-scenario-diagnostics")
+    assert diagnostic.payload["rejected"][0]["reason"] == "missing-or-invalid-owned-stop"
+
+
+def test_near_obstacle_cannot_be_skipped_to_qualify_far_target() -> None:
+    items = _items() + [GeneratedAnalysisItem("near", GeneratedItemType.ZONE, {
+        "kind": "key-level", "lower": 10.3, "upper": 10.32, "score": .8,
+    })]
+    payload = next(item.payload for item in build_structural_scenario_items(_bars(), items)
+                   if item.item_type is GeneratedItemType.SCENARIO)
+    assert payload["selected_target_label"] == "T1"
+    assert payload["has_trade_space"] is False
+    assert payload["targets"][-1]["risk_reward_ratio"] > 1.5
+    assert payload["targets"][-1]["requires_break_of"] == ["T1"]
+
+
+def test_stale_volume_with_small_recent_touch_is_not_target() -> None:
+    items = _items() + [GeneratedAnalysisItem("old-zone", GeneratedItemType.ZONE, {
+        "kind": "estimated-volume-at-price", "lower": 10.4, "upper": 10.5,
+        "latest_date": "2026-02-01", "recent_fraction_120": .01,
+    })]
+    payload = next(item.payload for item in build_structural_scenario_items(_bars(), items)
+                   if item.item_type is GeneratedItemType.SCENARIO)
+    assert all("old-zone" not in target["evidence_item_ids"] for target in payload["targets"])
 
 
 def test_overhead_supply_is_separate_uncertain_evidence() -> None:

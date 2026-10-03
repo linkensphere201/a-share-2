@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 from enum import StrEnum
+from math import isfinite
 from typing import Callable, Sequence
 
 from stock_harness.analysis_inputs import AnalysisBar
@@ -87,7 +88,7 @@ def evaluate_pattern_boundaries(
         upper = upper_price_at(index)
         lower = lower_price_at(index)
         if direction is None:
-            if upper <= 0 or lower <= 0 or upper <= lower:
+            if not (isfinite(upper) and isfinite(lower) and upper > lower > 0):
                 expired_date = bar.period_end
                 break
             if bar.close > upper * (1 + buffer_percent):

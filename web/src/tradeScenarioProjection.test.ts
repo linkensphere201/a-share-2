@@ -47,6 +47,16 @@ const series = { priceToCoordinate: (price: number) => 200 - price * 10 }
 const host = { clientWidth: 300, clientHeight: 220 } as HTMLDivElement
 
 describe('structural trade scenario projection', () => {
+  it('prefers an active long scenario over a higher ranked short and hides invalidated history', () => {
+    const mixed = structuredClone(run)
+    mixed.items[0].payload.primary = true
+    mixed.items[0].payload.rank = 1
+    mixed.items[1].payload.primary = false
+    mixed.items[1].payload.rank = 3
+    expect(readPrimaryStructuralScenario(mixed)?.direction).toBe('long')
+    mixed.items[1].payload.state = 'invalidated'
+    expect(readPrimaryStructuralScenario(mixed)?.direction).toBe('short')
+  })
   it('selects and parses the backend-owned primary scenario', () => {
     const scenario = readPrimaryStructuralScenario(run)
 

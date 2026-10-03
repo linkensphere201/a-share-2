@@ -124,7 +124,9 @@ def calculate_risk_reward(
     *,
     precision: int = 6,
 ) -> float | None:
-    if min(entry_price, invalidation_price, target_price) <= 0:
+    from math import isfinite
+
+    if not all(isfinite(value) and value > 0 for value in (entry_price, invalidation_price, target_price)):
         return None
     if direction is TradeDirection.LONG:
         risk = entry_price - invalidation_price

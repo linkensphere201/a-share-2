@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
+from math import isfinite
 from typing import Sequence
 
 from stock_harness.analysis_results import GeneratedAnalysisItem, GeneratedItemType
@@ -18,6 +20,8 @@ class StructuralBoundary:
     upper: float
     score: float
     slope_per_bar: float = 0
+    evidence_date: str | None = None
+    recent_fraction_120: float | None = None
 
     @property
     def center(self) -> float:
@@ -44,7 +48,7 @@ class StructuralMap:
 
 
 def build_structural_map(
-    items: Sequence[GeneratedAnalysisItem], latest_close: float
+    items: Sequence[GeneratedAnalysisItem], latest_close: float, as_of_date: date | None = None,
 ) -> StructuralMap:
     by_id = {item.item_id: item for item in items}
     core_ids = _core_ids(items)
@@ -67,6 +71,8 @@ def build_structural_map(
                 item.item_id, str(payload.get("kind", "zone")), role,
                 str(payload.get("horizon", "long")), lower, upper,
                 _number(payload.get("score")) or _number(payload.get("estimated_share")) or 0,
+                evidence_date=payload.get("latest_date"),
+                recent_fraction_120=_number(payload.get("recent_fraction_120")),
             ))
         elif item.item_type is GeneratedItemType.LINE and item.item_id in selected:
             price = _number(payload.get("projected_price"))
@@ -78,6 +84,7 @@ def build_structural_map(
                 str(payload.get("horizon", "long")), price, price,
                 _number(payload.get("score")) or 0,
                 _number(payload.get("slope_per_bar")) or 0,
+                evidence_date=payload.get("second_confirmed_date") or payload.get("available_date"),
             ))
         elif (
             item.item_type is GeneratedItemType.EVIDENCE
@@ -89,12 +96,12 @@ def build_structural_map(
             if low is not None and low > 0:
                 boundaries.append(StructuralBoundary(
                     item.item_id, "historical-range-low", "support", horizon,
-                    low, low, 0.2,
+                    low, low, 0.2, evidence_date=payload.get("low_date"),
                 ))
             if high is not None and high > 0:
                 boundaries.append(StructuralBoundary(
                     item.item_id, "historical-range-high", "resistance", horizon,
-                    high, high, 0.2,
+                    high, high, 0.2, evidence_date=payload.get("high_date"),
                 ))
 
     event_by_parent = _events_by_parent(items)
@@ -114,8 +121,7 @@ def build_structural_map(
             str(payload.get("horizon", "medium")),
             _state(payload, event),
             boundary,
-            _number(payload.get("invalidation_price"))
-            or _number((event or {}).get("invalidation_level")),
+            _number(payload.get("invalidation_price")),
             _number(payload.get("ranking_score")) or _number(payload.get("score")) or 0,
             str(payload.get("start_date")) if isinstance(payload.get("start_date"), str) else None,
         ))
@@ -150,7 +156,21 @@ def build_structural_map(
         -horizon_rank.get(value.horizon, 0),
         value.source_item_id,
     ))
+    if as_of_date is not None:
+        boundaries = [value for value in boundaries if _current_boundary(value, as_of_date)]
     return StructuralMap(tuple(boundaries), tuple(setups))
+
+
+def _current_boundary(value: StructuralBoundary, as_of_date: date) -> bool:
+    if value.recent_fraction_120 is not None and value.recent_fraction_120 < .2:
+        return False
+    if value.evidence_date is None:
+        return True  # Legacy/coarse evidence remains explicit through missing date metadata.
+    try:
+        age = (as_of_date - date.fromisoformat(value.evidence_date)).days
+    except (ValueError, TypeError):
+        return False
+    return 0 <= age <= 365
 
 
 def _core_ids(items: Sequence[GeneratedAnalysisItem]) -> set[str]:
@@ -202,4 +222,4 @@ def _state(payload: object, event: dict[str, object] | None) -> str:
 
 
 def _number(value: object) -> float | None:
-    return float(value) if isinstance(value, (int, float)) else None
+    return float(value) if isinstance(value, (int, float)) and isfinite(value) else None

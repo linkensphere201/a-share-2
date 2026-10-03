@@ -26,12 +26,12 @@ def _observation(*, rr: float = 4.0, state: str = "retest") -> dict[str, object]
                 "state": state, "entry_price": 10, "invalidation_price": 9,
                 "scenario_item_id": "scenario-1",
                 "targets": [{
-                    "label": "T1", "price": 10.5,
-                    "basis": "key-level", "risk_reward_ratio": .5,
-                    "stressed_risk_reward_ratio": .4,
+                    "label": "T1", "price": 10 + rr,
+                    "basis": "key-level", "risk_reward_ratio": rr + .2,
+                    "stressed_risk_reward_ratio": rr,
                     "evidence_item_ids": ["level-1"],
                 }, {
-                    "label": "T2", "price": 10 + rr,
+                    "label": "T2", "price": 12 + rr,
                     "basis": "estimated-volume-at-price+key-level",
                     "risk_reward_ratio": rr + .2,
                     "stressed_risk_reward_ratio": rr,
@@ -47,7 +47,7 @@ def test_trend_breakout_requires_three_stressed_r_and_uses_nearest_target() -> N
     result = score_entities(scorer, [_observation()])[0]
 
     assert result["eligible"] is True
-    assert result["selected_target_label"] == "T2"
+    assert result["selected_target_label"] == "T1"
     assert result["stressed_risk_reward"] == 4.0
     assert result["components"]["risk_reward"] == 30.0
     assert result["total_score"] >= 75
@@ -57,6 +57,16 @@ def test_trend_breakout_requires_three_stressed_r_and_uses_nearest_target() -> N
     assert rejected["eligible"] is False
     assert "no-credible-target-at-3r" in rejected["disqualifiers"]
     assert "不足3:1" in rejected["risk_summary"]
+
+
+def test_distant_target_does_not_hide_nearest_obstacle() -> None:
+    entity = _observation()
+    entity["metrics"]["price_space"]["targets"][0].update(
+        price=10.5, risk_reward_ratio=.5, stressed_risk_reward_ratio=.4,
+    )
+    result = score_entities(default_scorer_registry().get(TREND_BREAKOUT_SCORER), [entity])[0]
+    assert result["eligible"] is False
+    assert result["selected_target_label"] is None
 
 
 def test_hard_events_remain_visible_without_adding_a_bonus_component() -> None:

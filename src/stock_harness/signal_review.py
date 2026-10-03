@@ -1341,7 +1341,7 @@ def _stock_opportunity_classification(
         scenario.get("targets", []) if isinstance(scenario, dict) else []
     )
     credible_targets = [
-        target for target in targets
+        target for target in targets[:1]
         if isinstance(target, dict)
         and isinstance(target.get("stressed_risk_reward_ratio"), (int, float))
         and float(target["stressed_risk_reward_ratio"]) >= 3.0

@@ -38,7 +38,7 @@ export function TradeScenarioPanel({
   const visibleTargets = targetFilter === 'volume-zone' ? volumeTargets : scenario.targets
   return <section className={`trade-scenario-panel ${scenario.state}`} aria-label="盈亏比场景">
     <h3>
-      <span>交易场景</span>
+      <span>{scenario.direction === 'long' ? '多头参考空间' : '下行风险情景'}</span>
       {showVisibilityControl && <AnalysisOverlayToggle label="显示趋势目标与盈亏比"
         checked={visible} onChange={onVisibleChange}>目标区域与盈亏比</AnalysisOverlayToggle>}
     </h3>
@@ -52,7 +52,7 @@ export function TradeScenarioPanel({
         <small>{stateLabel(scenario.state)} · {setupFamilyLabel(scenario.setupFamily)}</small>
       </button>
       <dl>
-        <dt>入场</dt><dd>{scenario.entryPrice.toFixed(2)}</dd>
+        <dt>{scenario.state === 'waiting-trigger' ? '计划触发' : '参考价格'}</dt><dd>{scenario.entryPrice.toFixed(2)}</dd>
         <dt>失效</dt><dd
           onPointerEnter={() => onHighlightItemChange(invalidationEvidence)}
           onPointerLeave={() => onHighlightItemChange(undefined)}
@@ -90,6 +90,7 @@ export function TradeScenarioPanel({
           <Ratio label="原始盈亏比" value={activeTarget.riskRewardRatio}/>
           <Ratio label="压力盈亏比" value={activeTarget.stressedRiskRewardRatio}/>
           <small>{targetBasisLabel(activeTarget.basis)}</small>
+          {!!activeTarget.requiresBreakOf?.length && <small>前置障碍：{activeTarget.requiresBreakOf.join('、')}</small>}
         </div>}
       </> : <p className="trade-scenario-unavailable">当前结构没有可复现的目标位，不给出盈亏比。</p>}
     </div>

@@ -69,6 +69,10 @@ class VolumePriceZone:
     score: float
     uncertainty: str = "estimated from daily high-low uniform distribution"
     method: str = "daily-range-uniform-decayed-v1"
+    recent_fraction_60: float = 0
+    recent_fraction_120: float = 0
+    recent_fraction_250: float = 0
+    latest_date: date | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -261,6 +265,7 @@ def estimate_daily_volume_profile(
     config.validate()
     ordered = sorted(bars, key=lambda item: item.period_end)
     positive = [bar for bar in ordered if bar.volume > 0 and bar.high >= bar.low]
+    age_by_date = {bar.period_end: len(ordered) - 1 - i for i, bar in enumerate(ordered)}
     if not positive:
         return VolumeProfile((), 0.0, 0.0)
     lower = min(bar.low for bar in positive)
@@ -271,7 +276,8 @@ def estimate_daily_volume_profile(
     volumes = [0.0] * config.volume_bins
     evidence: list[dict[date, float]] = [{} for _ in range(config.volume_bins)]
     decay_rate = log(2) / config.volume_decay_half_life_bars
-    for age, bar in enumerate(reversed(positive)):
+    for bar in reversed(positive):
+        age = age_by_date[bar.period_end]
         weighted_volume = bar.volume * exp(-decay_rate * age)
         first_bin = max(0, min(config.volume_bins - 1, int((bar.low - lower) / bin_width)))
         last_bin = max(0, min(config.volume_bins - 1, int((bar.high - lower) / bin_width)))
@@ -314,6 +320,10 @@ def estimate_daily_volume_profile(
             estimated_share=share,
             evidence_dates=evidence_dates,
             score=round(share, 6),
+            recent_fraction_60=sum(v for d, v in contributions.items() if age_by_date[d] < 60) / zone_volume,
+            recent_fraction_120=sum(v for d, v in contributions.items() if age_by_date[d] < 120) / zone_volume,
+            recent_fraction_250=sum(v for d, v in contributions.items() if age_by_date[d] < 250) / zone_volume,
+            latest_date=max(contributions),
         ))
     zones.sort(key=lambda item: item.estimated_volume, reverse=True)
     return VolumeProfile(tuple(zones[:config.max_volume_zones]), total, bin_width)

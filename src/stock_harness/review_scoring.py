@@ -10,13 +10,13 @@ from typing import Protocol
 
 
 TREND_BREAKOUT_SCORER = "trend-breakout"
-TREND_BREAKOUT_VERSION = "trend-breakout-score-v1"
+TREND_BREAKOUT_VERSION = "trend-breakout-score-v2-nearest-obstacle"
 MARKET_REGIME_SCORER = "market-regime"
 MARKET_REGIME_VERSION = "market-regime-score-v1"
 RECOGNITION_SCORER = "recognition"
 RECOGNITION_VERSION = "recognition-score-v1"
 STOCK_OPPORTUNITY_SCORER = "stock-trend-opportunity"
-STOCK_OPPORTUNITY_VERSION = "stock-trend-opportunity-score-v2"
+STOCK_OPPORTUNITY_VERSION = "stock-trend-opportunity-score-v3-nearest-obstacle"
 
 
 class ReviewScorer(Protocol):
@@ -227,7 +227,7 @@ def _trend_breakout_score(entity: Mapping[str, object]) -> dict[str, object]:
         _mapping(value) for value in _sequence(price_space.get("targets"))
         if isinstance(value, Mapping)
     ]
-    selected = next((target for target in targets if (
+    selected = next((target for target in targets[:1] if (
         _optional_number(target.get("stressed_risk_reward_ratio")) is not None
         and _number(target.get("stressed_risk_reward_ratio"), 0) >= 3.0
     )), None)
@@ -427,7 +427,7 @@ def _stock_opportunity_score(entity: Mapping[str, object]) -> dict[str, object]:
         _mapping(value) for value in _sequence(scenario.get("targets"))
         if isinstance(value, Mapping)
     ]
-    selected = next((target for target in targets if (
+    selected = next((target for target in targets[:1] if (
         _optional_number(target.get("stressed_risk_reward_ratio")) is not None
         and _number(target.get("stressed_risk_reward_ratio"), 0) >= 3.0
     )), None)

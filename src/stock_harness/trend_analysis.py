@@ -71,7 +71,7 @@ from stock_harness.trend_context import (
 )
 
 
-ALGORITHM_VERSION = "trend-causal-replay-v49"
+ALGORITHM_VERSION = "trend-causal-replay-v50"
 LOGGER = logging.getLogger(__name__)
 
 
@@ -1086,6 +1086,10 @@ def _generated_items(
                 "center": zone.center,
                 "estimated_volume": zone.estimated_volume,
                 "estimated_share": zone.estimated_share,
+                "recent_fraction_60": zone.recent_fraction_60,
+                "recent_fraction_120": zone.recent_fraction_120,
+                "recent_fraction_250": zone.recent_fraction_250,
+                "latest_date": zone.latest_date.isoformat() if zone.latest_date else None,
                 "evidence_dates": [item.isoformat() for item in zone.evidence_dates],
                 "score": zone.score,
                 "method": zone.method,

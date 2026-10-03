@@ -8,6 +8,7 @@ export type StructuralScenarioTarget = {
   riskRewardRatio?: number
   stressedRiskRewardRatio?: number
   evidenceItemIds: string[]
+  requiresBreakOf?: string[]
 }
 
 export type StructuralTradeScenario = {
@@ -58,7 +59,10 @@ export function readPrimaryStructuralScenario(
   const candidates = run.items.filter(item => (
     item.item_type === 'scenario'
     && item.payload.kind === 'structural-trade-scenario'
+    && !['invalidated', 'no-entry', 'stale', 'failed'].includes(String(item.payload.state))
   )).sort((left, right) => {
+    const directionOrder = Number(right.payload.direction === 'long') - Number(left.payload.direction === 'long')
+    if (directionOrder) return directionOrder
     const leftPrimary = left.payload.primary === true ? 1 : 0
     const rightPrimary = right.payload.primary === true ? 1 : 0
     const leftRank = numberValue(left.payload.rank) ?? 999
@@ -209,6 +213,7 @@ function parseTarget(value: unknown): StructuralScenarioTarget[] {
     riskRewardRatio: numberValue(target.risk_reward_ratio),
     stressedRiskRewardRatio: numberValue(target.stressed_risk_reward_ratio),
     evidenceItemIds: stringArray(target.evidence_item_ids),
+    requiresBreakOf: stringArray(target.requires_break_of),
   }]
 }
 
