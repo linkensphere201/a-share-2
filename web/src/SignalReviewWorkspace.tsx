@@ -923,7 +923,7 @@ function buildViewEmptyExplanation(
       title: eligible ? `该轮存在 ${eligible} 个机会，但列表未能匹配` : '该轮没有板块通过机会门槛',
       detail: eligible
         ? `趋势突破体系实际筛出 ${eligible}/${values.length} 个结果；若仍为空，属于界面数据匹配异常。`
-        : `已评分 ${values.length} 个板块，必须同时满足完整数据、有效多头价格顺序和压力盈亏比不低于 3。`,
+        : `已评分 ${values.length} 个板块，机会要求完整数据、有效多头结构及最近目标原始盈亏比大于 2。`,
       reasons: topFilterReasons(values),
     }
   }
