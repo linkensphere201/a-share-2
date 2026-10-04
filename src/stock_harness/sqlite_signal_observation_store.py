@@ -255,6 +255,7 @@ class SQLiteSignalObservationStoreMixin:
                       AND bar.trade_date BETWEEN ? AND ?
                 ), pivoted AS MATERIALIZED (
                     SELECT instrument_id,
+                           max(trade_date) AS latest_date,
                            max(CASE WHEN rn = 1 THEN close END) AS close_0,
                            max(CASE WHEN rn = 2 THEN close END) AS close_1,
                            max(CASE WHEN rn = 6 THEN close END) AS close_5,
@@ -310,7 +311,7 @@ class SQLiteSignalObservationStoreMixin:
                              ELSE 5
                            END AS limit_streak
                     FROM pivoted
-                    WHERE close_0 IS NOT NULL
+                    WHERE close_0 IS NOT NULL AND latest_date = ?
                 ), memberships AS MATERIALIZED (
                     SELECT DISTINCT membership.board_instrument_id,
                                     stock.instrument_id AS stock_instrument_id
@@ -343,14 +344,19 @@ class SQLiteSignalObservationStoreMixin:
                                 THEN features.close_0 / features.close_5 - 1 END),
                        avg(CASE WHEN features.close_5 > 0
                                 THEN features.close_0 / features.close_5 - 1 END),
-                       sum(coalesce(features.limit_covered, 0))
+                       sum(coalesce(features.limit_covered, 0)),
+                       group_concat(CASE WHEN features.close_5 > 0
+                           AND features.close_0 / features.close_5 >= 1.10
+                           THEN stock.symbol END)
                 FROM memberships
                 JOIN instruments AS board
                   ON board.instrument_id = memberships.board_instrument_id
+                JOIN instruments AS stock
+                  ON stock.instrument_id = memberships.stock_instrument_id
                 LEFT JOIN features
                   ON features.instrument_id = memberships.stock_instrument_id
                 GROUP BY memberships.board_instrument_id, board.symbol
-                """, (lower_key, trade_key),
+                """, (lower_key, trade_key, trade_key),
             ).fetchall()
         result = {}
         for row in rows:
@@ -372,6 +378,7 @@ class SQLiteSignalObservationStoreMixin:
                     round(int(row[8]) / return_covered, 6) if return_covered else None
                 ),
                 "max_member_return_5": round(float(row[10]), 6) if row[10] is not None else None,
+                "trend_leader_symbols": sorted(str(row[13]).split(",")) if row[13] else [],
                 "average_member_return_5": round(float(row[11]), 6) if row[11] is not None else None,
                 "limit_coverage_ratio": (
                     round(int(row[12]) / covered, 6) if covered else 0.0

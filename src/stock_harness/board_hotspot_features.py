@@ -37,6 +37,7 @@ def extract_board_hotspot_features(
     }
     shape = _shape_features(ordered, relative)
     return {
+        "effective_date": ordered[-1].trade_date.isoformat() if ordered else None,
         "feature_version": BOARD_HOTSPOT_FEATURE_VERSION,
         "coverage_state": "complete" if len(ordered) >= 21 else "insufficient",
         "metrics": {
@@ -52,6 +53,22 @@ def extract_board_hotspot_features(
         },
         "member_snapshot": members,
     }
+
+
+def extract_hotspot_session_window(bars, benchmark_bars, dates, member_snapshots):
+    """Use exact dated prefixes; a stale last bar never fills a missing session."""
+    result = []
+    for day in dates:
+        prefix = [bar for bar in bars if bar.trade_date <= day]
+        reference = [bar for bar in benchmark_bars if bar.trade_date <= day]
+        feature = extract_board_hotspot_features(
+            prefix, reference, member_snapshot=member_snapshots.get(day),
+        )
+        if not prefix or prefix[-1].trade_date != day or not reference or reference[-1].trade_date != day:
+            feature["coverage_state"] = "missing-session"
+        feature["effective_date"] = day.isoformat()
+        result.append(feature)
+    return result
 
 
 def _return(bars: Sequence[StoredDailyBar], period: int) -> float | None:

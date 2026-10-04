@@ -30,12 +30,12 @@ from stock_harness.observation_systems import (
     BOARD_HOTSPOT_LEADING_SYSTEM,
     BOARD_HOTSPOT_SYSTEM,
     BoardHotspotLeadingSystem,
-    BoardHotspotSystem,
     ObservationSystemContext,
     ObservationSystemRegistry,
     TrendBreakoutSystem,
 )
 from stock_harness.observation_systems.board_systems import (
+    LegacyBoardHotspotSystem as BoardHotspotSystem,
     _strict_preheat_candidate, _visibility_lifecycle_fit,
 )
 from stock_harness.review_scoring import (

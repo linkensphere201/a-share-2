@@ -1,4 +1,4 @@
-"""Replay the board-hotspot plugin on bounded named board cases."""
+"""Replay legacy V7 hotspot/V2 leading baselines, not unified V8 discovery."""
 
 from __future__ import annotations
 
@@ -27,10 +27,10 @@ from stock_harness.observation_systems import (
     BOARD_HOTSPOT_LEADING_SYSTEM,
     BOARD_HOTSPOT_SYSTEM,
     BoardHotspotLeadingSystem,
-    BoardHotspotSystem,
     ObservationSystemContext,
 )
 from stock_harness.sqlite_store import SQLiteMarketDataStore
+from stock_harness.observation_systems.board_systems import LegacyBoardHotspotSystem as BoardHotspotSystem
 
 
 def main() -> None:

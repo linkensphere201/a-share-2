@@ -10,6 +10,9 @@ from stock_harness.observation_systems.contracts import (
 )
 from stock_harness.board_hotspot_evaluation import canonical_board_name
 from stock_harness.board_hotspot_window import analyze_hotspot_window
+from stock_harness.board_hotspot_unified import (
+    VERSION, UnifiedHotspotScorer, apply_discovery_visibility,
+)
 from stock_harness.board_capacity import market_capacity_fit
 from stock_harness.market_liquidity import stabilize_seat_budget
 from stock_harness.review_scoring import (
@@ -22,7 +25,7 @@ from stock_harness.review_scoring import (
 
 
 BOARD_HOTSPOT_SYSTEM = "board-hotspot-emergence"
-BOARD_HOTSPOT_VERSION = "board-hotspot-emergence-v7-window-shape"
+BOARD_HOTSPOT_VERSION = VERSION
 
 
 class TrendBreakoutSystem:
@@ -60,9 +63,9 @@ class TrendBreakoutSystem:
         )
 
 
-class BoardHotspotSystem:
+class LegacyBoardHotspotSystem:
     system_id = BOARD_HOTSPOT_SYSTEM
-    version = BOARD_HOTSPOT_VERSION
+    version = "board-hotspot-emergence-v7-window-shape"
     entity_scope = "board"
     display_name = "近期热点"
     dependencies = (
@@ -105,6 +108,7 @@ class BoardHotspotSystem:
                 "hotspot_snapshot": _mapping(feature.get("member_snapshot")),
                 "prior_hotspot": prior.get(symbol, {}),
                 "recent_hotspot": _records(recent.get(symbol)),
+                "session_features": feature.get("session_features", []),
             })
         scorer = _BoardHotspotScorer()
         results = score_entities(
@@ -123,9 +127,31 @@ class BoardHotspotSystem:
         )
 
 
+class BoardHotspotSystem(LegacyBoardHotspotSystem):
+    version = VERSION
+
+    def execute(self, context: ObservationSystemContext) -> ObservationSystemExecution:
+        features = _mapping(context.dependencies["board_hotspot_features"])
+        entities = [{"symbol": str(o["symbol"]),
+                     "session_features": _mapping(features.get(str(o["symbol"]))).get("session_features", [])}
+                    for o in context.observations]
+        results = score_entities(
+            UnifiedHotspotScorer(), entities,
+            prior_by_symbol=context.prior_scores.get(self.system_id),
+            recent_by_symbol=context.recent_scores.get(self.system_id),
+        )
+        apply_discovery_visibility(
+            results, _mapping(context.dependencies["board_names"]),
+            _mapping(context.dependencies["board_theme_profiles"]),
+            _mapping(context.dependencies["market_liquidity_context"]),
+            _mapping(context.dependencies["board_capacity_features"]),
+        )
+        return ObservationSystemExecution(self.system_id, self.version, self.entity_scope, results)
+
+
 class _BoardHotspotScorer:
     system_id = BOARD_HOTSPOT_SYSTEM
-    version = BOARD_HOTSPOT_VERSION
+    version = "board-hotspot-emergence-v7-window-shape"
     entity_scope = "board"
 
     def score(self, entity: Mapping[str, object]) -> dict[str, object]:

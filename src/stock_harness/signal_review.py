@@ -24,7 +24,7 @@ from stock_harness.board_leader_scan import (
     is_risk_name,
     rank_board_leaders,
 )
-from stock_harness.board_hotspot_features import extract_board_hotspot_features
+from stock_harness.board_hotspot_features import extract_board_hotspot_features, extract_hotspot_session_window
 from stock_harness.board_capacity import classify_board_capacities
 from stock_harness.board_hotspot_replay import BoardAggregatePool
 from stock_harness.board_observation_pool import (
@@ -49,7 +49,6 @@ from stock_harness.hotspot_wave import project_hotspot_waves
 from stock_harness.observation_systems import (
     BOARD_HOTSPOT_LEADING_SYSTEM,
     BOARD_HOTSPOT_SYSTEM,
-    BoardHotspotLeadingSystem,
     BoardHotspotSystem,
     ObservationSystemContext,
     ObservationSystemRegistry,
@@ -91,7 +90,7 @@ WEEKLY_RECOGNITION_SIGNAL = "weekly-board-recognition"
 DEFINITION_VERSION = "weekly-board-recognition-v1"
 DAILY_MARKET_BOARD_SIGNAL = "daily-market-board-review"
 DAILY_DEFINITION_VERSION = "daily-market-board-review-v1"
-DAILY_REVIEW_ALGORITHM_VERSION = "daily-market-board-review-v10-system-score-history"
+DAILY_REVIEW_ALGORITHM_VERSION = "daily-market-board-review-v11-unified-hotspots"
 STOCK_OBSERVATION_SIGNAL = "stock-observation-pool"
 HISTORICAL_LIMIT = 5
 
@@ -99,7 +98,6 @@ HISTORICAL_LIMIT = 5
 def _board_observation_system_registry() -> ObservationSystemRegistry:
     registry = ObservationSystemRegistry()
     registry.register(BoardHotspotSystem())
-    registry.register(BoardHotspotLeadingSystem())
     return registry
 
 
@@ -282,6 +280,12 @@ class SignalReviewService:
         benchmark = self._reader.get().get_recent_daily_bars(
             "000001.SH", cutoff, DAILY_LOOKBACK_BARS,
         )
+        hotspot_dates = sorted({bar.trade_date for bar in benchmark if bar.trade_date <= cutoff} | {cutoff})[-5:]
+        member_history = {cutoff: hotspot_snapshots}
+        for day in hotspot_dates:
+            if day != cutoff:
+                self._check_stopping()
+                member_history[day] = self._reader.get().calculate_board_hotspot_snapshots(day)
         run = self._store.get_signal_review_run(run_id)
         context_runs = self._store.list_compatible_prior_signal_review_runs(run_id, 7)
         correction_run = next(
@@ -325,6 +329,10 @@ class SignalReviewService:
                     series.get(symbol, []), benchmark,
                     breadth_snapshot=board_breadth.get(symbol),
                     member_snapshot=hotspot_snapshots.get(symbol),
+                )
+                hotspot_features[symbol]["session_features"] = extract_hotspot_session_window(
+                    series.get(symbol, []), benchmark, hotspot_dates,
+                    {day: member_history[day].get(symbol, {}) for day in hotspot_dates},
                 )
             for observation in batch:
                 metrics = observation.get("metrics")
@@ -424,13 +432,6 @@ class SignalReviewService:
             ), hotspot_system.system_id,
             hotspot_system.version,
         )
-        leading_system = BoardHotspotLeadingSystem()
-        leading_prior, leading_recent = _score_history(
-            self._store, self._store.list_compatible_prior_score_runs(
-                run_id, leading_system.system_id, leading_system.version,
-            ), leading_system.system_id,
-            leading_system.version,
-        )
         observation_systems = _board_observation_system_registry()
         self._check_stopping()
         system_executions = observation_systems.execute_all(ObservationSystemContext(
@@ -438,12 +439,10 @@ class SignalReviewService:
             prior_scores={
                 TREND_BREAKOUT_SCORER: trend_prior,
                 BOARD_HOTSPOT_SYSTEM: hotspot_prior,
-                BOARD_HOTSPOT_LEADING_SYSTEM: leading_prior,
             },
             recent_scores={
                 TREND_BREAKOUT_SCORER: trend_recent,
                 BOARD_HOTSPOT_SYSTEM: hotspot_recent,
-                BOARD_HOTSPOT_LEADING_SYSTEM: leading_recent,
             },
             dependencies={
                 "review_scorer_registry": scorers,
@@ -467,10 +466,9 @@ class SignalReviewService:
             ),
         )
         hotspot_execution = system_execution_by_id[BOARD_HOTSPOT_SYSTEM]
-        leading_execution = system_execution_by_id[BOARD_HOTSPOT_LEADING_SYSTEM]
         trend_scores = list(trend_execution.results)
         hotspot_scores = hotspot_execution.results
-        leading_scores = leading_execution.results
+        leading_scores = []  # Historical leading results remain readable, not recomputed.
         prior_wave_snapshots = self._store.list_hotspot_wave_snapshots(
             str(session_runs[0]["run_id"]), status="active",
         ) if session_runs else []
@@ -519,7 +517,6 @@ class SignalReviewService:
         for system_id, execution in (
             (TREND_BREAKOUT_SCORER, trend_execution),
             (BOARD_HOTSPOT_SYSTEM, hotspot_execution),
-            (BOARD_HOTSPOT_LEADING_SYSTEM, leading_execution),
             (MARKET_REGIME_SCORER, market_execution),
         ):
             if execution.error:
@@ -555,6 +552,13 @@ class SignalReviewService:
                     "conclusion_code": observation["conclusion_code"],
                     "state_codes": observation["state_codes"],
                     "attention_reasons": reasons,
+                    "attention_changed": bool(reasons) and (
+                        item_key not in previous_items
+                        or observation["comparison"].get("transition") not in {"unchanged", None}
+                        or observation["comparison"].get("price") == "strengthened"
+                        or observation["comparison"].get("volume") == "strengthened"
+                        or "prior-state-invalidated" in reasons
+                    ),
                     "rendered_summary": observation["rendered_summary"],
                     "metrics": metrics,
                     "comparison": observation["comparison"],
@@ -621,7 +625,6 @@ class SignalReviewService:
                 for system_id, execution in (
                     (TREND_BREAKOUT_SCORER, trend_execution),
                     (BOARD_HOTSPOT_SYSTEM, hotspot_execution),
-                    (BOARD_HOTSPOT_LEADING_SYSTEM, leading_execution),
                     (MARKET_REGIME_SCORER, market_execution),
                 ) if execution.error
             ],
