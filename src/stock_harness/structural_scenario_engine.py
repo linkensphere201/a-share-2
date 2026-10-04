@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Mapping, Sequence
 
 from stock_harness.analysis_inputs import AnalysisBar
@@ -14,9 +14,10 @@ from stock_harness.structural_map import (
     build_structural_map,
 )
 from stock_harness.trade_scenarios import TradeDirection, calculate_risk_reward
+from stock_harness.trend_risk_reward import SCENARIO_VERSION, OPPORTUNITY_THRESHOLD, evaluate_trend_space
 
 
-STRUCTURAL_SCENARIO_VERSION = "structural-trade-scenario-v4-owned-stop"
+STRUCTURAL_SCENARIO_VERSION = SCENARIO_VERSION
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,8 +34,6 @@ class _TargetCandidate:
 def build_structural_scenario_items(
     bars: Sequence[AnalysisBar],
     items: Sequence[GeneratedAnalysisItem],
-    *,
-    minimum_risk_reward: float = 1.5,
 ) -> list[GeneratedAnalysisItem]:
     if len(bars) < 2:
         return []
@@ -53,9 +52,14 @@ def build_structural_scenario_items(
         scenario = _build_scenario(
             bars, structural.boundaries, setup, atr,
             supply_score=float(supply_item.payload["score"]),
-            rank=len(scenarios) + 1, minimum_risk_reward=minimum_risk_reward,
+            rank=len(scenarios) + 1,
         )
         if scenario is not None:
+            assessment = evaluate_trend_space(scenario.payload)
+            scenario = replace(scenario, payload={**scenario.payload,
+                "targets": [{**t, "risk_reward_ratio": assessment["risk_reward_ratio"]}
+                            for t in scenario.payload["targets"]],
+                "space_assessment": assessment, "has_trade_space": assessment["opportunity"]})
             scenarios.append(scenario)
         else:
             rejected.append({"setup_id": setup.source_item_id, "reason": "missing-or-invalid-owned-stop"})
@@ -188,25 +192,22 @@ def project_scenario_summary(
             "setup_basis": None, "direction": direction,
             "entry_price": None,
             "invalidation_price": None, "risk_reward_ratio": None,
-            "minimum_risk_reward": 1.5, "has_trade_space": False,
+            "minimum_risk_reward": OPPORTUNITY_THRESHOLD, "has_trade_space": False,
             "upside_target": upside, "downside_target": downside,
             "scenario_item_id": None,
         }
     targets = scenario.get("targets") if isinstance(scenario.get("targets"), list) else []
-    selected_label = scenario.get("selected_target_label")
-    selected = next((
-        value for value in targets
-        if isinstance(value, dict) and value.get("label") == selected_label
-    ), next((value for value in targets if isinstance(value, dict)), None))
+    selected = targets[0] if targets and isinstance(targets[0], dict) else None
+    assessment = evaluate_trend_space(scenario)
     return {
         **scenario,
+        "space_assessment": assessment,
+        "has_trade_space": assessment["opportunity"],
         "method": "structural-scenario-engine",
         "scenario_item_id": scenarios[0][0],
-        "risk_reward_ratio": (
-            _number(selected.get("risk_reward_ratio")) if isinstance(selected, dict) else None
-        ),
-        "upside_target": upside,
-        "downside_target": downside,
+        "risk_reward_ratio": assessment["risk_reward_ratio"],
+        "upside_target": selected if scenario.get("direction") == "long" else None,
+        "downside_target": selected if scenario.get("direction") == "short" else None,
     }
 
 
@@ -218,7 +219,6 @@ def _build_scenario(
     *,
     supply_score: float,
     rank: int,
-    minimum_risk_reward: float,
 ) -> GeneratedAnalysisItem | None:
     direction = TradeDirection(setup.direction)
     policy = _setup_policy(setup)
@@ -252,17 +252,16 @@ def _build_scenario(
         return None
     targets = _targets(boundaries, setup, entry, direction, atr)
     target_payloads = []
-    for index, target in enumerate(targets[:3], start=1):
-        raw_rr = calculate_risk_reward(direction, entry, invalidation, target.price)
+    for index, target in enumerate(targets[:1], start=1):
         stressed_rr = _stressed_risk_reward(
             direction, entry, invalidation, target.price, supply_score
         )
         target_payloads.append({
             "label": f"T{index}",
-            "price": round(target.price, 6),
+            "price": target.price,
             "basis": target.basis,
             "side": "upside" if direction is TradeDirection.LONG else "downside",
-            "risk_reward_ratio": raw_rr,
+            "risk_reward_ratio": None,  # Filled by the shared exact-price policy.
             "stressed_risk_reward_ratio": stressed_rr,
             "evidence_item_ids": list(target.source_item_ids),
             "score": round(target.score, 6),
@@ -300,21 +299,18 @@ def _build_scenario(
             "as_of_date": bars[-1].period_end.isoformat(),
             "start_date": setup.start_date or bars[max(0, len(bars) - 20)].period_end.isoformat(),
             "reference_price": round(bars[-1].close, 6),
-            "entry_price": round(entry, 6),
+            "entry_price": entry,
             "trigger_entry_price": round(trigger_entry, 6),
             "entry_range": {
                 "lower": round(setup.boundary_price - buffer, 6),
                 "upper": round(setup.boundary_price + buffer, 6),
             },
-            "invalidation_price": round(invalidation, 6),
+            "invalidation_price": invalidation,
             "risk_percent": round(risk_percent, 4),
             "targets": target_payloads,
             "selected_target_label": primary_target["label"] if primary_target else None,
-            "minimum_risk_reward": minimum_risk_reward,
-            "has_trade_space": primary_target is not None and (
-                isinstance(primary_target["stressed_risk_reward_ratio"], (int, float))
-                and float(primary_target["stressed_risk_reward_ratio"]) >= minimum_risk_reward
-            ),
+            "minimum_risk_reward": OPPORTUNITY_THRESHOLD,
+            "threshold_comparison": "strictly-greater-than",
             "qualification_basis": "nearest-valid-obstacle",
             "stop_contract": {"setup_id": setup.source_item_id,
                               "anchor_price": setup.invalidation_price,

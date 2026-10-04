@@ -1,4 +1,5 @@
 from __future__ import annotations
+from stock_harness.trend_risk_reward import SCENARIO_VERSION
 
 from stock_harness.review_scoring import (
     STOCK_OPPORTUNITY_SCORER,
@@ -23,6 +24,7 @@ def _observation(*, rr: float = 4.0, state: str = "retest") -> dict[str, object]
             "medium_shape": {"state": "rising"},
             "relative_strength": {"5": .03, "20": .08},
             "price_space": {
+                "contract_version": SCENARIO_VERSION, "direction": "long",
                 "state": state, "entry_price": 10, "invalidation_price": 9,
                 "scenario_item_id": "scenario-1",
                 "targets": [{
@@ -42,7 +44,7 @@ def _observation(*, rr: float = 4.0, state: str = "retest") -> dict[str, object]
     }
 
 
-def test_trend_breakout_requires_three_stressed_r_and_uses_nearest_target() -> None:
+def test_trend_breakout_requires_above_two_raw_r_and_uses_nearest_target() -> None:
     scorer = default_scorer_registry().get(TREND_BREAKOUT_SCORER)
     result = score_entities(scorer, [_observation()])[0]
 
@@ -53,10 +55,10 @@ def test_trend_breakout_requires_three_stressed_r_and_uses_nearest_target() -> N
     assert result["total_score"] >= 75
     assert "4.00:1" in result["summary"]
 
-    rejected = score_entities(scorer, [_observation(rr=2.9)])[0]
+    rejected = score_entities(scorer, [_observation(rr=2.0)])[0]
     assert rejected["eligible"] is False
-    assert "no-credible-target-at-3r" in rejected["disqualifiers"]
-    assert "不足3:1" in rejected["risk_summary"]
+    assert "nearest-target-raw-rr-not-above-2" in rejected["disqualifiers"]
+    assert "未大于2" in rejected["risk_summary"]
 
 
 def test_distant_target_does_not_hide_nearest_obstacle() -> None:
@@ -66,7 +68,8 @@ def test_distant_target_does_not_hide_nearest_obstacle() -> None:
     )
     result = score_entities(default_scorer_registry().get(TREND_BREAKOUT_SCORER), [entity])[0]
     assert result["eligible"] is False
-    assert result["selected_target_label"] is None
+    assert result["selected_target_label"] == "T1"
+    assert "invalid-long-price-ordering" not in result["disqualifiers"]
 
 
 def test_hard_events_remain_visible_without_adding_a_bonus_component() -> None:
@@ -171,7 +174,7 @@ def test_scorer_failure_is_isolated_as_an_explicit_execution_error() -> None:
     assert execution.error == "RuntimeError: fixture failure"
 
 
-def test_stock_opportunity_scorer_requires_actionable_m4_and_stressed_three_r() -> None:
+def test_stock_opportunity_scorer_requires_actionable_m4_and_above_two_raw_r() -> None:
     scorer = default_scorer_registry().get(STOCK_OPPORTUNITY_SCORER)
     entity = {
         "symbol": "000001.SZ",
@@ -182,6 +185,7 @@ def test_stock_opportunity_scorer_requires_actionable_m4_and_stressed_three_r() 
                 "status": "succeeded", "warning_count": 0,
                 "core_item_ids": ["line-1", "scenario-1"],
                 "scenario": {
+                    "contract_version": SCENARIO_VERSION,
                     "state": "retest", "direction": "long",
                     "scenario_item_id": "scenario-1",
                     "entry_price": 10, "invalidation_price": 9,
@@ -202,9 +206,9 @@ def test_stock_opportunity_scorer_requires_actionable_m4_and_stressed_three_r() 
             "scenario": {
                 **entity["payload"]["m4_analysis"]["scenario"],
                 "targets": [{
-                    "label": "T1", "price": 12.5,
-                    "risk_reward_ratio": 2.5,
-                    "stressed_risk_reward_ratio": 2.4,
+                    "label": "T1", "price": 12,
+                    "risk_reward_ratio": 2,
+                    "stressed_risk_reward_ratio": 1.9,
                 }],
             },
         },
@@ -215,7 +219,7 @@ def test_stock_opportunity_scorer_requires_actionable_m4_and_stressed_three_r() 
     assert accepted["selected_scenario_id"] == "scenario-1"
     assert accepted["components"]["independent_strength"] == 12.3
     assert rejected["eligible"] is False
-    assert "no-credible-target-at-3r" in rejected["disqualifiers"]
+    assert "nearest-target-raw-rr-not-above-2" in rejected["disqualifiers"]
 
 
 def test_stock_opportunity_scorer_rejects_short_scenario_explicitly() -> None:

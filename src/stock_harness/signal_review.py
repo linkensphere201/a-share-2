@@ -13,6 +13,7 @@ import logging
 import threading
 import time
 from uuid import uuid4
+from stock_harness.trend_risk_reward import OPPORTUNITY_THRESHOLD, evaluate_trend_space
 
 from stock_harness.board_leader_scan import (
     ALGORITHM_VERSION,
@@ -1340,14 +1341,11 @@ def _stock_opportunity_classification(
     targets = (
         scenario.get("targets", []) if isinstance(scenario, dict) else []
     )
-    credible_targets = [
-        target for target in targets[:1]
-        if isinstance(target, dict)
-        and isinstance(target.get("stressed_risk_reward_ratio"), (int, float))
-        and float(target["stressed_risk_reward_ratio"]) >= 3.0
-    ]
+    assessment = evaluate_trend_space(scenario or {})
+    credible_targets = targets[:1] if assessment["opportunity"] else []
     opportunity_eligible = (
         state in {"waiting-trigger", "triggered", "retest"}
+        and (scenario or {}).get("direction") == "long"
         and bool(credible_targets)
         and not (scenario or {}).get("qualification_blocked")
     )
@@ -1368,7 +1366,9 @@ def _stock_opportunity_classification(
         "opportunity_state": state,
         "opportunity_eligible": opportunity_eligible,
         "credible_target_count": len(credible_targets),
-        "minimum_stressed_risk_reward": 3.0,
+        "minimum_raw_risk_reward": OPPORTUNITY_THRESHOLD,
+        "threshold_comparison": "strictly-greater-than",
+        "space_assessment": assessment,
     }
 
 

@@ -8,6 +8,7 @@ import hashlib
 import json
 import math
 from statistics import fmean, median
+from stock_harness.trend_risk_reward import evaluate_trend_space
 
 from stock_harness.analysis_inputs import AnalysisBar
 from stock_harness.models import StoredDailyBar
@@ -604,13 +605,18 @@ def _price_space_sentence(metrics: dict[str, object]) -> str:
     downside = value.get("downside_target")
     upside_text = _target_text(upside, "上涨")
     downside_text = _target_text(downside, "下跌")
-    ratio = _number(value.get("risk_reward_ratio"))
+    assessment = evaluate_trend_space(value)
+    if assessment["status"] == "unavailable":
+        reason = {"legacy-analysis-recalculate": "旧版分析，需重新测算",
+                  "price-basis-unverified": "复权依据不足"}.get(str(assessment["reason"]), "结构或价格依据不足")
+        return f"{upside_text}；{downside_text}；不可判定：{reason}，不计算盈亏比。"
+    ratio = _number(assessment["risk_reward_ratio"])
     entry = _number(value.get("entry_price"))
     invalidation = _number(value.get("invalidation_price"))
     if ratio is None or entry is None or invalidation is None:
         return f"{upside_text}；{downside_text}；当前没有可复现的入场/失效组合，不计算盈亏比。"
-    threshold = _number(value.get("minimum_risk_reward")) or 1.5
-    verdict = "存在博弈空间" if bool(value.get("has_trade_space")) else f"低于{threshold:.2f}:1，空间不足"
+    verdict = {"unavailable": "不可判定，需检查结构或重新测算", "insufficient": "空间不合格",
+               "qualified": "空间合格，观察", "opportunity": "满足交易机会的空间门槛"}[assessment["status"]]
     return (
         f"{upside_text}；{downside_text}；计划入场{entry:.2f}、"
         f"失效位{invalidation:.2f}，盈亏比{ratio:.2f}:1（{verdict}）。"
@@ -620,6 +626,8 @@ def _price_space_sentence(metrics: dict[str, object]) -> str:
 def _target_text(value: object, direction: str) -> str:
     if not isinstance(value, dict) or value.get("price") is None:
         return f"{direction}目标位暂无合格历史区间位"
+    if value.get("basis"):
+        return f"{direction}最近目标价{float(value['price']):.2f}（结构证据）"
     return (
         f"{direction}目标位{float(value['price']):.2f}"
         f"（{int(value.get('lookback_sessions') or 0)}日区间）"

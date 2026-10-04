@@ -407,9 +407,9 @@ def test_daily_price_space_calculates_only_reproducible_long_risk_reward() -> No
     assert price_space["invalidation_price"] < 82.5
     assert price_space["risk_reward_ratio"] > 1.5
     assert price_space["has_trade_space"] is True
-    assert "上涨目标位" in rendered
+    assert "上涨最近目标价" in rendered
     assert "下跌目标位" in rendered
-    assert "存在博弈空间" in rendered
+    assert "满足交易机会的空间门槛" in rendered
 
 
 def test_daily_summary_exposes_exact_confirmation_and_invalidation_prices() -> None:
@@ -909,9 +909,12 @@ def test_board_observation_pool_unions_scores_anomalies_and_recognition() -> Non
 
 
 def test_stock_opportunity_classification_keeps_recognition_and_m4_separate() -> None:
+    from stock_harness.trend_risk_reward import SCENARIO_VERSION
     scenario = {
+        "contract_version": SCENARIO_VERSION, "direction": "long",
+        "entry_price": 10, "invalidation_price": 9,
         "state": "retest",
-        "targets": [{"stressed_risk_reward_ratio": 3.4}],
+        "targets": [{"price": 13.4, "stressed_risk_reward_ratio": 1.4}],
     }
     recognized = _stock_opportunity_classification({
         "recognized": True,
@@ -924,8 +927,8 @@ def test_stock_opportunity_classification_keeps_recognition_and_m4_separate() ->
     waiting = _stock_opportunity_classification({
         "recognized": True,
         "independent_scan": {"eligible": True},
-    }, {"state": "waiting-trigger", "targets": [
-        {"stressed_risk_reward_ratio": 2.9},
+    }, {**scenario, "state": "waiting-trigger", "targets": [
+        {"price": 12, "stressed_risk_reward_ratio": 1.9},
     ]})
 
     assert recognized["classification"] == "recognized-and-eligible"

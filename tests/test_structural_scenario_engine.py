@@ -88,7 +88,7 @@ def test_builds_traceable_structural_scenario_and_clusters_targets() -> None:
     scenario = next(item for item in generated if item.item_type is GeneratedItemType.SCENARIO)
     payload = scenario.payload
 
-    assert payload["contract_version"] == "structural-trade-scenario-v4-owned-stop"
+    assert payload["contract_version"] == "structural-trade-scenario-v5-nearest-raw-rr"
     assert payload["direction"] == "long"
     assert payload["state"] == "waiting-trigger"
     assert payload["entry_price"] > 10.2
@@ -149,7 +149,7 @@ def test_retest_policy_and_projected_line_target_are_explicit() -> None:
             "kind": "key-level", "lower": 9.2, "upper": 9.5, "score": 0.8,
         }),
         GeneratedAnalysisItem("future-resistance", GeneratedItemType.LINE, {
-            "kind": "resistance", "horizon": "medium", "projected_price": 11.5,
+            "kind": "resistance", "horizon": "medium", "projected_price": 10.05,
             "slope_per_bar": 0.03, "score": 0.8,
         }),
         GeneratedAnalysisItem("core-analysis-projection", GeneratedItemType.EVIDENCE, {
@@ -167,7 +167,7 @@ def test_retest_policy_and_projected_line_target_are_explicit() -> None:
     assert payload["entry_policy"] == "observed-retest-hold"
     assert "touched the broken boundary" in payload["confirmation_rule"]
     assert any(
-        target["basis"] == "trend-line" and target["price"] == 11.5
+        "trend-line" in target["basis"] and target["price"] == 10.05
         for target in payload["targets"]
     )
 
@@ -191,8 +191,9 @@ def test_near_obstacle_cannot_be_skipped_to_qualify_far_target() -> None:
                    if item.item_type is GeneratedItemType.SCENARIO)
     assert payload["selected_target_label"] == "T1"
     assert payload["has_trade_space"] is False
-    assert payload["targets"][-1]["risk_reward_ratio"] > 1.5
-    assert payload["targets"][-1]["requires_break_of"] == ["T1"]
+    assert len(payload["targets"]) == 1
+    assert payload["targets"][0]["risk_reward_ratio"] < 1
+    assert payload["targets"][0]["requires_break_of"] == []
 
 
 def test_stale_volume_with_small_recent_touch_is_not_target() -> None:

@@ -7,16 +7,17 @@ from dataclasses import dataclass
 import hashlib
 import json
 from typing import Protocol
+from stock_harness.trend_risk_reward import evaluate_trend_space
 
 
 TREND_BREAKOUT_SCORER = "trend-breakout"
-TREND_BREAKOUT_VERSION = "trend-breakout-score-v2-nearest-obstacle"
+TREND_BREAKOUT_VERSION = "trend-breakout-score-v3-raw-space"
 MARKET_REGIME_SCORER = "market-regime"
 MARKET_REGIME_VERSION = "market-regime-score-v1"
 RECOGNITION_SCORER = "recognition"
 RECOGNITION_VERSION = "recognition-score-v1"
 STOCK_OPPORTUNITY_SCORER = "stock-trend-opportunity"
-STOCK_OPPORTUNITY_VERSION = "stock-trend-opportunity-score-v3-nearest-obstacle"
+STOCK_OPPORTUNITY_VERSION = "stock-trend-opportunity-score-v4-raw-space"
 
 
 class ReviewScorer(Protocol):
@@ -103,7 +104,7 @@ def default_scorer_registry() -> ReviewScorerRegistry:
         TREND_BREAKOUT_SCORER, TREND_BREAKOUT_VERSION, "board",
         _trend_breakout_score, "daily", "all-normalized-business-boards",
         ("daily-observation", "structural-trade-scenario"),
-        ("complete-data", "valid-long-ordering", "stressed-rr-at-least-3"),
+        ("complete-data", "valid-long-ordering", "nearest-raw-rr-above-2"),
         ("risk_reward", "shape_trigger", "price_volume", "multi_horizon",
          "target_quality", "relative_strength"),
         ("entry-extension", "missing-volume-confirmation", "horizon-conflict"),
@@ -128,7 +129,7 @@ def default_scorer_registry() -> ReviewScorerRegistry:
         STOCK_OPPORTUNITY_SCORER, STOCK_OPPORTUNITY_VERSION, "stock",
         _stock_opportunity_score, "daily", "dated-stock-observation-pool",
         ("stock-observation-pool", "structural-trade-scenario"),
-        ("successful-m4", "actionable-state", "stressed-rr-at-least-3"),
+        ("successful-m4", "actionable-state", "nearest-raw-rr-above-2"),
         ("risk_reward", "setup_state", "independent_strength",
          "target_quality", "analysis_quality"),
         ("extended-entry", "missing-target", "analysis-warning"),
@@ -227,15 +228,13 @@ def _trend_breakout_score(entity: Mapping[str, object]) -> dict[str, object]:
         _mapping(value) for value in _sequence(price_space.get("targets"))
         if isinstance(value, Mapping)
     ]
-    selected = next((target for target in targets[:1] if not price_space.get("qualification_blocked") and (
-        _optional_number(target.get("stressed_risk_reward_ratio")) is not None
-        and _number(target.get("stressed_risk_reward_ratio"), 0) >= 3.0
-    )), None)
+    assessment = evaluate_trend_space(price_space)
+    selected = targets[0] if targets else None
     stressed_rr = (
         _optional_number(selected.get("stressed_risk_reward_ratio"))
         if selected else None
     )
-    raw_rr = _optional_number(selected.get("risk_reward_ratio")) if selected else None
+    raw_rr = assessment["risk_reward_ratio"]
     hard_events = hard_signal_events(entity)
     disqualifiers = [str(value) for value in _sequence(entity.get("disqualifiers"))]
     if entity.get("coverage_state") != "complete":
@@ -244,8 +243,8 @@ def _trend_breakout_score(entity: Mapping[str, object]) -> dict[str, object]:
         disqualifiers.append(f"scenario-{state}")
     if state == "extended":
         disqualifiers.append("entry-is-extended")
-    if selected is None:
-        disqualifiers.append("no-credible-target-at-3r")
+    if not assessment["opportunity"]:
+        disqualifiers.append(str(assessment["reason"] or "nearest-target-raw-rr-not-above-2"))
     entry = _optional_number(price_space.get("entry_price"))
     invalidation = _optional_number(price_space.get("invalidation_price"))
     target_price = _optional_number(selected.get("price")) if selected else None
@@ -254,7 +253,7 @@ def _trend_breakout_score(entity: Mapping[str, object]) -> dict[str, object]:
     ):
         disqualifiers.append("invalid-long-price-ordering")
 
-    rr_points = _risk_reward_points(stressed_rr)
+    rr_points = _risk_reward_points(raw_rr)
     shape_points = {
         "retest": 20.0, "triggered": 17.0, "waiting-trigger": 11.0,
         "extended": 5.0, "invalidated": 0.0, "no-entry": 0.0,
@@ -308,10 +307,10 @@ def _trend_breakout_score(entity: Mapping[str, object]) -> dict[str, object]:
         "具备趋势突破交易空间" if eligible else
         "有异动但暂不具备交易空间"
     )
-    positive = _trend_positive_reasons(state, stressed_rr, volume_ratio, short_state, medium_state)
+    positive = _trend_positive_reasons(state, raw_rr, volume_ratio, short_state, medium_state)
     risk = _trend_risk_summary(disqualifiers, state, basis)
     return {
-        "symbol": symbol, "eligible": eligible,
+        "symbol": symbol, "eligible": eligible, "space_assessment": assessment,
         "total_score": round(total, 2), "grade": score_grade(total),
         "verdict": verdict,
         "summary": "；".join(positive[:2]) + "。",
@@ -427,15 +426,13 @@ def _stock_opportunity_score(entity: Mapping[str, object]) -> dict[str, object]:
         _mapping(value) for value in _sequence(scenario.get("targets"))
         if isinstance(value, Mapping)
     ]
-    selected = next((target for target in targets[:1] if not scenario.get("qualification_blocked") and (
-        _optional_number(target.get("stressed_risk_reward_ratio")) is not None
-        and _number(target.get("stressed_risk_reward_ratio"), 0) >= 3.0
-    )), None)
+    assessment = evaluate_trend_space(scenario)
+    selected = targets[0] if targets else None
     stressed_rr = (
         _optional_number(selected.get("stressed_risk_reward_ratio"))
         if selected else None
     )
-    raw_rr = _optional_number(selected.get("risk_reward_ratio")) if selected else None
+    raw_rr = assessment["risk_reward_ratio"]
     setup_points = {
         "retest": 25.0, "triggered": 22.0, "waiting-trigger": 16.0,
         "extended": 5.0, "invalidated": 0.0, "no-entry": 0.0,
@@ -445,12 +442,14 @@ def _stock_opportunity_score(entity: Mapping[str, object]) -> dict[str, object]:
     independent_score = max(
         _number(independent.get("score"), 0), _number(member.get("score"), 0),
     )
-    target_points = min(10.0, len(targets) * 3.0 + (2.0 if selected else 0.0))
+    target_points = min(10.0, 3.0 + 2.0 * len(set(
+        str(v) for v in _sequence(selected.get("evidence_item_ids"))
+    ))) if selected else 0.0
     warning_count = int(_number(analysis.get("warning_count"), 0))
     analysis_points = 10.0 if analysis.get("status") == "succeeded" else 0.0
     analysis_points = max(0.0, analysis_points - min(5.0, warning_count * 1.5))
     components = {
-        "risk_reward": round(_risk_reward_points(stressed_rr), 2),
+        "risk_reward": round(_risk_reward_points(raw_rr), 2),
         "setup_state": setup_points,
         "independent_strength": round(min(15.0, independent_score * .15), 2),
         "target_quality": round(target_points, 2),
@@ -465,8 +464,8 @@ def _stock_opportunity_score(entity: Mapping[str, object]) -> dict[str, object]:
         disqualifiers.append("scenario-direction-not-long")
     if state not in {"waiting-trigger", "triggered", "retest"}:
         disqualifiers.append(f"scenario-{state}")
-    if selected is None:
-        disqualifiers.append("no-credible-target-at-3r")
+    if not assessment["opportunity"]:
+        disqualifiers.append(str(assessment["reason"] or "nearest-target-raw-rr-not-above-2"))
     entry = _optional_number(scenario.get("entry_price"))
     invalidation = _optional_number(scenario.get("invalidation_price"))
     target_price = _optional_number(selected.get("price")) if selected else None
@@ -477,13 +476,13 @@ def _stock_opportunity_score(entity: Mapping[str, object]) -> dict[str, object]:
     eligible = not disqualifiers
     total = round(max(0.0, min(100.0, sum(components.values()))), 2)
     return {
-        "symbol": symbol, "eligible": eligible,
+        "symbol": symbol, "eligible": eligible, "space_assessment": assessment,
         "setup_state": state,
         "total_score": total, "grade": score_grade(total),
         "verdict": "eligible" if eligible else "waiting",
         "summary": (
-            f"{state}; stressed RR {stressed_rr:.2f}:1"
-            if stressed_rr is not None else f"{state}; no target reaches stressed 3R"
+            f"{state}; raw RR {raw_rr:.2f}:1; {assessment['status']}"
+            if raw_rr is not None else f"{state}; {assessment['reason']}"
         ),
         "risk_summary": ", ".join(disqualifiers) if disqualifiers else "gates passed",
         "components": components, "penalties": [],
@@ -576,9 +575,9 @@ def score_grade(score: float) -> str:
 
 
 def _risk_reward_points(value: float | None) -> float:
-    if value is None or value < 3:
+    if value is None or value <= 1:
         return 0.0
-    points = ((3.0, 24.0), (4.0, 30.0), (5.0, 35.0), (6.0, 38.0), (8.0, 40.0))
+    points = ((1.0, 0.0), (2.0, 16.0), (3.0, 24.0), (4.0, 30.0), (5.0, 35.0), (6.0, 38.0), (8.0, 40.0))
     for index in range(1, len(points)):
         left, right = points[index - 1], points[index]
         if value <= right[0]:
@@ -592,7 +591,7 @@ def _trend_positive_reasons(
 ) -> list[str]:
     result = []
     if rr is not None:
-        result.append(f"压力调整后盈亏比{rr:.2f}:1")
+        result.append(f"原始盈亏比{rr:.2f}:1")
     result.append({
         "retest": "突破后进入回踩确认", "triggered": "结构边界已经触发",
         "waiting-trigger": "结构接近触发边界",
@@ -605,8 +604,12 @@ def _trend_positive_reasons(
 
 
 def _trend_risk_summary(disqualifiers: Sequence[str], state: str, basis: str) -> str:
-    if "no-credible-target-at-3r" in disqualifiers:
-        return "最近可信目标不足3:1，不进入趋势机会榜。"
+    if "nearest-target-raw-rr-not-above-2" in disqualifiers:
+        return "最近目标原始盈亏比未大于2，不进入趋势机会榜。"
+    if "legacy-analysis-recalculate" in disqualifiers:
+        return "旧版分析需重新测算，不沿用旧资格结论。"
+    if "price-basis-unverified" in disqualifiers:
+        return "复权依据不足，不判定交易空间。"
     if state == "extended":
         return "价格已经偏离合理入场区，保留异动但不追高。"
     if state == "invalidated":

@@ -10,6 +10,7 @@ import threading
 import time
 from typing import Sequence
 from uuid import uuid4
+from stock_harness.trend_risk_reward import evaluate_trend_space
 
 from stock_harness.analysis_inputs import (
     AnalysisHorizons, AnalysisInputMode, AnalysisInputService, AnalysisTimeframe,
@@ -593,13 +594,14 @@ def _scenario_evidence(
         target for target in payload.get("targets", []) if isinstance(target, dict)
     ]
     first = targets[0] if targets else None
-    major = targets[-1] if targets else None
+    assessment = evaluate_trend_space(payload)
     return {
         "scenario_item_id": scenario["item_id"],
         "invalidation_price": payload.get("invalidation_price"),
         "first_target_price": first.get("price") if first else None,
-        "major_target_price": major.get("price") if major else None,
+        "major_target_price": None,
         "first_risk_reward": first.get("risk_reward_ratio") if first else None,
-        "major_risk_reward": major.get("risk_reward_ratio") if major else None,
+        "major_risk_reward": None,
+        "space_assessment": assessment,
         "trade_scenario": payload,
     }

@@ -14,6 +14,7 @@ import logging
 import threading
 import time
 from typing import Iterator, Sequence
+from stock_harness.trend_risk_reward import evaluate_trend_space
 
 from stock_harness.accumulation_pattern import ANALYSIS_LOOKBACK, detect_accumulation_pattern
 from stock_harness.first_pullback_pattern import detect_first_pullback
@@ -71,7 +72,7 @@ from stock_harness.trend_context import (
 )
 
 
-ALGORITHM_VERSION = "trend-causal-replay-v50"
+ALGORITHM_VERSION = "trend-causal-replay-v51"
 LOGGER = logging.getLogger(__name__)
 
 
@@ -1125,13 +1126,15 @@ def _generated_items(
     ranked.append(build_core_projection_item(ranked))
     scenarios = build_structural_scenario_items(analysis_input.bars, ranked)
     comparable = not any(w.code == "adjustment_factors_incomplete" for w in analysis_input.warnings)
-    ranked.extend(replace(item, payload={
-        **item.payload,
-        "price_basis": analysis_input.price_basis,
-        "price_comparability": "verified-input" if comparable else "unverified-adjustment",
-        "qualification_blocked": not comparable,
-        "has_trade_space": bool(item.payload.get("has_trade_space")) and comparable,
-    }) if item.item_type is GeneratedItemType.SCENARIO else item for item in scenarios)
+    for item in scenarios:
+        if item.item_type is GeneratedItemType.SCENARIO:
+            payload = {**item.payload, "price_basis": analysis_input.price_basis,
+                       "price_comparability": "verified-input" if comparable else "unverified-adjustment",
+                       "qualification_blocked": not comparable}
+            assessment = evaluate_trend_space(payload)
+            item = replace(item, payload={**payload, "space_assessment": assessment,
+                                          "has_trade_space": assessment["opportunity"]})
+        ranked.append(item)
     return ranked
 
 def _structural_event_items(
