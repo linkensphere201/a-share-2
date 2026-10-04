@@ -105,6 +105,7 @@ export type SignalItem = {
     conclusion_code?: string
     state_codes?: string[]
     attention_reasons?: string[]
+    attention_changed?: boolean
     rendered_summary?: string
     metrics?: Record<string, unknown>
     effective_date?: string
@@ -199,6 +200,10 @@ export type SignalScoreResult = {
   risk_summary: string
   change_summary: string
   hotspot_stage?: string
+  visibility_reasons?: string[]
+  leader_symbols?: string[]
+  hotspot_window_dates?: string[]
+  observation_only?: boolean
   hotspot_wave_id?: string
   hotspot_wave_sequence?: number
   hotspot_wave_status?: 'active' | 'ended'

@@ -30,6 +30,28 @@ afterEach(() => {
 })
 
 describe('SignalReviewWorkspace', () => {
+  it('collapses unchanged daily attention without hiding new risks or deleting history', async () => {
+    const dailyDefinition = { ...definition, signal_id: 'daily-market-board-review', cadence: 'daily', profiles: ['market', 'attention'] }
+    const dailyRun = { ...run, signal_id: dailyDefinition.signal_id, cadence: 'daily' }
+    const records = [
+      { ...items[0], name: '旧关注', profile: 'attention', change_type: 'retained', payload: { attention_changed: false } },
+      { ...items[1], name: '新增风险', profile: 'attention', change_type: 'retained', payload: { attention_changed: true } },
+    ]
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === '/api/signals/definitions') return response({ items: [dailyDefinition] })
+      if (url.includes('/api/signals/runs?')) return response({ items: [dailyRun] })
+      if (url.endsWith('/items?summary=true')) return response({ items: records })
+      return response({ items: [], total: 0 })
+    }))
+    const user = userEvent.setup()
+    render(<SignalReviewWorkspace theme={themes[0]} onClose={() => undefined}/>)
+    expect(await screen.findByText('新增风险')).toBeTruthy()
+    expect(screen.queryByText('旧关注')).toBeNull()
+    await user.click(screen.getByRole('checkbox', { name: '包含未变化关注' }))
+    expect(await screen.findByText('旧关注')).toBeTruthy()
+  })
+
   it('requests cancellation once and shows the distinct cancelled outcome', async () => {
     let cancelled = false
     const active = { ...run, status: 'running', phase: 'stock-features' }
@@ -522,8 +544,8 @@ describe('SignalReviewWorkspace', () => {
     const trend = signalScore('BK002.DC', 82, true, 1, [])
     const leading = {
       ...signalScore('BK001.DC', 72, true, 1, []),
-      system_id: 'board-hotspot-leading', leading_state: 'strengthening',
-      leading_visible: true, leading_slot_limit: 1,
+      system_id: 'board-hotspot-emergence', hotspot_stage: 'leader-ignited',
+      radar_visible: true, observation_only: true,
     }
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
@@ -541,7 +563,7 @@ describe('SignalReviewWorkspace', () => {
     const user = userEvent.setup()
     render(<SignalReviewWorkspace theme={themes[0]} onClose={() => undefined}/>)
 
-    await user.click(await screen.findByRole('button', { name: /前导雷达/ }))
+    await user.click(await screen.findByRole('button', { name: /近期热点/ }))
     expect(await screen.findByText('前导板块')).toBeTruthy()
     await user.click(screen.getByRole('button', { name: /机会评分/ }))
     expect(await screen.findByText('机会板块')).toBeTruthy()
@@ -549,7 +571,7 @@ describe('SignalReviewWorkspace', () => {
     expect(screen.getByLabelText('趋势体系前排')).toBeTruthy()
   })
 
-  it('shows the leading radar as an independent filtered system', async () => {
+  it('merges core-led observations into recent hotspots without a leading tab', async () => {
     const dailyDefinition = {
       ...definition, signal_id: 'daily-market-board-review', name: '每日复盘',
       cadence: 'daily', profiles: ['market', 'attention'],
@@ -558,8 +580,10 @@ describe('SignalReviewWorkspace', () => {
     const observations = [dailyObservation('BK001.DC', '临界板块')]
     const leading = {
       ...signalScore('BK001.DC', 72, true, 1, []),
-      system_id: 'board-hotspot-leading',
-      scorer_version: 'board-hotspot-leading-v1-causal-acceleration',
+      system_id: 'board-hotspot-emergence',
+      scorer_version: 'board-hotspot-emergence-v8-session-discovery',
+      hotspot_stage: 'leader-ignited', radar_visible: true, observation_only: true,
+      candidate_streak: 2, leader_symbols: ['600418.SH'],
       leading_state: 'strengthening', leading_visible: true,
       leading_slot_limit: 1, leading_acceleration_count: 3,
       leading_streak: 2, setup_path: 'platform-breakout',
@@ -582,12 +606,13 @@ describe('SignalReviewWorkspace', () => {
     const user = userEvent.setup()
     render(<SignalReviewWorkspace theme={themes[0]} onClose={() => undefined}/>)
 
-    await user.click(await screen.findByRole('button', { name: /前导雷达/ }))
+    await user.click(await screen.findByRole('button', { name: /近期热点/ }))
+    expect(screen.queryByRole('button', { name: /前导雷达/ })).toBeNull()
     expect(await screen.findByText('临界板块')).toBeTruthy()
-    expect(screen.getByText('低容量 · 缩量 · 1席')).toBeTruthy()
+    expect(screen.getByText('低容量 · 缩量')).toBeTruthy()
     await user.click(screen.getByText('临界板块').closest('button')!)
-    expect(screen.getByText('3 项加速')).toBeTruthy()
-    expect(screen.getByText('平台临界')).toBeTruthy()
+    expect(screen.getByText('最近3日支持 2 日')).toBeTruthy()
+    expect(screen.getByText('600418.SH')).toBeTruthy()
   })
 
   it('shows stable visible hotspots under the default all filter', async () => {
@@ -649,9 +674,11 @@ describe('SignalReviewWorkspace', () => {
     render(<SignalReviewWorkspace theme={themes[0]} onClose={() => undefined}/>)
 
     await user.click(await screen.findByRole('button', { name: /近期热点/ }))
-    expect(await screen.findByText('该轮没有热点进入可见席位')).toBeTruthy()
-    expect(screen.getByText(/发现 1 个初始热点候选，0 个通过/)).toBeTruthy()
+    expect(await screen.findByText('当前筛选没有热点结果')).toBeTruthy()
+    expect(screen.getByText(/本轮 1 个阶段候选，0 个主题通过/)).toBeTruthy()
     expect(screen.getByText('持续观察窗口不足：1 个')).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: /未入选/ }))
+    expect(await screen.findByText('点火候选')).toBeTruthy()
   })
 
   it('loads the exact M4 run and highlights the cited analysis item', async () => {

@@ -280,7 +280,8 @@ class SignalReviewService:
         benchmark = self._reader.get().get_recent_daily_bars(
             "000001.SH", cutoff, DAILY_LOOKBACK_BARS,
         )
-        hotspot_dates = sorted({bar.trade_date for bar in benchmark if bar.trade_date <= cutoff} | {cutoff})[-5:]
+        calendar = self._reader.get().list_trading_dates("tushare", cutoff - timedelta(days=45), cutoff)
+        hotspot_dates = sorted(set(calendar or [bar.trade_date for bar in benchmark]) | {cutoff})[-5:]
         member_history = {cutoff: hotspot_snapshots}
         for day in hotspot_dates:
             if day != cutoff:

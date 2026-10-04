@@ -64,7 +64,8 @@ def extract_hotspot_session_window(bars, benchmark_bars, dates, member_snapshots
         feature = extract_board_hotspot_features(
             prefix, reference, member_snapshot=member_snapshots.get(day),
         )
-        if not prefix or prefix[-1].trade_date != day or not reference or reference[-1].trade_date != day:
+        if (not prefix or prefix[-1].trade_date != day or not reference or reference[-1].trade_date != day
+                or [bar.trade_date for bar in prefix[-21:]] != [bar.trade_date for bar in reference[-21:]]):
             feature["coverage_state"] = "missing-session"
         feature["effective_date"] = day.isoformat()
         result.append(feature)

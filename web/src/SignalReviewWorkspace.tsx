@@ -48,10 +48,9 @@ type Props = {
 }
 type ProfileFilter = 'all' | SignalProfile
 type ChangeFilter = 'all' | SignalChangeType
-type DailyView = 'results' | 'opportunities' | 'leading' | 'hotspots' | 'observations' | 'board-pool' | 'stock-pool'
+type DailyView = 'results' | 'opportunities' | 'hotspots' | 'observations' | 'board-pool' | 'stock-pool'
 type AnalysisScope = 'market' | 'board' | 'stock'
-type HotspotFilter = 'all' | 'rising' | 'confirmed' | 'fading'
-type LeadingFilter = 'all' | 'strengthening' | 'confirmed'
+type HotspotFilter = 'all' | 'core' | 'diffusing' | 'confirmed' | 'fading' | 'excluded'
 type PoolLifecycleFilter = 'all' | ObservationPoolItem['lifecycle_state']
 type PoolPresentationView = 'focus' | 'opportunity' | 'risk' | 'all'
 type SignalRunContextMenu = { x: number; y: number; run: SignalRun }
@@ -143,7 +142,7 @@ export function SignalReviewWorkspace({ theme, onClose, targetLists = [], onAddI
   useEffect(() => { setSelectedAnalysisScore(undefined); setHighlightedSystemProjectionId(undefined) }, [selectedRun?.run_id, dailyView, analysisScope])
   const [highlightedSystemProjectionId, setHighlightedSystemProjectionId] = useState<string>()
   const [hotspotFilter, setHotspotFilter] = useState<HotspotFilter>('all')
-  const [leadingFilter, setLeadingFilter] = useState<LeadingFilter>('all')
+  const [showUnchanged, setShowUnchanged] = useState(false)
   const [historySelection, setHistorySelection] = useState<{ symbol: string; entityKey?: string }>()
   const [exactAnalysis, setExactAnalysis] = useState<TrendAnalysisRun | null>(null)
   const [reviewTrendState, setReviewTrendState] = useState<TradingSystemWindowState>(createReviewTrendState)
@@ -342,7 +341,10 @@ export function SignalReviewWorkspace({ theme, onClose, targetLists = [], onAddI
 
   const filtered = useMemo(() => items.filter(item =>
     (profile === 'all' || item.profile === profile)
-    && (change === 'all' || item.change_type === change),
+    && (change === 'all' || item.change_type === change)
+    && (selectedDefinition?.cadence !== 'daily' || showUnchanged || change !== 'all'
+      || item.profile !== 'attention' || (item.payload.attention_changed
+        ?? (item.change_type !== 'retained' || item.payload.attention_reasons?.includes('prior-state-invalidated')))),
   ).sort((left, right) => {
     const profileOrder = (value: SignalProfile) => value === 'market' ? 0
       : value === 'attention' || value === 'recent' ? 1 : 2
@@ -350,7 +352,7 @@ export function SignalReviewWorkspace({ theme, onClose, targetLists = [], onAddI
       || (right.payload.score_result?.total_score ?? right.payload.list_score?.total_score ?? right.score * 100)
         - (left.payload.score_result?.total_score ?? left.payload.list_score?.total_score ?? left.score * 100)
       || left.symbol.localeCompare(right.symbol)
-  }), [items, profile, change])
+  }), [items, profile, change, showUnchanged, selectedDefinition?.cadence])
   const scoresBySystem = useMemo(() => {
     const grouped = new Map<string, SignalScoreResult[]>()
     scores.forEach(item => {
@@ -363,11 +365,9 @@ export function SignalReviewWorkspace({ theme, onClose, targetLists = [], onAddI
   const parallelLeaders = useMemo(() => parallelReviewSystems(
     scores, dailyView, analysisScope,
     new Set(observationPool?.items.map(item => item.symbol) ?? []),
-    new Set(scores.filter(score => dailyView === 'leading'
-      ? score.system_id === 'board-hotspot-leading' && leadingMatches(score, leadingFilter)
-      : score.system_id === 'board-hotspot-emergence' && hotspotMatches(score, hotspotFilter))
+    new Set(scores.filter(score => score.system_id === 'board-hotspot-emergence' && hotspotMatches(score, hotspotFilter))
       .map(score => score.symbol)),
-  ), [scores, dailyView, analysisScope, observationPool, leadingFilter, hotspotFilter])
+  ), [scores, dailyView, analysisScope, observationPool, hotspotFilter])
   const boardScoreSystems = useMemo(() => [...scoresBySystem.entries()]
     .filter(([system, values]) => system !== 'mean-reversion' && values.some(item => item.entity_scope === 'board'))
     .map(([system]) => system), [scoresBySystem])
@@ -392,40 +392,27 @@ export function SignalReviewWorkspace({ theme, onClose, targetLists = [], onAddI
     .filter(item => dailyView !== 'hotspots' || hotspotMatches(
       scoreBySymbol.get(item.symbol), hotspotFilter,
     ))
-    .filter(item => dailyView !== 'leading' || leadingMatches(
-      scoreBySymbol.get(item.symbol), leadingFilter,
-    ))
     .sort((left, right) => {
       const leftScore = scoreBySymbol.get(left.symbol)
       const rightScore = scoreBySymbol.get(right.symbol)
       return Number(Boolean(rightScore?.eligible)) - Number(Boolean(leftScore?.eligible))
         || (rightScore?.total_score ?? -1) - (leftScore?.total_score ?? -1)
         || left.symbol.localeCompare(right.symbol)
-    }), [dailyView, hotspotFilter, leadingFilter, observations, scoreBySymbol])
+    }), [dailyView, hotspotFilter, observations, scoreBySymbol])
   const hotspotSummary = useMemo(() => {
     const values = (scoresBySystem.get('board-hotspot-emergence') ?? [])
       .filter(item => item.radar_visible)
     return {
       all: values.length,
-      rising: values.filter(item => item.score_direction === 'strengthening').length,
+      core: values.filter(item => item.hotspot_stage === 'leader-ignited').length,
+      diffusing: values.filter(item => ['trend-emerging', 'breadth-expanding'].includes(item.hotspot_stage ?? '')).length,
       confirmed: values.filter(item => ['hotspot-confirmed', 'accelerating'].includes(item.hotspot_stage ?? '')).length,
       fading: values.filter(item => ['diverging', 'exhausted'].includes(item.hotspot_stage ?? '')).length,
+      excluded: (scoresBySystem.get('board-hotspot-emergence') ?? []).filter(item => !item.radar_visible).length,
     }
   }, [scoresBySystem])
   const hotspotMarket = useMemo(() => (
     scoresBySystem.get('board-hotspot-emergence') ?? []
-  ).find(item => item.market_liquidity_capacity), [scoresBySystem])
-  const leadingSummary = useMemo(() => {
-    const values = (scoresBySystem.get('board-hotspot-leading') ?? [])
-      .filter(item => item.leading_visible)
-    return {
-      all: values.length,
-      strengthening: values.filter(item => item.leading_state === 'strengthening').length,
-      confirmed: values.filter(item => item.leading_state === 'launch-confirmed').length,
-    }
-  }, [scoresBySystem])
-  const leadingMarket = useMemo(() => (
-    scoresBySystem.get('board-hotspot-leading') ?? []
   ).find(item => item.market_liquidity_capacity), [scoresBySystem])
   const viewEmptyExplanation = useMemo(() => buildViewEmptyExplanation(
     dailyView, scoresBySystem, observationQuery, displayedObservations.length,
@@ -712,8 +699,7 @@ export function SignalReviewWorkspace({ theme, onClose, targetLists = [], onAddI
         if ((event.target as HTMLElement).closest('.signal-scroll')) setSelectedAnalysisScore(undefined)
       }}>
         <header><span>{dailyView === 'observations' ? '全部板块观察'
-          : dailyView === 'leading' ? '热点启动前导雷达'
-          : dailyView === 'hotspots' ? '近期热点雷达'
+          : dailyView === 'hotspots' ? '近期热点'
           : dailyView === 'opportunities' ? '板块机会评分'
             : dailyView === 'board-pool' ? '板块观察池'
               : dailyView === 'stock-pool' ? '个股观察池' : '复盘结果'}</span><small>{['board-pool', 'stock-pool'].includes(dailyView)
@@ -724,7 +710,6 @@ export function SignalReviewWorkspace({ theme, onClose, targetLists = [], onAddI
         {daily && <div className="signal-view-switch">
           <button className={dailyView === 'results' ? 'active' : ''} onClick={() => { setDailyView('results'); setSelectedObservation(undefined); setSelectedPoolItem(undefined) }}><ListFilter size={12}/>今日关注</button>
           <button className={dailyView === 'opportunities' ? 'active' : ''} onClick={() => { setDailyView('opportunities'); setSelectedScoreSystem('trend-breakout'); setSelectedItem(undefined); setSelectedPoolItem(undefined) }}><Radar size={12}/>机会评分</button>
-          <button className={dailyView === 'leading' ? 'active' : ''} onClick={() => { setDailyView('leading'); setSelectedScoreSystem('board-hotspot-leading'); setSelectedItem(undefined); setSelectedPoolItem(undefined) }}><Radar size={12}/>前导雷达</button>
           <button className={dailyView === 'hotspots' ? 'active' : ''} onClick={() => { setDailyView('hotspots'); setSelectedScoreSystem('board-hotspot-emergence'); setSelectedItem(undefined); setSelectedPoolItem(undefined) }}><Radar size={12}/>近期热点</button>
           <button className={dailyView === 'observations' ? 'active' : ''} onClick={() => { setDailyView('observations'); setSelectedItem(undefined); setSelectedPoolItem(undefined) }}><Eye size={12}/>全部观察</button>
           <button className={dailyView === 'board-pool' ? 'active' : ''} onClick={() => { setDailyView('board-pool'); setSelectedItem(undefined); setSelectedObservation(undefined) }}><Layers3 size={12}/>板块池</button>
@@ -735,16 +720,12 @@ export function SignalReviewWorkspace({ theme, onClose, targetLists = [], onAddI
             {(['market', 'board', 'stock'] as AnalysisScope[]).map(scope => <button key={scope}
               className={analysisScope === scope ? 'active' : ''} onClick={() => setAnalysisScope(scope)}>{analysisScopeLabel(scope)}</button>)}
           </div>}
-          <ParallelReviewLeaders key={`${selectedRun?.run_id}:${dailyView}:${analysisScope}`}
-            {...parallelLeaders} selected={selectedAnalysisScore} onSelect={selectParallelScore} onContextMenu={openResultMenu}/>
+          {['results', 'opportunities'].includes(dailyView) && <ParallelReviewLeaders key={`${selectedRun?.run_id}:${dailyView}:${analysisScope}`}
+            {...parallelLeaders} selected={selectedAnalysisScore} onSelect={selectParallelScore} onContextMenu={openResultMenu}/>}
         </>}
         {dailyView === 'hotspots' && <div className="signal-hotspot-filters" aria-label="热点阶段筛选">
-          {hotspotMarket && <span className="signal-hotspot-market">{marketCapacityLabel(hotspotMarket.market_liquidity_capacity)} · {marketDirectionLabel(hotspotMarket.market_liquidity_direction)} · {hotspotMarket.radar_slot_limit ?? 1}席</span>}
-          {(['all', 'rising', 'confirmed', 'fading'] as HotspotFilter[]).map(value => <button key={value} className={hotspotFilter === value ? 'active' : ''} onClick={() => setHotspotFilter(value)}>{hotspotFilterLabel(value)}<small>{hotspotSummary[value]}</small></button>)}
-        </div>}
-        {dailyView === 'leading' && <div className="signal-hotspot-filters leading" aria-label="前导阶段筛选">
-          {leadingMarket && <span className="signal-hotspot-market">{marketCapacityLabel(leadingMarket.market_liquidity_capacity)} · {marketDirectionLabel(leadingMarket.market_liquidity_direction)} · {leadingMarket.leading_slot_limit ?? 1}席</span>}
-          {(['all', 'strengthening', 'confirmed'] as LeadingFilter[]).map(value => <button key={value} className={leadingFilter === value ? 'active' : ''} onClick={() => setLeadingFilter(value)}>{leadingFilterLabel(value)}<small>{leadingSummary[value]}</small></button>)}
+          {hotspotMarket && <span className="signal-hotspot-market">{marketCapacityLabel(hotspotMarket.market_liquidity_capacity)} · {marketDirectionLabel(hotspotMarket.market_liquidity_direction)}</span>}
+          {(['all', 'core', 'diffusing', 'confirmed', 'fading', 'excluded'] as HotspotFilter[]).map(value => <button key={value} className={hotspotFilter === value ? 'active' : ''} onClick={() => setHotspotFilter(value)}>{hotspotFilterLabel(value)}<small>{hotspotSummary[value]}</small></button>)}
         </div>}
         {daily && hardEventSummary.total > 0 && <div className="signal-hard-event-strip" role="status" title="独立硬异动是趋势体系捕获的量价或结构异常，不等于热点雷达席位">
           <span>独立硬异动 {hardEventSummary.total}</span><small>不等于热点席位</small>
@@ -780,10 +761,10 @@ export function SignalReviewWorkspace({ theme, onClose, targetLists = [], onAddI
             return <button key={item.symbol} onContextMenu={event => openResultMenu(event, { ...item, kind: 'board' })} className={selectedObservation?.symbol === item.symbol ? 'active' : ''} onClick={() => { setSelectedObservation(item); setSelectedItem(undefined); setSelectedPoolItem(undefined) }}>
               <ScoreBadge score={score}/>
               <span><span className="instrument-name-line"><b>{item.name}</b></span><small>{item.symbol}</small></span>
-              <SignalStateCell
+              {dailyView === 'hotspots' ? <span>{hotspotStageLabel(score?.hotspot_stage)}<small>{score?.visibility_reasons?.map(hotspotReasonLabel).join('；')}</small></span> : <SignalStateCell
                 states={item.state_codes}
                 fallback={item.coverage_state === 'complete' ? '未触发异动' : '数据不足'}
-              />
+              />}
               <span className={`attention-state ${entry?.status ?? 'inactive'}`}>{entry?.manual_pinned ? '固定' : item.attention_eligible ? '自动' : '-'}</span>
             </button>
           })}</div>
@@ -792,6 +773,7 @@ export function SignalReviewWorkspace({ theme, onClose, targetLists = [], onAddI
             {(['all', ...(daily ? ['market', 'attention'] : ['recent', 'historical'])] as ProfileFilter[]).map(value => <button key={value} className={profile === value ? 'active' : ''} onClick={() => setProfile(value)}>{value === 'all' ? '全部' : profileLabels[value]} {value === 'all' ? items.length : counts[value]}</button>)}
           </div>
           <div className="signal-filters secondary">
+            {daily && <label><input type="checkbox" checked={showUnchanged} onChange={event => setShowUnchanged(event.target.checked)}/>包含未变化关注</label>}
             {(['all', 'added', 'retained', 'removed'] as ChangeFilter[]).map(value => <button key={value} className={change === value ? 'active' : ''} onClick={() => setChange(value)}>{value === 'all' ? '全部变化' : changeLabels[value]}</button>)}
           </div>
           <div className="signal-result-head"><span>评分</span><span>标的</span><span>{daily ? '状态' : '板块'}</span><span>变化</span></div>
@@ -932,19 +914,9 @@ function buildViewEmptyExplanation(
     const candidates = values.filter(item => item.hotspot_stage && item.hotspot_stage !== 'failed').length
     const visible = values.filter(item => item.radar_visible).length
     return {
-      title: '该轮没有热点进入可见席位',
-      detail: `固定算法发现 ${candidates} 个初始热点候选，${visible} 个通过持续窗口与市场容量约束。初始候选不会直接作为热点展示。`,
+      title: '当前筛选没有热点结果',
+      detail: `本轮 ${candidates} 个阶段候选，${visible} 个主题通过持续性与数据覆盖检查。`,
       reasons: topFilterReasons(values, true),
-    }
-  }
-  if (view === 'leading') {
-    const values = scoresBySystem.get('board-hotspot-leading') ?? []
-    const candidates = values.filter(item => item.leading_state && item.leading_state !== 'invalidated').length
-    const visible = values.filter(item => item.leading_visible).length
-    return {
-      title: '该轮没有前导信号进入可见席位',
-      detail: `固定算法保留 ${candidates} 个观察候选，${visible} 个满足结构临界、证据增强和席位约束。`,
-      reasons: topFilterReasons(values),
     }
   }
   return {
@@ -1220,10 +1192,13 @@ function ScoreSummary({ score, onHistorySelect, onEvidenceHighlight }: {
     <ScoreSparkline score={score} onHistorySelect={onHistorySelect}/>
     <em>{score.change_summary}</em>
     {score.system_id === 'board-hotspot-emergence' && <div className="signal-hotspot-state">
-      <span className={score.score_direction ?? 'stable'}>{hotspotStageLabel(score.hotspot_stage)}<small>{score.score_direction === 'strengthening' ? '持续增强' : score.score_direction === 'declining' ? '正在衰退' : score.score_direction === 'new' ? '首次识别' : '强度稳定'}</small></span>
-      {score.hotspot_wave_id && <span>{hotspotWaveStageLabel(score.hotspot_wave_stage)}<small>第 {score.hotspot_wave_sequence ?? 1} 轮 · 已运行 {score.hotspot_wave_session_count ?? 1} 日</small></span>}
+      <span className={score.score_direction ?? 'stable'}>{hotspotStageLabel(score.hotspot_stage)}<small>{score.observation_only ? '观察信号' : score.score_direction === 'strengthening' ? '持续增强' : score.score_direction === 'declining' ? '正在衰退' : score.score_direction === 'new' ? '首次识别' : '强度稳定'}</small></span>
+      {score.hotspot_wave_id && !score.observation_only && <span>{hotspotWaveStageLabel(score.hotspot_wave_stage)}<small>第 {score.hotspot_wave_sequence ?? 1} 轮 · 已运行 {score.hotspot_wave_session_count ?? 1} 日</small></span>}
       <span>{hotspotWindowStateLabel(score.hotspot_window_state)}<small>{score.hotspot_window_qualified_sessions ?? 0}/{score.hotspot_window_observed_sessions ?? 0} 日有效 · 形态支持 {score.hotspot_window_shape_support_sessions ?? 0} 日</small></span>
-      <span>连续 {score.candidate_streak ?? 0} 日<small>峰值 {(score.peak_score ?? score.total_score).toFixed(0)} · 回撤 {(score.drawdown_from_peak ?? 0).toFixed(0)}</small></span>
+      {score.observation_only ? <span>最近3日支持 {score.candidate_streak ?? 0} 日<small>{score.hotspot_window_dates?.join(' / ')}</small></span>
+        : <span>连续 {score.candidate_streak ?? 0} 日<small>峰值 {(score.peak_score ?? score.total_score).toFixed(0)} · 回撤 {(score.drawdown_from_peak ?? 0).toFixed(0)}</small></span>}
+      {!!score.leader_symbols?.length && <span>持续领涨成员<small>{score.leader_symbols.join(' / ')}</small></span>}
+      {!!score.visibility_reasons?.length && <span>未展示原因<small>{score.visibility_reasons.map(hotspotReasonLabel).join('；')}</small></span>}
       <span>{score.limit_up_count ?? 0} 家涨停<small>最高 {score.max_limit_up_streak ?? 0} 连板 · 破板 {score.broken_up_count ?? 0}</small></span>
       <span>{score.theme_name ?? boardCapacityLabel(score.board_capacity_tier)}<small>{score.theme_parent_name ? `${score.theme_parent_name} · ` : ''}{boardCapacityLabel(score.board_capacity_tier)} · 匹配 {score.capacity_fit_score?.toFixed(0) ?? '-'}</small></span>
     </div>}
@@ -1284,10 +1259,6 @@ function leadingStateLabel(state?: string) {
   }[state ?? ''] ?? '数据不足'
 }
 
-function leadingFilterLabel(value: LeadingFilter) {
-  return { all: '全部前导', strengthening: '临界增强', confirmed: '启动确认' }[value]
-}
-
 function hotspotShapeLabel(path?: string) {
   return {
     'platform-breakout': '平台临界', 'downtrend-reversal': '下降转势',
@@ -1297,7 +1268,7 @@ function hotspotShapeLabel(path?: string) {
 
 function hotspotStageLabel(stage?: string) {
   return {
-    'leader-ignited': '龙头点火',
+    'leader-ignited': '核心领涨',
     'trend-emerging': '趋势形成',
     'breadth-expanding': '扩散增强',
     'hotspot-confirmed': '热点确认',
@@ -1322,7 +1293,18 @@ function hotspotWindowStateLabel(state?: string) {
 }
 
 function hotspotFilterLabel(value: HotspotFilter) {
-  return { all: '全部有效', rising: '持续增强', confirmed: '已确认', fading: '分歧/退潮' }[value]
+  return { all: '全部有效', core: '核心领涨', diffusing: '扩散中', confirmed: '已确认', fading: '分歧/退潮', excluded: '未入选' }[value]
+}
+
+function hotspotReasonLabel(reason: string) {
+  return ({ 'incomplete-session-window': '交易日窗口或成员覆盖不足',
+    'weak-current-price-volume': '当前量价支持不足',
+    'insufficient-session-persistence': '持续性不足',
+    'no-persistent-leader-or-diffusion': '缺少持续核心或板块扩散',
+    'current-sharp-reversal': '当日显著回落',
+    'non-business-theme': '非业务主题',
+    'same-theme-representative': '已合并至同主题代表',
+  } as Record<string, string>)[reason] ?? reason
 }
 
 function marketCapacityLabel(value?: string) {
@@ -1339,23 +1321,16 @@ function marketDirectionLabel(value?: string) {
 
 function hotspotMatches(score: SignalScoreResult | undefined, filter: HotspotFilter) {
   if (!score || score.system_id !== 'board-hotspot-emergence') return false
+  if (filter === 'excluded') return !score.radar_visible
   const fadingWave = score.hotspot_wave_representative
     && ['diverging', 'exhausted', 'ended'].includes(score.hotspot_wave_stage ?? '')
   if (score.hotspot_stage === 'failed' && !fadingWave) return false
   if (!score.radar_visible && !fadingWave) return false
   if (filter === 'all') return true
-  if (filter === 'rising') return score.score_direction === 'strengthening'
-    && ((score.candidate_streak ?? 0) >= 1 || (score.max_limit_up_streak ?? 0) >= 2)
+  if (filter === 'core') return score.hotspot_stage === 'leader-ignited'
+  if (filter === 'diffusing') return ['trend-emerging', 'breadth-expanding'].includes(score.hotspot_stage ?? '')
   if (filter === 'confirmed') return ['hotspot-confirmed', 'accelerating'].includes(score.hotspot_stage ?? '')
   return fadingWave || ['diverging', 'exhausted'].includes(score.hotspot_stage ?? '')
-}
-
-function leadingMatches(score: SignalScoreResult | undefined, filter: LeadingFilter) {
-  if (!score || score.system_id !== 'board-hotspot-leading' || !score.leading_visible) return false
-  if (filter === 'all') return true
-  return filter === 'strengthening'
-    ? score.leading_state === 'strengthening'
-    : score.leading_state === 'launch-confirmed'
 }
 
 function ScoreSparkline({ score, onHistorySelect }: {

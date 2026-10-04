@@ -236,7 +236,7 @@ class SQLiteSignalObservationStoreMixin:
             rows = self._connection.execute(
                 """
                 WITH recent AS MATERIALIZED (
-                    SELECT bar.instrument_id, bar.trade_date, bar.high, bar.close,
+                    SELECT bar.instrument_id, bar.trade_date, bar.high, bar.close, bar.volume,
                            limits.up_limit,
                            lead(bar.close) OVER (
                                PARTITION BY bar.instrument_id
@@ -259,6 +259,10 @@ class SQLiteSignalObservationStoreMixin:
                            max(CASE WHEN rn = 1 THEN close END) AS close_0,
                            max(CASE WHEN rn = 2 THEN close END) AS close_1,
                            max(CASE WHEN rn = 6 THEN close END) AS close_5,
+                           avg(CASE WHEN rn <= 5 THEN volume END) AS volume_5,
+                           avg(CASE WHEN rn BETWEEN 6 AND 10 THEN volume END) AS prior_volume_5,
+                           count(CASE WHEN rn <= 10 THEN 1 END) AS volume_sessions,
+                           max(CASE WHEN rn <= 5 THEN volume END) AS peak_volume_5,
                            max(CASE WHEN rn = 1 THEN
                                CASE WHEN (up_limit IS NOT NULL
                                           AND close >= up_limit - 0.005)
@@ -297,9 +301,10 @@ class SQLiteSignalObservationStoreMixin:
                            max(CASE WHEN rn = 1 THEN
                                CASE WHEN up_limit IS NOT NULL THEN 1 ELSE 0 END END
                            ) AS limit_covered
-                    FROM recent WHERE rn <= 6 GROUP BY instrument_id
+                    FROM recent WHERE rn <= 10 GROUP BY instrument_id
                 ), features AS MATERIALIZED (
                     SELECT instrument_id, close_0, close_1, close_5,
+                           volume_5, prior_volume_5, volume_sessions, peak_volume_5,
                            sealed_1, sealed_2, sealed_3, sealed_4, sealed_5,
                            broken_1, limit_covered,
                            CASE
@@ -347,6 +352,10 @@ class SQLiteSignalObservationStoreMixin:
                        sum(coalesce(features.limit_covered, 0)),
                        group_concat(CASE WHEN features.close_5 > 0
                            AND features.close_0 / features.close_5 >= 1.10
+                           AND features.volume_sessions = 10
+                           AND features.prior_volume_5 > 0
+                           AND features.volume_5 / features.prior_volume_5 >= 1.05
+                           AND features.peak_volume_5 <= features.volume_5 * 5 * .55
                            THEN stock.symbol END)
                 FROM memberships
                 JOIN instruments AS board

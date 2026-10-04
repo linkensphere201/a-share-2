@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Mapping, Sequence
+from stock_harness.board_hotspot_evaluation import canonical_board_name
 
 VERSION = "board-hotspot-emergence-v8-session-discovery"
 
@@ -26,7 +27,7 @@ def sample(feature: Mapping) -> dict:
     coverage = min(_number(members.get("coverage_ratio")),
                    _number(members.get("return_5_covered_count")) / member_count
                    if member_count else 0.0)
-    valid = feature.get("coverage_state") == "complete" and coverage >= .65
+    valid = feature.get("coverage_state") == "complete" and coverage >= .65 and member_count >= 3
     price = _number(returns.get("5"))
     rs = _number(relative.get("5"))
     volume = _number(metrics.get("recent_volume_ratio_5_5"))
@@ -39,6 +40,7 @@ def sample(feature: Mapping) -> dict:
         "relative_strength_5": rs, "volume_persistence_5": volume,
         "positive_return_5_ratio": breadth, "member_coverage_ratio": coverage,
         "leader_symbols": leaders, "supported": support,
+        "price_supported": valid and price > 0 and rs >= .015,
         "diffusing": support and price >= .02 and breadth >= .55,
         "shape_path": shape.get("path", "none"),
         "extension_atr": _number(shape.get("extension_from_ma20_atr")),
@@ -63,16 +65,19 @@ class UnifiedHotspotScorer:
         persistent_leaders = sorted(symbol for symbol in current["leader_symbols"]
                                     if counts[symbol] >= 2)
         supported = sum(item["supported"] for item in recent)
+        price_supported = sum(item["price_supported"] for item in recent)
         broad = sum(item["diffusing"] for item in recent)
-        reasons = []
-        if len(samples) < 5 or not all(item["valid"] for item in samples):
-            reasons.append("incomplete-session-window")
-        if not current["supported"]:
-            reasons.append("weak-current-price-volume")
-        if supported < 2:
-            reasons.append("insufficient-session-persistence")
         core = bool(persistent_leaders) and current["positive_return_5_ratio"] >= .35
         diffusion = broad >= 2 and current["diffusing"]
+        reasons = []
+        dates = [str(item["effective_date"] or "") for item in samples]
+        if (len(samples) < 5 or not all(item["valid"] for item in samples)
+                or not all(dates) or dates != sorted(set(dates))):
+            reasons.append("incomplete-session-window")
+        if not current["supported"] and not (core and current["price_supported"]):
+            reasons.append("weak-current-price-volume")
+        if supported < 2 and not (core and price_supported >= 2):
+            reasons.append("insufficient-session-persistence")
         if not core and not diffusion:
             reasons.append("no-persistent-leader-or-diffusion")
         stage = "failed"
@@ -93,7 +98,7 @@ class UnifiedHotspotScorer:
         components = {
             "relative_strength": min(25., max(0., current["relative_strength_5"]) * 300),
             "participation": current["positive_return_5_ratio"] * 25,
-            "persistence": supported * 8.,
+            "persistence": (price_supported if core else supported) * 8.,
             "leader": 15. if persistent_leaders else 0.,
             "activity": min(11., max(0., current["volume_persistence_5"] - .8) * 20),
         }
@@ -110,12 +115,15 @@ class UnifiedHotspotScorer:
             "risk_summary": "; ".join(warnings), "penalties": [],
             "disqualifiers": reasons, "hard_events": [], "components": components,
             "hotspot_stage": stage, "setup_path": current["shape_path"],
-            "candidate_streak": supported, "leader_symbols": persistent_leaders,
+            "candidate_streak": price_supported if core else supported,
+            "leader_symbols": persistent_leaders,
             "hotspot_window_version": "actual-trading-sessions-v2",
             "hotspot_window_state": "persistent" if not reasons else "fragmented",
             "hotspot_window_eligible": not reasons,
             "hotspot_window_observed_sessions": sum(item["valid"] for item in samples),
-            "hotspot_window_qualified_sessions": supported,
+            "hotspot_window_qualified_sessions": sum(
+                item["price_supported"] if core else item["supported"] for item in samples
+            ),
             "hotspot_window_shape_support_sessions": sum(item["shape_path"] != "none" for item in samples),
             "hotspot_window_failure_reasons": reasons,
             "hotspot_session_samples": samples,
@@ -136,7 +144,6 @@ def apply_discovery_visibility(results: Sequence[dict], names: Mapping,
         symbol = result["symbol"]
         theme = _map(themes.get(symbol))
         capacity = _map(capacities.get(symbol))
-        from stock_harness.board_hotspot_evaluation import canonical_board_name
         identity = str(theme.get("theme_id") or canonical_board_name(str(names.get(symbol, symbol))))
         reasons = list(result["disqualifiers"])
         if not theme.get("signal_eligible", True):

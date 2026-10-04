@@ -9,7 +9,7 @@ from stock_harness.sqlite_store import SQLiteMarketDataStore
 
 
 WEEKLY_RECOGNITION_SIGNAL = "weekly-board-recognition"
-BOARD_POOL_VERSION = "board-observation-pool-v3-leading-radar"
+BOARD_POOL_VERSION = "board-observation-pool-v4-unified-hotspots"
 
 
 def _build_board_pool_snapshot(
@@ -56,6 +56,8 @@ def _build_board_pool_snapshot(
             ))
     for score in hotspot_scores or []:
         if not bool(score.get("eligible")):
+            continue
+        if score.get("observation_only") and not score.get("radar_visible"):
             continue
         symbol = str(score["symbol"])
         value = candidate(symbol)
