@@ -9,6 +9,7 @@ export type StructuralScenarioTarget = {
   stressedRiskRewardRatio?: number
   evidenceItemIds: string[]
   requiresBreakOf?: string[]
+  zone?: { lower: number; upper: number }
 }
 
 export type StructuralTradeScenario = {
@@ -26,8 +27,17 @@ export type StructuralTradeScenario = {
   selectedTargetLabel?: string
   hasTradeSpace: boolean
   qualificationBlocked?: boolean
+  legacy: boolean
+  spaceStatus: 'unavailable' | 'insufficient' | 'qualified' | 'opportunity'
+  rewardDistance?: number
+  riskDistance?: number
   evidenceItemIds: string[]
   invalidationEvidenceItemIds: string[]
+}
+
+export function trendSpaceLabel(value: StructuralTradeScenario['spaceStatus']): string {
+  return { unavailable: '不可判定', insufficient: '空间不合格', qualified: '空间合格，观察',
+    opportunity: '满足交易机会的空间门槛' }[value]
 }
 
 export type RiskRewardGeometry = {
@@ -87,9 +97,13 @@ export function readPrimaryStructuralScenario(
   const actionablePrice = state === 'waiting-trigger'
     ? entryPrice
     : referencePrice ?? entryPrice
-  const targets = parsedTargets.filter(target => direction === 'long'
+  const targets = parsedTargets.slice(0, 1).filter(target => direction === 'long'
     ? target.price > actionablePrice
     : target.price < actionablePrice)
+  const legacy = item.payload.contract_version !== 'structural-trade-scenario-v5-nearest-raw-rr'
+  const assessment = item.payload.space_assessment as Record<string, unknown> | undefined
+  const assessmentCurrent = !legacy && assessment?.policy_version === 'trend-space-v1-raw-strict'
+  const status = assessmentCurrent && item.payload.qualification_blocked !== true ? assessment?.status : 'unavailable'
   return {
     id: item.item_id,
     direction,
@@ -102,10 +116,12 @@ export function readPrimaryStructuralScenario(
     invalidationPrice,
     riskPercent: numberValue(item.payload.risk_percent) ?? 0,
     targets,
-    selectedTargetLabel: stringValue(item.payload.selected_target_label),
-    hasTradeSpace: item.payload.has_trade_space === true && targets.some(
-      target => target.stressedRiskRewardRatio !== undefined,
-    ),
+    selectedTargetLabel: targets[0]?.label,
+    legacy,
+    spaceStatus: status === 'opportunity' || status === 'qualified' || status === 'insufficient' ? status : 'unavailable',
+    rewardDistance: numberValue(assessment?.reward_distance),
+    riskDistance: numberValue(assessment?.risk_distance),
+    hasTradeSpace: status === 'opportunity' && targets.length === 1,
     qualificationBlocked: item.payload.qualification_blocked === true,
     evidenceItemIds: stringArray(item.payload.evidence_item_ids),
     invalidationEvidenceItemIds: stringArray(item.payload.invalidation_evidence_item_ids),
@@ -211,9 +227,13 @@ function parseTarget(value: unknown): StructuralScenarioTarget[] {
   const label = stringValue(target.label)
   const price = numberValue(target.price)
   if (!label || price === undefined) return []
+  const zone = target.zone as Record<string, unknown> | undefined
+  const lower = numberValue(zone?.lower)
+  const upper = numberValue(zone?.upper)
   return [{
     label,
     price,
+    zone: lower !== undefined && upper !== undefined && lower <= upper ? { lower, upper } : undefined,
     basis: stringValue(target.basis) ?? 'structure',
     riskRewardRatio: numberValue(target.risk_reward_ratio),
     stressedRiskRewardRatio: numberValue(target.stressed_risk_reward_ratio),

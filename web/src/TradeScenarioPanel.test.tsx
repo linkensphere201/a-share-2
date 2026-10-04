@@ -38,7 +38,7 @@ describe('TradeScenarioPanel', () => {
     expect(onVisibleChange).toHaveBeenCalledWith(true)
   })
 
-  it('switches targets, visibility, and exact evidence highlights', () => {
+  it('shows one explicit target price, legacy warning, visibility and exact evidence highlights', () => {
     const onTargetChange = vi.fn()
     const onVisibleChange = vi.fn()
     const onHighlightItemChange = vi.fn()
@@ -50,13 +50,14 @@ describe('TradeScenarioPanel', () => {
       onHighlightItemChange={onHighlightItemChange}
     />)
 
-    fireEvent.click(screen.getByRole('button', { name: /T1/ }))
-    expect(onTargetChange).toHaveBeenCalledWith('T1')
-    expect(screen.getByRole('button', { name: /T1.*关键位.*盈亏比 1.80/ })).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: '成交密集区' }))
-    expect(onTargetChange).toHaveBeenLastCalledWith('T3')
-    expect(screen.queryByRole('button', { name: /T1.*关键位/ })).toBeNull()
-    expect(screen.getByRole('button', { name: /T3.*成交密集区.*盈亏比 5.40/ })).toBeTruthy()
+    expect(screen.getByText('采用目标价')).toBeTruthy()
+    expect(screen.getByText('2.00 倍')).toBeTruthy()
+    expect(screen.getByText('1.80 倍')).toBeTruthy()
+    expect(screen.getByText(/旧版分析，需重新测算/)).toBeTruthy()
+    expect(screen.getByText('不可判定')).toBeTruthy()
+    expect(screen.queryByText('14.00')).toBeNull()
+    expect(screen.queryByText('16.00')).toBeNull()
+    expect(onTargetChange).not.toHaveBeenCalled()
     expect(screen.getByText(/三角形/)).toBeTruthy()
     fireEvent.click(screen.getByRole('checkbox', { name: '显示趋势目标与盈亏比' }))
     expect(onVisibleChange).toHaveBeenCalledWith(false)
@@ -65,5 +66,20 @@ describe('TradeScenarioPanel', () => {
     expect(onHighlightItemChange).toHaveBeenCalledWith('pattern-1')
     fireEvent.pointerLeave(setup)
     expect(onHighlightItemChange).toHaveBeenLastCalledWith(undefined)
+  })
+
+  it.each(['qualified', 'opportunity', 'insufficient'] as const)('renders backend %s without local threshold logic', status => {
+    const current = structuredClone(run)
+    Object.assign(current.items[0].payload, {
+      contract_version: 'structural-trade-scenario-v5-nearest-raw-rr',
+      space_assessment: { policy_version: 'trend-space-v1-raw-strict', status,
+        reward_distance: 2, risk_distance: 1 },
+    })
+    render(<TradeScenarioPanel run={current} onHighlightItemChange={() => undefined}/>)
+    expect(screen.getByText({ qualified: '空间合格，观察', opportunity: '满足交易机会的空间门槛',
+      insufficient: '空间不合格' }[status])).toBeTruthy()
+    expect(screen.getByText('2.0000')).toBeTruthy()
+    expect(screen.getByText('1.0000')).toBeTruthy()
+    expect(screen.queryByText(/旧版分析/)).toBeNull()
   })
 })

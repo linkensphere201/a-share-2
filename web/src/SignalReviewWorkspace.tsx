@@ -974,6 +974,10 @@ function filterReasonLabel(value: string): string {
   return ({
     'invalid-long-price-ordering': '入场、止损与目标位顺序无效',
     'no-credible-target-at-3r': '没有达到 1:3 的可信目标位',
+    'nearest-target-raw-rr-not-above-2': '最近目标原始盈亏比未大于 2',
+    'legacy-analysis-recalculate': '旧版分析，需重新测算',
+    'price-basis-unverified': '复权依据不足，不可判定',
+    'missing-nearest-target': '缺少有效的最近目标',
     'scenario-no-entry': '当前结构尚无入场场景',
     'incomplete-current-date-data': '当日数据不完整',
     'insufficient-history': '历史长度不足',

@@ -30,8 +30,6 @@ def evaluate_trend_space(scenario: Mapping[str, object]) -> dict[str, object]:
     }
     if scenario.get("contract_version") != SCENARIO_VERSION:
         return {**result, "reason": "legacy-analysis-recalculate"}
-    if scenario.get("qualification_blocked"):
-        return {**result, "reason": "price-basis-unverified"}
     if scenario.get("state") in {"invalidated", "failed", "stale", "no-entry"}:
         return {**result, "reason": "inactive-or-missing-structure"}
     targets = scenario.get("targets")
@@ -52,6 +50,9 @@ def evaluate_trend_space(scenario: Mapping[str, object]) -> dict[str, object]:
     if risk <= 0 or reward <= 0:
         return {**result, "reason": "invalid-price-ordering"}
     ratio = float(reward / risk)
+    result.update(risk_reward_ratio=ratio, reward_distance=float(reward), risk_distance=float(risk))
+    if scenario.get("qualification_blocked"):
+        return {**result, "reason": "price-basis-unverified"}
     status = grade_ratio(ratio)
     return {**result, "status": status, "risk_reward_ratio": ratio,
             "reward_distance": float(reward), "risk_distance": float(risk),

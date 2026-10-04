@@ -60,3 +60,9 @@ def test_decimal_price_exactly_two_is_not_promoted_by_float_noise():
     result = evaluate_trend_space(value)
     assert result["risk_reward_ratio"] == 2
     assert result["status"] == "qualified"
+
+
+def test_unverified_prices_keep_reference_distances_but_never_qualify():
+    result = evaluate_trend_space(scenario(14, qualification_blocked=True))
+    assert result["reward_distance"] == 4 and result["risk_distance"] == 1
+    assert result["status"] == "unavailable" and not result["qualified"]

@@ -85,6 +85,7 @@ export type ScreenerCandidate = {
     scenario_item_id?: string | null
     first_risk_reward?: number | null
     major_risk_reward?: number | null
+    space_assessment?: { policy_version: string; status: 'unavailable' | 'insufficient' | 'qualified' | 'opportunity'; reason?: string | null }
     first_date?: string
     second_date?: string
     small_14?: { return_percent: number; recent_half_percent: number }

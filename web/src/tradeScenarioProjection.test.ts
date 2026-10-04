@@ -62,14 +62,15 @@ describe('structural trade scenario projection', () => {
 
     expect(scenario).toEqual(expect.objectContaining({
       id: 'scenario-1', direction: 'long', state: 'triggered',
-      entryPrice: 10, invalidationPrice: 9, selectedTargetLabel: 'T2',
+      entryPrice: 10, invalidationPrice: 9, selectedTargetLabel: 'T1',
+      legacy: true, hasTradeSpace: false, spaceStatus: 'unavailable',
     }))
-    expect(scenario?.targets).toHaveLength(3)
-    expect(scenario?.targets[1].evidenceItemIds).toEqual(['target-2'])
-    expect(targetBasisLabel(scenario!.targets[2].basis)).toBe('成交密集区')
+    expect(scenario?.targets).toHaveLength(1)
+    expect(scenario?.targets[0].evidenceItemIds).toEqual(['target-1'])
+    expect(targetBasisLabel('estimated-volume-at-price')).toBe('成交密集区')
     expect(targetBasisLabel('historical-range-high+key-level')).toBe('历史区间高点 + 关键位')
     expect(setupFamilyLabel('symmetrical-triangle')).toBe('对称三角形')
-    expect(isVolumeZoneTarget(scenario!.targets[2])).toBe(true)
+    expect(isVolumeZoneTarget(scenario!.targets[0])).toBe(false)
   })
 
   it('projects the selected target through live chart price coordinates', () => {
@@ -79,16 +80,10 @@ describe('structural trade scenario projection', () => {
       scenarioId: 'scenario-1', entryY: 100, invalidationY: 110,
       selectedTargetLabel: 'T1', state: 'triggered',
     }))
-    expect(geometry?.targets).toHaveLength(3)
+    expect(geometry?.targets).toHaveLength(1)
     expect(geometry?.targets[0]).toEqual(expect.objectContaining({
       targetY: 80, selected: true,
     }))
-    expect(geometry?.targets[1]).toEqual(expect.objectContaining({
-      targetY: 60, selected: false,
-    }))
-    expect(geometry!.targets[1].x).toBeGreaterThan(geometry!.targets[0].x)
-    expect(geometry!.targets[1].width).toBeLessThan(geometry!.targets[0].width)
-    expect(geometry!.targets[2]).toEqual(expect.objectContaining({ targetY: 40, selected: false }))
     expect(geometry?.width).toBeGreaterThanOrEqual(80)
   })
 
@@ -99,6 +94,7 @@ describe('structural trade scenario projection', () => {
 
     const scenario = readPrimaryStructuralScenario(staleTargets)
 
-    expect(scenario?.targets.map(target => target.label)).toEqual(['T2', 'T3'])
+    expect(scenario?.targets).toEqual([])
+    expect(scenario?.hasTradeSpace).toBe(false)
   })
 })

@@ -49,7 +49,7 @@ describe('TrendExplanationPanel', () => {
     render(<TrendExplanationPanel run={run} onHighlightItemChange={onHighlight} onClose={vi.fn()}/>)
     expect(screen.getByLabelText('盈亏比场景')).toBeTruthy()
     expect(screen.getByText('压力盈亏比')).toBeTruthy()
-    expect(screen.getByText('2.01')).toBeTruthy()
+    expect(screen.getByText('2.01 倍')).toBeTruthy()
     expect(screen.queryByText('收敛程度 75')).toBeNull()
     expect(screen.getByText(/正式 · 2026-08-21 · 日线/)).toBeTruthy()
     expect(screen.getByText('突破与破位')).toBeTruthy()

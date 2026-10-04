@@ -1,4 +1,5 @@
 import type { ScreenerCandidate } from './screenerClient'
+import { trendSpaceLabel } from './tradeScenarioProjection'
 import { candidateStageLabel, pullbackStates, signed, latestClose } from './screenerPresentation'
 import { accumulationStageLabel, accumulationPatternLabel, accumulationStyleLabel, firstPullbackVolumeLabel } from './trendExplanation'
 
@@ -129,8 +130,10 @@ export function ScreenerEvidence({ selected }: { selected?: ScreenerCandidate })
           <span><small>收盘</small>{latestClose(selected).toFixed(2)}</span>
           <span><small>距斜边</small>{signed(selected.evidence.distance_percent ?? 0)}%</span>
           <span><small>失效位</small>{selected.evidence.invalidation_price?.toFixed(2) ?? '—'}</span>
-          <span><small>目标位</small>{selected.evidence.first_target_price?.toFixed(2) ?? '—'}</span>
-          <span><small>盈亏比</small>{selected.evidence.first_risk_reward?.toFixed(2) ?? '—'}</span>
+          <span><small>最近目标价</small>{selected.evidence.first_target_price?.toFixed(2) ?? '—'}</span>
+          <span><small>原始盈亏比</small>{selected.evidence.first_risk_reward == null ? '—' : `${selected.evidence.first_risk_reward.toFixed(2)} 倍`}</span>
+          <span><small>空间判定</small>{selected.evidence.space_assessment?.policy_version === 'trend-space-v1-raw-strict'
+            ? trendSpaceLabel(selected.evidence.space_assessment.status) : '需重新测算'}</span>
           <span><small>小周期 14</small>{signed(selected.evidence.small_14?.return_percent ?? 0)}%</span>
           <span><small>中周期 28</small>{signed(selected.evidence.medium_28?.return_percent ?? 0)}%</span>
         </footer>}
