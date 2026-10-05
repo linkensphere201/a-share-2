@@ -11,8 +11,9 @@ from stock_harness.observation_systems.contracts import (
 from stock_harness.board_hotspot_evaluation import canonical_board_name
 from stock_harness.board_hotspot_window import analyze_hotspot_window
 from stock_harness.board_hotspot_unified import (
-    VERSION, UnifiedHotspotScorer, apply_discovery_visibility,
+    apply_discovery_visibility,
 )
+from stock_harness.hotspot_session_engine import VERSION, SessionHotspotScorer
 from stock_harness.board_capacity import market_capacity_fit
 from stock_harness.market_liquidity import stabilize_seat_budget
 from stock_harness.review_scoring import (
@@ -136,7 +137,7 @@ class BoardHotspotSystem(LegacyBoardHotspotSystem):
                      "session_features": _mapping(features.get(str(o["symbol"]))).get("session_features", [])}
                     for o in context.observations]
         results = score_entities(
-            UnifiedHotspotScorer(), entities,
+            SessionHotspotScorer(), entities,
             prior_by_symbol=context.prior_scores.get(self.system_id),
             recent_by_symbol=context.recent_scores.get(self.system_id),
         )

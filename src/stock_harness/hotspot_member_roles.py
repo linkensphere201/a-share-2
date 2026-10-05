@@ -111,19 +111,20 @@ def rank_hotspot_members(board_bars: Sequence[StoredDailyBar], members: Sequence
 
 
 def attach_hotspot_member_roles(store: SQLiteMarketDataStore, scores: Sequence[dict], board_series: Mapping,
-                                cutoff: date, check_stopping: Callable[[], None]) -> None:
+                                cutoff: date, check_stopping: Callable[[], None], *, prepared=None) -> None:
     visible = [s for s in scores if s.get("radar_visible")]
     if not visible:
         return
     memberships = {}
     for score in visible:
         check_stopping()
-        memberships[score["symbol"]] = [m for m in store.list_board_members(score["symbol"], 5000)
+        members = prepared.memberships.get(score["symbol"], []) if prepared else store.list_board_members(score["symbol"], 5000)
+        memberships[score["symbol"]] = [m for m in members
             if m.get("available") and m.get("kind") == "stock" and not is_risk_name(m["name"])
             and not str(m["symbol"]).startswith(("200", "900"))]
     symbols = sorted({m["symbol"] for members in memberships.values() for m in members})
-    series, raw, bases = {}, {}, {}
-    for start in range(0, len(symbols), 200):
+    series, raw, bases = (prepared.series, prepared.raw, prepared.bases) if prepared else ({}, {}, {})
+    for start in range(0, 0 if prepared else len(symbols), 200):
         check_stopping()
         batch = symbols[start:start + 200]
         bars, basis = store.get_recent_causally_adjusted_stock_bars_many(batch, cutoff, 21)

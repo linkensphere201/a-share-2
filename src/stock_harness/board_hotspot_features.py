@@ -72,6 +72,30 @@ def extract_hotspot_session_window(bars, benchmark_bars, dates, member_snapshots
     return result
 
 
+def extract_tracking_sessions(bars, benchmark_bars, dates, member_snapshots):
+    """Compact session facts; shape analysis is not repeated for each replay day."""
+    board = {b.trade_date: b for b in bars}
+    reference = {b.trade_date: b for b in benchmark_bars}
+    reference_dates = sorted(set(reference) | set(dates))
+    result = []
+    for day in dates:
+        expected = [d for d in reference_dates if d <= day][-21:]
+        complete = len(expected) == 21 and all(d in board and d in reference for d in expected)
+        sample = {"effective_date": day.isoformat(), "coverage_state": "complete" if complete else "missing-session",
+                  "member_snapshot": member_snapshots.get(day, {}), "metrics": {}}
+        if complete:
+            b, r = [board[d] for d in expected], [reference[d] for d in expected]
+            if any(x.close <= 0 for x in b + r):
+                sample["coverage_state"] = "invalid-price"
+            else:
+                returns = {str(n): _return(b, n) for n in [1, 5, 20]}
+                sample["metrics"] = {"returns": returns,
+                    "relative_strength": {str(n): returns[str(n)] - _return(r, n) for n in [1, 5, 20]},
+                    "volume_ratio20": _last_volume_ratio(b, 20)}
+        result.append(sample)
+    return result
+
+
 def _return(bars: Sequence[StoredDailyBar], period: int) -> float | None:
     if len(bars) <= period or bars[-period - 1].close <= 0:
         return None

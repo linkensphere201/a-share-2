@@ -24,7 +24,9 @@ from stock_harness.board_leader_scan import (
     is_risk_name,
     rank_board_leaders,
 )
-from stock_harness.board_hotspot_features import extract_board_hotspot_features, extract_hotspot_session_window
+from stock_harness.board_hotspot_features import extract_board_hotspot_features, extract_tracking_sessions
+from stock_harness.hotspot_member_history import load_hotspot_member_history, REPLAY_SESSIONS
+from stock_harness.board_hotspot_unified import collapse_overlapping_hotspots
 from stock_harness.board_capacity import classify_board_capacities
 from stock_harness.board_hotspot_replay import BoardAggregatePool
 from stock_harness.board_observation_pool import (
@@ -91,7 +93,7 @@ WEEKLY_RECOGNITION_SIGNAL = "weekly-board-recognition"
 DEFINITION_VERSION = "weekly-board-recognition-v1"
 DAILY_MARKET_BOARD_SIGNAL = "daily-market-board-review"
 DAILY_DEFINITION_VERSION = "daily-market-board-review-v1"
-DAILY_REVIEW_ALGORITHM_VERSION = "daily-market-board-review-v12-hotspot-members"
+DAILY_REVIEW_ALGORITHM_VERSION = "daily-market-board-review-v13-session-hotspots"
 STOCK_OBSERVATION_SIGNAL = "stock-observation-pool"
 HISTORICAL_LIMIT = 5
 
@@ -281,13 +283,12 @@ class SignalReviewService:
         benchmark = self._reader.get().get_recent_daily_bars(
             "000001.SH", cutoff, DAILY_LOOKBACK_BARS,
         )
-        calendar = self._reader.get().list_trading_dates("tushare", cutoff - timedelta(days=45), cutoff)
-        hotspot_dates = sorted(set(calendar or [bar.trade_date for bar in benchmark]) | {cutoff})[-5:]
-        member_history = {cutoff: hotspot_snapshots}
-        for day in hotspot_dates:
-            if day != cutoff:
-                self._check_stopping()
-                member_history[day] = self._reader.get().calculate_board_hotspot_snapshots(day)
+        calendar = self._reader.get().list_trading_dates("tushare", cutoff - timedelta(days=150), cutoff)
+        hotspot_dates = sorted(set(calendar or [bar.trade_date for bar in benchmark]) | {cutoff})[-REPLAY_SESSIONS:]
+        self._progress(run_id, "hotspot-member-history", len(boards), 0)
+        member_inputs = load_hotspot_member_history(self._reader.get(),
+            [str(b["symbol"]) for b in boards], hotspot_dates, benchmark, self._check_stopping)
+        member_history = member_inputs.history
         run = self._store.get_signal_review_run(run_id)
         context_runs = self._store.list_compatible_prior_signal_review_runs(run_id, 7)
         correction_run = next(
@@ -311,6 +312,7 @@ class SignalReviewService:
         }
         observations: list[dict[str, object]] = []
         hotspot_features: dict[str, dict[str, object]] = {}
+        all_board_series = {}
         self._progress(run_id, "board-observations", len(boards), 0)
         for offset in range(0, len(boards), 100):
             self._check_stopping()
@@ -318,6 +320,7 @@ class SignalReviewService:
             series = self._reader.get().get_recent_daily_bars_many(
                 [str(board["symbol"]) for board in page], cutoff, DAILY_LOOKBACK_BARS,
             )
+            all_board_series.update(series)
             batch = [
                 analyze_daily_series(
                     str(board["symbol"]), series.get(str(board["symbol"]), []), cutoff,
@@ -332,7 +335,7 @@ class SignalReviewService:
                     breadth_snapshot=board_breadth.get(symbol),
                     member_snapshot=hotspot_snapshots.get(symbol),
                 )
-                hotspot_features[symbol]["session_features"] = extract_hotspot_session_window(
+                hotspot_features[symbol]["session_features"] = extract_tracking_sessions(
                     series.get(symbol, []), benchmark, hotspot_dates,
                     {day: member_history[day].get(symbol, {}) for day in hotspot_dates},
                 )
@@ -470,15 +473,11 @@ class SignalReviewService:
         hotspot_execution = system_execution_by_id[BOARD_HOTSPOT_SYSTEM]
         trend_scores = list(trend_execution.results)
         hotspot_scores = hotspot_execution.results
-        attach_hotspot_member_roles(self._reader.get(), hotspot_scores, series, cutoff, self._check_stopping)
+        collapse_overlapping_hotspots(hotspot_scores, member_inputs.memberships)
+        attach_hotspot_member_roles(self._reader.get(), hotspot_scores, all_board_series, cutoff,
+                                   self._check_stopping, prepared=member_inputs)
         leading_scores = []  # Historical leading results remain readable, not recomputed.
-        prior_wave_snapshots = self._store.list_hotspot_wave_snapshots(
-            str(session_runs[0]["run_id"]), status="active",
-        ) if session_runs else []
-        hotspot_wave_snapshots = project_hotspot_waves(
-            hotspot_scores, prior_wave_snapshots, cutoff,
-            self._store.hotspot_wave_sequences_before(cutoff),
-        )
+        hotspot_wave_snapshots = []  # V9 lifecycle is replayed from sessions, never review runs.
         trend_score_by_symbol = {
             str(value["symbol"]): value for value in trend_scores
         }

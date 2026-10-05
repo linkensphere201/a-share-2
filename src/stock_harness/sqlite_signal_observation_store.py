@@ -12,6 +12,29 @@ from stock_harness.sqlite_runtime import read_snapshot
 
 
 class SQLiteSignalObservationStoreMixin:
+    def list_hotspot_memberships(self, board_symbols: Sequence[str]) -> dict[str, list[dict]]:
+        """One complete membership page, without per-stock top-board truncation."""
+        symbols = sorted(set(board_symbols))
+        if len(symbols) > 200:
+            raise ValueError("hotspot membership page exceeds 200 boards")
+        result = {symbol: [] for symbol in symbols}
+        if not symbols:
+            return result
+        placeholders = ",".join("?" for _ in symbols)
+        with self._lock:
+            rows = self._connection.execute(f"""
+                SELECT DISTINCT board.symbol, stock.symbol, stock.name
+                FROM board_memberships AS membership
+                JOIN instruments AS board ON board.instrument_id = membership.board_instrument_id
+                JOIN instruments AS stock ON stock.symbol = membership.member_symbol
+                WHERE membership.active = 1 AND board.active = 1 AND stock.active = 1
+                  AND stock.kind = 'stock' AND board.symbol IN ({placeholders})
+                ORDER BY board.symbol, stock.symbol
+            """, symbols).fetchall()
+        for board, symbol, name in rows:
+            result[board].append(dict(symbol=symbol, name=name, kind="stock", available=True))
+        return result
+
     def list_all_stock_board_memberships(
         self, board_limit: int = 3,
     ) -> dict[str, list[dict[str, object]]]:

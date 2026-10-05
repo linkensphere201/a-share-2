@@ -160,7 +160,8 @@ def apply_discovery_visibility(results: Sequence[dict], names: Mapping,
         })
         if _number(capacity.get("turnover_concentration_hhi")) >= .45:
             result["risk_summary"] = "; ".join(filter(None, [result["risk_summary"], "concentrated-participation"]))
-        if reasons:
+        if reasons and not (result.get("session_tracking") and result.get("risk_visible")
+                            and theme.get("signal_eligible", True)):
             continue
         previous = representatives.get(identity)
         if previous is None or (-result["total_score"], symbol) < (-previous["total_score"], previous["symbol"]):
@@ -170,3 +171,29 @@ def apply_discovery_visibility(results: Sequence[dict], names: Mapping,
     for result in results:
         if not result["visibility_reasons"] and not result["radar_visible"]:
             result["visibility_reasons"] = ["same-theme-representative"]
+
+
+def collapse_overlapping_hotspots(results, memberships):
+    """Conservative presentation grouping; never count one core as many themes."""
+    representatives = []
+    for row in sorted((r for r in results if r.get("radar_visible")),
+                      key=lambda r: (-r["total_score"], r["symbol"])):
+        members = {m["symbol"] for m in memberships.get(row["symbol"], [])}
+        cores = set(row.get("leader_symbols") or [])
+        match = None
+        for prior, prior_members, prior_cores in representatives:
+            union = members | prior_members
+            if (union and len(members & prior_members) / len(union) >= .8
+                    and cores and prior_cores and cores == prior_cores
+                    and row.get("change_bucket") == prior.get("change_bucket")):
+                match = prior
+                break
+        if match is None:
+            representatives.append((row, members, cores))
+        else:
+            row.update(radar_visible=False, radar_rank=None,
+                       related_representative=match["symbol"],
+                       visibility_reasons=["overlapping-theme-representative"])
+            match.setdefault("related_themes", []).append({"symbol": row["symbol"], "name": row.get("theme_name")})
+    for rank, (row, _, _) in enumerate(representatives, 1):
+        row["radar_rank"] = rank
