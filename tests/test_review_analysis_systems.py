@@ -12,6 +12,7 @@ from stock_harness.review_systems import (
     analyze_mean_reversion_entity,
 )
 from stock_harness.review_scoring import TREND_BREAKOUT_SCORER, default_scorer_registry
+from stock_harness.mean_reversion_policy import MeanReversionPolicyConfig
 
 
 def test_registry_validates_definitions_dependencies_and_duplicate_ids() -> None:
@@ -87,7 +88,7 @@ def test_mean_reversion_result_has_complete_contract_and_independent_scope_rank(
     assert "mr:board-context" in evidence_ids
 
 
-def test_stock_oversold_falling_knife_is_disabled_in_v1() -> None:
+def test_stock_oversold_remains_disabled_in_production_policy() -> None:
     entity = _entity("STOCK", "stock", score_target=5)
     entity["mean_reversion"]["setup_family"] = "oversold-exhaustion"
 
@@ -98,6 +99,72 @@ def test_stock_oversold_falling_knife_is_disabled_in_v1() -> None:
 
     assert result["eligible"] is False
     assert "stock-falling-knife-disabled-v1" in result["disqualifiers"]
+
+
+def test_stock_oversold_is_admitted_after_strict_retest_confirmation() -> None:
+    entity = _entity("STOCK", "stock", score_target=2)
+    entity["mean_reversion"]["setup_family"] = "oversold-exhaustion"
+    entity["mean_reversion"]["exhaustion"].update({
+        "signal_count": 4, "close_location": .65,
+    })
+    entity["mean_reversion"]["confirmation"].update({
+        "contracted_retest": True, "retest_volume_ratio": .82,
+    })
+
+    result = analyze_mean_reversion_entity(
+        "stock", entity,
+        decision_context={
+            "market_permission": {"status": "allowed"},
+            "relative_strength": {"available": True, "passed": True},
+        },
+        policy_config=MeanReversionPolicyConfig(
+            enable_stock_oversold_retest=True,
+        ),
+    )
+
+    assert result["eligibility"]["eligible"] is True
+    assert result["system_version"] == "mean-reversion-daily-v5"
+
+
+def test_stock_oversold_flow_variant_requires_visible_exhaustion_evidence() -> None:
+    entity = _entity("STOCK", "stock", score_target=2)
+    entity["mean_reversion"]["setup_family"] = "oversold-exhaustion"
+    entity["mean_reversion"]["exhaustion"].update({
+        "signal_count": 4,
+        "close_location": .65,
+        "signals": {
+            "negative_momentum_decelerating": False,
+            "selling_volume_contracting": False,
+            "capitulation_absorbed": False,
+        },
+    })
+    entity["mean_reversion"]["confirmation"].update({
+        "contracted_retest": True, "retest_volume_ratio": .82,
+    })
+    context = {
+        "market_permission": {"status": "allowed"},
+        "relative_strength": {"available": True, "passed": True},
+    }
+    config = MeanReversionPolicyConfig(
+        enable_stock_oversold_retest=True,
+        require_stock_oversold_flow_exhaustion=True,
+    )
+
+    rejected = analyze_mean_reversion_entity(
+        "stock", entity, decision_context=context, policy_config=config,
+    )
+    entity["mean_reversion"]["exhaustion"]["signals"][
+        "selling_volume_contracting"
+    ] = True
+    admitted = analyze_mean_reversion_entity(
+        "stock", entity, decision_context=context, policy_config=config,
+    )
+
+    assert (
+        "stock-oversold-flow-exhaustion-required"
+        in rejected["eligibility"]["rejection_reasons"]
+    )
+    assert admitted["eligibility"]["eligible"] is True
 
 
 def test_mean_reversion_without_setup_has_zero_opportunity_score() -> None:

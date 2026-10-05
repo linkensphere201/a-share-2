@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 
-POLICY_VERSION = "mean-reversion-policy-v1"
+POLICY_VERSION = "mean-reversion-policy-v2"
 MINIMUM_CONFIRMATION_QUALITY = 55.0
 MINIMUM_TRADEABLE_STRESSED_RR = 1.0
 STRESSED_ASYMMETRY_THRESHOLD = 3.0
@@ -17,6 +17,8 @@ class MeanReversionPolicyConfig:
     enforce_market_permission: bool = True
     enforce_relative_strength: bool = True
     enforce_board_context: bool = True
+    enable_stock_oversold_retest: bool = False
+    require_stock_oversold_flow_exhaustion: bool = False
 
 
 def build_mean_reversion_decision(
@@ -43,7 +45,15 @@ def build_mean_reversion_decision(
     if family == "none":
         validity_reasons.append("no-mean-reversion-setup")
     if scope == "stock" and family == "oversold-exhaustion":
-        validity_reasons.append("stock-falling-knife-disabled-v1")
+        if config.enable_stock_oversold_retest:
+            validity_reasons.extend(_stock_oversold_retest_reasons(
+                facts, market_permission,
+                require_flow_exhaustion=(
+                    config.require_stock_oversold_flow_exhaustion
+                ),
+            ))
+        else:
+            validity_reasons.append("stock-falling-knife-disabled-v1")
     if family == "directional-pullback" and facts.get("parent_trend") != "up":
         validity_reasons.append("parent-uptrend-not-qualified")
     if bool(_mapping(facts.get("regime")).get("persistent_one_way_decline")):
@@ -112,6 +122,10 @@ def build_mean_reversion_decision(
             "enforce_market_permission": config.enforce_market_permission,
             "enforce_relative_strength": config.enforce_relative_strength,
             "enforce_board_context": config.enforce_board_context,
+            "enable_stock_oversold_retest": config.enable_stock_oversold_retest,
+            "require_stock_oversold_flow_exhaustion": (
+                config.require_stock_oversold_flow_exhaustion
+            ),
         },
         "context": dict(context),
         "eligible": eligible,
@@ -148,6 +162,35 @@ def _confirmation_quality(confirmation: Mapping[str, object]) -> float:
     if explicit is not None:
         return max(0.0, min(100.0, explicit))
     return 100.0 if bool(confirmation.get("confirmed")) else 0.0
+
+
+def _stock_oversold_retest_reasons(
+    facts: Mapping[str, object], market_permission: Mapping[str, object],
+    *, require_flow_exhaustion: bool,
+) -> list[str]:
+    """Admit stock counter-trend setups only after a visible low-volume retest."""
+    confirmation = _mapping(facts.get("confirmation"))
+    exhaustion = _mapping(facts.get("exhaustion"))
+    exhaustion_signals = _mapping(exhaustion.get("signals"))
+    reasons = []
+    if market_permission.get("status") != "allowed":
+        reasons.append("stock-oversold-market-not-allowed")
+    if int(_number(exhaustion.get("signal_count"))) < 3:
+        reasons.append("stock-oversold-exhaustion-insufficient")
+    if not bool(confirmation.get("contracted_retest")):
+        reasons.append("stock-oversold-contracted-retest-required")
+    retest_volume = _optional_number(confirmation.get("retest_volume_ratio"))
+    if retest_volume is None or retest_volume > .9:
+        reasons.append("stock-oversold-retest-volume-not-contracted")
+    if _number(exhaustion.get("close_location")) < .5:
+        reasons.append("stock-oversold-close-not-reclaimed")
+    if require_flow_exhaustion and not any(bool(exhaustion_signals.get(key)) for key in (
+        "negative_momentum_decelerating",
+        "selling_volume_contracting",
+        "capitulation_absorbed",
+    )):
+        reasons.append("stock-oversold-flow-exhaustion-required")
+    return reasons
 
 
 def _mapping(value: object) -> Mapping[str, object]:

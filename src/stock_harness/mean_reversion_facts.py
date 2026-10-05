@@ -132,8 +132,21 @@ def build_mean_reversion_facts(
         "capitulation_absorbed": capitulation_absorbed,
     }
     exhaustion_count = sum(exhaustion_signals.values())
+    directional_candidate = bool(
+        parent_uptrend and center_stable
+        and recent_low_deviation is not None and recent_low_deviation <= -.65
+    )
+    oversold_candidate = bool(
+        center_stable and recent_low_deviation is not None
+        and recent_low_deviation <= -1.5 and exhaustion_count >= 3
+    )
+    preliminary_setup_family = (
+        "directional-pullback" if directional_candidate
+        else "oversold-exhaustion" if oversold_candidate else "none"
+    )
     confirmation = _multi_stage_confirmation(
         ordered, atr, volumes, median_volume20,
+        allow_late_retest=preliminary_setup_family == "oversold-exhaustion",
     )
     confirmation_boundary = float(confirmation["boundary_price"])
     confirmed = bool(confirmation["confirmed"])
@@ -168,18 +181,7 @@ def build_mean_reversion_facts(
         current < ema120[-1] * .98 and ema20_slope_atr < -1.8
         and ema60_slope_atr < -1.2
     ) or volume_path == "volume-backed-structural-break"
-    directional_candidate = bool(
-        parent_uptrend and center_stable
-        and recent_low_deviation is not None and recent_low_deviation <= -.65
-    )
-    oversold_candidate = bool(
-        center_stable and recent_low_deviation is not None
-        and recent_low_deviation <= -1.5 and exhaustion_count >= 3
-    )
-    setup_family = (
-        "directional-pullback" if directional_candidate
-        else "oversold-exhaustion" if oversold_candidate else "none"
-    )
+    setup_family = preliminary_setup_family
     if structural_break:
         state = "structural-break"
     elif setup_family == "none":
@@ -421,7 +423,7 @@ def _confirmation_quality(
 
 def _multi_stage_confirmation(
     bars: Sequence[StoredDailyBar], atrs: Sequence[float], volumes: Sequence[float],
-    median_volume20: float,
+    median_volume20: float, *, allow_late_retest: bool = False,
 ) -> dict[str, object]:
     last = len(bars) - 1
     current_atr = max(atrs[-1], 1e-9)
@@ -439,7 +441,7 @@ def _multi_stage_confirmation(
 
     current_reclaim, current_boundary, _ = reclaim(last)
     selected: tuple[int, float] | None = None
-    for index in range(max(5, last - 3), last):
+    for index in range(max(5, last - 5), last):
         passed, boundary, _ = reclaim(index)
         if passed:
             selected = (index, boundary)
@@ -471,13 +473,18 @@ def _multi_stage_confirmation(
         if retest_volumes and median_volume20 > 0 else None
     )
     first_hold_index = reclaim_index + 1
-    first_hold_retest = bool(
-        hold_sessions >= 1
-        and float(bars[first_hold_index].close) < float(bars[reclaim_index].close)
-        and float(bars[first_hold_index].low) <= boundary + current_atr * .35
-        and median_volume20 > 0
-        and volumes[first_hold_index] / median_volume20 <= .9
-    )
+    def contracted_retest(index: int) -> bool:
+        return bool(
+            index > reclaim_index
+            and float(bars[index].close) < float(bars[reclaim_index].close)
+            and float(bars[index].close) >= boundary * 1.002
+            and float(bars[index].low) <= boundary + current_atr * .35
+            and median_volume20 > 0
+            and volumes[index] / median_volume20 <= .9
+        )
+
+    first_hold_retest = contracted_retest(first_hold_index)
+    current_contracted_retest = contracted_retest(last)
     first_hold_breakout_atr = (
         (float(bars[first_hold_index].close) - boundary) / current_atr
         if hold_sessions >= 1 else 0.0
@@ -492,14 +499,27 @@ def _multi_stage_confirmation(
         )
     )
     prior_reconfirmed = bool(
-        hold_sessions > 1 and (first_hold_retest or first_hold_stand)
+        any(contracted_retest(index) for index in range(
+            reclaim_index + 1, last,
+        ))
+        or (
+            hold_sessions > 2
+            and float(bars[reclaim_index + 2].close) >= boundary * 1.002
+        )
     )
     reconfirmed = bool(
-        held and not prior_reconfirmed
+        held
         and float(bars[-1].close) >= boundary * 1.002
         and (
-            (hold_sessions == 1 and (first_hold_retest or first_hold_stand))
-            or hold_sessions == 2
+            (allow_late_retest and current_contracted_retest)
+            or (
+                not prior_reconfirmed
+                and (
+                    current_contracted_retest
+                    or (hold_sessions == 1 and first_hold_stand)
+                    or hold_sessions == 2
+                )
+            )
         )
         and (retest_ratio is None or retest_ratio <= 1.05)
     )
@@ -515,6 +535,7 @@ def _multi_stage_confirmation(
         "structural_low": _round(structural_low),
         "retest_volume_ratio": _round(retest_ratio),
         "first_hold_retest": first_hold_retest,
+        "contracted_retest": current_contracted_retest,
         "first_hold_stand": first_hold_stand,
         "prior_reconfirmed": prior_reconfirmed,
         "breakout_atr": _round((float(bars[-1].close) - boundary) / current_atr),

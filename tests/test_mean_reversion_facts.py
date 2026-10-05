@@ -4,6 +4,7 @@ from dataclasses import replace
 from datetime import date, timedelta
 
 from stock_harness.mean_reversion_facts import (
+    _multi_stage_confirmation,
     _atr_series,
     _ema_series,
     build_mean_reversion_facts,
@@ -56,6 +57,26 @@ def test_consecutive_momentum_day_does_not_count_as_one_day_retest() -> None:
     assert facts["confirmation"]["first_hold_stand"] is False
     assert facts["confirmation"]["confirmed"] is False
     assert facts["state"] == "confirmation-hold"
+
+
+def test_later_contracted_retest_can_confirm_once_within_observation_window() -> None:
+    closes = [100 + index * .35 for index in range(125)]
+    closes.extend([144 - index * .55 for index in range(14)])
+    closes.extend([136.6, 136.8, 137.0, 138.5, 140.0, 139.0, 138.4])
+    bars = _bars(closes, final_volume=800)
+    bars[-4] = replace(bars[-4], high=closes[-4] + .3)
+
+    confirmation = _multi_stage_confirmation(
+        bars,
+        _atr_series(bars, 14),
+        [float(bar.volume) for bar in bars],
+        1_000,
+        allow_late_retest=True,
+    )
+
+    assert confirmation["hold_sessions"] == 3
+    assert confirmation["contracted_retest"] is True
+    assert confirmation["confirmed"] is True
 
 
 def test_expanding_structural_decline_is_never_treated_as_reversion() -> None:

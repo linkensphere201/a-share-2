@@ -32,6 +32,10 @@ REPLAY_VARIANTS = {
     "market": MeanReversionPolicyConfig(True, False, False),
     "relative": MeanReversionPolicyConfig(True, True, False),
     "full": MeanReversionPolicyConfig(True, True, True),
+    "oversold-retest": MeanReversionPolicyConfig(True, True, True, True),
+    "oversold-flow-retest": MeanReversionPolicyConfig(
+        True, True, True, True, True,
+    ),
 }
 
 
