@@ -23,13 +23,16 @@ class HotspotMemberInputs:
 
 
 def member_session_facts(bars: Sequence[StoredDailyBar], calendar: Sequence[date],
-                         benchmark: dict[date, float]) -> dict[date, dict]:
+                         benchmark: dict[date, float], raw_bars: Sequence[StoredDailyBar] | None = None) -> dict[date, dict]:
     by_date = {bar.trade_date: bar for bar in bars}
+    raw = {bar.trade_date: bar for bar in (raw_bars if raw_bars is not None else bars)}
     facts = {}
     for index in range(10, len(calendar)):
         day = calendar[index]
         dates = calendar[index-10:index+1]
-        if any(d not in by_date for d in dates):
+        if any(d not in by_date for d in dates) or any(d not in raw for d in dates[-5:]):
+            continue
+        if any(raw[d].close <= 0 or raw[d].volume <= 0 for d in dates[-5:]):
             continue
         values = [by_date[d] for d in dates]
         if any(b.close <= 0 or b.volume <= 0 for b in values):
@@ -48,6 +51,7 @@ def member_session_facts(bars: Sequence[StoredDailyBar], calendar: Sequence[date
         impulse = (ret1 >= .025 and rs1 >= .02 and activity >= 1.2) or (
             ret5 >= .07 and rs5 >= .04 and up_days >= 2 and activity >= 1.05)
         facts[day] = dict(return_1=ret1, return_5=ret5, strong=strong, impulse=impulse,
+                          amount_proxy=fmean(raw[d].close * raw[d].volume for d in dates[-5:]),
                           healthy=closes[-1] / max(closes) >= .9 and closes[-1] >= fmean(closes))
     return facts
 
@@ -77,19 +81,20 @@ def load_hotspot_member_history(store, board_symbols: Sequence[str], dates: Sequ
         bases.update(basis)
         raw.update(store.get_recent_daily_bars_many(page, cutoff, len(calendar)))
         for symbol in page:
-            facts[symbol] = member_session_facts(adjusted.get(symbol, []), calendar, benchmark)
+            facts[symbol] = member_session_facts(adjusted.get(symbol, []), calendar, benchmark, raw.get(symbol, []))
     history = {day: {} for day in dates}
     for board, members in memberships.items():
         check_stopping()
         for day in dates:
             rows = [(m["symbol"], facts[m["symbol"]][day]) for m in members if day in facts[m["symbol"]]]
             n = len(rows)
+            liquid = {s for s, _ in sorted(rows, key=lambda r: (-r[1]["amount_proxy"], r[0]))[:max(1, min(10, (n+4)//5))]}
             history[day][board] = dict(member_count=len(members), covered_member_count=n,
                 return_5_covered_count=n, coverage_ratio=n / len(members) if members else 0,
                 positive_return_1_ratio=sum(r["return_1"] > 0 for _, r in rows) / n if n else 0,
                 positive_return_5_ratio=sum(r["return_5"] > 0 for _, r in rows) / n if n else 0,
                 strong_member_symbols=[s for s, r in rows if r["strong"]],
-                impulse_leader_symbols=[s for s, r in rows if r["impulse"]],
+                impulse_leader_symbols=[s for s, r in rows if r["impulse"] and s in liquid],
                 healthy_member_symbols=[s for s, r in rows if r["healthy"]],
                 covered_member_symbols=[s for s, _ in rows],
                 membership_semantics="current-active-membership")

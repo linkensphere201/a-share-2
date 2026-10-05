@@ -41,13 +41,16 @@ def evaluate_fixture(path: Path) -> dict:
             for i, day in enumerate(dates):
                 old = UnifiedHotspotScorer().score({"symbol": board, "session_features": old_features[max(0,i-4):i+1]})
                 m = features[i]["metrics"]
-                rows.append(dict(date=day.isoformat(), v8=old["eligible"], v9=replay[i]["active"],
+                rows.append(dict(date=day.isoformat(), v8=old["eligible"], v9=replay[i]["active"] and replay[i]["stage"] != "data-interrupted",
                     v9_stage=replay[i]["stage"], v9_expansion=replay[i].get("expansion", False),
+                    core_symbols=replay[i]["leader_symbols"],
                     momentum=features[i]["coverage_state"] == "complete" and float((m.get("returns") or {}).get("5") or 0) >= .02,
                     relative=features[i]["coverage_state"] == "complete" and float((m.get("relative_strength") or {}).get("5") or 0) >= .02))
             first = {key: next((r["date"] for r in rows if r[key]), None) for key in ["v8", "v9", "momentum", "relative"]}
-            delays = {k: sum(anchor < d <= date.fromisoformat(v) for d in dates) if v else None for k,v in first.items()}
+            delays = {k: (sum(anchor < d <= date.fromisoformat(v) for d in dates) if v >= anchor.isoformat()
+                           else -sum(date.fromisoformat(v) < d <= anchor for d in dates)) if v else None for k,v in first.items()}
             output[board] = dict(first_detected=first, sessions_after_research_anchor=delays,
+                first_jac_core=next((r["date"] for r in rows if r["v9"] and "600418.SH" in r["core_symbols"]), None),
                 active_sessions={k: sum(r[k] for r in rows) for k in first},
                 entry_transitions={k: sum(r[k] and (i == 0 or not rows[i-1][k]) for i,r in enumerate(rows)) for k in first},
                 timeline=rows)

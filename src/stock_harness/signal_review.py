@@ -766,6 +766,9 @@ class SignalReviewService:
             score = mean_score_by_symbol.get(("stock", str(item["symbol"])))
             if score is not None:
                 item["payload"]["mean_reversion_score"] = score
+        summary["hotspot_tracked_theme_count"] = sum(bool(s.get("radar_visible")) for s in hotspot_scores)
+        summary["hotspot_change_counts"] = {bucket: sum(bool(s.get("radar_visible")) and s.get("change_bucket") == bucket
+            for s in hotspot_scores) for bucket in ["new", "strengthening", "maintaining", "risk"]}
         summary["analysis_systems"] = analysis_systems.definitions()
         summary["mean_reversion_counts"] = {
             scope: {

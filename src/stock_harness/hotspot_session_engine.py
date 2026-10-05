@@ -21,6 +21,7 @@ def replay_hotspot_sessions(features: Sequence[Mapping]) -> list[dict]:
     active, weak, age, episode = False, 0, 0, 0
     started = None
     cores: dict[str, int] = {}
+    core_first: dict[str, str] = {}
     expansion_days: list[bool] = []
     ever_expanded = False
     for feature, day in zip(features, dates):
@@ -33,6 +34,7 @@ def replay_hotspot_sessions(features: Sequence[Mapping]) -> list[dict]:
             timeline.append(dict(effective_date=day, stage="data-interrupted", active=active,
                                  first_detected=started, episode=episode, observed_sessions=age,
                                  leader_symbols=sorted(cores), new_strong=[], lost_strong=[],
+                                 core_first_observed={s: core_first[s] for s in cores},
                                  expansion=False, reason="coverage-interrupted", score=0))
             # Do not call recovered observations a one-session change.
             previous_strong = None
@@ -66,7 +68,10 @@ def replay_hotspot_sessions(features: Sequence[Mapping]) -> list[dict]:
             started = day
             ever_expanded = False
             cores = {}
+            core_first = {}
         if active:
+            for symbol in impulses:
+                core_first.setdefault(symbol, day)
             cores.update({symbol: 0 for symbol in impulses})
             age += 1
         supported = bool(cores) or (ret5 > 0 and rs5 > 0 and float(members.get("positive_return_5_ratio") or 0) >= .45)
@@ -96,6 +101,7 @@ def replay_hotspot_sessions(features: Sequence[Mapping]) -> list[dict]:
         timeline.append(dict(effective_date=day, stage=stage, active=active,
             first_detected=started, episode=episode, observed_sessions=age,
             leader_symbols=sorted(cores), new_strong=sorted(new), lost_strong=sorted(lost),
+            core_first_observed={s: core_first[s] for s in cores},
             expansion=expansion, reason=reason, score=round(score, 2), weak_sessions=weak,
             return_5=ret5, relative_strength_5=rs5, breadth=breadth))
         previous_strong = strong
@@ -121,15 +127,17 @@ class SessionHotspotScorer:
             "coverage-interrupted": "数据不足，暂停状态判断", "no-core-or-broad-impulse": "暂无核心或板块同步异动"}
         current_members = ((entity.get("session_features") or [{}])[-1].get("member_snapshot") or {})
         current_symbols = set(current_members.get("covered_member_symbols") or [])
+        missing = sorted(set(last["leader_symbols"]) - current_symbols)
+        risk = risk or bool(missing)
         return dict(symbol=entity["symbol"], eligible=active, total_score=last["score"], raw_score=last["score"],
             grade="C" if risk else "B" if active else "D", verdict=LABELS[stage],
-            summary=reason_labels[last["reason"]], risk_summary="观察候选，非交易许可" if active else "",
+            summary=reason_labels[last["reason"]], risk_summary="核心行情缺失，身份仅保留" if missing else "观察候选，非交易许可" if active else "",
             penalties=[], hard_events=[], disqualifiers=[] if active else [last["reason"]], components={},
             hotspot_stage=stage, observation_only=True, session_tracking=True,
             leader_symbols=last["leader_symbols"], first_detected=last.get("first_detected"),
             tracking_sessions=last.get("observed_sessions", 0), tracking_window_start=history[0]["effective_date"] if history else None,
             tracking_left_censored=bool(history and last.get("first_detected") == history[0]["effective_date"]),
-            missing_leader_symbols=sorted(set(last["leader_symbols"]) - current_symbols),
+            missing_leader_symbols=missing, core_first_observed=last.get("core_first_observed", {}),
             new_strong_count=len(last.get("new_strong", [])), lost_strong_count=len(last.get("lost_strong", [])),
             new_strong_symbols=last.get("new_strong", []), lost_strong_symbols=last.get("lost_strong", []),
             change_bucket="risk" if risk else "new" if last.get("first_detected") == last.get("effective_date") else "strengthening" if last.get("expansion") else "maintaining",

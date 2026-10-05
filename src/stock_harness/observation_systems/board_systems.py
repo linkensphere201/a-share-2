@@ -13,7 +13,7 @@ from stock_harness.board_hotspot_window import analyze_hotspot_window
 from stock_harness.board_hotspot_unified import (
     apply_discovery_visibility,
 )
-from stock_harness.hotspot_session_engine import VERSION, SessionHotspotScorer
+from stock_harness.hotspot_session_engine import VERSION, LABELS, SessionHotspotScorer
 from stock_harness.board_capacity import market_capacity_fit
 from stock_harness.market_liquidity import stabilize_seat_budget
 from stock_harness.review_scoring import (
@@ -130,6 +130,10 @@ class LegacyBoardHotspotSystem:
 
 class BoardHotspotSystem(LegacyBoardHotspotSystem):
     version = VERSION
+
+    def definition(self) -> dict[str, object]:
+        return {**super().definition(), "lifecycle": list(LABELS),
+                "history_basis": "trading-session-replay", "discovery_only": True}
 
     def execute(self, context: ObservationSystemContext) -> ObservationSystemExecution:
         features = _mapping(context.dependencies["board_hotspot_features"])

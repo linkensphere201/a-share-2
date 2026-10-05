@@ -188,6 +188,11 @@ export type HotspotMemberReport = {
     down_market_excess: number | null; down_market_sessions: number; drawdown_10: number
     amount_rank: number; amount_share: number; amount_proxy_5: number; price_basis: string
     recognition_fresh: boolean
+    core_first_observed?: string | null
+    member_state?: 'pullback' | 'holding'
+    liquidity_top_sessions?: number
+    board_up_participation?: number | null
+    recognition_points?: number
     recognition: Array<{ effective_date: string; rank: number; recognition_role: string; run_id: string }>
   }>
 }
@@ -221,6 +226,18 @@ export type SignalScoreResult = {
   visibility_reasons?: string[]
   leader_symbols?: string[]
   hotspot_members?: HotspotMemberReport
+  session_tracking?: boolean
+  first_detected?: string | null
+  tracking_sessions?: number
+  tracking_window_start?: string
+  tracking_left_censored?: boolean
+  missing_leader_symbols?: string[]
+  core_first_observed?: Record<string, string>
+  change_bucket?: 'new' | 'strengthening' | 'maintaining' | 'risk'
+  new_strong_count?: number
+  lost_strong_count?: number
+  related_themes?: Array<{symbol: string; name?: string}>
+  hotspot_timeline?: Array<{effective_date: string; stage: string; reason: string; new_strong: string[]; lost_strong: string[]}>
   hotspot_window_dates?: string[]
   observation_only?: boolean
   hotspot_wave_id?: string

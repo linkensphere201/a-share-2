@@ -11,10 +11,10 @@ export function HotspotMemberReport({ report }: { report: Report }) {
         : <div className="hotspot-member-table"><table>
           <thead><tr><th>标的 / 角色</th><th>相对强度</th><th>持续 / 先后</th><th>成交地位</th><th>抗跌 / 回撤</th><th>辨识度记录</th></tr></thead>
           <tbody>{report.items.map(item => <tr key={item.symbol}>
-            <td><b>{item.rank}. {item.name}</b><small>{item.symbol}</small><span className={`member-role ${item.role}`}>{item.role_label}</span><small>角色内评分 {item.score.toFixed(1)}</small></td>
+            <td><b>{item.rank}. {item.name}</b><small>{item.symbol}</small><span className={`member-role ${item.role}`}>{item.role_label}</span>{item.core_first_observed && <small>核心进入 {item.core_first_observed}</small>}{item.member_state === 'pullback' && <small>回踩观察，身份保留</small>}<small>角色内评分 {item.score.toFixed(1)}</small></td>
             <td>5日 {percent(item.return_5)}<small>超额 {points(item.excess_return_5)}</small><small>20日 {percent(item.return_20)} / 超额 {points(item.excess_return_20)}</small><small>{item.price_basis === 'forward-adjusted-as-of' ? '截至当日复权' : '原始价格口径'}</small></td>
             <td>近5日强势 {item.strength_sessions} 日<small>{item.launch_lead_sessions == null ? '启动先后未确认' : item.launch_lead_sessions > 0 ? `启动代理领先 ${item.launch_lead_sessions} 日` : item.launch_lead_sessions < 0 ? `启动代理落后 ${-item.launch_lead_sessions} 日` : '启动代理同日'}</small></td>
-            <td>成交代理第 {item.amount_rank}<small>覆盖成员占比 {percent(item.amount_share)}</small><small>收盘价 × 成交量</small></td>
+            <td>成交代理第 {item.amount_rank}<small>覆盖成员占比 {percent(item.amount_share)}</small>{item.liquidity_top_sessions != null && <small>近5日成交前排 {item.liquidity_top_sessions} 日</small>}<small>收盘价 × 成交量</small></td>
             <td>{item.down_market_excess == null ? '无板块下跌样本' : `下跌日超额 ${points(item.down_market_excess)}`}<small>样本 {item.down_market_sessions} 日</small><small>距10日收盘高点 {percent(item.drawdown_10)}</small></td>
             <td>{item.recognition.length ? item.recognition.map((record, index) => <small key={`${record.run_id}:${index}`}>
               {record.recognition_role.startsWith('historical') ? '历史辨识度' : '近期辨识度'} 第{record.rank}<br/>{record.effective_date}

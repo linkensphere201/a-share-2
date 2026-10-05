@@ -584,6 +584,10 @@ describe('SignalReviewWorkspace', () => {
       scorer_version: 'board-hotspot-emergence-v8-session-discovery',
       hotspot_stage: 'leader-ignited', radar_visible: true, observation_only: true,
       candidate_streak: 2, leader_symbols: ['600418.SH'],
+      session_tracking: true, first_detected: '2026-09-22', tracking_sessions: 5,
+      tracking_window_start: '2026-09-01', change_bucket: 'new',
+      new_strong_count: 3, lost_strong_count: 0,
+      hotspot_timeline: [{ effective_date: '2026-09-22', stage: 'emerging-watch', reason: 'core-first', new_strong: [], lost_strong: [] }],
       leading_state: 'strengthening', leading_visible: true,
       leading_slot_limit: 1, leading_acceleration_count: 3,
       leading_streak: 2, setup_path: 'platform-breakout',
@@ -611,8 +615,11 @@ describe('SignalReviewWorkspace', () => {
     expect(await screen.findByText('临界板块')).toBeTruthy()
     expect(screen.getByText('低容量 · 缩量')).toBeTruthy()
     await user.click(screen.getByText('临界板块').closest('button')!)
-    expect(screen.getByText('最近3日支持 2 日')).toBeTruthy()
-    expect(screen.getByText('600418.SH')).toBeTruthy()
+    expect(screen.getByText('首次观察 2026-09-22')).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: /新出现/ }))
+    expect(screen.getByRole('button', { name: /临界板块/ })).toBeTruthy()
+    await user.click(screen.getByText('最近交易日轨迹'))
+    expect(screen.getByText(/2026-09-22 · 萌芽观察/)).toBeTruthy()
   })
 
   it('shows stable visible hotspots under the default all filter', async () => {
@@ -643,7 +650,7 @@ describe('SignalReviewWorkspace', () => {
 
     await user.click(await screen.findByRole('button', { name: /近期热点/ }))
     expect(await screen.findByText('印制电路板')).toBeTruthy()
-    expect(screen.getByRole('button', { name: /全部有效/ }).className).toContain('active')
+    expect(screen.getByRole('button', { name: /全部跟踪/ }).className).toContain('active')
   })
 
   it('explains why hotspot candidates did not enter a visible seat', async () => {

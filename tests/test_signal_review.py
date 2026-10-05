@@ -1035,6 +1035,30 @@ def _assignment(
     }
 
 
+def test_hotspot_reports_receive_all_board_pages(monkeypatch) -> None:
+    import stock_harness.signal_review as module
+    store = SQLiteMarketDataStore(":memory:")
+    symbols = [f"B{i:03}.DC" for i in range(101)]
+    store.upsert_instruments([Instrument(s, s, InstrumentKind.SECTOR, "DC") for s in symbols]
+        + [Instrument("000001.SH", "Benchmark", InstrumentKind.INDEX, "SH"),
+           Instrument("SHAMV.A", "Active", InstrumentKind.INDEX, "LOCAL")])
+    for symbol in symbols + ["000001.SH", "SHAMV.A"]:
+        store.upsert_daily_bars("test", _daily_bars(symbol, 125))
+    captured = {}
+    def inspect(store, scores, series, cutoff, check_stopping, *, prepared):
+        captured.update(series)
+        assert prepared is not None
+    monkeypatch.setattr(module, "attach_hotspot_member_roles", inspect)
+    service = module.SignalReviewService(store)
+    service._boards = lambda: [dict(symbol=s, name=s) for s in symbols]
+    run = service.run_sync(DAILY_MARKET_BOARD_SIGNAL, _daily_bars("000001.SH", 125)[-1].trade_date)
+    assert run["status"] == "succeeded"
+    assert set(captured) == set(symbols)
+    assert len(captured[symbols[0]]) == 125
+    service.close()
+    store.close()
+
+
 def _daily_bars(symbol: str, count: int, falling: bool = False) -> list[DailyBar]:
     from datetime import timedelta
 
