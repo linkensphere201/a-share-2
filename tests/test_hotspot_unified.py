@@ -9,6 +9,7 @@ from stock_harness.models import BoardMembership, DailyBar, Instrument, Instrume
 from stock_harness.sqlite_store import SQLiteMarketDataStore
 from stock_harness.board_observation_pool import _build_board_pool_snapshot
 from stock_harness.review_scoring import score_entities
+from stock_harness.hotspot_member_roles import attach_hotspot_member_roles
 
 
 def window():
@@ -199,4 +200,17 @@ def test_real_auto_case_uses_complete_source_without_inventing_missing_bars():
     apply_discovery_visibility(list(results.values()), {b: "汽车整车" for b in results}, {}, {}, {})
     assert results["BK1029.DC"]["radar_visible"]
     assert not results["881125.TI"]["radar_visible"]
+    board_series = {b: store.get_recent_daily_bars(b, cutoff, 120) for b in results}
+    attach_hotspot_member_roles(store, list(results.values()), board_series, cutoff, lambda: None)
+    report = results["BK1029.DC"]["hotspot_members"]
+    assert report["status"] == "complete"
+    jac = next(r for r in report["items"] if r["symbol"] == "600418.SH")
+    assert jac["role"] == "core-leader"
+    assert "hotspot_members" not in results["881125.TI"]
+    saved_scores = score_entities(UnifiedHotspotScorer(), [{"symbol": "BK1029.DC", "session_features": window()}])
+    saved_scores[0]["hotspot_members"] = report
+    run = store.create_signal_review_run(signal_id="daily-market-board-review", definition_version="test",
+        algorithm_version="test", cadence="daily", effective_date=cutoff, parameters={})
+    store.complete_signal_review_run(run["run_id"], items=[], scores=saved_scores, summary={}, input_digest="test")
+    assert store.list_signal_review_scores(run["run_id"], include_system_payload=False)[0]["hotspot_members"] == report
     store.close()

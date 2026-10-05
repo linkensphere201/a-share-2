@@ -265,6 +265,16 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .signal-hard-event-strip small { overflow: hidden; padding: 2px 4px; color: var(--theme-muted); border: 1px solid color-mix(in srgb, #d8aa4f 28%, var(--theme-border)); border-radius: 2px; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
 .signal-hotspot-filters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; padding: 4px 6px; border-bottom: 1px solid var(--theme-border); background: var(--theme-surface); }
 .signal-hotspot-filters.leading { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.hotspot-member-report { grid-column: 1 / -1; min-width: 0; padding-block: 8px; border-top: 1px solid var(--theme-border); }
+.hotspot-member-report > header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; padding-bottom: 8px; }
+.hotspot-member-report small { display: block; color: var(--theme-muted); line-height: 1.5; white-space: normal; overflow-wrap: anywhere; }
+.hotspot-member-table { width: 100%; overflow-x: auto; }
+.hotspot-member-table table { width: 100%; min-width: 780px; border-collapse: collapse; text-align: left; font-size: 11px; }
+.hotspot-member-table th, .hotspot-member-table td { padding: 8px; vertical-align: top; border-bottom: 1px solid var(--theme-border); }
+.hotspot-member-table th { color: var(--theme-muted); font-weight: 500; }
+.member-role { display: block; color: var(--theme-accent); padding-block: 3px; }
+.member-role.core-leader { color: #dfaa53; }
+.member-role.trend-anchor { color: #76c99b; }
 .signal-hotspot-market { grid-column: 1 / -1; padding: 2px 4px 4px; color: var(--theme-muted); font-size: 9px; }
 .signal-hotspot-filters button { display: flex; min-width: 0; height: 28px; align-items: center; justify-content: center; gap: 4px; color: var(--theme-muted); border: 1px solid transparent; background: transparent; font-size: 8px; }
 .signal-hotspot-filters button.active { color: var(--theme-text-strong); border-color: color-mix(in srgb, #d8aa4f 42%, var(--theme-border)); background: color-mix(in srgb, #d8aa4f 8%, var(--theme-base)); }

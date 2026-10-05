@@ -1,4 +1,5 @@
 import { useResultQuery } from './useResultQuery'
+import { HotspotMemberReport } from './HotspotMemberReport'
 import { useSignalRunHistory } from './useSignalRunHistory'
 import {
   useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent,
@@ -1197,11 +1198,12 @@ function ScoreSummary({ score, onHistorySelect, onEvidenceHighlight }: {
       <span>{hotspotWindowStateLabel(score.hotspot_window_state)}<small>{score.hotspot_window_qualified_sessions ?? 0}/{score.hotspot_window_observed_sessions ?? 0} 日有效 · 形态支持 {score.hotspot_window_shape_support_sessions ?? 0} 日</small></span>
       {score.observation_only ? <span>最近3日支持 {score.candidate_streak ?? 0} 日<small>{score.hotspot_window_dates?.join(' / ')}</small></span>
         : <span>连续 {score.candidate_streak ?? 0} 日<small>峰值 {(score.peak_score ?? score.total_score).toFixed(0)} · 回撤 {(score.drawdown_from_peak ?? 0).toFixed(0)}</small></span>}
-      {!!score.leader_symbols?.length && <span>持续领涨成员<small>{score.leader_symbols.join(' / ')}</small></span>}
+      {!score.hotspot_members && !!score.leader_symbols?.length && <span>持续领涨成员<small>{score.leader_symbols.join(' / ')}</small></span>}
       {!!score.visibility_reasons?.length && <span>未展示原因<small>{score.visibility_reasons.map(hotspotReasonLabel).join('；')}</small></span>}
       <span>{score.limit_up_count ?? 0} 家涨停<small>最高 {score.max_limit_up_streak ?? 0} 连板 · 破板 {score.broken_up_count ?? 0}</small></span>
       <span>{score.theme_name ?? boardCapacityLabel(score.board_capacity_tier)}<small>{score.theme_parent_name ? `${score.theme_parent_name} · ` : ''}{boardCapacityLabel(score.board_capacity_tier)} · 匹配 {score.capacity_fit_score?.toFixed(0) ?? '-'}</small></span>
     </div>}
+    {score.hotspot_members && <HotspotMemberReport report={score.hotspot_members}/>}
     {score.system_id === 'board-hotspot-leading' && <div className="signal-hotspot-state leading">
       <span className={score.score_direction ?? 'stable'}>{leadingStateLabel(score.leading_state)}<small>{score.score_direction === 'strengthening' ? '证据继续增强' : score.score_direction === 'declining' ? '证据正在减弱' : '保持当前状态'}</small></span>
       <span>{score.leading_acceleration_count ?? 0} 项加速<small>连续观察 {score.leading_streak ?? 0} 日</small></span>

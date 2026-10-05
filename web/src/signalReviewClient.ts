@@ -174,6 +174,24 @@ export type SignalHardEvent = {
   source_code: string
 }
 
+export type HotspotMemberReport = {
+  version: string
+  effective_date: string
+  status: 'complete' | 'insufficient-data'
+  member_count: number
+  covered_count: number
+  candidate_count: number
+  items: Array<{
+    symbol: string; name: string; rank: number; role: string; role_label: string; score: number
+    return_5: number; return_20: number; excess_return_5: number; excess_return_20: number
+    strength_sessions: number; launch_lead_sessions: number | null
+    down_market_excess: number | null; down_market_sessions: number; drawdown_10: number
+    amount_rank: number; amount_share: number; amount_proxy_5: number; price_basis: string
+    recognition_fresh: boolean
+    recognition: Array<{ effective_date: string; rank: number; recognition_role: string; run_id: string }>
+  }>
+}
+
 export type SignalScoreResult = {
   run_id: string
   entity_key: string
@@ -202,6 +220,7 @@ export type SignalScoreResult = {
   hotspot_stage?: string
   visibility_reasons?: string[]
   leader_symbols?: string[]
+  hotspot_members?: HotspotMemberReport
   hotspot_window_dates?: string[]
   observation_only?: boolean
   hotspot_wave_id?: string

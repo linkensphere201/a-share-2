@@ -214,6 +214,7 @@ def _recognition_by_board(
                 "recognition-assignment", str(recognition_run["run_id"]),
                 str(item["item_key"]), str(item["profile"]), {
                     "member_symbol": item["symbol"], "member_name": item["name"],
+                    "effective_date": recognition_run["effective_date"].isoformat(),
                     "rank": recognition_rank,
                     "recognition_role": f"{item['profile']}-rank-{recognition_rank}",
                     "score": payload.get("score"),

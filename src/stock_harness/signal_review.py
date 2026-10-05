@@ -46,6 +46,7 @@ from stock_harness.daily_signal_analysis import (
 )
 from stock_harness.models import InstrumentKind
 from stock_harness.hotspot_wave import project_hotspot_waves
+from stock_harness.hotspot_member_roles import attach_hotspot_member_roles
 from stock_harness.observation_systems import (
     BOARD_HOTSPOT_LEADING_SYSTEM,
     BOARD_HOTSPOT_SYSTEM,
@@ -90,7 +91,7 @@ WEEKLY_RECOGNITION_SIGNAL = "weekly-board-recognition"
 DEFINITION_VERSION = "weekly-board-recognition-v1"
 DAILY_MARKET_BOARD_SIGNAL = "daily-market-board-review"
 DAILY_DEFINITION_VERSION = "daily-market-board-review-v1"
-DAILY_REVIEW_ALGORITHM_VERSION = "daily-market-board-review-v11-unified-hotspots"
+DAILY_REVIEW_ALGORITHM_VERSION = "daily-market-board-review-v12-hotspot-members"
 STOCK_OBSERVATION_SIGNAL = "stock-observation-pool"
 HISTORICAL_LIMIT = 5
 
@@ -469,6 +470,7 @@ class SignalReviewService:
         hotspot_execution = system_execution_by_id[BOARD_HOTSPOT_SYSTEM]
         trend_scores = list(trend_execution.results)
         hotspot_scores = hotspot_execution.results
+        attach_hotspot_member_roles(self._reader.get(), hotspot_scores, series, cutoff, self._check_stopping)
         leading_scores = []  # Historical leading results remain readable, not recomputed.
         prior_wave_snapshots = self._store.list_hotspot_wave_snapshots(
             str(session_runs[0]["run_id"]), status="active",
@@ -785,6 +787,8 @@ class SignalReviewService:
             "rank": 0, "score": 0, "confidence": 1,
             "payload": {
                 "digests": sorted(observation_digest(item) for item in observations),
+                "hotspot_members": {score["symbol"]: score["hotspot_members"]
+                                    for score in hotspot_scores if "hotspot_members" in score},
             },
             "evidence": [],
         }])
